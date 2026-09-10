@@ -15,7 +15,12 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
+use crate::colmap_runtime::{
+    configure_systemd_user_bus_environment, worker_command, WorkerMemoryLimitMode,
+    WorkerMemoryLimitPlan,
+};
 use crate::ground_classification::{Point3, PointClass};
+use crate::job_runtime::{JobMemorySink, RasterPreparationStagePlan};
 use crate::process_group;
 
 const POLL: Duration = Duration::from_millis(15);
@@ -83,6 +88,16 @@ pub enum DenseRasterPrepError {
         code: Option<i32>,
         stderr_tail: String,
     },
+    #[error(
+        "raster preparation stage `{stage}` exceeded its worker memory limit of {limit_bytes} bytes (sampled peak {peak_rss_bytes} bytes)"
+    )]
+    WorkerMemoryLimit {
+        stage: String,
+        limit_bytes: u64,
+        peak_rss_bytes: u64,
+    },
+    #[error("failed to record raster preparation memory evidence: {0}")]
+    MemoryRecord(String),
     #[error("classification has {actual} entries but the dense cloud has {expected} vertices")]
     ClassificationLength { expected: u64, actual: usize },
     #[error("dense cloud already has a different immutable ground classification")]
@@ -118,6 +133,53 @@ pub fn prepare_dense_vector_with_classification(
     classifications: Option<&[PointClass]>,
     cancellation: &CancellationToken,
 ) -> Result<PreparedDenseVector, DenseRasterPrepError> {
+    prepare_dense_vector_with_classification_inner(
+        dense_ply,
+        output_root,
+        ogr2ogr,
+        gdal_srs,
+        classifications,
+        cancellation,
+        None,
+    )
+}
+
+/// Converts a dense cloud while enforcing and recording the admission-time ogr2ogr bound.
+#[allow(clippy::too_many_arguments)]
+pub fn prepare_dense_vector_with_classification_bounded(
+    dense_ply: &Path,
+    output_root: &Path,
+    ogr2ogr: &Path,
+    gdal_srs: &str,
+    classifications: Option<&[PointClass]>,
+    cancellation: &CancellationToken,
+    memory_plan: RasterPreparationStagePlan,
+    memory: &JobMemorySink,
+) -> Result<PreparedDenseVector, DenseRasterPrepError> {
+    prepare_dense_vector_with_classification_inner(
+        dense_ply,
+        output_root,
+        ogr2ogr,
+        gdal_srs,
+        classifications,
+        cancellation,
+        Some(GdalCommandMemory {
+            plan: memory_plan,
+            sink: memory,
+        }),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prepare_dense_vector_with_classification_inner(
+    dense_ply: &Path,
+    output_root: &Path,
+    ogr2ogr: &Path,
+    gdal_srs: &str,
+    classifications: Option<&[PointClass]>,
+    cancellation: &CancellationToken,
+    memory: Option<GdalCommandMemory<'_>>,
+) -> Result<PreparedDenseVector, DenseRasterPrepError> {
     if output_root.exists() {
         fs::remove_dir_all(output_root)?;
     }
@@ -126,7 +188,7 @@ pub fn prepare_dense_vector_with_classification(
     let fgb_path = output_root.join("dense.fgb");
     let (point_count, minimum, maximum) =
         ply_to_csv(dense_ply, &csv_path, classifications, cancellation)?;
-    run_command(
+    run_command_with_memory(
         ogr2ogr,
         &[
             "-f",
@@ -149,6 +211,7 @@ pub fn prepare_dense_vector_with_classification(
         ],
         Some(output_root),
         cancellation,
+        memory,
     )?;
     fs::remove_file(csv_path)?;
     Ok(PreparedDenseVector {
@@ -733,6 +796,69 @@ pub fn prepare_color_vrt(
     radius: f64,
     cancellation: &CancellationToken,
 ) -> Result<PathBuf, DenseRasterPrepError> {
+    prepare_color_vrt_inner(
+        vector,
+        output_root,
+        gdal_grid,
+        gdalbuildvrt,
+        gdal_srs,
+        bounds,
+        width,
+        height,
+        radius,
+        cancellation,
+        None,
+    )
+}
+
+/// Builds the color VRT while enforcing and recording the gdal_grid unit bound.
+#[allow(clippy::too_many_arguments)]
+pub fn prepare_color_vrt_bounded(
+    vector: &PreparedDenseVector,
+    output_root: &Path,
+    gdal_grid: &Path,
+    gdalbuildvrt: &Path,
+    gdal_srs: &str,
+    bounds: [f64; 4],
+    width: u32,
+    height: u32,
+    radius: f64,
+    cancellation: &CancellationToken,
+    memory_plan: RasterPreparationStagePlan,
+    memory: &JobMemorySink,
+) -> Result<PathBuf, DenseRasterPrepError> {
+    prepare_color_vrt_inner(
+        vector,
+        output_root,
+        gdal_grid,
+        gdalbuildvrt,
+        gdal_srs,
+        bounds,
+        width,
+        height,
+        radius,
+        cancellation,
+        Some(GdalCommandMemory {
+            plan: memory_plan,
+            sink: memory,
+        }),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prepare_color_vrt_inner(
+    vector: &PreparedDenseVector,
+    output_root: &Path,
+    gdal_grid: &Path,
+    gdalbuildvrt: &Path,
+    gdal_srs: &str,
+    bounds: [f64; 4],
+    width: u32,
+    height: u32,
+    radius: f64,
+    cancellation: &CancellationToken,
+    memory: Option<GdalCommandMemory<'_>>,
+) -> Result<PathBuf, DenseRasterPrepError> {
     fs::create_dir_all(output_root)?;
     let mut bands = Vec::new();
     for field in ["red", "green", "blue"] {
@@ -762,13 +888,13 @@ pub fn prepare_color_vrt(
             vector.flatgeobuf_path.to_string_lossy().into_owned(),
             output.to_string_lossy().into_owned(),
         ];
-        run_owned_command(gdal_grid, &arguments, cancellation)?;
+        run_owned_command_with_memory(gdal_grid, &arguments, cancellation, memory)?;
         bands.push(output);
     }
     let vrt = output_root.join("orthophoto.vrt");
     let mut arguments = vec!["-separate".to_owned(), vrt.to_string_lossy().into_owned()];
     arguments.extend(bands.iter().map(|path| path.to_string_lossy().into_owned()));
-    run_owned_command(gdalbuildvrt, &arguments, cancellation)?;
+    run_owned_command_with_memory(gdalbuildvrt, &arguments, cancellation, memory)?;
     Ok(vrt)
 }
 
@@ -778,6 +904,34 @@ pub fn inspect_vector_wkt(
     vector: &PreparedDenseVector,
     cancellation: &CancellationToken,
 ) -> Result<String, DenseRasterPrepError> {
+    inspect_vector_wkt_inner(ogrinfo, vector, cancellation, None)
+}
+
+/// Reads vector WKT under the same bound as the preceding OGR conversion unit.
+pub fn inspect_vector_wkt_bounded(
+    ogrinfo: &Path,
+    vector: &PreparedDenseVector,
+    cancellation: &CancellationToken,
+    memory_plan: RasterPreparationStagePlan,
+    memory: &JobMemorySink,
+) -> Result<String, DenseRasterPrepError> {
+    inspect_vector_wkt_inner(
+        ogrinfo,
+        vector,
+        cancellation,
+        Some(GdalCommandMemory {
+            plan: memory_plan,
+            sink: memory,
+        }),
+    )
+}
+
+fn inspect_vector_wkt_inner(
+    ogrinfo: &Path,
+    vector: &PreparedDenseVector,
+    cancellation: &CancellationToken,
+    memory: Option<GdalCommandMemory<'_>>,
+) -> Result<String, DenseRasterPrepError> {
     let output_path = vector.flatgeobuf_path.with_extension("ogrinfo.json");
     let arguments = vec![
         "-json".to_owned(),
@@ -785,12 +939,14 @@ pub fn inspect_vector_wkt(
         vector.flatgeobuf_path.to_string_lossy().into_owned(),
         vector.layer.clone(),
     ];
-    run_gdal_command(
+    run_gdal_command_inner(
         ogrinfo,
         &arguments,
         Some(File::create(&output_path)?),
         None,
         cancellation,
+        memory,
+        None,
     )?;
     let value: serde_json::Value = serde_json::from_slice(&fs::read(&output_path)?)
         .map_err(|error| DenseRasterPrepError::InvalidPly(error.to_string()))?;
@@ -1222,17 +1378,26 @@ fn json_xyz(value: &serde_json::Value, key: &str) -> Result<[f64; 3], DenseRaste
     ])
 }
 
-fn run_command(
+fn run_command_with_memory(
     executable: &Path,
     arguments: &[&str],
     gdal_temp_directory: Option<&Path>,
     cancellation: &CancellationToken,
+    memory: Option<GdalCommandMemory<'_>>,
 ) -> Result<(), DenseRasterPrepError> {
     let owned = arguments
         .iter()
         .map(|value| (*value).to_owned())
         .collect::<Vec<_>>();
-    run_gdal_command(executable, &owned, None, gdal_temp_directory, cancellation)
+    run_gdal_command_inner(
+        executable,
+        &owned,
+        None,
+        gdal_temp_directory,
+        cancellation,
+        memory,
+        None,
+    )
 }
 
 fn run_owned_command(
@@ -1243,6 +1408,23 @@ fn run_owned_command(
     run_gdal_command(executable, arguments, None, None, cancellation)
 }
 
+fn run_owned_command_with_memory(
+    executable: &Path,
+    arguments: &[String],
+    cancellation: &CancellationToken,
+    memory: Option<GdalCommandMemory<'_>>,
+) -> Result<(), DenseRasterPrepError> {
+    run_gdal_command_inner(
+        executable,
+        arguments,
+        None,
+        None,
+        cancellation,
+        memory,
+        None,
+    )
+}
+
 fn run_gdal_command(
     executable: &Path,
     arguments: &[String],
@@ -1250,12 +1432,62 @@ fn run_gdal_command(
     gdal_temp_directory: Option<&Path>,
     cancellation: &CancellationToken,
 ) -> Result<(), DenseRasterPrepError> {
+    run_gdal_command_inner(
+        executable,
+        arguments,
+        stdout_destination,
+        gdal_temp_directory,
+        cancellation,
+        None,
+        None,
+    )
+}
+
+#[derive(Clone, Copy)]
+struct GdalCommandMemory<'a> {
+    plan: RasterPreparationStagePlan,
+    sink: &'a JobMemorySink,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_gdal_command_inner(
+    executable: &Path,
+    arguments: &[String],
+    stdout_destination: Option<File>,
+    gdal_temp_directory: Option<&Path>,
+    cancellation: &CancellationToken,
+    memory: Option<GdalCommandMemory<'_>>,
+    explicit_worker_plan: Option<WorkerMemoryLimitPlan>,
+) -> Result<(), DenseRasterPrepError> {
     let normalized_arguments = arguments
         .iter()
         .map(|argument| external_tool_argument(argument))
         .collect::<Vec<_>>();
     let command_description = diagnostic_command(executable, &normalized_arguments);
-    let mut command = offline_gdal_command(executable);
+    let (mut command, worker_limit_plan) = if let Some(plan) = explicit_worker_plan {
+        #[cfg(target_os = "linux")]
+        {
+            let launcher = match plan.mode {
+                WorkerMemoryLimitMode::CgroupScope => Path::new("/usr/bin/systemd-run"),
+                WorkerMemoryLimitMode::RlimitAs => Path::new("/usr/bin/prlimit"),
+            };
+            (
+                crate::colmap_runtime::worker_command_for_plan(launcher, executable, plan),
+                Some(plan),
+            )
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = plan;
+            (Command::new(executable), None)
+        }
+    } else {
+        worker_command(
+            executable,
+            memory.map(|memory| memory.plan.resident_limit_bytes),
+        )
+    };
+    configure_offline_gdal_command(&mut command, executable);
     command.args(&normalized_arguments);
     if let Some(directory) = gdal_temp_directory {
         command
@@ -1271,6 +1503,16 @@ fn run_gdal_command(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    #[cfg(target_os = "linux")]
+    if matches!(
+        worker_limit_plan,
+        Some(WorkerMemoryLimitPlan {
+            mode: WorkerMemoryLimitMode::CgroupScope,
+            ..
+        })
+    ) {
+        configure_systemd_user_bus_environment(&mut command);
+    }
     let mut child = process_group::spawn(&mut command)?;
     let Some(stdout) = child.stdout.take() else {
         let _ = child.terminate_and_wait();
@@ -1291,6 +1533,7 @@ fn run_gdal_command(
             let _ = child.terminate_and_wait();
             let _ = join_output_reader(stdout_reader);
             let _ = join_output_reader(stderr_reader);
+            record_command_memory(memory, worker_limit_plan, child.peak_rss_bytes())?;
             return Err(DenseRasterPrepError::Cancelled);
         }
         let status = match child.try_wait() {
@@ -1299,6 +1542,7 @@ fn run_gdal_command(
                 let _ = child.terminate_and_wait();
                 let _ = join_output_reader(stdout_reader);
                 let _ = join_output_reader(stderr_reader);
+                record_command_memory(memory, worker_limit_plan, child.peak_rss_bytes())?;
                 return Err(DenseRasterPrepError::Io(error));
             }
         };
@@ -1307,8 +1551,26 @@ fn run_gdal_command(
             let stderr_result = join_output_reader(stderr_reader);
             let _stdout_tail = stdout_result?;
             let stderr_tail = stderr_result?;
+            let peak_rss_bytes = child.peak_rss_bytes();
+            record_command_memory(memory, worker_limit_plan, peak_rss_bytes)?;
             if status.success() {
                 return Ok(());
+            }
+            if status_indicates_memory_limit(&status, &stderr_tail) {
+                if let (Some(memory), Some(limit)) = (memory, worker_limit_plan) {
+                    memory
+                        .sink
+                        .record_worker_memory_limit_hit_blocking(
+                            memory.plan.stage,
+                            limit.enforced_limit_bytes,
+                        )
+                        .map_err(|error| DenseRasterPrepError::MemoryRecord(error.to_string()))?;
+                    return Err(DenseRasterPrepError::WorkerMemoryLimit {
+                        stage: memory.plan.stage.into(),
+                        limit_bytes: limit.enforced_limit_bytes,
+                        peak_rss_bytes,
+                    });
+                }
             }
             return Err(DenseRasterPrepError::GdalFailed {
                 command: command_description,
@@ -1318,6 +1580,53 @@ fn run_gdal_command(
         }
         thread::sleep(POLL);
     }
+}
+
+fn record_command_memory(
+    memory: Option<GdalCommandMemory<'_>>,
+    worker_limit_plan: Option<WorkerMemoryLimitPlan>,
+    peak_rss_bytes: u64,
+) -> Result<(), DenseRasterPrepError> {
+    let Some(memory) = memory else {
+        return Ok(());
+    };
+    let mut parameters = serde_json::json!({
+        "modelBytes": memory.plan.model_bytes,
+        "workerMemoryLimitBytes": memory.plan.resident_limit_bytes,
+    });
+    if let (Some(parameters), Some(limit)) = (parameters.as_object_mut(), worker_limit_plan) {
+        parameters.insert(
+            "workerMemoryLimitBytes".into(),
+            limit.enforced_limit_bytes.into(),
+        );
+        parameters.insert("workerMemoryLimitMode".into(), limit.mode.as_str().into());
+    }
+    memory
+        .sink
+        .record_stage_peak_blocking(memory.plan.stage, peak_rss_bytes, 1, parameters)
+        .map_err(|error| DenseRasterPrepError::MemoryRecord(error.to_string()))
+}
+
+fn status_indicates_memory_limit(status: &std::process::ExitStatus, stderr: &[u8]) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        if matches!(status.signal(), Some(6 | 9 | 11)) {
+            return true;
+        }
+    }
+    let lower = String::from_utf8_lossy(stderr).to_ascii_lowercase();
+    [
+        "cannot allocate memory",
+        "failed to map segment",
+        "memory allocation",
+        "std::bad_alloc",
+        "out of memory",
+        "oom-kill",
+        "killed",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
 }
 
 fn spawn_output_reader<R>(
@@ -1407,8 +1716,7 @@ fn diagnostic_path(path: &Path) -> String {
     path.to_string_lossy().into_owned()
 }
 
-fn offline_gdal_command(executable: &Path) -> Command {
-    let mut command = Command::new(executable);
+fn configure_offline_gdal_command(command: &mut Command, executable: &Path) {
     command
         .env_clear()
         .env("GDAL_DISABLE_READDIR_ON_OPEN", "EMPTY_DIR")
@@ -1424,7 +1732,6 @@ fn offline_gdal_command(executable: &Path) -> Command {
             command.env("PROJ_DATA", proj_data);
         }
     }
-    command
 }
 
 #[cfg(windows)]
@@ -1446,6 +1753,276 @@ fn external_tool_argument(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    fn command_argv(command: &Command) -> Vec<String> {
+        std::iter::once(command.get_program())
+            .chain(command.get_args())
+            .map(|value| value.to_string_lossy().into_owned())
+            .collect()
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn ogr2ogr_and_gdal_grid_scope_commands_use_hard_memory_max() {
+        for executable in ["/fake/ogr2ogr", "/fake/gdal_grid"] {
+            let plan = WorkerMemoryLimitPlan {
+                mode: WorkerMemoryLimitMode::CgroupScope,
+                enforced_limit_bytes: 12_345_678,
+            };
+            let command = crate::colmap_runtime::worker_command_for_plan(
+                Path::new("/fake/systemd-run"),
+                Path::new(executable),
+                plan,
+            );
+            assert_eq!(
+                command_argv(&command),
+                [
+                    "/fake/systemd-run",
+                    "--user",
+                    "--scope",
+                    "--quiet",
+                    "-p",
+                    "MemoryMax=12345678",
+                    "-p",
+                    "MemorySwapMax=0",
+                    "--collect",
+                    "--",
+                    "/usr/bin/prlimit",
+                    "--core=0",
+                    "--",
+                    executable,
+                ]
+            );
+        }
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn ogr2ogr_and_gdal_grid_fallback_commands_use_double_rlimit_as() {
+        for executable in ["/fake/ogr2ogr", "/fake/gdal_grid"] {
+            let plan = WorkerMemoryLimitPlan {
+                mode: WorkerMemoryLimitMode::RlimitAs,
+                enforced_limit_bytes: 24_691_356,
+            };
+            let command = crate::colmap_runtime::worker_command_for_plan(
+                Path::new("/usr/bin/prlimit"),
+                Path::new(executable),
+                plan,
+            );
+            assert_eq!(
+                command_argv(&command),
+                ["/usr/bin/prlimit", "--as=24691356", "--", executable,]
+            );
+        }
+    }
+
+    #[tokio::test]
+    #[cfg(target_os = "linux")]
+    async fn fake_dem_job_records_bounded_ogr2ogr_and_gdal_grid_stages() {
+        use crate::job_runtime::{
+            plan_raster_preparation_memory, JobAdmission, JobManager, JobManagerConfig,
+            MemoryPreflight,
+        };
+        use himmelcad_core::{
+            hash::ObjectHash,
+            photolab_jobs::{
+                JobProgress, NewPhotolabJob, PhotolabJobId, PhotolabJobKind, PhotolabJobState,
+                PhotolabStage, PhotolabStageKind, ProgressMetrics,
+            },
+        };
+
+        let plan = plan_raster_preparation_memory(1, 1, 4 * 1024 * 1024 * 1024);
+        let execution_plan = plan.clone();
+        let memory = plan.memory.clone();
+        let manager = JobManager::new(JobManagerConfig {
+            max_concurrency: 1,
+            max_queued: 0,
+        })
+        .expect("fake DEM manager");
+        let job_id = PhotolabJobId("fake-dem-memory".into());
+        manager
+            .start_with_admission(
+                NewPhotolabJob {
+                    id: job_id.clone(),
+                    kind: PhotolabJobKind::BuildDem,
+                    config_hash: ObjectHash::of_bytes(b"fake-dem-config"),
+                    input_hash: ObjectHash::of_bytes(b"fake-dem-input"),
+                    progress: JobProgress {
+                        stage: PhotolabStage {
+                            kind: PhotolabStageKind::Preparing,
+                            index: 0,
+                            stage_count: 1,
+                            label: "Prepare DEM".into(),
+                        },
+                        metrics: ProgressMetrics::empty(),
+                    },
+                },
+                JobAdmission {
+                    memory_preflight: Some(MemoryPreflight {
+                        predicted_bytes: plan.predicted_peak_bytes,
+                        available_bytes: memory.envelope_bytes,
+                        machine_usable_bytes: memory.envelope_bytes,
+                        memory,
+                        refusal: None,
+                    }),
+                    ..Default::default()
+                },
+                move |context| {
+                    for stage in [execution_plan.ogr2ogr, execution_plan.gdal_grid] {
+                        let enforced_limit_bytes = stage.resident_limit_bytes.saturating_mul(2);
+                        run_gdal_command_inner(
+                            Path::new("/bin/true"),
+                            &[],
+                            None,
+                            None,
+                            &context.cancellation,
+                            Some(GdalCommandMemory {
+                                plan: stage,
+                                sink: &context.memory,
+                            }),
+                            Some(WorkerMemoryLimitPlan {
+                                mode: WorkerMemoryLimitMode::RlimitAs,
+                                enforced_limit_bytes,
+                            }),
+                        )
+                        .map_err(|error| {
+                            crate::job_runtime::JobWorkerError::Failed {
+                                code: "fakeDem".into(),
+                                message: error.to_string(),
+                            }
+                        })?;
+                    }
+                    Ok(())
+                },
+            )
+            .await
+            .expect("start fake DEM");
+        let terminal = manager
+            .wait_for_terminal(&job_id)
+            .await
+            .expect("fake DEM terminal record");
+        assert_eq!(terminal.state, PhotolabJobState::Completed);
+        assert!(terminal.memory.observations.is_empty());
+        for stage_plan in [plan.ogr2ogr, plan.gdal_grid] {
+            let stage = terminal
+                .memory
+                .stages
+                .iter()
+                .find(|stage| stage.stage == stage_plan.stage)
+                .expect("bounded preparation stage");
+            assert_eq!(stage.parameters["modelBytes"], stage_plan.model_bytes);
+            assert_eq!(stage.parameters["workerMemoryLimitMode"], "rlimitAs");
+            assert_eq!(
+                stage.parameters["workerMemoryLimitBytes"],
+                stage_plan.resident_limit_bytes.saturating_mul(2)
+            );
+        }
+    }
+
+    #[tokio::test]
+    #[cfg(target_os = "linux")]
+    async fn fake_dem_memory_kill_records_typed_failure_and_degradation() {
+        use crate::job_runtime::{
+            plan_raster_preparation_memory, JobAdmission, JobManager, JobManagerConfig,
+            JobWorkerError, MemoryPreflight,
+        };
+        use himmelcad_core::{
+            hash::ObjectHash,
+            photolab_jobs::{
+                JobProgress, NewPhotolabJob, PhotolabJobId, PhotolabJobKind, PhotolabJobState,
+                PhotolabMemoryDegradation, PhotolabStage, PhotolabStageKind, ProgressMetrics,
+            },
+        };
+
+        let plan = plan_raster_preparation_memory(1, 1, 4 * 1024 * 1024 * 1024);
+        let stage = plan.gdal_grid;
+        let memory = plan.memory.clone();
+        let manager = JobManager::new(JobManagerConfig {
+            max_concurrency: 1,
+            max_queued: 0,
+        })
+        .expect("fake DEM manager");
+        let job_id = PhotolabJobId("fake-dem-memory-kill".into());
+        manager
+            .start_with_admission(
+                NewPhotolabJob {
+                    id: job_id.clone(),
+                    kind: PhotolabJobKind::BuildDem,
+                    config_hash: ObjectHash::of_bytes(b"fake-dem-kill-config"),
+                    input_hash: ObjectHash::of_bytes(b"fake-dem-kill-input"),
+                    progress: JobProgress {
+                        stage: PhotolabStage {
+                            kind: PhotolabStageKind::Preparing,
+                            index: 0,
+                            stage_count: 1,
+                            label: "Prepare DEM".into(),
+                        },
+                        metrics: ProgressMetrics::empty(),
+                    },
+                },
+                JobAdmission {
+                    memory_preflight: Some(MemoryPreflight {
+                        predicted_bytes: plan.predicted_peak_bytes,
+                        available_bytes: memory.envelope_bytes,
+                        machine_usable_bytes: memory.envelope_bytes,
+                        memory,
+                        refusal: None,
+                    }),
+                    ..Default::default()
+                },
+                move |context| {
+                    let enforced_limit_bytes = stage.resident_limit_bytes.saturating_mul(2);
+                    let error = run_gdal_command_inner(
+                        Path::new("/bin/sh"),
+                        &["-c".into(), "kill -9 $$".into()],
+                        None,
+                        None,
+                        &context.cancellation,
+                        Some(GdalCommandMemory {
+                            plan: stage,
+                            sink: &context.memory,
+                        }),
+                        Some(WorkerMemoryLimitPlan {
+                            mode: WorkerMemoryLimitMode::RlimitAs,
+                            enforced_limit_bytes,
+                        }),
+                    )
+                    .expect_err("fake gdal_grid must be killed");
+                    match error {
+                        memory_error @ DenseRasterPrepError::WorkerMemoryLimit { .. } => {
+                            Err(JobWorkerError::Failed {
+                                code: "workerMemoryLimit".into(),
+                                message: memory_error.to_string(),
+                            })
+                        }
+                        other => Err(JobWorkerError::Failed {
+                            code: "unexpected".into(),
+                            message: other.to_string(),
+                        }),
+                    }
+                },
+            )
+            .await
+            .expect("start fake DEM memory kill");
+        let terminal = manager
+            .wait_for_terminal(&job_id)
+            .await
+            .expect("fake DEM kill terminal record");
+        assert!(matches!(
+            terminal.state,
+            PhotolabJobState::Failed { ref code, .. } if code == "workerMemoryLimit"
+        ));
+        assert!(terminal
+            .memory
+            .degradations
+            .iter()
+            .any(|degradation| matches!(
+                degradation,
+                PhotolabMemoryDegradation::WorkerMemoryLimitHit { stage: recorded, .. }
+                    if recorded == stage.stage
+            )));
+    }
 
     #[test]
     fn parses_colmap_sparse_points_without_losing_world_precision() {

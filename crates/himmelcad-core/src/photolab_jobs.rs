@@ -404,6 +404,23 @@ pub struct PhotolabMatchingMemoryReplan {
     pub matching_unit_bytes: u64,
 }
 
+/// Admission-time model and hard resident bound for one raster preparation worker.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PhotolabRasterPreparationStageMemory {
+    pub model_bytes: u64,
+    pub resident_limit_bytes: u64,
+}
+
+/// Dense-point-derived memory contract for DEM preparation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PhotolabRasterPreparationMemory {
+    pub point_count: u64,
+    pub ogr2ogr: PhotolabRasterPreparationStageMemory,
+    pub gdal_grid: PhotolabRasterPreparationStageMemory,
+}
+
 /// Per-machine envelope and the choices made to stay inside it.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -419,6 +436,8 @@ pub struct PhotolabJobMemory {
     pub observations: Vec<PhotolabMemoryObservation>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub matching_replanned: Option<PhotolabMatchingMemoryReplan>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raster_preparation: Option<PhotolabRasterPreparationMemory>,
 }
 
 /// Admission-time disk evidence for jobs with measured scratch requirements.
@@ -1066,6 +1085,17 @@ mod tests {
                 actual_max_keypoints: 24_000,
                 matching_workers: 1,
                 matching_unit_bytes: 7_180_435_456,
+            }),
+            raster_preparation: Some(PhotolabRasterPreparationMemory {
+                point_count: 45_800_000,
+                ogr2ogr: PhotolabRasterPreparationStageMemory {
+                    model_bytes: 2_970_635_456,
+                    resident_limit_bytes: 9_758_894_320,
+                },
+                gdal_grid: PhotolabRasterPreparationStageMemory {
+                    model_bytes: 3_474_435_456,
+                    resident_limit_bytes: 14_304_544_416,
+                },
             }),
         };
         value.toolchain = vec![PhotolabWorkerTool {

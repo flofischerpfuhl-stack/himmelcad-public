@@ -3732,13 +3732,13 @@ fn worker_memory_limit_bytes(unit_bytes: u64, workers: u16) -> u64 {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum WorkerMemoryLimitMode {
+pub(crate) enum WorkerMemoryLimitMode {
     CgroupScope,
     RlimitAs,
 }
 
 impl WorkerMemoryLimitMode {
-    fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::CgroupScope => "cgroupScope",
             Self::RlimitAs => "rlimitAs",
@@ -3747,12 +3747,12 @@ impl WorkerMemoryLimitMode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct WorkerMemoryLimitPlan {
-    mode: WorkerMemoryLimitMode,
-    enforced_limit_bytes: u64,
+pub(crate) struct WorkerMemoryLimitPlan {
+    pub(crate) mode: WorkerMemoryLimitMode,
+    pub(crate) enforced_limit_bytes: u64,
 }
 
-fn worker_command(
+pub(crate) fn worker_command(
     executable: &Path,
     memory_limit_bytes: Option<u64>,
 ) -> (Command, Option<WorkerMemoryLimitPlan>) {
@@ -3784,7 +3784,7 @@ fn worker_command(
 }
 
 #[cfg(target_os = "linux")]
-fn worker_command_for_plan(
+pub(crate) fn worker_command_for_plan(
     launcher: &Path,
     executable: &Path,
     plan: WorkerMemoryLimitPlan,
@@ -3895,7 +3895,7 @@ fn systemd_probe_excerpt(bytes: &[u8]) -> String {
 }
 
 #[cfg(target_os = "linux")]
-fn configure_systemd_user_bus_environment(command: &mut Command) {
+pub(crate) fn configure_systemd_user_bus_environment(command: &mut Command) {
     let runtime_dir = std::env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
         .or_else(systemd_user_runtime_dir);

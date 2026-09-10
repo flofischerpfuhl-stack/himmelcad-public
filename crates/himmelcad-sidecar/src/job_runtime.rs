@@ -21,7 +21,8 @@ use himmelcad_core::{
         JobProgress, NewPhotolabJob, PhotolabJob, PhotolabJobDiskEstimate, PhotolabJobId,
         PhotolabJobKind, PhotolabJobMemory, PhotolabJobState, PhotolabMatchingMemoryReplan,
         PhotolabMemoryDegradation, PhotolabMemoryObservation, PhotolabMemoryTimeFirstChoice,
-        PhotolabStageMemory, PhotolabWorkerTool, CHECKPOINT_SCHEMA_VERSION,
+        PhotolabRasterPreparationMemory, PhotolabRasterPreparationStageMemory, PhotolabStageMemory,
+        PhotolabWorkerTool, CHECKPOINT_SCHEMA_VERSION,
     },
     photolab_products::ProductKind,
 };
@@ -53,6 +54,26 @@ const DENSE_RASTER_FLATGEOBUF_BYTES_PER_POINT: u64 = 88;
 const DENSE_RASTER_GDAL_TEMP_BYTES_PER_POINT: u64 = 145;
 const DENSE_RASTER_HEADROOM_NUMERATOR: u64 = 11;
 const DENSE_RASTER_HEADROOM_DENOMINATOR: u64 = 10;
+
+// WP-A7j X6 calibration from the 2026-09-10 45.8 M-point Sulzberg run:
+// ogr2ogr peaked at 2.7 GB RSS (2.7 GB / 45.8 M ~= 59 B/point), while
+// gdal_grid peaked at 3.2 GB anon RSS (3.2 GB / 45.8 M ~= 70 B/point).
+// A 256 MiB fixed term covers process startup, GDAL metadata, and small jobs.
+pub const RASTER_PREPARATION_BASE_BYTES: u64 = 256 * MIB;
+pub const OGR2OGR_MEMORY_BYTES_PER_POINT: u64 = 59;
+pub const GDAL_GRID_MEMORY_BYTES_PER_POINT: u64 = 70;
+// The hard scope limit retains the existing A7 25% model headroom. File-backed
+// pages are charged to the worker cgroup too, so add 1.5x of the stage's measured
+// write working set instead of treating page cache as free memory.
+const RASTER_PREPARATION_MODEL_HEADROOM_NUMERATOR: u64 = 5;
+const RASTER_PREPARATION_MODEL_HEADROOM_DENOMINATOR: u64 = 4;
+const RASTER_PREPARATION_WRITE_HEADROOM_NUMERATOR: u64 = 3;
+const RASTER_PREPARATION_WRITE_HEADROOM_DENOMINATOR: u64 = 2;
+const MINIMUM_RASTER_PREPARATION_LIMIT_BYTES: u64 = 2 * GIB;
+pub const DEM_NEEDS_MORE_MEMORY_CODE: &str = "insufficientMemory";
+pub const DEM_NEEDS_MORE_MEMORY_MESSAGE: &str = "DEM needs more memory than this machine has";
+pub const OGR2OGR_PREPARATION_STAGE: &str = "Prepare dense points with ogr2ogr";
+pub const GDAL_GRID_PREPARATION_STAGE: &str = "Rasterize DEM with gdal_grid";
 
 // WP-A7 X6 calibration: the measured 21 MP ALIKED_N32 extraction used 15.7 GB,
 // which is approximately 750 bytes per actual resized pixel. A later measured
@@ -136,6 +157,130 @@ pub struct AlignmentMatchingReplan {
 pub struct AlignmentMatchingMemoryRefusal {
     pub predicted_bytes: u64,
     pub available_bytes: u64,
+}
+
+/// One sequential DEM preparation unit and the resident cap applied to its worker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RasterPreparationStagePlan {
+    pub stage: &'static str,
+    pub model_bytes: u64,
+    pub resident_limit_bytes: u64,
+}
+
+/// Immutable dense-point-derived choices frozen before a DEM job becomes visible.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RasterPreparationMemoryPlan {
+    pub memory: PhotolabJobMemory,
+    pub ogr2ogr: RasterPreparationStagePlan,
+    pub gdal_grid: RasterPreparationStagePlan,
+    pub predicted_peak_bytes: u64,
+    pub refusal: Option<JobAdmissionRefusal>,
+}
+
+/// Plans the two sequential native preparation workers for a DEM.
+#[must_use]
+pub fn plan_raster_preparation_memory(
+    point_count: u64,
+    raster_output_bytes: u64,
+    usable_bytes: u64,
+) -> RasterPreparationMemoryPlan {
+    let ogr2ogr_model_bytes = point_count
+        .saturating_mul(OGR2OGR_MEMORY_BYTES_PER_POINT)
+        .saturating_add(RASTER_PREPARATION_BASE_BYTES);
+    let gdal_grid_model_bytes = point_count
+        .saturating_mul(GDAL_GRID_MEMORY_BYTES_PER_POINT)
+        .saturating_add(RASTER_PREPARATION_BASE_BYTES);
+    let ogr2ogr_write_bytes = point_count.saturating_mul(DENSE_RASTER_FLATGEOBUF_BYTES_PER_POINT);
+    let gdal_grid_write_bytes = point_count
+        .saturating_mul(DENSE_RASTER_GDAL_TEMP_BYTES_PER_POINT)
+        .saturating_add(raster_output_bytes);
+    let ogr2ogr_limit_bytes =
+        raster_preparation_limit_bytes(ogr2ogr_model_bytes, ogr2ogr_write_bytes);
+    let gdal_grid_limit_bytes =
+        raster_preparation_limit_bytes(gdal_grid_model_bytes, gdal_grid_write_bytes);
+    let ogr2ogr = RasterPreparationStagePlan {
+        stage: OGR2OGR_PREPARATION_STAGE,
+        model_bytes: ogr2ogr_model_bytes,
+        resident_limit_bytes: ogr2ogr_limit_bytes,
+    };
+    let gdal_grid = RasterPreparationStagePlan {
+        stage: GDAL_GRID_PREPARATION_STAGE,
+        model_bytes: gdal_grid_model_bytes,
+        resident_limit_bytes: gdal_grid_limit_bytes,
+    };
+    let predicted_peak_bytes = ogr2ogr_limit_bytes.max(gdal_grid_limit_bytes);
+    let refusal = (predicted_peak_bytes > usable_bytes).then(|| JobAdmissionRefusal {
+        code: DEM_NEEDS_MORE_MEMORY_CODE.into(),
+        message: DEM_NEEDS_MORE_MEMORY_MESSAGE.into(),
+    });
+    let memory = PhotolabJobMemory {
+        envelope_bytes: usable_bytes,
+        stages: vec![
+            raster_preparation_stage_record(
+                ogr2ogr,
+                OGR2OGR_MEMORY_BYTES_PER_POINT,
+                ogr2ogr_write_bytes,
+            ),
+            raster_preparation_stage_record(
+                gdal_grid,
+                GDAL_GRID_MEMORY_BYTES_PER_POINT,
+                gdal_grid_write_bytes,
+            ),
+        ],
+        time_first_choices: Vec::new(),
+        degradations: Vec::new(),
+        observations: Vec::new(),
+        matching_replanned: None,
+        raster_preparation: Some(PhotolabRasterPreparationMemory {
+            point_count,
+            ogr2ogr: PhotolabRasterPreparationStageMemory {
+                model_bytes: ogr2ogr_model_bytes,
+                resident_limit_bytes: ogr2ogr_limit_bytes,
+            },
+            gdal_grid: PhotolabRasterPreparationStageMemory {
+                model_bytes: gdal_grid_model_bytes,
+                resident_limit_bytes: gdal_grid_limit_bytes,
+            },
+        }),
+    };
+    RasterPreparationMemoryPlan {
+        memory,
+        ogr2ogr,
+        gdal_grid,
+        predicted_peak_bytes,
+        refusal,
+    }
+}
+
+fn raster_preparation_limit_bytes(model_bytes: u64, write_bytes: u64) -> u64 {
+    let model_with_headroom = model_bytes
+        .saturating_mul(RASTER_PREPARATION_MODEL_HEADROOM_NUMERATOR)
+        .div_ceil(RASTER_PREPARATION_MODEL_HEADROOM_DENOMINATOR);
+    let write_working_set = write_bytes
+        .saturating_mul(RASTER_PREPARATION_WRITE_HEADROOM_NUMERATOR)
+        .div_ceil(RASTER_PREPARATION_WRITE_HEADROOM_DENOMINATOR);
+    model_with_headroom
+        .saturating_add(write_working_set)
+        .max(MINIMUM_RASTER_PREPARATION_LIMIT_BYTES)
+}
+
+fn raster_preparation_stage_record(
+    plan: RasterPreparationStagePlan,
+    bytes_per_point: u64,
+    write_working_set_bytes: u64,
+) -> PhotolabStageMemory {
+    PhotolabStageMemory {
+        stage: plan.stage.into(),
+        peak_rss_bytes: 0,
+        workers: 1,
+        parameters: serde_json::json!({
+            "baseBytes": RASTER_PREPARATION_BASE_BYTES,
+            "bytesPerPoint": bytes_per_point,
+            "modelBytes": plan.model_bytes,
+            "writeWorkingSetBytes": write_working_set_bytes,
+            "workerMemoryLimitBytes": plan.resident_limit_bytes,
+        }),
+    }
 }
 
 /// Neural extraction estimate for one image after long-edge resize.
@@ -366,6 +511,7 @@ pub fn plan_alignment_memory(request: &AlignmentMemoryRequest) -> AlignmentMemor
         degradations,
         observations: Vec::new(),
         matching_replanned: None,
+        raster_preparation: None,
     };
     AlignmentMemoryPlan {
         memory,
@@ -782,6 +928,7 @@ impl MemoryPreflight {
                     budget_bytes: available_bytes,
                 }],
                 matching_replanned: None,
+                raster_preparation: None,
             },
             refusal: None,
         }
@@ -3404,6 +3551,78 @@ mod tests {
             estimate_job_bytes(PhotolabJobKind::BuildDem, scale),
             estimate.required_bytes
         );
+    }
+
+    #[test]
+    fn raster_preparation_model_matches_the_45_8_million_point_probe() {
+        let plan = plan_raster_preparation_memory(45_800_000, 64, 20 * GIB);
+        let within_five_percent = |actual: u64, expected: u64| {
+            actual.abs_diff(expected) <= expected.saturating_mul(5) / 100
+        };
+        assert!(within_five_percent(plan.ogr2ogr.model_bytes, 3_000_000_000));
+        assert!(within_five_percent(
+            plan.gdal_grid.model_bytes,
+            3_500_000_000
+        ));
+        assert_eq!(plan.ogr2ogr.model_bytes, 2_970_635_456);
+        assert_eq!(plan.gdal_grid.model_bytes, 3_474_435_456);
+        assert!(plan.memory.observations.is_empty());
+        assert!(plan.refusal.is_none());
+    }
+
+    #[test]
+    fn raster_preparation_refuses_when_one_unit_exceeds_the_usable_envelope() {
+        let admitted = plan_raster_preparation_memory(45_800_000, 64, 20 * GIB);
+        let refused = plan_raster_preparation_memory(
+            45_800_000,
+            64,
+            admitted.predicted_peak_bytes.saturating_sub(1),
+        );
+        assert_eq!(
+            refused.refusal,
+            Some(JobAdmissionRefusal {
+                code: DEM_NEEDS_MORE_MEMORY_CODE.into(),
+                message: DEM_NEEDS_MORE_MEMORY_MESSAGE.into(),
+            })
+        );
+        assert!(refused.memory.degradations.is_empty());
+        assert!(refused.memory.time_first_choices.is_empty());
+    }
+
+    #[tokio::test]
+    async fn raster_preparation_refusal_is_typed_visible_and_starts_no_worker() {
+        let plan = plan_raster_preparation_memory(45_800_000, 64, 8 * GIB);
+        assert!(plan.refusal.is_some());
+        let worker_started = Arc::new(AtomicBool::new(false));
+        let worker_flag = Arc::clone(&worker_started);
+        let manager = manager(1, 0);
+        let started = manager
+            .start_with_admission(
+                request_for_kind("dem-memory-refusal", PhotolabJobKind::BuildDem),
+                JobAdmission {
+                    memory_preflight: Some(MemoryPreflight {
+                        predicted_bytes: plan.predicted_peak_bytes,
+                        available_bytes: plan.memory.envelope_bytes,
+                        machine_usable_bytes: plan.memory.envelope_bytes,
+                        memory: plan.memory,
+                        refusal: plan.refusal,
+                    }),
+                    ..Default::default()
+                },
+                move |_| {
+                    worker_flag.store(true, Ordering::Release);
+                    Ok(())
+                },
+            )
+            .await
+            .expect("typed refusal remains visible");
+        assert!(matches!(
+            started.job.state,
+            PhotolabJobState::Failed { ref code, ref message }
+                if code == DEM_NEEDS_MORE_MEMORY_CODE && message == DEM_NEEDS_MORE_MEMORY_MESSAGE
+        ));
+        assert!(!worker_started.load(Ordering::Acquire));
+        assert!(started.job.memory.raster_preparation.is_some());
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

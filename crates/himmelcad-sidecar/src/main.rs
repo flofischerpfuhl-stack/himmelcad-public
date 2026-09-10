@@ -113,8 +113,9 @@ use himmelcad_sidecar::dedode_runtime::{
     DevDedodeOnnxRuntimeConfig, DevDedodeRuntimeConfig,
 };
 use himmelcad_sidecar::dense_raster_prep::{
-    inspect_raster_wkt, inspect_vector_wkt, persist_dense_classification, prepare_dense_potree,
-    prepare_dense_vector_with_classification, prepare_sparse_potree, read_dense_points,
+    inspect_raster_wkt, inspect_vector_wkt, inspect_vector_wkt_bounded,
+    persist_dense_classification, prepare_dense_potree, prepare_dense_vector_with_classification,
+    prepare_dense_vector_with_classification_bounded, prepare_sparse_potree, read_dense_points,
     DenseRasterPrepError,
 };
 use himmelcad_sidecar::gcp_local_estimate_runtime::{
@@ -138,12 +139,12 @@ use himmelcad_sidecar::image_quality_runtime::{
 };
 use himmelcad_sidecar::import_registration_runtime::ImportRegistrationRuntime;
 use himmelcad_sidecar::job_runtime::{
-    memory_os_ui_reserve_bytes, plan_alignment_memory, AlignmentExtractionTiling,
-    AlignmentMemoryPlan, AlignmentMemoryRequest, DrainReport, FrozenJobRequest,
-    JobAdmissionRefusal, JobIdParams, JobManager, JobManagerConfig, JobWorkerContext,
-    JobWorkerError, ListJobsParams, MemoryPreflight, StartJobResult,
-    ALIGNMENT_NEEDS_UNTILED_EXTRACTION_CODE, ALIGNMENT_NEEDS_UNTILED_EXTRACTION_MESSAGE,
-    SIFT_MATCHING_BYTES_PER_WORKER,
+    memory_os_ui_reserve_bytes, plan_alignment_memory, plan_raster_preparation_memory,
+    AlignmentExtractionTiling, AlignmentMemoryPlan, AlignmentMemoryRequest, DrainReport,
+    FrozenJobRequest, JobAdmissionRefusal, JobIdParams, JobManager, JobManagerConfig,
+    JobWorkerContext, JobWorkerError, ListJobsParams, MemoryPreflight, RasterPreparationMemoryPlan,
+    StartJobResult, ALIGNMENT_NEEDS_UNTILED_EXTRACTION_CODE,
+    ALIGNMENT_NEEDS_UNTILED_EXTRACTION_MESSAGE, SIFT_MATCHING_BYTES_PER_WORKER,
 };
 use himmelcad_sidecar::mesh_surface_runtime::{
     bake_surface_edit, check_persisted_surface, create_surface_draft, fix_persisted_surface,
@@ -6451,6 +6452,28 @@ async fn handle_job_rpc(
                                     prepared.job.kind,
                                     disk_scale,
                                 );
+                            let raster_memory_plan = if prepared.job.kind
+                                == PhotolabJobKind::BuildDem
+                            {
+                                const GIB: u64 = 1024 * 1024 * 1024;
+                                let physical_memory_bytes =
+                                    probe_hardware().map_or(8 * GIB, |hardware| hardware.ram_bytes);
+                                let machine_usable_bytes = physical_memory_bytes.saturating_sub(
+                                    memory_os_ui_reserve_bytes(physical_memory_bytes),
+                                );
+                                let usable_memory_bytes =
+                                    jobs.usable_memory_bytes(physical_memory_bytes).await;
+                                Some((
+                                    plan_raster_preparation_memory(
+                                        dense_point_count,
+                                        disk_estimate.output_bytes,
+                                        usable_memory_bytes,
+                                    ),
+                                    machine_usable_bytes,
+                                ))
+                            } else {
+                                None
+                            };
                             let disk_path = prepared
                                 .project_root
                                 .join(".photolab/raster-inputs")
@@ -6470,7 +6493,15 @@ async fn handle_job_rpc(
                                         disk_path,
                                     ),
                                 ),
-                                memory_preflight: None,
+                                memory_preflight: raster_memory_plan.as_ref().map(
+                                    |(plan, machine_usable_bytes)| MemoryPreflight {
+                                        predicted_bytes: plan.predicted_peak_bytes,
+                                        available_bytes: plan.memory.envelope_bytes,
+                                        machine_usable_bytes: *machine_usable_bytes,
+                                        memory: plan.memory.clone(),
+                                        refusal: plan.refusal.clone(),
+                                    },
+                                ),
                                 toolchain_preflight: Some(
                                     worker_toolchain_preflight(
                                         prepared.job.kind,
@@ -6487,7 +6518,12 @@ async fn handle_job_rpc(
                                     admission,
                                     disk_estimate,
                                     move |context| {
-                                        run_raster_product(prepared, &context, &publisher)
+                                        run_raster_product(
+                                            prepared,
+                                            raster_memory_plan.map(|(plan, _)| plan),
+                                            &context,
+                                            &publisher,
+                                        )
                                     },
                                 )
                                 .await;
@@ -7125,6 +7161,24 @@ async fn resume_product_job(
                 prepared.job.kind,
                 disk_scale,
             );
+            let raster_memory_plan = if prepared.job.kind == PhotolabJobKind::BuildDem {
+                const GIB: u64 = 1024 * 1024 * 1024;
+                let physical_memory_bytes =
+                    probe_hardware().map_or(8 * GIB, |hardware| hardware.ram_bytes);
+                let machine_usable_bytes = physical_memory_bytes
+                    .saturating_sub(memory_os_ui_reserve_bytes(physical_memory_bytes));
+                let usable_memory_bytes = jobs.usable_memory_bytes(physical_memory_bytes).await;
+                Some((
+                    plan_raster_preparation_memory(
+                        dense_point_count,
+                        disk_estimate.output_bytes,
+                        usable_memory_bytes,
+                    ),
+                    machine_usable_bytes,
+                ))
+            } else {
+                None
+            };
             let disk_path = prepared
                 .project_root
                 .join(".photolab/raster-inputs")
@@ -7142,6 +7196,15 @@ async fn resume_product_job(
                     )
                     .into_admission(),
                 ),
+                memory_preflight: raster_memory_plan.as_ref().map(
+                    |(plan, machine_usable_bytes)| MemoryPreflight {
+                        predicted_bytes: plan.predicted_peak_bytes,
+                        available_bytes: plan.memory.envelope_bytes,
+                        machine_usable_bytes: *machine_usable_bytes,
+                        memory: plan.memory.clone(),
+                        refusal: plan.refusal.clone(),
+                    },
+                ),
                 ..Default::default()
             };
             jobs.start_with_frozen_request_and_disk_admission(
@@ -7149,7 +7212,14 @@ async fn resume_product_job(
                 frozen,
                 admission,
                 disk_estimate,
-                move |context| run_raster_product(prepared, &context, &publisher),
+                move |context| {
+                    run_raster_product(
+                        prepared,
+                        raster_memory_plan.map(|(plan, _)| plan),
+                        &context,
+                        &publisher,
+                    )
+                },
             )
             .await
             .map_err(|error| ResumeRpcFailure::rejected("resumeStartFailed", error.to_string()))
@@ -7869,7 +7939,7 @@ fn execute_batch_product(
             )
             .map_err(|error| worker_error("batchPrepare", &error.to_string()))?;
             let node = context.with_progress_window(base, total);
-            run_raster_product(prepared, &node, projects)?;
+            run_raster_product(prepared, None, &node, projects)?;
         }
         config @ ProductRunConfiguration::Mesh { .. } => {
             let prepared = prepare_mesh_job(
@@ -10344,6 +10414,7 @@ fn run_mesh_job(
 
 fn run_raster_product(
     prepared: PreparedRasterProductJob,
+    raster_memory_plan: Option<RasterPreparationMemoryPlan>,
     context: &JobWorkerContext,
     publisher: &ProjectRuntime,
 ) -> Result<(), JobWorkerError> {
@@ -10431,18 +10502,40 @@ fn run_raster_product(
             } else {
                 None
             };
-            let vector = prepare_dense_vector_with_classification(
-                dense_ply,
-                &input_root,
-                &tools.ogr2ogr,
-                &prepared.horizontal_srs,
-                classifications.as_deref(),
-                &context.cancellation,
-            )
+            let vector = if let Some(plan) = raster_memory_plan.as_ref() {
+                prepare_dense_vector_with_classification_bounded(
+                    dense_ply,
+                    &input_root,
+                    &tools.ogr2ogr,
+                    &prepared.horizontal_srs,
+                    classifications.as_deref(),
+                    &context.cancellation,
+                    plan.ogr2ogr,
+                    &context.memory,
+                )
+            } else {
+                prepare_dense_vector_with_classification(
+                    dense_ply,
+                    &input_root,
+                    &tools.ogr2ogr,
+                    &prepared.horizontal_srs,
+                    classifications.as_deref(),
+                    &context.cancellation,
+                )
+            }
             .map_err(|error| map_dense_prep_error_with_diagnostic(error, &context.diagnostics))?;
-            let wkt = inspect_vector_wkt(&tools.ogrinfo, &vector, &context.cancellation).map_err(
-                |error| map_dense_prep_error_with_diagnostic(error, &context.diagnostics),
-            )?;
+            let wkt = if let Some(plan) = raster_memory_plan.as_ref() {
+                inspect_vector_wkt_bounded(
+                    &tools.ogrinfo,
+                    &vector,
+                    &context.cancellation,
+                    plan.ogr2ogr,
+                    &context.memory,
+                )
+            } else {
+                inspect_vector_wkt(&tools.ogrinfo, &vector, &context.cancellation)
+            }
+            .map_err(|error| map_dense_prep_error_with_diagnostic(error, &context.diagnostics))?;
             let crs = RasterCrs {
                 horizontal: prepared.horizontal_srs.clone(),
                 vertical: prepared.vertical_label.clone(),
@@ -10943,6 +11036,9 @@ fn map_dense_prep_error_with_diagnostic(
 ) -> JobWorkerError {
     match error {
         DenseRasterPrepError::Cancelled => JobWorkerError::Cancelled,
+        other @ DenseRasterPrepError::WorkerMemoryLimit { .. } => {
+            worker_error("workerMemoryLimit", &other.to_string())
+        }
         DenseRasterPrepError::GdalFailed {
             command,
             code,

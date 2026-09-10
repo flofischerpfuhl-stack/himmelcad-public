@@ -905,6 +905,32 @@ term now carries the measured gap: 73 + 88 + 145 = 306 B/point ≈ 14.0 GB at
 the DEM preparation stages are still `unboundedStage` in the envelope and need
 their own plan (follow-up).
 
+WP-A7j status 2026-09-10 — the DEM admission record now carries a typed
+`rasterPreparation` plan derived from the actual dense point count. The X6
+resident models are 59 B/point for ogr2ogr and 70 B/point for gdal_grid, each
+plus a 256 MiB base; at 45.8 M points they predict 2.97 GB and 3.47 GB. Each
+single-worker hard bound uses `MemoryMax` with 25% model headroom plus 1.5× the
+measured stage write working set (minimum 2 GiB), no swap, and the existing
+double-`RLIMIT_AS` fallback. A unit that does not fit the usable machine
+envelope is refused as `insufficientMemory` with “DEM needs more memory than
+this machine has”; no quality change or downsampling is permitted. The dense
+preparation supervisor records `modelBytes`, `workerMemoryLimitMode`,
+`workerMemoryLimitBytes`, and sampled `peakRssBytes`, and persists
+`workerMemoryLimitHit` before returning the typed worker failure.
+
+Contract gap (WP-A7j, sentence “spawn every GDAL/OGR preparation command
+through the same per-worker cgroup scope mechanism”): production DEM
+gdal_grid, pyramid, and COG children are spawned inside `raster_runtime.rs`,
+but that file is absent from WP-A7j's permitted-file list. This package bounds
+the production ogr2ogr path and the `dense_raster_prep` gdal_grid path, and it
+freezes both stage models without claiming an unobserved mode or peak. The
+remaining production raster-runtime spawn site must accept the frozen
+gdal_grid stage plan and `JobMemorySink`, use the exposed worker-scope helper,
+and merge its sampled peak into the existing `Rasterize DEM with gdal_grid`
+record before WP-A7j can be marked complete. Batch DEM admission has the same
+record-timing gap when its dense cloud is produced by an earlier node and the
+actual point count does not exist at batch admission.
+
 ### WP-B5 — Journal/manifest ordering + orphan-dataset GC (Size M)
 
 Problem. PhotoLab writes the journal entry before the manifest
