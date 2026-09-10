@@ -676,6 +676,14 @@ still has no frozen raster memory plan; reusing the DEM-named `gdal_grid` stage
 would claim false work, so orthomosaic calibration/admission remains a separate
 contract decision rather than an invented WP-A7j-c model.
 
+WP-A7j-c verification (2026-09-10 22:02, DTM republish under a 12 GB unit):
+completed; both raster preparation stages ran in cgroup scopes and were
+sampled — `Prepare dense points with ogr2ogr` model 4.85 GB / observed 4.65 GB
+(limit 12.1 GB), `Rasterize DEM with gdal_grid` model 3.47 GB / observed
+3.19 GB (limit 14.4 GB); no `unboundedStage` observations, no degradations.
+The memory envelope now covers COLMAP extraction/matching and the raster
+preparation end to end on this machine class.
+
 ### WP-A7d — Bound matching from the extracted feature set (Size M)
 
 Implemented 2026-09-09 (working tree, no commit): tiled ALIKED now records the
