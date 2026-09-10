@@ -18,8 +18,8 @@ use himmelcad_core::{
     hash::ObjectHash,
     photolab_jobs::{
         CancellationToken, CheckpointCommitState, CheckpointDescriptor, CheckpointId, JobError,
-        JobProgress, NewPhotolabJob, PhotolabJob, PhotolabJobId, PhotolabJobKind,
-        PhotolabJobMemory, PhotolabJobState, PhotolabMatchingMemoryReplan,
+        JobProgress, NewPhotolabJob, PhotolabJob, PhotolabJobDiskEstimate, PhotolabJobId,
+        PhotolabJobKind, PhotolabJobMemory, PhotolabJobState, PhotolabMatchingMemoryReplan,
         PhotolabMemoryDegradation, PhotolabMemoryObservation, PhotolabMemoryTimeFirstChoice,
         PhotolabStageMemory, PhotolabWorkerTool, CHECKPOINT_SCHEMA_VERSION,
     },
@@ -38,6 +38,16 @@ const HISTORY_RETRY_INTERVAL: Duration = Duration::from_millis(500);
 
 const GIB: u64 = 1024 * 1024 * 1024;
 const MIB: u64 = 1024 * 1024;
+
+// WP-G1a-3g X6 tunables, derived from the 2026-09-10 45.8 M-point DSM probe:
+// 3.3 GB CSV ~= 72.1 B/point, 4.0 GB FlatGeobuf ~= 87.4 B/point, and 2.9 GB
+// GDAL temporary storage ~= 63.4 B/point. Each byte rate is rounded up so
+// admission remains conservative as coordinate widths vary.
+const DENSE_RASTER_CSV_BYTES_PER_POINT: u64 = 73;
+const DENSE_RASTER_FLATGEOBUF_BYTES_PER_POINT: u64 = 88;
+const DENSE_RASTER_GDAL_TEMP_BYTES_PER_POINT: u64 = 64;
+const DENSE_RASTER_HEADROOM_NUMERATOR: u64 = 11;
+const DENSE_RASTER_HEADROOM_DENOMINATOR: u64 = 10;
 
 // WP-A7 X6 calibration: the measured 21 MP ALIKED_N32 extraction used 15.7 GB,
 // which is approximately 750 bytes per actual resized pixel. A later measured
@@ -701,7 +711,19 @@ impl PublicationTarget {
 pub enum DiskEstimateScale {
     Images(u64),
     RasterPixels(u64),
+    DenseRaster {
+        point_count: u64,
+        raster_pixels: u64,
+    },
     Fixed,
+}
+
+/// Measured scratch and predicted output components attached to raster admission.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DiskEstimateComponents {
+    pub scratch_bytes: u64,
+    pub output_bytes: u64,
+    pub required_bytes: u64,
 }
 
 /// One free-space check attached to an immutable job admission.
@@ -771,6 +793,37 @@ impl DiskPreflight {
     }
 }
 
+/// Returns the components of a dense-raster estimate before its 10% admission headroom.
+#[must_use]
+pub fn disk_estimate_components(
+    kind: PhotolabJobKind,
+    scale: DiskEstimateScale,
+) -> DiskEstimateComponents {
+    let output_bytes = estimate_raster_output_bytes(kind, scale);
+    let scratch_bytes = match scale {
+        DiskEstimateScale::DenseRaster { point_count, .. } => point_count.saturating_mul(
+            DENSE_RASTER_CSV_BYTES_PER_POINT
+                + DENSE_RASTER_FLATGEOBUF_BYTES_PER_POINT
+                + DENSE_RASTER_GDAL_TEMP_BYTES_PER_POINT,
+        ),
+        _ => 0,
+    };
+    let required_bytes = if matches!(scale, DiskEstimateScale::DenseRaster { .. }) {
+        scratch_bytes
+            .saturating_add(output_bytes)
+            .saturating_mul(DENSE_RASTER_HEADROOM_NUMERATOR)
+            .saturating_add(DENSE_RASTER_HEADROOM_DENOMINATOR - 1)
+            .saturating_div(DENSE_RASTER_HEADROOM_DENOMINATOR)
+    } else {
+        output_bytes
+    };
+    DiskEstimateComponents {
+        scratch_bytes,
+        output_bytes,
+        required_bytes,
+    }
+}
+
 /// Scheduler metadata captured alongside the frozen compute request.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct JobAdmission {
@@ -817,15 +870,44 @@ pub fn estimate_job_bytes(kind: PhotolabJobKind, scale: DiskEstimateScale) -> u6
                 overview_denominator,
                 scratch_output_multiplier,
             },
-            DiskEstimateScale::RasterPixels(pixels),
-        ) => pixels
-            .saturating_mul(bytes_per_pixel)
-            .saturating_mul(overview_numerator)
-            .saturating_add(overview_denominator - 1)
-            .saturating_div(overview_denominator)
-            .saturating_mul(scratch_output_multiplier),
+            DiskEstimateScale::RasterPixels(pixels)
+            | DiskEstimateScale::DenseRaster {
+                raster_pixels: pixels,
+                ..
+            },
+        ) => {
+            let output_bytes = pixels
+                .saturating_mul(bytes_per_pixel)
+                .saturating_mul(overview_numerator)
+                .saturating_add(overview_denominator - 1)
+                .saturating_div(overview_denominator)
+                .saturating_mul(scratch_output_multiplier);
+            if let DiskEstimateScale::DenseRaster { point_count, .. } = scale {
+                let scratch_bytes = point_count.saturating_mul(
+                    DENSE_RASTER_CSV_BYTES_PER_POINT
+                        + DENSE_RASTER_FLATGEOBUF_BYTES_PER_POINT
+                        + DENSE_RASTER_GDAL_TEMP_BYTES_PER_POINT,
+                );
+                scratch_bytes
+                    .saturating_add(output_bytes)
+                    .saturating_mul(DENSE_RASTER_HEADROOM_NUMERATOR)
+                    .saturating_add(DENSE_RASTER_HEADROOM_DENOMINATOR - 1)
+                    .saturating_div(DENSE_RASTER_HEADROOM_DENOMINATOR)
+            } else {
+                output_bytes
+            }
+        }
         _ => 0,
     }
+}
+
+fn estimate_raster_output_bytes(kind: PhotolabJobKind, scale: DiskEstimateScale) -> u64 {
+    let raster_pixels = match scale {
+        DiskEstimateScale::RasterPixels(raster_pixels)
+        | DiskEstimateScale::DenseRaster { raster_pixels, .. } => raster_pixels,
+        _ => return 0,
+    };
+    estimate_job_bytes(kind, DiskEstimateScale::RasterPixels(raster_pixels))
 }
 
 /// Returns the level-zero pixel count for a finite projected extent and GSD.
@@ -1493,7 +1575,7 @@ impl JobManager {
     where
         F: FnOnce(JobWorkerContext) -> JobWorkerResult + Send + 'static,
     {
-        self.start_inner(request, None, JobAdmission::default(), work)
+        self.start_inner(request, None, JobAdmission::default(), None, work)
             .await
     }
 
@@ -1507,7 +1589,7 @@ impl JobManager {
     where
         F: FnOnce(JobWorkerContext) -> JobWorkerResult + Send + 'static,
     {
-        self.start_inner(request, None, admission, work).await
+        self.start_inner(request, None, admission, None, work).await
     }
 
     /// Admits a resumable job and atomically retains its sidecar-owned request.
@@ -1531,8 +1613,14 @@ impl JobManager {
                 "frozen request identity does not match the admitted job".into(),
             ));
         }
-        self.start_inner(request, Some(frozen_request), JobAdmission::default(), work)
-            .await
+        self.start_inner(
+            request,
+            Some(frozen_request),
+            JobAdmission::default(),
+            None,
+            work,
+        )
+        .await
     }
 
     /// Admits a resumable job with frozen publication and disk metadata.
@@ -1557,7 +1645,55 @@ impl JobManager {
                 "frozen request identity does not match the admitted job".into(),
             ));
         }
-        self.start_inner(request, Some(frozen_request), admission, work)
+        self.start_inner(request, Some(frozen_request), admission, None, work)
+            .await
+    }
+
+    /// Admits a resumable raster job and records its measured scratch estimate before visibility.
+    pub async fn start_with_frozen_request_and_disk_admission<F>(
+        &self,
+        request: NewPhotolabJob,
+        frozen_request: FrozenJobRequest,
+        admission: JobAdmission,
+        disk_estimate: DiskEstimateComponents,
+        work: F,
+    ) -> Result<StartJobResult, JobManagerError>
+    where
+        F: FnOnce(JobWorkerContext) -> JobWorkerResult + Send + 'static,
+    {
+        frozen_request
+            .validate()
+            .map_err(JobManagerError::InvalidFrozenRequest)?;
+        if frozen_request.job_kind != request.kind
+            || frozen_request.config_hash != request.config_hash
+            || frozen_request.input_hash != request.input_hash
+        {
+            return Err(JobManagerError::InvalidFrozenRequest(
+                "frozen request identity does not match the admitted job".into(),
+            ));
+        }
+        self.start_inner(
+            request,
+            Some(frozen_request),
+            admission,
+            Some(disk_estimate),
+            work,
+        )
+        .await
+    }
+
+    /// Test and non-resumable counterpart of raster disk admission.
+    pub async fn start_with_disk_admission<F>(
+        &self,
+        request: NewPhotolabJob,
+        admission: JobAdmission,
+        disk_estimate: DiskEstimateComponents,
+        work: F,
+    ) -> Result<StartJobResult, JobManagerError>
+    where
+        F: FnOnce(JobWorkerContext) -> JobWorkerResult + Send + 'static,
+    {
+        self.start_inner(request, None, admission, Some(disk_estimate), work)
             .await
     }
 
@@ -1566,6 +1702,7 @@ impl JobManager {
         request: NewPhotolabJob,
         frozen_request: Option<FrozenJobRequest>,
         mut admission: JobAdmission,
+        disk_estimate: Option<DiskEstimateComponents>,
         work: F,
     ) -> Result<StartJobResult, JobManagerError>
     where
@@ -1591,8 +1728,22 @@ impl JobManager {
                     .as_ref()
                     .and_then(|preflight| preflight.refusal.clone())
             });
+        if disk_estimate.is_some() && admission.disk_preflight.is_none() {
+            return Err(JobManagerError::DiskPreflight(
+                "disk estimate has no matching free-space preflight".into(),
+            ));
+        }
+        let mut admitted_disk_estimate = None;
         if refusal.is_none() {
             if let Some(preflight) = admission.disk_preflight.as_ref() {
+                if let Some(components) = disk_estimate {
+                    if components.required_bytes != preflight.required_bytes {
+                        return Err(JobManagerError::DiskPreflight(format!(
+                            "disk estimate requires {} bytes but preflight requires {} bytes",
+                            components.required_bytes, preflight.required_bytes
+                        )));
+                    }
+                }
                 let path = preflight.path.clone();
                 let required_bytes = preflight.required_bytes;
                 let availability = Arc::clone(&self.inner.disk_availability);
@@ -1605,6 +1756,16 @@ impl JobManager {
                         required_bytes,
                         available_bytes,
                         path: preflight.path.clone(),
+                        job_kind: disk_estimate.map(|_| request.kind),
+                        scratch_bytes: disk_estimate.map(|estimate| estimate.scratch_bytes),
+                    });
+                }
+                if let Some(components) = disk_estimate {
+                    admitted_disk_estimate = Some(PhotolabJobDiskEstimate {
+                        scratch_bytes: components.scratch_bytes,
+                        output_bytes: components.output_bytes,
+                        available_bytes,
+                        volume: preflight.path.to_string_lossy().into_owned(),
                     });
                 }
             }
@@ -1625,6 +1786,9 @@ impl JobManager {
         }
         if let Some(preflight) = admission.memory_preflight.as_ref() {
             job.set_memory_plan(preflight.memory.clone());
+        }
+        if let Some(disk_estimate) = admitted_disk_estimate {
+            job.set_disk_estimate(disk_estimate);
         }
         if let Some(refusal) = refusal.as_ref() {
             job.transition_to(PhotolabJobState::Failed {
@@ -2579,6 +2743,8 @@ pub enum JobManagerError {
         required_bytes: u64,
         available_bytes: u64,
         path: PathBuf,
+        job_kind: Option<PhotolabJobKind>,
+        scratch_bytes: Option<u64>,
     },
     InsufficientMemory {
         predicted_bytes: u64,
@@ -2641,13 +2807,29 @@ impl std::fmt::Display for JobManagerError {
                 required_bytes,
                 available_bytes,
                 path,
-            } => write!(
-                formatter,
-                "Not enough free space on {}: about {} needed, {} free.",
-                path.display(),
-                format_bytes(*required_bytes),
-                format_bytes(*available_bytes)
-            ),
+                job_kind,
+                scratch_bytes,
+            } => match (job_kind, scratch_bytes) {
+                (Some(PhotolabJobKind::BuildDem), Some(scratch_bytes)) => write!(
+                    formatter,
+                    "Not enough disk for the DEM: needs about {} of scratch, {} free",
+                    format_decimal_gigabytes(*scratch_bytes),
+                    format_decimal_gigabytes(*available_bytes)
+                ),
+                (Some(PhotolabJobKind::BuildOrthomosaic), _) => write!(
+                    formatter,
+                    "Not enough disk for the orthomosaic: about {} needed, {} free.",
+                    format_bytes(*required_bytes),
+                    format_bytes(*available_bytes)
+                ),
+                _ => write!(
+                    formatter,
+                    "Not enough free space on {}: about {} needed, {} free.",
+                    path.display(),
+                    format_bytes(*required_bytes),
+                    format_bytes(*available_bytes)
+                ),
+            },
             Self::InsufficientMemory {
                 predicted_bytes,
                 available_bytes,
@@ -2689,6 +2871,11 @@ fn format_bytes(bytes: u64) -> String {
         }
     }
     format!("{bytes} bytes")
+}
+
+fn format_decimal_gigabytes(bytes: u64) -> String {
+    const DECIMAL_GB: u64 = 1_000_000_000;
+    format!("{:.1} GB", bytes as f64 / DECIMAL_GB as f64)
 }
 
 impl std::error::Error for JobManagerError {
@@ -3195,6 +3382,25 @@ mod tests {
         );
     }
 
+    #[test]
+    fn dense_raster_estimate_matches_the_45_8_million_point_probe() {
+        let scale = DiskEstimateScale::DenseRaster {
+            point_count: 45_800_000,
+            raster_pixels: 3,
+        };
+        let estimate = disk_estimate_components(PhotolabJobKind::BuildDem, scale);
+        assert_eq!(estimate.scratch_bytes, 10_305_000_000);
+        assert_eq!(estimate.output_bytes, 64);
+        assert_eq!(
+            estimate.required_bytes,
+            (10_305_000_000_u64 + 64).saturating_mul(11).div_ceil(10)
+        );
+        assert_eq!(
+            estimate_job_bytes(PhotolabJobKind::BuildDem, scale),
+            estimate.required_bytes
+        );
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn same_running_or_queued_publication_target_is_rejected() {
         let manager = manager(1, 2);
@@ -3364,6 +3570,8 @@ mod tests {
                 required_bytes: 2 * GIB,
                 available_bytes: GIB,
                 path,
+                job_kind: None,
+                scratch_bytes: None,
             }
         );
         assert!(manager
@@ -3373,6 +3581,126 @@ mod tests {
             .await
             .expect("list")
             .is_empty());
+    }
+
+    #[tokio::test]
+    async fn dense_raster_disk_refusal_starts_no_worker_and_carries_both_numbers() {
+        let components = disk_estimate_components(
+            PhotolabJobKind::BuildDem,
+            DiskEstimateScale::DenseRaster {
+                point_count: 45_800_000,
+                raster_pixels: 3,
+            },
+        );
+        let available_bytes = components.required_bytes - 1;
+        let manager = JobManager::with_runtime_history_and_disk_availability(
+            JobManagerConfig {
+                max_concurrency: 1,
+                max_queued: 0,
+            },
+            Handle::current(),
+            None,
+            Arc::new(move |_| Ok(available_bytes)),
+        )
+        .expect("manager");
+        let worker_started = Arc::new(AtomicBool::new(false));
+        let worker_flag = Arc::clone(&worker_started);
+        let path = PathBuf::from("/project/.photolab/raster-inputs/dem-job");
+        let error = manager
+            .start_with_disk_admission(
+                request_for_kind("dem-job", PhotolabJobKind::BuildDem),
+                JobAdmission {
+                    publication_targets: Vec::new(),
+                    disk_preflight: Some(DiskPreflight {
+                        required_bytes: components.required_bytes,
+                        path: path.clone(),
+                    }),
+                    memory_preflight: None,
+                    toolchain_preflight: None,
+                },
+                components,
+                move |_| {
+                    worker_flag.store(true, Ordering::Release);
+                    Ok(())
+                },
+            )
+            .await
+            .expect_err("insufficient dense-raster disk must reject");
+        assert_eq!(
+            error.to_string(),
+            "Not enough disk for the DEM: needs about 10.3 GB of scratch, 11.3 GB free"
+        );
+        assert_eq!(
+            error,
+            JobManagerError::InsufficientDisk {
+                required_bytes: components.required_bytes,
+                available_bytes,
+                path,
+                job_kind: Some(PhotolabJobKind::BuildDem),
+                scratch_bytes: Some(components.scratch_bytes),
+            }
+        );
+        assert!(!worker_started.load(Ordering::Acquire));
+        assert!(manager
+            .list(ListJobsParams {
+                include_terminal: true,
+            })
+            .await
+            .expect("list")
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn dense_raster_disk_admission_records_estimate_before_worker_runs() {
+        let components = disk_estimate_components(
+            PhotolabJobKind::BuildDem,
+            DiskEstimateScale::DenseRaster {
+                point_count: 45_800_000,
+                raster_pixels: 3,
+            },
+        );
+        let available_bytes = components.required_bytes + GIB;
+        let manager = JobManager::with_runtime_history_and_disk_availability(
+            JobManagerConfig {
+                max_concurrency: 1,
+                max_queued: 0,
+            },
+            Handle::current(),
+            None,
+            Arc::new(move |_| Ok(available_bytes)),
+        )
+        .expect("manager");
+        let path = PathBuf::from("/project/.photolab/raster-inputs/dem-job");
+        let started = manager
+            .start_with_disk_admission(
+                request_for_kind("dem-job", PhotolabJobKind::BuildDem),
+                JobAdmission {
+                    publication_targets: Vec::new(),
+                    disk_preflight: Some(DiskPreflight {
+                        required_bytes: components.required_bytes,
+                        path: path.clone(),
+                    }),
+                    memory_preflight: None,
+                    toolchain_preflight: None,
+                },
+                components,
+                |_| Ok(()),
+            )
+            .await
+            .expect("sufficient dense-raster disk must admit");
+        assert_eq!(
+            started.job.disk_estimate,
+            Some(PhotolabJobDiskEstimate {
+                scratch_bytes: components.scratch_bytes,
+                output_bytes: components.output_bytes,
+                available_bytes,
+                volume: path.to_string_lossy().into_owned(),
+            })
+        );
+        manager
+            .wait_for_terminal(&PhotolabJobId("dem-job".into()))
+            .await
+            .expect("worker completed");
     }
 
     #[tokio::test]

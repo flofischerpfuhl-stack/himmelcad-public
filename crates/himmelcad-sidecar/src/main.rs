@@ -6397,10 +6397,12 @@ async fn handle_job_rpc(
                                     unreachable!("raster product preparation returned another kind")
                                 }
                             };
-                            let bounds = if prepared.job.kind == PhotolabJobKind::BuildDem {
+                            let (bounds, dense_point_count) = if prepared.job.kind
+                                == PhotolabJobKind::BuildDem
+                            {
                                 match projects.latest_dense_mvs_dataset_for_lineage(&prepared.lineage) {
                                     Ok((_, record)) => match record.potree {
-                                        Some(potree) => (potree.bounds_min, potree.bounds_max),
+                                        Some(potree) => ((potree.bounds_min, potree.bounds_max), potree.point_count),
                                         None => return rpc_err(req.id, -32000, "dense point cloud has no frozen bounds for disk preflight"),
                                     },
                                     Err(error) => return product_rpc_err(req.id, &error),
@@ -6413,16 +6415,19 @@ async fn handle_job_rpc(
                                     .1
                                     .summary;
                                 (
-                                    [
-                                        summary.grid.bounds.minimum_east,
-                                        summary.grid.bounds.minimum_north,
-                                        0.0,
-                                    ],
-                                    [
-                                        summary.grid.bounds.maximum_east,
-                                        summary.grid.bounds.maximum_north,
-                                        0.0,
-                                    ],
+                                    (
+                                        [
+                                            summary.grid.bounds.minimum_east,
+                                            summary.grid.bounds.minimum_north,
+                                            0.0,
+                                        ],
+                                        [
+                                            summary.grid.bounds.maximum_east,
+                                            summary.grid.bounds.maximum_north,
+                                            0.0,
+                                        ],
+                                    ),
+                                    0,
                                 )
                             };
                             let Some(raster_pixels) =
@@ -6436,6 +6441,20 @@ async fn handle_job_rpc(
                                     "raster extent or GSD is invalid for disk preflight",
                                 );
                             };
+                            let disk_scale =
+                                himmelcad_sidecar::job_runtime::DiskEstimateScale::DenseRaster {
+                                    point_count: dense_point_count,
+                                    raster_pixels,
+                                };
+                            let disk_estimate =
+                                himmelcad_sidecar::job_runtime::disk_estimate_components(
+                                    prepared.job.kind,
+                                    disk_scale,
+                                );
+                            let disk_path = prepared
+                                .project_root
+                                .join(".photolab/raster-inputs")
+                                .join(&prepared.operation_id);
                             let admission = himmelcad_sidecar::job_runtime::JobAdmission {
                                 publication_targets: vec![
                                     himmelcad_sidecar::job_runtime::PublicationTarget::product(
@@ -6447,8 +6466,8 @@ async fn handle_job_rpc(
                                 disk_preflight: Some(
                                     himmelcad_sidecar::job_runtime::DiskPreflight::for_job(
                                         prepared.job.kind,
-                                        himmelcad_sidecar::job_runtime::DiskEstimateScale::RasterPixels(raster_pixels),
-                                        prepared.project_root.clone(),
+                                        disk_scale,
+                                        disk_path,
                                     ),
                                 ),
                                 memory_preflight: None,
@@ -6462,10 +6481,11 @@ async fn handle_job_rpc(
                             };
                             let publisher = Arc::clone(&projects);
                             let result = jobs
-                                .start_with_frozen_request_and_admission(
+                                .start_with_frozen_request_and_disk_admission(
                                     prepared.job.clone(),
                                     frozen_request,
                                     admission,
+                                    disk_estimate,
                                     move |context| {
                                         run_raster_product(prepared, &context, &publisher)
                                     },
@@ -7042,7 +7062,79 @@ async fn resume_product_job(
                 }
             }
             let publisher = Arc::clone(projects);
+            let gsd = match &prepared.configuration {
+                ProductRunConfiguration::Dem {
+                    resolution_meters_per_pixel,
+                    ..
+                }
+                | ProductRunConfiguration::Ortho {
+                    resolution_meters_per_pixel,
+                    ..
+                } => *resolution_meters_per_pixel,
+                _ => unreachable!("raster branch checked above"),
+            };
+            let (bounds, dense_point_count) = if prepared.job.kind == PhotolabJobKind::BuildDem {
+                let (_, record) = projects
+                    .latest_dense_mvs_dataset_for_lineage(&prepared.lineage)
+                    .map_err(|error| {
+                        ResumeRpcFailure::rejected("resumePreparationFailed", error.to_string())
+                    })?;
+                let potree = record.potree.ok_or_else(|| {
+                    ResumeRpcFailure::rejected(
+                        "resumePreparationFailed",
+                        "dense point cloud has no frozen bounds for disk preflight",
+                    )
+                })?;
+                ((potree.bounds_min, potree.bounds_max), potree.point_count)
+            } else {
+                let summary = &prepared
+                    .dem_dataset
+                    .as_ref()
+                    .expect("orthomosaic preparation pins a DEM")
+                    .1
+                    .summary;
+                (
+                    (
+                        [
+                            summary.grid.bounds.minimum_east,
+                            summary.grid.bounds.minimum_north,
+                            0.0,
+                        ],
+                        [
+                            summary.grid.bounds.maximum_east,
+                            summary.grid.bounds.maximum_north,
+                            0.0,
+                        ],
+                    ),
+                    0,
+                )
+            };
+            let raster_pixels =
+                himmelcad_sidecar::job_runtime::raster_pixel_count(bounds.0, bounds.1, gsd)
+                    .ok_or_else(|| {
+                        ResumeRpcFailure::rejected(
+                            "resumePreparationFailed",
+                            "raster extent or GSD is invalid for disk preflight",
+                        )
+                    })?;
+            let disk_scale = himmelcad_sidecar::job_runtime::DiskEstimateScale::DenseRaster {
+                point_count: dense_point_count,
+                raster_pixels,
+            };
+            let disk_estimate = himmelcad_sidecar::job_runtime::disk_estimate_components(
+                prepared.job.kind,
+                disk_scale,
+            );
+            let disk_path = prepared
+                .project_root
+                .join(".photolab/raster-inputs")
+                .join(&prepared.operation_id);
             let admission = himmelcad_sidecar::job_runtime::JobAdmission {
+                disk_preflight: Some(himmelcad_sidecar::job_runtime::DiskPreflight::for_job(
+                    prepared.job.kind,
+                    disk_scale,
+                    disk_path,
+                )),
                 toolchain_preflight: Some(
                     worker_toolchain_preflight(
                         prepared.job.kind,
@@ -7052,10 +7144,11 @@ async fn resume_product_job(
                 ),
                 ..Default::default()
             };
-            jobs.start_with_frozen_request_and_admission(
+            jobs.start_with_frozen_request_and_disk_admission(
                 prepared.job.clone(),
                 frozen,
                 admission,
+                disk_estimate,
                 move |context| run_raster_product(prepared, &context, &publisher),
             )
             .await
@@ -11812,6 +11905,8 @@ mod tests {
                     required_bytes: 2 * TEST_GIB,
                     available_bytes: TEST_GIB,
                     path: PathBuf::from("working-copy"),
+                    job_kind: None,
+                    scratch_bytes: None,
                 },
             ),
         );

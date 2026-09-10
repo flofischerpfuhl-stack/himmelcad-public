@@ -421,6 +421,16 @@ pub struct PhotolabJobMemory {
     pub matching_replanned: Option<PhotolabMatchingMemoryReplan>,
 }
 
+/// Admission-time disk evidence for jobs with measured scratch requirements.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PhotolabJobDiskEstimate {
+    pub scratch_bytes: u64,
+    pub output_bytes: u64,
+    pub available_bytes: u64,
+    pub volume: String,
+}
+
 /// One executable resolved and validated before a job becomes visible.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -456,6 +466,9 @@ pub struct PhotolabJob {
     /// Per-machine memory contract frozen before work starts and enriched with measured peaks.
     #[serde(default)]
     pub memory: PhotolabJobMemory,
+    /// Disk estimate frozen before the worker becomes visible.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disk_estimate: Option<PhotolabJobDiskEstimate>,
     /// Worker executables resolved at admission for reproducible evidence.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub toolchain: Vec<PhotolabWorkerTool>,
@@ -468,7 +481,7 @@ impl Serialize for PhotolabJob {
     {
         use serde::ser::SerializeStruct;
 
-        let mut record = serializer.serialize_struct("PhotolabJob", 16)?;
+        let mut record = serializer.serialize_struct("PhotolabJob", 17)?;
         record.serialize_field("schemaVersion", &self.schema_version)?;
         record.serialize_field("id", &self.id)?;
         record.serialize_field("kind", &self.kind)?;
@@ -503,6 +516,9 @@ impl Serialize for PhotolabJob {
             record.serialize_field("terminalDiagnostic", value)?;
         }
         record.serialize_field("memory", &self.memory)?;
+        if let Some(value) = &self.disk_estimate {
+            record.serialize_field("diskEstimate", value)?;
+        }
         if !self.toolchain.is_empty() {
             record.serialize_field("toolchain", &self.toolchain)?;
         }
@@ -530,6 +546,7 @@ impl PhotolabJob {
             last_checkpoint_sequence: None,
             terminal_diagnostic: None,
             memory: PhotolabJobMemory::default(),
+            disk_estimate: None,
             toolchain: Vec::new(),
         })
     }
@@ -537,6 +554,11 @@ impl PhotolabJob {
     /// Freezes the envelope and planned choices before the record becomes visible.
     pub fn set_memory_plan(&mut self, memory: PhotolabJobMemory) {
         self.memory = memory;
+    }
+
+    /// Freezes admission-time disk evidence before the record becomes visible.
+    pub fn set_disk_estimate(&mut self, disk_estimate: PhotolabJobDiskEstimate) {
+        self.disk_estimate = Some(disk_estimate);
     }
 
     /// Freezes the resolved worker executable inventory before visibility.
@@ -1015,6 +1037,7 @@ mod tests {
         let decoded: PhotolabJob =
             serde_json::from_value(serde_json::Value::Object(object)).expect("old job record");
         assert_eq!(decoded.memory, PhotolabJobMemory::default());
+        assert_eq!(decoded.disk_estimate, None);
         assert!(decoded.toolchain.is_empty());
     }
 
@@ -1050,6 +1073,12 @@ mod tests {
             path: "/runtime/workers/potree/PotreeConverter".into(),
             version: Some("2.1.1".into()),
         }];
+        value.disk_estimate = Some(PhotolabJobDiskEstimate {
+            scratch_bytes: 10_305_000_000,
+            output_bytes: 128 * 1024 * 1024,
+            available_bytes: 24 * 1024 * 1024 * 1024,
+            volume: "/project/.photolab/raster-inputs/job-1".into(),
+        });
         let encoded = serde_json::to_vec(&value).expect("serialize memory plan");
         let decoded: PhotolabJob =
             serde_json::from_slice(&encoded).expect("deserialize memory plan");

@@ -894,6 +894,8 @@ Landed 2026-09-04 (scoped to admission + disk preflight; the side-channel part s
 
 WP-WIN-06-PL (2026-09-10): disk admission now resolves the requested target to its deepest existing ancestor and measures free bytes directly through `fs2::available_space` (`statvfs` on Unix, `GetDiskFreeSpaceExW` on Windows), with no localized `df` or `fsutil` output parsing. The `InsufficientDisk` refusal keeps the existing threshold and timing while its structured RPC data records both `available_bytes` and `required_bytes` for auditability. Windows-native tests cover an existing temporary directory, a not-yet-created child, and both refusal byte fields.
 
+WP-G1a-3g (2026-09-10): the failed 45.8 M-point DSM probe measured a 3.3 GB `dense.csv`, a 4.0 GB and growing FlatGeobuf, and about 2.9 GB of GDAL temporary storage while free space fell from 14 GB to zero. DEM admission now budgets 73 + 88 + 64 = 225 bytes per dense point (about 10.3 GB at the measured scale), adds the existing raster-output estimate, applies 10% headroom, and records the scratch/output/available/volume evidence before worker visibility. `CPL_TMPDIR` and `GDAL_TMPDIR` are pinned to the job-owned `.photolab/raster-inputs/<job>` directory so one volume is checked and terminal cleanup removes the temporary storage on completion or failure. The current orthomosaic path consumes a published DEM and camera imagery rather than `dense_raster_prep`; it therefore carries zero dense-point scratch and retains its raster-output estimate plus headroom. Follow-up — WP-A4b: write FlatGeobuf/LAS directly from the PLY instead of CSV → ogr2ogr (3× scratch, minutes of I/O).
+
 ### WP-B5 — Journal/manifest ordering + orphan-dataset GC (Size M)
 
 Problem. PhotoLab writes the journal entry before the manifest

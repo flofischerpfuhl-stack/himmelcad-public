@@ -3441,6 +3441,7 @@ impl ActiveSideOperation {
             last_checkpoint_sequence: None,
             terminal_diagnostic: None,
             memory: Default::default(),
+            disk_estimate: None,
             toolchain: Vec::new(),
         }
     }
@@ -9915,6 +9916,7 @@ fn cleanup_published_job_scratch(
         last_checkpoint_sequence: None,
         terminal_diagnostic: None,
         memory: Default::default(),
+        disk_estimate: None,
         toolchain: Vec::new(),
     };
     if let Err(error) = cleanup_terminal_job_scratch(project_root, manifest, &job) {

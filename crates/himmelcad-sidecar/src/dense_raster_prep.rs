@@ -147,6 +147,7 @@ pub fn prepare_dense_vector_with_classification(
             "dense_points",
             "-overwrite",
         ],
+        Some(output_root),
         cancellation,
     )?;
     fs::remove_file(csv_path)?;
@@ -788,6 +789,7 @@ pub fn inspect_vector_wkt(
         ogrinfo,
         &arguments,
         Some(File::create(&output_path)?),
+        None,
         cancellation,
     )?;
     let value: serde_json::Value = serde_json::from_slice(&fs::read(&output_path)?)
@@ -815,6 +817,7 @@ pub fn inspect_raster_wkt(
         gdalinfo,
         &arguments,
         Some(File::create(&output_path)?),
+        None,
         cancellation,
     )?;
     let value: serde_json::Value = serde_json::from_slice(&fs::read(&output_path)?)
@@ -1222,13 +1225,14 @@ fn json_xyz(value: &serde_json::Value, key: &str) -> Result<[f64; 3], DenseRaste
 fn run_command(
     executable: &Path,
     arguments: &[&str],
+    gdal_temp_directory: Option<&Path>,
     cancellation: &CancellationToken,
 ) -> Result<(), DenseRasterPrepError> {
     let owned = arguments
         .iter()
         .map(|value| (*value).to_owned())
         .collect::<Vec<_>>();
-    run_owned_command(executable, &owned, cancellation)
+    run_gdal_command(executable, &owned, None, gdal_temp_directory, cancellation)
 }
 
 fn run_owned_command(
@@ -1236,13 +1240,14 @@ fn run_owned_command(
     arguments: &[String],
     cancellation: &CancellationToken,
 ) -> Result<(), DenseRasterPrepError> {
-    run_gdal_command(executable, arguments, None, cancellation)
+    run_gdal_command(executable, arguments, None, None, cancellation)
 }
 
 fn run_gdal_command(
     executable: &Path,
     arguments: &[String],
     stdout_destination: Option<File>,
+    gdal_temp_directory: Option<&Path>,
     cancellation: &CancellationToken,
 ) -> Result<(), DenseRasterPrepError> {
     let normalized_arguments = arguments
@@ -1252,6 +1257,11 @@ fn run_gdal_command(
     let command_description = diagnostic_command(executable, &normalized_arguments);
     let mut command = offline_gdal_command(executable);
     command.args(&normalized_arguments);
+    if let Some(directory) = gdal_temp_directory {
+        command
+            .env("CPL_TMPDIR", directory)
+            .env("GDAL_TMPDIR", directory);
+    }
     if let Some(parent) = executable.parent() {
         if parent.join("liblaszip.so").is_file() {
             command.env("LD_LIBRARY_PATH", parent);
@@ -1508,6 +1518,62 @@ mod tests {
             }
             other => panic!("unexpected error: {other}"),
         }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn ogr2ogr_uses_the_job_raster_input_directory_for_gdal_temp() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = std::env::temp_dir().join(format!(
+            "hcad-gdal-temp-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).expect("test root");
+        let dense_ply = root.join("dense.ply");
+        let mut dense = File::create(&dense_ply).expect("dense fixture");
+        dense
+            .write_all(b"ply\nformat binary_little_endian 1.0\nelement vertex 1\nproperty double x\nproperty double y\nproperty double z\nproperty uchar red\nproperty uchar green\nproperty uchar blue\nproperty float confidence\nend_header\n")
+            .expect("PLY header");
+        for value in [500_000.0_f64, 5_400_000.0, 100.0] {
+            dense.write_all(&value.to_le_bytes()).expect("coordinate");
+        }
+        dense.write_all(&[1, 2, 3]).expect("colour");
+        dense.write_all(&1.0_f32.to_le_bytes()).expect("confidence");
+        drop(dense);
+
+        let fake_ogr2ogr = root.join("ogr2ogr");
+        fs::write(
+            &fake_ogr2ogr,
+            b"#!/bin/sh\nprintf '%s\\n%s\\n' \"$CPL_TMPDIR\" \"$GDAL_TMPDIR\" > \"$CPL_TMPDIR/invocation.txt\"\n: > \"$3\"\n",
+        )
+        .expect("fake ogr2ogr");
+        let mut permissions = fs::metadata(&fake_ogr2ogr).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&fake_ogr2ogr, permissions).unwrap();
+
+        let output_root = root.join("raster-inputs/job-1");
+        let vector = prepare_dense_vector(
+            &dense_ply,
+            &output_root,
+            &fake_ogr2ogr,
+            "EPSG:25832",
+            &CancellationToken::new(),
+        )
+        .expect("prepare dense vector");
+        assert_eq!(vector.point_count, 1);
+        assert_eq!(
+            fs::read_to_string(output_root.join("invocation.txt")).expect("captured environment"),
+            format!("{0}\n{0}\n", output_root.display())
+        );
+        assert!(!output_root.join("dense.csv").exists());
+        assert!(output_root.join("dense.fgb").is_file());
         fs::remove_dir_all(root).unwrap();
     }
 
