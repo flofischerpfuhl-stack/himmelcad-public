@@ -76,3 +76,19 @@ decided by the manifest's `bitsetLsb0` validity authority when present. The
 allowed elevation difference is the larger of half the raster data type's
 vertical quantum and `0.01 m`. The Markdown file contains one paste-ready
 comparison table per package.
+
+For meshes, the oracle selects the DEM package referenced by the mesh or the
+newest package with the same source alignment and processing set, falling back
+to the project's newest ready DEM. It records the kernel manifest's discovered
+bounds keys and values, tile and texture counts, total triangle count when the
+tile index provides one, and the DEM elevations at the seven dense-cloud XY
+positions plus the raster centre. The allowed elevation difference is the
+larger of the DEM tolerance and one DEM cell. DEM NoData remains a mesh hole
+unless `interpolateHoles` is true; interpolated holes are marked without an
+elevation assertion.
+
+The mesh table also includes the first, middle, and last POSITION vertices from
+the first indexed glTF/GLB tile. The reader requires a FLOAT VEC3 accessor and
+applies the glTF node world transform followed by the kernel tile transform to
+report project-CRS coordinates. The applied matrices and multiplication order
+are included in the oracle.
