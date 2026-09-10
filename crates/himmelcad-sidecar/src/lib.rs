@@ -44,6 +44,7 @@ pub mod prepared_triangle_mesh_ply;
 pub mod process_group;
 pub mod product_export;
 pub mod project_archive;
+pub mod publish_fs;
 pub mod raster_runtime;
 pub mod site_calibration_reader;
 pub mod splat_tiler;

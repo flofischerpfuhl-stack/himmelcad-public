@@ -125,6 +125,9 @@ use himmelcad_sidecar::project_archive::{
     pack_hcadx, unpack_hcadx, ArchivePhase, ArchiveProgress, PackArchiveOptions,
     UnpackArchiveLimits,
 };
+use himmelcad_sidecar::publish_fs::{
+    publish_directory, replace_file_atomically, write_object_if_absent, ObjectWriteOutcome,
+};
 use himmelcad_sidecar::raster_runtime::{
     raster_checkpoint_content_key, GdalAudit, RasterBuildSummary, RasterNoDataValue,
     RasterValidityResource,
@@ -3881,12 +3884,7 @@ impl ProjectRuntime {
             remove_path_if_exists(&incoming_path)?;
         } else {
             remove_path_if_exists(&working_path)?;
-            fs::rename(&incoming_path, &working_path).with_context(|| {
-                format!(
-                    "failed to publish extracted workspace {}",
-                    working_path.display()
-                )
-            })?;
+            publish_directory(&incoming_path, &working_path)?;
         }
         let manifest = if recover {
             read_manifest(&working_path)?
@@ -6066,8 +6064,7 @@ impl ProjectRuntime {
                 fs::remove_dir_all(path)?;
             }
         }
-        fs::rename(&outcome.scratch_path, &dataset_path)
-            .context("failed to atomically publish solved alignment merge dataset")?;
+        publish_directory(&outcome.scratch_path, &dataset_path)?;
 
         let mut published = context.record;
         published.state = MergedAlignmentState::Published;
@@ -6201,8 +6198,7 @@ impl ProjectRuntime {
                 .parent()
                 .context("merge dataset has no parent")?,
         )?;
-        fs::rename(&outcome.scratch_path, &dataset_path)
-            .context("failed to atomically publish shared-control alignment dataset")?;
+        publish_directory(&outcome.scratch_path, &dataset_path)?;
         let mut published = context.record;
         published.state = MergedAlignmentState::Published;
         published.connection_evidence = connection_evidence;
@@ -7944,12 +7940,7 @@ impl ProjectRuntime {
                 fs::remove_dir_all(path)?;
             }
         }
-        fs::rename(&outcome.scratch_path, &dataset_path).with_context(|| {
-            format!(
-                "failed to atomically publish compute dataset {}",
-                dataset_path.display()
-            )
-        })?;
+        publish_directory(&outcome.scratch_path, &dataset_path)?;
 
         let mut candidate = session.manifest.clone();
         let mut entity_ids = Vec::new();
@@ -8281,12 +8272,7 @@ impl ProjectRuntime {
                 .parent()
                 .context("splat dataset path has no parent")?,
         )?;
-        fs::rename(&outcome.scratch_path, &dataset_path).with_context(|| {
-            format!(
-                "failed to atomically publish Brush dataset {}",
-                dataset_path.display()
-            )
-        })?;
+        publish_directory(&outcome.scratch_path, &dataset_path)?;
 
         let record = BrushArtifactRecord {
             schema_version: 3,
@@ -8431,12 +8417,7 @@ impl ProjectRuntime {
                 .parent()
                 .context("MVS dataset path has no parent")?,
         )?;
-        fs::rename(&outcome.scratch_path, &dataset_path).with_context(|| {
-            format!(
-                "failed to atomically publish MVS dataset {}",
-                dataset_path.display()
-            )
-        })?;
+        publish_directory(&outcome.scratch_path, &dataset_path)?;
         let record = MvsArtifactRecord {
             schema_version: 3,
             job_id: outcome.output.job_id.clone(),
@@ -8968,7 +8949,7 @@ impl ProjectRuntime {
         )?;
         let entity_id = EntityId(format!("{}:mesh:{job_id}", session.manifest.project_id));
         let canonical_dataset = package_prepared_mesh_dataset(staging_path, &prepared, &entity_id)?;
-        fs::rename(staging_path, &destination)?;
+        publish_directory(staging_path, &destination)?;
         let record = MeshArtifactRecord {
             schema_version: 3,
             job_id: job_id.into(),
@@ -9743,8 +9724,8 @@ impl ProjectRuntime {
         let directory = session.working_path.join("objects").join(prefix);
         fs::create_dir_all(&directory)?;
         let path = directory.join(remainder);
-        if !path.exists() {
-            atomic_write_bytes(&path, bytes)?;
+        if write_object_if_absent(&path, bytes)? == ObjectWriteOutcome::Published {
+            sync_parent_directory(&path)?;
         }
         Ok(hash)
     }
@@ -10086,12 +10067,7 @@ fn quarantine_orphaned_datasets(
                 }
                 timestamp = timestamp.saturating_add(1);
             };
-            fs::rename(&source, &destination).with_context(|| {
-                format!(
-                    "failed to quarantine unpublished dataset {}",
-                    source.display()
-                )
-            })?;
+            publish_directory(&source, &destination)?;
             sync_parent_directory(&source)?;
             sync_parent_directory(&destination)?;
             tracing::warn!(
@@ -12631,8 +12607,8 @@ fn update_camera_product_tags(
 fn put_project_object(project_root: &Path, bytes: &[u8]) -> Result<ObjectHash> {
     let hash = ObjectHash::of_bytes(bytes);
     let path = project_object_path(project_root, &hash);
-    if !path.is_file() {
-        atomic_write_bytes(&path, bytes)?;
+    if write_object_if_absent(&path, bytes)? == ObjectWriteOutcome::Published {
+        sync_parent_directory(&path)?;
     }
     Ok(hash)
 }
@@ -13197,13 +13173,7 @@ fn atomic_write_bytes(path: &Path, bytes: &[u8]) -> Result<()> {
         file.write_all(bytes)?;
         file.sync_all()?;
     }
-    fs::rename(&temporary, path).with_context(|| {
-        format!(
-            "failed to atomically commit {} to {}",
-            temporary.display(),
-            path.display()
-        )
-    })?;
+    replace_file_atomically(&temporary, path)?;
     sync_parent_directory(path)?;
     Ok(())
 }
@@ -13396,13 +13366,7 @@ fn verify_archive_candidate(candidate: &Path, cancellation: &CancellationToken) 
 
 fn publish_archive_candidate(candidate: &Path, destination: &Path, overwrite: bool) -> Result<()> {
     if !destination.exists() {
-        fs::rename(candidate, destination).with_context(|| {
-            format!(
-                "failed to publish archive {} to {}",
-                candidate.display(),
-                destination.display()
-            )
-        })?;
+        replace_file_atomically(candidate, destination)?;
         sync_parent_directory(destination)?;
         return Ok(());
     }
@@ -13414,60 +13378,12 @@ fn publish_archive_candidate(candidate: &Path, destination: &Path, overwrite: bo
         );
     }
 
-    replace_existing_archive(candidate, destination)
-}
-
-#[cfg(unix)]
-fn replace_existing_archive(candidate: &Path, destination: &Path) -> Result<()> {
-    fs::rename(candidate, destination).with_context(|| {
-        format!(
-            "failed to atomically replace archive {}",
-            destination.display()
-        )
-    })?;
+    replace_file_atomically(candidate, destination)?;
     sync_parent_directory(destination)
-}
-
-#[cfg(not(unix))]
-fn replace_existing_archive(candidate: &Path, destination: &Path) -> Result<()> {
-    let backup = archive_backup_path(destination)?;
-    remove_path_if_exists(&backup)?;
-    fs::rename(destination, &backup).with_context(|| {
-        format!(
-            "failed to preserve existing archive {}",
-            destination.display()
-        )
-    })?;
-    if let Err(error) = fs::rename(candidate, destination) {
-        let restore = fs::rename(&backup, destination);
-        return match restore {
-            Ok(()) => Err(error)
-                .with_context(|| format!("failed to replace archive {}", destination.display())),
-            Err(restore_error) => anyhow::bail!(
-                "failed to replace archive {} ({error}); previous archive remains at {} and could not be restored ({restore_error})",
-                destination.display(),
-                backup.display()
-            ),
-        };
-    }
-    if let Err(error) = fs::remove_file(&backup) {
-        tracing::warn!(
-            path = %backup.display(),
-            %error,
-            "new archive is valid but replaced archive backup could not be removed"
-        );
-    }
-    sync_parent_directory(destination)?;
-    Ok(())
 }
 
 fn archive_candidate_path(destination: &Path) -> Result<PathBuf> {
     sibling_operation_path(destination, "candidate")
-}
-
-#[cfg(not(unix))]
-fn archive_backup_path(destination: &Path) -> Result<PathBuf> {
-    sibling_operation_path(destination, "backup")
 }
 
 fn sibling_operation_path(destination: &Path, marker: &str) -> Result<PathBuf> {

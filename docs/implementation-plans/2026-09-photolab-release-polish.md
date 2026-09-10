@@ -694,6 +694,20 @@ project publication returned `projectPublish: Zugriff verweigert (os error 5)`
 Windows defect in the publication path (WP-WIN-11-PL). Report:
 `.build/photolab-evidence/win10-report.md`.
 
+WP-WIN-11-PL implemented 2026-09-10 (working tree, no commit): PhotoLab now
+routes file replacement, closed scratch-directory publication, archive
+publication, and content-addressed object writes through one typed publication
+filesystem layer. Windows retries only `ERROR_ACCESS_DENIED` (5) and
+`ERROR_SHARING_VIOLATION` (32), for at most 12 attempts with 50 ms exponential
+backoff capped at 750 ms and six seconds total; Unix makes one attempt.
+Identical existing objects are verified by length and SHA-256 and left in
+place, while differing objects are atomically replaced. Errors retain the
+operation, source, destination, and OS error, so `projectPublish` reports the
+failed step and destination. Ready-last package ordering and the existing
+file/parent durability flushes are unchanged; Windows parent-directory sync
+remains the non-failing no-op adopted by WIN-01b. Local unit suites pass; the
+Windows build and 16 GB publication gate remain for the follow-up remote run.
+
 ### WP-A7d — Bound matching from the extracted feature set (Size M)
 
 Implemented 2026-09-09 (working tree, no commit): tiled ALIKED now records the
