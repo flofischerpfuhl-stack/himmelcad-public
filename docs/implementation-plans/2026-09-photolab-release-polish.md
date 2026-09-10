@@ -561,6 +561,20 @@ no silent downgrade to ALIKED-only) until WP-A7i adds the DeDoDe tiling path
 through the same merge kernel. Both are Size S and queued behind the A7c
 smoke evidence.
 
+Evidence 2026-09-10 13:30 — A7c smoke #5 (24 Sulzberg images, fast profile,
+forced 2×1 ALIKED tiling, HEAD with A7c–A7g, unit MemoryMax=18G):
+alignment completed 24/24 in 51.8 min, machine never at risk. Memory record:
+probe `available=true`, mode `cgroupScope` on every COLMAP stage; extraction
+8 workers, peak 6.45 GB (limit 32.4 GB); matching re-planned to 4 threads at
+8,122 keypoints, attempt 1 killed by its own cap at 14.52 GB (limit 14.53 GB =
+the matching budget) → `workerMemoryLimitHit` + `matchingThreadsHalved 4→2`,
+attempt 2 completed at 12.11 GB peak (6.06 GB observed per thread); geometry
+verification 0.17 GB. The A7 series (envelope → tiling → bounded matcher →
+self-bounding retry) is accepted on this evidence; the per-thread model still
+underestimates (3.43 GB predicted vs 6.06 GB observed at 2 threads), which the
+retry ladder absorbs — a later calibration fits base + per-thread from the
+recorded `attempts`. Evidence files: `.build/photolab-evidence/a7/smoke5-*.json`.
+
 ### WP-A7d — Bound matching from the extracted feature set (Size M)
 
 Implemented 2026-09-09 (working tree, no commit): tiled ALIKED now records the
