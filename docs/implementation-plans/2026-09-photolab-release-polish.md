@@ -684,6 +684,16 @@ sampled — `Prepare dense points with ogr2ogr` model 4.85 GB / observed 4.65 GB
 The memory envelope now covers COLMAP extraction/matching and the raster
 preparation end to end on this machine class.
 
+16 GB gate run, third attempt (WIN-10-PL, 2026-09-10 19:57–22:52): compute
+PASSED end to end on the 16 GB PC — 24/24 aligned (26,766 sparse points,
+114,435 observations, 0.698 px mean reprojection error), peak working set
+6.0 GiB, disk minimum 6.7 GiB, no kill, 2 h 20 min; the Potree 2.0 output was
+materialised completely. The gate still FAILS at the last step: the atomic
+project publication returned `projectPublish: Zugriff verweigert (os error 5)`
+(Windows access denied on the publish rename/replace) — a PhotoLab-owned
+Windows defect in the publication path (WP-WIN-11-PL). Report:
+`.build/photolab-evidence/win10-report.md`.
+
 ### WP-A7d — Bound matching from the extracted feature set (Size M)
 
 Implemented 2026-09-09 (working tree, no commit): tiled ALIKED now records the
