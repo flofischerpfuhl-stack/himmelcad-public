@@ -622,6 +622,17 @@ staged/default locations, while the cfg-independent Windows test requires `.exe`
 names. The preflight performs bounded metadata checks only; existing worker
 runtimes retain their version, trust, and model/resource validation.
 
+DSM republish failure root cause (2026-09-10 18:47, sampler
+`.build/logs/g1a3f-dsm-probe.sampler`): not intermittent — disk exhaustion.
+The DEM job on the 45.8 M-point dense cloud writes `dense.csv` (3.3 GB) and
+converts it with `ogr2ogr -f FlatGeobuf` (4.0 GB, growing) while GDAL holds
+2.9 GB of temp under /tmp; free space went 14 GB → 0 and ogr2ogr died with
+`ERROR 1: Unexpected I/O failure: writing feature` (now captured verbatim by
+WP-G1a-3f). Earlier DTM republishes succeeded only because 35–40 GB were free.
+WP-G1a-3g adds the scratch to the admission disk estimate with a typed
+refusal; a later WP-A4b should write FlatGeobuf/LAS directly from the PLY
+(three times the scratch and minutes of I/O today).
+
 ### WP-A7d — Bound matching from the extracted feature set (Size M)
 
 Implemented 2026-09-09 (working tree, no commit): tiled ALIKED now records the
