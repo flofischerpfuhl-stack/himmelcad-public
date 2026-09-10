@@ -547,6 +547,20 @@ fixtures updated). Evidence: the 24-image fast smoke with forced tiling
 (env override) produces an alignment within the golden tolerance of the
 untiled run; then the 16 GB gate run on the Windows host.
 
+Architect decisions on the A7c contract gaps (2026-09-10): (1) the COLMAP
+feature database carries no ALIKED score column, so the deterministic
+post-merge cap orders by the documented row-order/size proxy with (x, y)
+tie-breaking — accepted as the interim rule because it is deterministic and
+recorded in the stage parameters; follow-up WP-A7h persists the extractor's
+true scores in a sidecar side table and switches the cap to them, with a
+fixture proving identical results on both paths where scores are monotone.
+(2) Quality Hybrid (DeDoDe + ALIKED) on a machine whose plan requires tiled
+extraction: fail closed — the admission refuses with the typed reason "Quality
+Hybrid needs untiled extraction on this machine" (D2: no silent untiled run,
+no silent downgrade to ALIKED-only) until WP-A7i adds the DeDoDe tiling path
+through the same merge kernel. Both are Size S and queued behind the A7c
+smoke evidence.
+
 ### WP-A7d — Bound matching from the extracted feature set (Size M)
 
 Implemented 2026-09-09 (working tree, no commit): tiled ALIKED now records the
