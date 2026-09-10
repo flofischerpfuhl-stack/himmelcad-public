@@ -633,6 +633,15 @@ WP-G1a-3g adds the scratch to the admission disk estimate with a typed
 refusal; a later WP-A4b should write FlatGeobuf/LAS directly from the PLY
 (three times the scratch and minutes of I/O today).
 
+WP-A7j verification (2026-09-10 20:54, DTM republish under a 12 GB unit that
+previously killed `gdal_grid`): completed; the job memory record has no
+`unboundedStage` observation any more; `Prepare dense points with ogr2ogr` ran
+in a cgroup scope (mode cgroupScope, model 2.97 GB, limit 9.75 GB, observed
+peak 4.65 GB — the per-point constant is ~1.6× too low, recalibrate to
+≈ 100 B/point), while `Rasterize DEM with gdal_grid` shows mode None and peak
+0 — the scope/sampler wrapping did not take effect on that stage at runtime
+(WP-A7j-b).
+
 ### WP-A7d — Bound matching from the extracted feature set (Size M)
 
 Implemented 2026-09-09 (working tree, no commit): tiled ALIKED now records the
