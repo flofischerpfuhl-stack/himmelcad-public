@@ -45,7 +45,12 @@ const MIB: u64 = 1024 * 1024;
 // admission remains conservative as coordinate widths vary.
 const DENSE_RASTER_CSV_BYTES_PER_POINT: u64 = 73;
 const DENSE_RASTER_FLATGEOBUF_BYTES_PER_POINT: u64 = 88;
-const DENSE_RASTER_GDAL_TEMP_BYTES_PER_POINT: u64 = 64;
+// Measured 2026-09-10 on the 45.8 M-point Sulzberg cloud: the CSV → FlatGeobuf →
+// gdal_grid pipeline drove free space from 14.0 GB to zero (ENOSPC) although the
+// scratch directory itself peaked at 10.5 GB; the difference is GDAL/OGR temporary
+// and page-cache-backed writes that only show up as consumed space. The temp term
+// therefore carries the whole measured gap (14.0 GB / 45.8 M ≈ 306 B/point in total).
+const DENSE_RASTER_GDAL_TEMP_BYTES_PER_POINT: u64 = 145;
 const DENSE_RASTER_HEADROOM_NUMERATOR: u64 = 11;
 const DENSE_RASTER_HEADROOM_DENOMINATOR: u64 = 10;
 
@@ -3389,11 +3394,11 @@ mod tests {
             raster_pixels: 3,
         };
         let estimate = disk_estimate_components(PhotolabJobKind::BuildDem, scale);
-        assert_eq!(estimate.scratch_bytes, 10_305_000_000);
+        assert_eq!(estimate.scratch_bytes, 14_014_800_000);
         assert_eq!(estimate.output_bytes, 64);
         assert_eq!(
             estimate.required_bytes,
-            (10_305_000_000_u64 + 64).saturating_mul(11).div_ceil(10)
+            (14_014_800_000_u64 + 64).saturating_mul(11).div_ceil(10)
         );
         assert_eq!(
             estimate_job_bytes(PhotolabJobKind::BuildDem, scale),
@@ -3628,7 +3633,7 @@ mod tests {
             .expect_err("insufficient dense-raster disk must reject");
         assert_eq!(
             error.to_string(),
-            "Not enough disk for the DEM: needs about 10.3 GB of scratch, 11.3 GB free"
+            "Not enough disk for the DEM: needs about 14.0 GB of scratch, 15.4 GB free"
         );
         assert_eq!(
             error,
