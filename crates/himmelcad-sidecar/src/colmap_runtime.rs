@@ -3708,6 +3708,7 @@ fn spawn_prepared_colmap_child(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    #[cfg(target_os = "linux")]
     if matches!(
         worker_limit_plan,
         Some(WorkerMemoryLimitPlan {
