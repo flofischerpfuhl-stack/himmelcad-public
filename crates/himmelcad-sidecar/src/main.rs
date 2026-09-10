@@ -10346,9 +10346,10 @@ fn run_raster_product(
                 classifications.as_deref(),
                 &context.cancellation,
             )
-            .map_err(map_dense_prep_error)?;
-            let wkt = inspect_vector_wkt(&tools.ogrinfo, &vector, &context.cancellation)
-                .map_err(map_dense_prep_error)?;
+            .map_err(|error| map_dense_prep_error_with_diagnostic(error, &context.diagnostics))?;
+            let wkt = inspect_vector_wkt(&tools.ogrinfo, &vector, &context.cancellation).map_err(
+                |error| map_dense_prep_error_with_diagnostic(error, &context.diagnostics),
+            )?;
             let crs = RasterCrs {
                 horizontal: prepared.horizontal_srs.clone(),
                 vertical: prepared.vertical_label.clone(),
@@ -10425,7 +10426,7 @@ fn run_raster_product(
                 &dem_root.join("product.cog.tif"),
                 &context.cancellation,
             )
-            .map_err(map_dense_prep_error)?;
+            .map_err(|error| map_dense_prep_error_with_diagnostic(error, &context.diagnostics))?;
             if ObjectHash::of_bytes(frozen_wkt.as_bytes()) != crs.canonical_wkt_sha256 {
                 return Err(worker_error(
                     "invalidRasterInput",
@@ -10840,6 +10841,33 @@ fn map_dense_prep_error(error: DenseRasterPrepError) -> JobWorkerError {
         JobWorkerError::Cancelled
     } else {
         worker_error("denseRasterPreparation", &error.to_string())
+    }
+}
+
+fn map_dense_prep_error_with_diagnostic(
+    error: DenseRasterPrepError,
+    diagnostics: &himmelcad_sidecar::job_runtime::JobDiagnosticSink,
+) -> JobWorkerError {
+    match error {
+        DenseRasterPrepError::Cancelled => JobWorkerError::Cancelled,
+        DenseRasterPrepError::GdalFailed {
+            command,
+            code,
+            stderr_tail,
+        } => {
+            let first_stderr_line = stderr_tail.lines().next().unwrap_or("GDAL wrote no stderr");
+            let message = format!(
+                "GDAL preparation command {command} failed with exit code {code:?}: {first_stderr_line}"
+            );
+            if let Err(record_error) = diagnostics.record_blocking(stderr_tail) {
+                return worker_error(
+                    "denseRasterPreparationDiagnostic",
+                    &format!("{message}; failed to store GDAL stderr: {record_error}"),
+                );
+            }
+            worker_error("denseRasterPreparation", &message)
+        }
+        other => worker_error("denseRasterPreparation", &other.to_string()),
     }
 }
 

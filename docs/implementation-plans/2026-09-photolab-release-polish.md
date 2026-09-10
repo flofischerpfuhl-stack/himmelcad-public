@@ -2140,6 +2140,21 @@ started because the latest host preflight failed both launch gates (load
 average 10.60 and only 4 GB free; required load below 4 and at least 15 GB
 free).
 
+**WP-G1a-3f - GDAL preparation failure diagnostics. Implemented; reproduction
+blocked 2026-09-10.** Every external command launched by
+`dense_raster_prep.rs` now drains stdout and stderr concurrently and retains a
+bounded 2 KiB stderr tail. Failures carry the project-relative command, exit
+code, and tail; DEM/orthomosaic preparation stores the tail in the existing
+durable `terminalDiagnostic` job field and includes its first line in the
+failure message. A fake GDAL executable proves the stderr is preserved
+verbatim. The DSM reuse smoke was not started: load and disk passed the launch
+gate after the build (1.87, 14 GB free), but the required
+`systemd-run --user --scope -p MemoryMax=12G -p MemorySwapMax=0` wrapper could
+not connect to the user service manager (`Operation not permitted`). The old
+failures contain no tool output, so their cause remains unproven; per-operation
+raster-input directories rule out a fixed-name collision between consecutive
+job IDs.
+
 Diagnostic finding 2026-09-06 (40-image Quality Hybrid, golden-bin): COLMAP is
 CPU-only here and ALIKED_N32 at 8192 px runs with one extraction thread (15.7 GB
 RSS measured for one worker; the memory model in `colmap_feature_worker_threads`

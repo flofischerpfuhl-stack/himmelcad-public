@@ -21,6 +21,9 @@ use crate::process_group;
 const POLL: Duration = Duration::from_millis(15);
 /// X6 stream chunk: bounds cancellation latency while keeping class I/O allocations small.
 const CLASSIFICATION_CHUNK_POINTS: usize = 8_192;
+/// X6 diagnostic bound: 2 KiB preserves the actionable end of GDAL errors without
+/// allowing verbose external tools to grow durable job records without limit.
+const GDAL_OUTPUT_TAIL_BYTES: usize = 2 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PlyCoordinateKind {
@@ -74,8 +77,12 @@ pub enum DenseRasterPrepError {
     InvalidPly(String),
     #[error("dense raster preparation was cancelled")]
     Cancelled,
-    #[error("GDAL preparation command failed with exit code {0:?}")]
-    GdalFailed(Option<i32>),
+    #[error("GDAL preparation command `{command}` failed with exit code {code:?}")]
+    GdalFailed {
+        command: String,
+        code: Option<i32>,
+        stderr_tail: String,
+    },
     #[error("classification has {actual} entries but the dense cloud has {expected} vertices")]
     ClassificationLength { expected: u64, actual: usize },
     #[error("dense cloud already has a different immutable ground classification")]
@@ -771,31 +778,18 @@ pub fn inspect_vector_wkt(
     cancellation: &CancellationToken,
 ) -> Result<String, DenseRasterPrepError> {
     let output_path = vector.flatgeobuf_path.with_extension("ogrinfo.json");
-    let mut command = offline_gdal_command(ogrinfo);
-    command
-        .args([
-            "-json",
-            "-so",
-            external_tool_argument(vector.flatgeobuf_path.to_string_lossy().as_ref()).as_str(),
-            vector.layer.as_str(),
-        ])
-        .stdin(Stdio::null())
-        .stdout(File::create(&output_path)?)
-        .stderr(Stdio::null());
-    let mut child = process_group::spawn(&mut command)?;
-    loop {
-        if cancellation.is_cancel_requested() {
-            let _ = child.terminate_and_wait();
-            return Err(DenseRasterPrepError::Cancelled);
-        }
-        if let Some(status) = child.try_wait()? {
-            if !status.success() {
-                return Err(DenseRasterPrepError::GdalFailed(status.code()));
-            }
-            break;
-        }
-        thread::sleep(POLL);
-    }
+    let arguments = vec![
+        "-json".to_owned(),
+        "-so".to_owned(),
+        vector.flatgeobuf_path.to_string_lossy().into_owned(),
+        vector.layer.clone(),
+    ];
+    run_gdal_command(
+        ogrinfo,
+        &arguments,
+        Some(File::create(&output_path)?),
+        cancellation,
+    )?;
     let value: serde_json::Value = serde_json::from_slice(&fs::read(&output_path)?)
         .map_err(|error| DenseRasterPrepError::InvalidPly(error.to_string()))?;
     fs::remove_file(output_path)?;
@@ -816,29 +810,13 @@ pub fn inspect_raster_wkt(
     cancellation: &CancellationToken,
 ) -> Result<String, DenseRasterPrepError> {
     let output_path = raster.with_extension("gdalinfo.json");
-    let mut command = offline_gdal_command(gdalinfo);
-    command
-        .args([
-            "-json",
-            external_tool_argument(raster.to_string_lossy().as_ref()).as_str(),
-        ])
-        .stdin(Stdio::null())
-        .stdout(File::create(&output_path)?)
-        .stderr(Stdio::null());
-    let mut child = process_group::spawn(&mut command)?;
-    loop {
-        if cancellation.is_cancel_requested() {
-            let _ = child.terminate_and_wait();
-            return Err(DenseRasterPrepError::Cancelled);
-        }
-        if let Some(status) = child.try_wait()? {
-            if !status.success() {
-                return Err(DenseRasterPrepError::GdalFailed(status.code()));
-            }
-            break;
-        }
-        thread::sleep(POLL);
-    }
+    let arguments = vec!["-json".to_owned(), raster.to_string_lossy().into_owned()];
+    run_gdal_command(
+        gdalinfo,
+        &arguments,
+        Some(File::create(&output_path)?),
+        cancellation,
+    )?;
     let value: serde_json::Value = serde_json::from_slice(&fs::read(&output_path)?)
         .map_err(|error| DenseRasterPrepError::InvalidPly(error.to_string()))?;
     fs::remove_file(output_path)?;
@@ -1258,10 +1236,20 @@ fn run_owned_command(
     arguments: &[String],
     cancellation: &CancellationToken,
 ) -> Result<(), DenseRasterPrepError> {
+    run_gdal_command(executable, arguments, None, cancellation)
+}
+
+fn run_gdal_command(
+    executable: &Path,
+    arguments: &[String],
+    stdout_destination: Option<File>,
+    cancellation: &CancellationToken,
+) -> Result<(), DenseRasterPrepError> {
     let normalized_arguments = arguments
         .iter()
         .map(|argument| external_tool_argument(argument))
         .collect::<Vec<_>>();
+    let command_description = diagnostic_command(executable, &normalized_arguments);
     let mut command = offline_gdal_command(executable);
     command.args(&normalized_arguments);
     if let Some(parent) = executable.parent() {
@@ -1271,23 +1259,142 @@ fn run_owned_command(
     }
     command
         .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
     let mut child = process_group::spawn(&mut command)?;
+    let Some(stdout) = child.stdout.take() else {
+        let _ = child.terminate_and_wait();
+        return Err(DenseRasterPrepError::Io(std::io::Error::other(
+            "GDAL child did not expose its captured stdout",
+        )));
+    };
+    let Some(stderr) = child.stderr.take() else {
+        let _ = child.terminate_and_wait();
+        return Err(DenseRasterPrepError::Io(std::io::Error::other(
+            "GDAL child did not expose its captured stderr",
+        )));
+    };
+    let stdout_reader = spawn_output_reader(stdout, stdout_destination);
+    let stderr_reader = spawn_output_reader(stderr, None);
     loop {
         if cancellation.is_cancel_requested() {
             let _ = child.terminate_and_wait();
+            let _ = join_output_reader(stdout_reader);
+            let _ = join_output_reader(stderr_reader);
             return Err(DenseRasterPrepError::Cancelled);
         }
-        if let Some(status) = child.try_wait()? {
-            return if status.success() {
-                Ok(())
-            } else {
-                Err(DenseRasterPrepError::GdalFailed(status.code()))
-            };
+        let status = match child.try_wait() {
+            Ok(status) => status,
+            Err(error) => {
+                let _ = child.terminate_and_wait();
+                let _ = join_output_reader(stdout_reader);
+                let _ = join_output_reader(stderr_reader);
+                return Err(DenseRasterPrepError::Io(error));
+            }
+        };
+        if let Some(status) = status {
+            let stdout_result = join_output_reader(stdout_reader);
+            let stderr_result = join_output_reader(stderr_reader);
+            let _stdout_tail = stdout_result?;
+            let stderr_tail = stderr_result?;
+            if status.success() {
+                return Ok(());
+            }
+            return Err(DenseRasterPrepError::GdalFailed {
+                command: command_description,
+                code: status.code(),
+                stderr_tail: String::from_utf8_lossy(&stderr_tail).into_owned(),
+            });
         }
         thread::sleep(POLL);
     }
+}
+
+fn spawn_output_reader<R>(
+    mut reader: R,
+    mut destination: Option<File>,
+) -> thread::JoinHandle<std::io::Result<Vec<u8>>>
+where
+    R: Read + Send + 'static,
+{
+    thread::spawn(move || {
+        let mut tail = Vec::with_capacity(GDAL_OUTPUT_TAIL_BYTES);
+        let mut buffer = [0_u8; 8 * 1024];
+        loop {
+            let count = reader.read(&mut buffer)?;
+            if count == 0 {
+                break;
+            }
+            if let Some(writer) = destination.as_mut() {
+                writer.write_all(&buffer[..count])?;
+            }
+            extend_bounded_tail(&mut tail, &buffer[..count]);
+        }
+        if let Some(writer) = destination.as_mut() {
+            writer.flush()?;
+        }
+        Ok(tail)
+    })
+}
+
+fn join_output_reader(
+    reader: thread::JoinHandle<std::io::Result<Vec<u8>>>,
+) -> std::io::Result<Vec<u8>> {
+    reader
+        .join()
+        .map_err(|_| std::io::Error::other("GDAL output reader panicked"))?
+}
+
+fn extend_bounded_tail(tail: &mut Vec<u8>, bytes: &[u8]) {
+    if bytes.len() >= GDAL_OUTPUT_TAIL_BYTES {
+        tail.clear();
+        tail.extend_from_slice(&bytes[bytes.len() - GDAL_OUTPUT_TAIL_BYTES..]);
+        return;
+    }
+    let overflow = tail
+        .len()
+        .saturating_add(bytes.len())
+        .saturating_sub(GDAL_OUTPUT_TAIL_BYTES);
+    if overflow > 0 {
+        tail.drain(..overflow);
+    }
+    tail.extend_from_slice(bytes);
+}
+
+fn diagnostic_command(executable: &Path, arguments: &[String]) -> String {
+    std::iter::once(diagnostic_path(executable))
+        .chain(arguments.iter().map(|argument| {
+            let path = Path::new(argument);
+            if path.is_absolute() {
+                diagnostic_path(path)
+            } else {
+                argument.clone()
+            }
+        }))
+        .map(|argument| format!("{argument:?}"))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn diagnostic_path(path: &Path) -> String {
+    if let Some(project_root) = path.ancestors().find(|ancestor| {
+        ancestor
+            .extension()
+            .is_some_and(|extension| extension == "hcad")
+    }) {
+        let relative = path.strip_prefix(project_root).unwrap_or(path);
+        return if relative.as_os_str().is_empty() {
+            "<project>".into()
+        } else {
+            format!("<project>/{}", relative.to_string_lossy())
+        };
+    }
+    if let Ok(current) = std::env::current_dir() {
+        if let Ok(relative) = path.strip_prefix(current) {
+            return relative.to_string_lossy().into_owned();
+        }
+    }
+    path.to_string_lossy().into_owned()
 }
 
 fn offline_gdal_command(executable: &Path) -> Command {
@@ -1357,6 +1464,51 @@ mod tests {
             r"\\server\share\dense.csv"
         );
         assert_eq!(external_tool_argument("EPSG:31468"), "EPSG:31468");
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn gdal_failure_carries_command_code_and_stderr_verbatim() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let root =
+            std::env::temp_dir().join(format!("hcad-gdal-failure-{}-{nonce}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let executable = root.join("fake_gdal_failure");
+        fs::write(
+            &executable,
+            b"#!/bin/sh\nprintf 'captured stdout\\n'\nprintf 'known GDAL stderr line\\n' >&2\nexit 1\n",
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&executable).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&executable, permissions).unwrap();
+
+        let error = run_owned_command(
+            &executable,
+            &["--known-argument".into()],
+            &CancellationToken::new(),
+        )
+        .expect_err("fake GDAL command must fail");
+        match error {
+            DenseRasterPrepError::GdalFailed {
+                command,
+                code,
+                stderr_tail,
+            } => {
+                assert!(command.contains("fake_gdal_failure"));
+                assert!(command.contains("--known-argument"));
+                assert_eq!(code, Some(1));
+                assert_eq!(stderr_tail, "known GDAL stderr line\n");
+            }
+            other => panic!("unexpected error: {other}"),
+        }
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
