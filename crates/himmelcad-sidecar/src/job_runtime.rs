@@ -80,11 +80,18 @@ pub const GDAL_GRID_PREPARATION_STAGE: &str = "Rasterize DEM with gdal_grid";
 // which is approximately 750 bytes per actual resized pixel. A later measured
 // job may supply its observed calibration instead of this initial value.
 pub const BYTES_PER_ACTUAL_PIXEL: u64 = 750;
-/// WP-A7e X6 calibration for LightGlue's resident memory: twelve fp32
-/// attention-sized activation layers plus the fixed base reproduce both
-/// 2026-09-09 Sulzberg OOM incidents at 8,122 merged keypoints. Eight matcher
-/// threads reached 28.8 GB and 26.4 GB anon RSS; this model predicts 27.5 GB.
-pub const NEURAL_MATCHING_ATTENTION_LAYERS: u64 = 12;
+/// WP-A7k X6 calibration for LightGlue's resident memory: twenty-one fp32
+/// attention-sized activation layers plus the fixed base fit the measured one-
+/// and two-thread runs at 8,122 merged keypoints. The model deliberately
+/// over-predicts the incomplete and OOM-terminated higher-concurrency runs.
+///
+/// | Matcher threads | Observed peak | Model prediction |
+/// | ---: | ---: | ---: |
+/// | 1 | 6.0 GiB (WIN-07/WIN-09) | 5.81 GB |
+/// | 2 | 12.11 GB (smoke #5 attempt 2) | 11.62 GB |
+/// | 4 | at least 14.52 GB; killed at cap (smoke #5 attempt 1) | 23.24 GB |
+/// | 8 | 26.4–28.8 GB; kernel OOM kills (2026-09-09) | 46.48 GB |
+pub const NEURAL_MATCHING_ATTENTION_LAYERS: u64 = 21;
 pub const NEURAL_MATCHING_FIXED_BASE_BYTES: u64 = 256 * MIB;
 pub const SIFT_MATCHING_BYTES_PER_WORKER: u64 = 256 * MIB;
 // WP-A7 X6 policy: matching receives half the usable envelope so the sidecar,
@@ -4453,26 +4460,26 @@ mod tests {
         assert!((extraction as f64 / 1_000_000_000.0 - 15.7).abs() < 0.1);
 
         let matching = neural_matching_bytes_per_worker(8_122);
-        assert_eq!(matching, 3_434_845_888);
-        assert!((matching as f64 / 1_000_000_000.0 - 3.43).abs() / 3.43 < 0.01);
+        assert_eq!(matching, 5_809_653_712);
+        assert!((matching as f64 / 1_000_000_000.0 - 5.81).abs() / 5.81 < 0.01);
         let eight_threads = matching.saturating_mul(8);
-        assert_eq!(eight_threads, 27_478_767_104);
-        assert!((eight_threads as f64 / 1_000_000_000.0 - 27.5).abs() < 0.1);
+        assert_eq!(eight_threads, 46_477_229_696);
+        assert!((eight_threads as f64 / 1_000_000_000.0 - 46.5).abs() < 0.1);
     }
 
     #[test]
     fn matching_replan_caps_an_oversized_database_before_launch() {
         let replan = replan_alignment_matching(29 * GIB, 8, 24_000, 48_000)
             .expect("the planned 24k matcher unit fits");
-        assert_eq!(replan.keypoint_cap, 24_000);
+        assert_eq!(replan.keypoint_cap, 19_000);
         assert_eq!(replan.record.actual_max_keypoints, 48_000);
         assert_eq!(replan.record.matching_workers, 1);
-        assert_eq!(replan.record.matching_unit_bytes, 27_916_435_456);
+        assert_eq!(replan.record.matching_unit_bytes, 30_592_435_456);
         assert_eq!(
             replan.degradation,
             Some(PhotolabMemoryDegradation::MatchingKeypointsCapped {
                 from: 48_000,
-                to: 24_000,
+                to: 19_000,
             })
         );
     }
@@ -4481,16 +4488,27 @@ mod tests {
     fn sixteen_gib_caps_the_planned_24k_unit_to_the_largest_fitting_quantum() {
         let replan = replan_alignment_matching(16 * GIB, 8, 24_000, 48_000)
             .expect("a capped matcher unit fits 16 GiB");
-        assert_eq!(replan.keypoint_cap, 18_500);
+        assert_eq!(replan.keypoint_cap, 14_000);
         assert_eq!(replan.record.matching_workers, 1);
-        assert_eq!(replan.record.matching_unit_bytes, 16_696_435_456);
+        assert_eq!(replan.record.matching_unit_bytes, 16_732_435_456);
         assert_eq!(
             replan.degradation,
             Some(PhotolabMemoryDegradation::MatchingKeypointsCapped {
                 from: 48_000,
-                to: 18_500,
+                to: 14_000,
             })
         );
+    }
+
+    #[test]
+    fn windows_sixteen_gb_gate_keeps_the_observed_8_122_keypoints() {
+        let replan = replan_alignment_matching(10_660_000_000, 4, 24_000, 8_122)
+            .expect("one measured matcher thread fits the usable envelope");
+        assert_eq!(replan.keypoint_cap, 8_122);
+        assert_eq!(replan.record.actual_max_keypoints, 8_122);
+        assert_eq!(replan.record.matching_workers, 1);
+        assert_eq!(replan.record.matching_unit_bytes, 5_809_653_712);
+        assert_eq!(replan.degradation, None);
     }
 
     #[test]
@@ -4514,7 +4532,7 @@ mod tests {
                         PhotolabMatchingMemoryReplan {
                             actual_max_keypoints: 24_000,
                             matching_workers: 1,
-                            matching_unit_bytes: 27_916_435_456,
+                            matching_unit_bytes: 48_652_435_456,
                         },
                         24_000,
                         None,
@@ -4547,7 +4565,7 @@ mod tests {
             Some(PhotolabMatchingMemoryReplan {
                 actual_max_keypoints: 24_000,
                 matching_workers: 1,
-                matching_unit_bytes: 27_916_435_456,
+                matching_unit_bytes: 48_652_435_456,
             })
         );
         assert!(terminal.memory.degradations.contains(
@@ -4564,8 +4582,8 @@ mod tests {
         fast.usable_bytes = 29_100_000_000;
         fast.keypoints = 8_192;
         let fast_plan = plan_alignment_memory(&fast);
-        assert_eq!(fast_plan.matching_unit_bytes, 3_489_660_928);
-        assert_eq!(fast_plan.matching_workers, 4);
+        assert_eq!(fast_plan.matching_unit_bytes, 5_905_580_032);
+        assert_eq!(fast_plan.matching_workers, 2);
         assert!(fast_plan.memory.degradations.is_empty());
         let matching_stage = fast_plan
             .memory
@@ -4575,26 +4593,31 @@ mod tests {
             .expect("matching stage memory");
         assert_eq!(
             matching_stage.parameters.get("modelBytes"),
-            Some(&serde_json::json!(13_958_643_712_u64))
+            Some(&serde_json::json!(11_811_160_064_u64))
         );
 
         let mut quality = fast.clone();
         quality.keypoints = 24_000;
         let quality_plan = plan_alignment_memory(&quality);
-        assert_eq!(quality_plan.matching_unit_bytes, 27_916_435_456);
+        assert_eq!(quality_plan.matching_unit_bytes, 29_017_435_456);
         assert_eq!(quality_plan.matching_workers, 1);
-        assert_eq!(quality_plan.keypoints, 24_000);
-        assert!(quality_plan.memory.degradations.is_empty());
+        assert_eq!(quality_plan.keypoints, 18_500);
+        assert!(quality_plan.memory.degradations.contains(
+            &PhotolabMemoryDegradation::MatchingKeypointsCapped {
+                from: 24_000,
+                to: 18_500,
+            }
+        ));
 
         quality.usable_bytes = 16_000_000_000;
         let constrained = plan_alignment_memory(&quality);
-        assert_eq!(constrained.keypoints, 18_000);
-        assert_eq!(constrained.matching_unit_bytes, 15_820_435_456);
+        assert_eq!(constrained.keypoints, 13_500);
+        assert_eq!(constrained.matching_unit_bytes, 15_577_435_456);
         assert_eq!(constrained.matching_workers, 1);
         assert!(constrained.memory.degradations.contains(
             &PhotolabMemoryDegradation::MatchingKeypointsCapped {
                 from: 24_000,
-                to: 18_000,
+                to: 13_500,
             }
         ));
     }
@@ -4629,26 +4652,38 @@ mod tests {
     fn alignment_memory_plan_applies_time_before_quality() {
         // The 32 GB reference laptop: 31 GiB physical minus the 4 GiB reserve ≈ 27 GiB
         // usable — one full-resolution extraction (15.7 GB) fits once, so one worker,
-        // slower, with no quality degradation (owner S23).
+        // slower, before the independent matching-quality fit is applied (owner S23).
         let plan_laptop = plan_alignment_memory(&alignment_memory_request(27));
         assert_eq!(plan_laptop.extraction_workers, 1);
-        // The calibrated 24k unit occupies nearly the full envelope, so matching is sequential.
+        // The calibrated model preserves time-before-quality, then caps only because one 24k
+        // matching unit cannot fit the complete usable envelope.
         assert_eq!(plan_laptop.matching_workers, 1);
         assert_eq!(plan_laptop.extraction_edge, 8_192);
-        assert_eq!(plan_laptop.keypoints, 24_000);
+        assert_eq!(plan_laptop.keypoints, 18_000);
         assert_eq!(plan_laptop.extraction_tiling, None);
-        assert!(plan_laptop.memory.degradations.is_empty());
+        assert!(plan_laptop.memory.degradations.contains(
+            &PhotolabMemoryDegradation::MatchingKeypointsCapped {
+                from: 24_000,
+                to: 18_000,
+            }
+        ));
 
         // 32 GiB usable (≈ 36 GB machine): two extractions fit side by side; the calibrated
-        // 24k matcher remains sequential. No fixed worker cap (owner S23).
+        // 24k matcher remains sequential and is capped only enough for one unit to fit.
+        // There is no fixed worker cap (owner S23).
         let plan_32 = plan_alignment_memory(&alignment_memory_request(32));
         assert_eq!(plan_32.extraction_workers, 2);
         assert_eq!(plan_32.matching_workers, 1);
         assert!(plan_32.sequential_pair_batches);
         assert_eq!(plan_32.extraction_edge, 8_192);
-        assert_eq!(plan_32.keypoints, 24_000);
+        assert_eq!(plan_32.keypoints, 20_000);
         assert_eq!(plan_32.extraction_tiling, None);
-        assert!(plan_32.memory.degradations.is_empty());
+        assert!(plan_32.memory.degradations.contains(
+            &PhotolabMemoryDegradation::MatchingKeypointsCapped {
+                from: 24_000,
+                to: 20_000,
+            }
+        ));
 
         // 64 GB class (56 GiB usable): three extraction workers, still no degradation —
         // more memory only buys time.
@@ -4665,12 +4700,12 @@ mod tests {
         assert_eq!(plan_16.matching_workers, 1);
         assert!(plan_16.sequential_pair_batches);
         assert_eq!(plan_16.extraction_edge, 8_192);
-        assert_eq!(plan_16.keypoints, 18_500);
+        assert_eq!(plan_16.keypoints, 14_000);
         assert_eq!(plan_16.extraction_tiling, None);
         assert!(plan_16.memory.degradations.contains(
             &PhotolabMemoryDegradation::MatchingKeypointsCapped {
                 from: 24_000,
-                to: 18_500,
+                to: 14_000,
             }
         ));
 
@@ -4685,7 +4720,7 @@ mod tests {
         assert_eq!(plan_gate.matching_workers, 1);
         assert!(plan_gate.sequential_pair_batches);
         assert_eq!(plan_gate.extraction_edge, 8_192);
-        assert_eq!(plan_gate.keypoints, 14_500);
+        assert_eq!(plan_gate.keypoints, 11_000);
         assert_eq!(
             plan_gate.extraction_tiling,
             Some(AlignmentExtractionTiling {
@@ -4705,7 +4740,7 @@ mod tests {
         assert!(plan_gate.memory.degradations.contains(
             &PhotolabMemoryDegradation::MatchingKeypointsCapped {
                 from: 24_000,
-                to: 14_500,
+                to: 11_000,
             }
         ));
 
@@ -4714,12 +4749,12 @@ mod tests {
         assert_eq!(plan_8.matching_workers, 1);
         assert!(plan_8.sequential_pair_batches);
         assert_eq!(plan_8.extraction_edge, 8_192);
-        assert_eq!(plan_8.keypoints, 13_000);
+        assert_eq!(plan_8.keypoints, 9_500);
         assert_eq!(plan_8.extraction_tiling.expect("tiled extraction").tiles, 2);
         assert!(plan_8.memory.degradations.contains(
             &PhotolabMemoryDegradation::MatchingKeypointsCapped {
                 from: 24_000,
-                to: 13_000,
+                to: 9_500,
             }
         ));
     }

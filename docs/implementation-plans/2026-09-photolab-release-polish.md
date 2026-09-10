@@ -742,6 +742,26 @@ threads for 8,122 keypoints per image. READY FOR SMOKE with unit
 and either success at a bounded thread count or the typed matching-memory
 refusal, never a unit-level kill.
 
+### WP-A7k — Recalibrate the LightGlue per-thread model (Size S)
+
+Implemented 2026-09-10 (unit verification complete): the LightGlue resident
+model now uses 21 fp32 attention-layer units plus the existing 256 MiB fixed
+base. At 8,122 keypoints this predicts 5.81 GB per matcher thread, fitting the
+completed one- and two-thread runs; the deliberately conservative linear model
+over-predicts the terminated higher-concurrency runs. The 29.1 GB usable
+reference machine now plans two matcher workers at the 8,192-keypoint fast cap.
+The 16 GB gate machine's 10.66 GB usable envelope still admits its observed
+8,122-keypoint database without a quality cap and runs one thread. This removes
+the avoidable 4→2 retry and its roughly 15-minute alignment penalty while the
+A7f retry ladder remains the bounded recovery path for future variance.
+
+| Matcher threads |        Observed peak at 8,122 keypoints | 21-layer model | Interpretation                            |
+| --------------: | --------------------------------------: | -------------: | ----------------------------------------- |
+|               1 |             6.0 GiB (WIN-07 and WIN-09) |        5.81 GB | Calibration point                         |
+|               2 |    12.11 GB (Linux smoke #5, attempt 2) |       11.62 GB | Calibration point; completed              |
+|               4 | at least 14.52 GB (smoke #5, attempt 1) |       23.24 GB | Killed at its cap; true peak unknown      |
+|               8 |      26.4–28.8 GB (two 2026-09-09 runs) |       46.48 GB | Kernel OOM kills; conservative prediction |
+
 ### WP-A7g — Engage the per-worker cgroup scope inside a user unit (Size S)
 
 Implemented 2026-09-10 (working tree, no commit; host-unit verification blocked
