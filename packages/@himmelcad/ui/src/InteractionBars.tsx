@@ -19,6 +19,11 @@ export interface ViewportBottomBarProps {
   readonly onViewModeChange: (value: DisplayViewMode) => void;
   readonly onSelectableKindChange: (kind: string, value: boolean) => void;
   readonly onLabelsChange: (value: boolean) => void;
+  readonly renderer?: {
+    readonly label: string;
+    readonly title: string;
+    readonly degraded: boolean;
+  };
 }
 
 export function ViewportBottomBar({
@@ -28,12 +33,24 @@ export function ViewportBottomBar({
   onViewModeChange,
   onSelectableKindChange,
   onLabelsChange,
+  renderer,
 }: ViewportBottomBarProps): JSX.Element {
   const [kindsOpen, setKindsOpen] = useState(false);
   const kindsMenuId = useId();
   return (
     <div className={styles.bottomBar} role="toolbar" aria-label="Viewport display and selection">
       <div className={styles.leftCluster}>
+        {renderer ? (
+          <Tooltip content={renderer.title}>
+            <span
+              className={styles.rendererChip}
+              data-degraded={renderer.degraded || undefined}
+              tabIndex={0}
+            >
+              {renderer.label}
+            </span>
+          </Tooltip>
+        ) : null}
         <ToggleIconButton
           label="Support points and lines"
           pressed={state.supportGeometry}

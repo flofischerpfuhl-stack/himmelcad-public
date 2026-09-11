@@ -366,6 +366,13 @@ export function dispatchEntityTreeCommand(
     return;
   }
   if (!handlers.onContextAction) return;
+  if (handlers.productId !== undefined) {
+    (handlers.onContextAction as EntityTreeContextAction)(
+      commandId,
+      target.entityIds as readonly EntityId[],
+    );
+    return;
+  }
   const legacyAction =
     commandId === 'entity.export'
       ? 'export'
@@ -377,12 +384,6 @@ export function dispatchEntityTreeCommand(
   if (legacyAction) {
     (handlers.onContextAction as LegacyEntityTreeContextAction)(contextId, legacyAction);
     return;
-  }
-  if (handlers.productId !== undefined) {
-    (handlers.onContextAction as EntityTreeContextAction)(
-      commandId,
-      target.entityIds as readonly EntityId[],
-    );
   }
 }
 

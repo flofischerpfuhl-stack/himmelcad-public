@@ -2,6 +2,7 @@ import { KernelCameraController } from './KernelCameraController.js';
 import { KernelDecodeWorkerPool } from './KernelDecodeWorkerPool.js';
 import {
   KernelFrameDiagnostics,
+  type KernelBackendFallbackTelemetry,
   type KernelDeadlineReasonCode,
   type KernelDiagnosticsSampleRequest,
   type KernelDiagnosticsSampleResult,
@@ -97,7 +98,8 @@ export type KernelViewerSessionErrorCode =
   | 'deviceRecoveryFailed'
   | 'disposed'
   | 'frameFailed'
-  | 'loadFailed';
+  | 'loadFailed'
+  | 'softwareRenderingRequired';
 
 /** Stable typed error boundary exposed to product hosts. */
 export class KernelViewerSessionError extends Error {
@@ -125,6 +127,7 @@ export type KernelViewerSessionEvent =
       readonly reason: 'deviceLost' | 'outOfMemory';
     }
   | { readonly type: 'deviceRecoveryCompleted' }
+  | { readonly type: 'backendFallback'; readonly fallback: KernelBackendFallbackTelemetry }
   | {
       readonly type: 'loadProgress';
       readonly operationId: string;
@@ -139,6 +142,12 @@ export interface KernelViewerSessionOptions {
   readonly canvas: HTMLCanvasElement;
   readonly wasmLoader: HimmelcadViewerWasmLoader;
   readonly backend?: KernelBackendPreference;
+  /** Opt-in host policy. Omitted hosts retain the historical single-attempt behavior. */
+  readonly backendFallback?: {
+    readonly enabled: true;
+    readonly softwareRendering?: boolean;
+    readonly startupFallback?: Omit<KernelBackendFallbackTelemetry, 'type' | 'timestampMs'>;
+  };
   readonly initialWidth?: number;
   readonly initialHeight?: number;
   readonly inventory?: KernelHardwareInventory;
@@ -160,6 +169,7 @@ export interface KernelViewerLoadOptions extends KernelLoadOperationOptions {
 }
 
 export interface KernelViewerSessionDiagnostics {
+  readonly backend: KernelRendererBackend;
   readonly capabilities: KernelDeviceCapabilities;
   readonly hardwarePolicy: KernelResolvedHardwarePolicy;
   readonly frontierBudget: KernelFrontierBudget;
@@ -171,6 +181,62 @@ export interface KernelViewerSessionDiagnostics {
   readonly gpuFrameTiming: KernelGpuFrameTimingDiagnostics;
   readonly recoveringDevice: boolean;
   readonly deviceGeneration: number;
+}
+
+export type KernelRendererBackend = 'webgpu' | 'webgl2' | 'software';
+
+export interface KernelBackendCreationResult<T> {
+  readonly value: T;
+  readonly backend: KernelRendererBackend;
+  readonly fallbacks: readonly Omit<KernelBackendFallbackTelemetry, 'type' | 'timestampMs'>[];
+}
+
+/** Pure async fallback ladder used by the session and mockable without WASM or a browser GPU. */
+export async function createKernelBackendWithFallback<T>(
+  create: (backend: Exclude<KernelBackendPreference, 'automatic'>) => Promise<T>,
+  options: {
+    readonly initialBackend: KernelBackendPreference;
+    readonly softwareRendering?: boolean;
+    readonly currentBackendAlreadyFailed?: boolean;
+  },
+): Promise<KernelBackendCreationResult<T>> {
+  const softwareRendering = options.softwareRendering === true;
+  const initial = softwareRendering || options.initialBackend === 'webgl2' ? 'webgl2' : 'webgpu';
+  const order: readonly ('webgpu' | 'webgl2')[] =
+    initial === 'webgpu' ? ['webgpu', 'webgl2'] : ['webgl2'];
+  const fallbacks: Omit<KernelBackendFallbackTelemetry, 'type' | 'timestampMs'>[] = [];
+  let lastError: unknown = new Error('viewer surface creation failed');
+  for (const [index, backend] of order.entries()) {
+    const attempts = index === 0 && options.currentBackendAlreadyFailed === true ? 1 : 2;
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      try {
+        return {
+          value: await create(backend),
+          backend: softwareRendering ? 'software' : backend,
+          fallbacks: Object.freeze([...fallbacks]),
+        };
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    const next = order[index + 1];
+    if (next === 'webgl2') {
+      fallbacks.push({ from: backend, to: next, reason: errorMessage(lastError) });
+    }
+  }
+  if (!softwareRendering) {
+    const fallback = {
+      from: 'webgl2' as const,
+      to: 'software' as const,
+      reason: errorMessage(lastError),
+    };
+    throw new KernelViewerSessionError(
+      'softwareRenderingRequired',
+      `Software rendering is required: ${fallback.reason}`,
+      { cause: lastError },
+    );
+  }
+  throw lastError;
 }
 
 export type KernelQualityTier = 'full' | 'balanced' | 'coarse' | 'minimum';
@@ -226,13 +292,39 @@ export class KernelViewerSession {
     let viewer: WgpuKernelViewer | null = null;
     let streaming: KernelStreamingDriver | null = null;
     try {
-      viewer = await WgpuKernelViewer.create(
-        options.canvas,
-        options.wasmLoader,
-        options.initialWidth,
-        options.initialHeight,
-        options.backend,
-      );
+      const creation: KernelBackendCreationResult<WgpuKernelViewer> = options.backendFallback
+        ?.enabled
+        ? await createKernelBackendWithFallback(
+            (backend) =>
+              WgpuKernelViewer.create(
+                options.canvas,
+                options.wasmLoader,
+                options.initialWidth,
+                options.initialHeight,
+                backend,
+              ),
+            {
+              initialBackend: options.backend ?? 'automatic',
+              ...(options.backendFallback.softwareRendering === undefined
+                ? {}
+                : { softwareRendering: options.backendFallback.softwareRendering }),
+            },
+          )
+        : await (async (): Promise<KernelBackendCreationResult<WgpuKernelViewer>> => {
+            const value = await WgpuKernelViewer.create(
+              options.canvas,
+              options.wasmLoader,
+              options.initialWidth,
+              options.initialHeight,
+              options.backend,
+            );
+            return {
+              value,
+              backend: browserBackendFromCapabilities(value.capabilities),
+              fallbacks: [],
+            };
+          })();
+      viewer = creation.value;
       options.signal?.throwIfAborted();
       const inventory = options.inventory ?? browserHardwareInventory();
       const policy = viewer.resolveHardwarePolicy(inventory);
@@ -246,6 +338,10 @@ export class KernelViewerSession {
       );
       streaming.setRuntimeLimits(policy);
       const session = new KernelViewerSession(options, viewer, streaming, inventory, policy);
+      for (const fallback of creation.fallbacks) session.recordBackendFallback(fallback);
+      if (options.backendFallback?.startupFallback) {
+        session.recordBackendFallback(options.backendFallback.startupFallback);
+      }
       viewer.attachClipCapCoordinator(streaming, {
         tolerance: options.authoritativeSectionTolerance ?? 0.001,
         ...(options.requestFrame ? { requestFrame: options.requestFrame } : {}),
@@ -261,6 +357,7 @@ export class KernelViewerSession {
           cause: error,
         });
       }
+      if (error instanceof KernelViewerSessionError) throw error;
       throw new KernelViewerSessionError('creationFailed', 'viewer session creation failed', {
         cause: error,
       });
@@ -279,6 +376,8 @@ export class KernelViewerSession {
   private recovery: Promise<void> | null = null;
   private recoveryAbort: AbortController | null = null;
   private recoveryReason: 'deviceLost' | 'outOfMemory' | null = null;
+  private recoveryBackend: KernelBackendPreference | null = null;
+  private recoveryFailed = false;
   private nextOperationId = 1;
   private deviceGeneration = 1;
   private navigationState: KernelNavigationController | null = null;
@@ -907,10 +1006,38 @@ export class KernelViewerSession {
     });
   }
 
+  /** Electron host signal for a lost GPU process; recovery never mutates canonical scene truth. */
+  recoverFromGpuProcessLoss(
+    reason: string,
+    action: 'retryCurrent' | 'fallbackWebgl2' = 'retryCurrent',
+  ): boolean {
+    this.assertAlive();
+    if (!reason.trim() || this.recovery !== null || this.recoveryReason !== null) return false;
+    if (this.rendererBackend === 'software') return false;
+    this.recoveryBackend =
+      action === 'fallbackWebgl2'
+        ? 'webgl2'
+        : this.rendererBackend === 'webgl2'
+          ? 'webgl2'
+          : 'webgpu';
+    if (action === 'fallbackWebgl2' && this.rendererBackend === 'webgpu') {
+      this.recordBackendFallback({ from: 'webgpu', to: 'webgl2', reason });
+    }
+    this.recoveryReason = 'deviceLost';
+    this.startDeviceRecovery(reason);
+    return true;
+  }
+
+  get rendererBackend(): KernelRendererBackend {
+    this.assertAlive();
+    if (this.options.backendFallback?.softwareRendering === true) return 'software';
+    return browserBackendFromCapabilities(this.viewerState.capabilities);
+  }
+
   frame(interacting = false, animationFrameTimestampMs?: number): KernelFrameOutcome {
     this.assertAlive();
     if (this.recoveryReason !== null) {
-      this.startDeviceRecovery();
+      this.startDeviceRecovery(this.recoveryReason);
       return { status: 'recreateDevice', reason: this.recoveryReason };
     }
     const started = performance.now();
@@ -968,10 +1095,21 @@ export class KernelViewerSession {
       const cpuEncodeMs = performance.now() - encodeStarted;
       if (outcome.status === 'presented') this.resolvePresentedFrameWaiters(outcome);
       this.emit({ type: 'frame', outcome });
-      if (outcome.status === 'recreateSurface') this.viewerState.recoverSurface();
+      if (outcome.status === 'recreateSurface') {
+        try {
+          this.viewerState.recoverSurface();
+        } catch (error) {
+          const reason = `Surface recovery failed: ${errorMessage(error)}`;
+          this.recoveryBackend = this.rendererBackend === 'webgl2' ? 'webgl2' : 'webgpu';
+          this.recoveryReason = 'deviceLost';
+          this.startDeviceRecovery(reason);
+          return { status: 'recreateDevice', reason: 'deviceLost' };
+        }
+      }
       if (outcome.status === 'recreateDevice') {
+        this.recoveryBackend = this.rendererBackend === 'webgl2' ? 'webgl2' : 'webgpu';
         this.recoveryReason = outcome.reason;
-        this.startDeviceRecovery();
+        this.startDeviceRecovery(outcome.reason);
         return outcome;
       }
       const presentTimestampMs = outcome.status === 'presented' ? performance.now() : null;
@@ -1121,6 +1259,7 @@ export class KernelViewerSession {
   diagnostics(): KernelViewerSessionDiagnostics {
     this.assertAlive();
     return {
+      backend: this.rendererBackend,
       capabilities: this.viewerState.capabilities,
       hardwarePolicy: this.policyState,
       frontierBudget: this.policyState.frontier,
@@ -1213,8 +1352,14 @@ export class KernelViewerSession {
     }
   }
 
-  private startDeviceRecovery(): void {
-    if (this.recovery !== null || this.recoveryReason === null || this.disposed) return;
+  private startDeviceRecovery(failureReason: string): void {
+    if (
+      this.recovery !== null ||
+      this.recoveryReason === null ||
+      this.recoveryFailed ||
+      this.disposed
+    )
+      return;
     const reason = this.recoveryReason;
     const oldViewer = this.viewerState;
     const oldStreaming = this.streamingState;
@@ -1225,13 +1370,51 @@ export class KernelViewerSession {
     oldStreaming.dispose();
     this.emit({ type: 'deviceRecoveryStarted', reason });
     this.recovery = (async () => {
-      const created = await WgpuKernelViewer.create(
-        this.options.canvas,
-        this.options.wasmLoader,
-        undefined,
-        undefined,
-        this.options.backend,
-      );
+      const initialBackend =
+        this.recoveryBackend ??
+        (this.rendererBackend === 'webgl2' || this.rendererBackend === 'software'
+          ? 'webgl2'
+          : 'webgpu');
+      const creation: KernelBackendCreationResult<WgpuKernelViewer> = this.options.backendFallback
+        ?.enabled
+        ? await createKernelBackendWithFallback(
+            (backend) =>
+              WgpuKernelViewer.create(
+                this.options.canvas,
+                this.options.wasmLoader,
+                undefined,
+                undefined,
+                backend,
+              ),
+            {
+              initialBackend,
+              ...(this.options.backendFallback.softwareRendering === undefined
+                ? {}
+                : { softwareRendering: this.options.backendFallback.softwareRendering }),
+              currentBackendAlreadyFailed: true,
+            },
+          )
+        : await (async (): Promise<KernelBackendCreationResult<WgpuKernelViewer>> => {
+            const value = await WgpuKernelViewer.create(
+              this.options.canvas,
+              this.options.wasmLoader,
+              undefined,
+              undefined,
+              this.options.backend,
+            );
+            return {
+              value,
+              backend: browserBackendFromCapabilities(value.capabilities),
+              fallbacks: [],
+            };
+          })();
+      const created = creation.value;
+      for (const fallback of creation.fallbacks) {
+        this.recordBackendFallback({
+          ...fallback,
+          reason: fallback.reason || failureReason,
+        });
+      }
       if (this.disposed || abort.signal.aborted) {
         created.dispose();
         return;
@@ -1272,6 +1455,8 @@ export class KernelViewerSession {
       this.calibrationComplete = false;
       created.beginHardwareCalibration();
       this.recoveryReason = null;
+      this.recoveryBackend = null;
+      this.recoveryFailed = false;
       oldViewer.dispose();
       this.navigationState?.setEnabled(true);
       this.emit({ type: 'hardwarePolicy', policy });
@@ -1280,13 +1465,28 @@ export class KernelViewerSession {
     })()
       .catch((error) => {
         if (!this.disposed && !abort.signal.aborted) {
-          this.reportError('deviceRecoveryFailed', error);
+          this.recoveryFailed = true;
+          if (
+            error instanceof KernelViewerSessionError &&
+            error.code === 'softwareRenderingRequired'
+          ) {
+            this.emit({ type: 'error', error });
+          } else {
+            this.reportError('deviceRecoveryFailed', error);
+          }
         }
       })
       .finally(() => {
         this.recovery = null;
         this.recoveryAbort = null;
       });
+  }
+
+  private recordBackendFallback(
+    fallback: Omit<KernelBackendFallbackTelemetry, 'type' | 'timestampMs'>,
+  ): void {
+    const recorded = this.frameDiagnosticsState.recordBackendFallback(fallback);
+    this.emit({ type: 'backendFallback', fallback: recorded });
   }
 
   private async loadProvider<T>(
@@ -1485,6 +1685,14 @@ function extendedQuality(quality: KernelRuntimeQualityState): ExtendedQualityFie
         ? Math.max(0, Math.min(1, value.budgetScale))
         : 1,
   };
+}
+
+function browserBackendFromCapabilities(
+  capabilities: KernelDeviceCapabilities,
+): Exclude<KernelRendererBackend, 'software'> {
+  return capabilities.backend === 'webGl2' || capabilities.backend === 'openGl'
+    ? 'webgl2'
+    : 'webgpu';
 }
 
 function effectiveFrontierBudget(

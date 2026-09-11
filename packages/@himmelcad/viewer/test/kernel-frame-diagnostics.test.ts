@@ -108,6 +108,25 @@ void test('V-05 effect and quality-tier telemetry remain in the V-01 frame ring'
   ]);
 });
 
+void test('V-01 telemetry records renderer backend fallbacks with their reason', () => {
+  const diagnostics = new KernelFrameDiagnostics();
+  diagnostics.recordBackendFallback({
+    from: 'webgpu',
+    to: 'webgl2',
+    reason: 'surface creation failed',
+    timestampMs: 10,
+  });
+  assert.deepEqual(diagnostics.snapshot().backendFallbacks, [
+    {
+      type: 'backend.fallback',
+      from: 'webgpu',
+      to: 'webgl2',
+      reason: 'surface creation failed',
+      timestampMs: 10,
+    },
+  ]);
+});
+
 void test('G-VC-MEASURE puts synthetic present pauses and GPU load in tail fields, not CPU render time', () => {
   const diagnostics = new KernelFrameDiagnostics();
   for (let index = 1; index <= 100; index += 1) {

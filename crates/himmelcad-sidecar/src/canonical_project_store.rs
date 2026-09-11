@@ -808,25 +808,37 @@ impl CanonicalProjectStore {
         object_hash: &ObjectHash,
         destination: impl AsRef<Path>,
     ) -> Result<(), CanonicalProjectStoreError> {
+        self.materialize_object_with_progress(object_hash, destination, None, &mut |_| true)
+    }
+
+    /// Materializes one immutable object for bounded sidecar work while
+    /// publishing verification progress and observing cancellation. A
+    /// successful hard link is verified exactly once through the destination;
+    /// hashing both names would read the same multi-gigabyte inode twice.
+    pub fn materialize_object_with_progress(
+        &self,
+        object_hash: &ObjectHash,
+        destination: impl AsRef<Path>,
+        expected_length: Option<u64>,
+        progress: &mut dyn FnMut(u64) -> bool,
+    ) -> Result<(), CanonicalProjectStoreError> {
         let source = self.object_source_path(object_hash)?;
-        verify_file(&source, object_hash, None)?;
-        let destination = destination.as_ref();
-        let parent = destination
-            .parent()
-            .ok_or(CanonicalProjectStoreError::UnsafeArtifactSource)?;
-        fs::create_dir_all(parent)?;
-        if destination.exists() {
-            verify_file(destination, object_hash, None)?;
-            return Ok(());
-        }
-        match fs::hard_link(&source, destination) {
-            Ok(()) => {}
-            Err(error) if error.kind() == io::ErrorKind::CrossesDevices => {
-                fs::copy(&source, destination)?;
-            }
-            Err(error) => return Err(error.into()),
-        }
-        verify_file(destination, object_hash, None)
+        materialize_verified_path_with_progress(
+            &source,
+            destination.as_ref(),
+            object_hash,
+            expected_length,
+            progress,
+        )
+    }
+
+    /// Resolves a validated CAS object for host-side materialization. The path
+    /// remains inside the sidecar and is never part of the renderer protocol.
+    pub fn object_path_for_materialization(
+        &self,
+        object_hash: &ObjectHash,
+    ) -> Result<PathBuf, CanonicalProjectStoreError> {
+        self.object_source_path(object_hash)
     }
 
     /// Reads the semantic media type and exact byte length of an object written
@@ -2087,6 +2099,103 @@ fn copy_new_verified_with_progress(
     Ok(())
 }
 
+/// Materializes and verifies a resolved CAS object without retaining the
+/// canonical runtime lock during multi-gigabyte I/O.
+pub fn materialize_verified_path_with_progress(
+    source: &Path,
+    destination: &Path,
+    expected_hash: &ObjectHash,
+    expected_length: Option<u64>,
+    progress: &mut dyn FnMut(u64) -> bool,
+) -> Result<(), CanonicalProjectStoreError> {
+    let parent = destination
+        .parent()
+        .ok_or(CanonicalProjectStoreError::UnsafeArtifactSource)?;
+    fs::create_dir_all(parent)?;
+    if destination.exists() {
+        verify_file_with_progress(destination, expected_hash, expected_length, progress)?;
+        return Ok(());
+    }
+    match fs::hard_link(source, destination) {
+        Ok(()) => {
+            if let Err(error) =
+                verify_file_with_progress(destination, expected_hash, expected_length, progress)
+            {
+                let _ = fs::remove_file(destination);
+                return Err(error);
+            }
+        }
+        Err(error) if error.kind() == io::ErrorKind::CrossesDevices => {
+            copy_new_verified_with_progress(
+                source,
+                destination,
+                expected_hash,
+                expected_length,
+                progress,
+            )?;
+        }
+        Err(error) => return Err(error.into()),
+    }
+    Ok(())
+}
+
+/// Pins an already-verified canonical CAS inode for read-only work. A same-
+/// filesystem hard link does not duplicate bytes and therefore must not
+/// trigger another multi-gigabyte hash pass. Cross-device fallback still
+/// copies and verifies in one cancellable pass.
+pub fn pin_canonical_object_with_progress(
+    source: &Path,
+    destination: &Path,
+    expected_hash: &ObjectHash,
+    expected_length: u64,
+    progress: &mut dyn FnMut(u64) -> bool,
+) -> Result<(), CanonicalProjectStoreError> {
+    let parent = destination
+        .parent()
+        .ok_or(CanonicalProjectStoreError::UnsafeArtifactSource)?;
+    fs::create_dir_all(parent)?;
+    if destination.exists() {
+        let observed = fs::metadata(destination)?.len();
+        if observed != expected_length {
+            return Err(CanonicalProjectStoreError::ObjectLengthMismatch {
+                expected: expected_length,
+                observed,
+            });
+        }
+        if !progress(observed) {
+            return Err(CanonicalProjectStoreError::ImportCancelled);
+        }
+        return Ok(());
+    }
+    match fs::hard_link(source, destination) {
+        Ok(()) => {
+            let observed = fs::metadata(destination)?.len();
+            if observed != expected_length {
+                let _ = fs::remove_file(destination);
+                return Err(CanonicalProjectStoreError::ObjectLengthMismatch {
+                    expected: expected_length,
+                    observed,
+                });
+            }
+            if !progress(observed) {
+                let _ = fs::remove_file(destination);
+                return Err(CanonicalProjectStoreError::ImportCancelled);
+            }
+        }
+        Err(error) if error.kind() == io::ErrorKind::CrossesDevices => {
+            copy_new_verified_with_progress(
+                source,
+                destination,
+                expected_hash,
+                Some(expected_length),
+                progress,
+            )?;
+        }
+        Err(error) => return Err(error.into()),
+    }
+    Ok(())
+}
+
 fn verify_file(
     path: &Path,
     expected_hash: &ObjectHash,
@@ -3252,6 +3361,54 @@ mod tests {
         assert_eq!(bytes, b"null");
         assert_eq!(fs::read(&path).expect("replacement path"), b"evil");
         drop(source);
+        drop(store);
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn pointcloud_ground_capture_reports_bytes_and_cancels_inside_verification() {
+        let root = temp_project("pointcloud-ground-capture");
+        let store = CanonicalProjectStore::open(&root).expect("open store");
+        let bytes = vec![7_u8; 3 * 1024 * 1024];
+        let hash = ObjectHash::of_bytes(&bytes);
+        store
+            .put_immutable_bytes(&hash, &bytes)
+            .expect("publish source object");
+
+        let cancelled_destination = root.join("capture-cancelled/octree.bin");
+        let mut cancelled_after = 0_u64;
+        let error = store
+            .materialize_object_with_progress(
+                &hash,
+                &cancelled_destination,
+                Some(bytes.len() as u64),
+                &mut |chunk| {
+                    cancelled_after = cancelled_after.saturating_add(chunk);
+                    cancelled_after < 2 * 1024 * 1024
+                },
+            )
+            .expect_err("capture must observe cancellation");
+        assert!(matches!(error, CanonicalProjectStoreError::ImportCancelled));
+        assert!(!cancelled_destination.exists());
+
+        let completed_destination = root.join("capture-complete/octree.bin");
+        let mut verified_bytes = 0_u64;
+        store
+            .materialize_object_with_progress(
+                &hash,
+                &completed_destination,
+                Some(bytes.len() as u64),
+                &mut |chunk| {
+                    verified_bytes = verified_bytes.saturating_add(chunk);
+                    true
+                },
+            )
+            .expect("capture source once");
+        assert_eq!(verified_bytes, bytes.len() as u64);
+        assert_eq!(
+            fs::read(completed_destination).expect("captured bytes"),
+            bytes
+        );
         drop(store);
         fs::remove_dir_all(root).expect("cleanup");
     }

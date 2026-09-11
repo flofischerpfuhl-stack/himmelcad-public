@@ -3,6 +3,22 @@ import type { AgentHarnessHostTransport } from '@himmelcad/agent/src/transport.j
 import type { ProviderCredentialRendererTransport } from '@himmelcad/agent/src/providerCredentials.js';
 import type { AppJob, JobEvent, RegisterJobInput } from '@himmelcad/app';
 
+type BuilderRendererStatus =
+  | { readonly mode: 'hardware' }
+  | {
+      readonly mode: 'software';
+      readonly from: 'webgl2';
+      readonly reason: string;
+      readonly gpu: string;
+      readonly driver: string;
+      readonly decidedAt: string;
+    };
+
+export interface BuilderGpuProcessLoss {
+  readonly action: 'retryCurrent' | 'fallbackWebgl2';
+  readonly reason: string;
+}
+
 export interface BuilderResidencyBootstrap {
   readonly schemaVersion: 1;
   readonly generation: number;
@@ -53,6 +69,13 @@ export interface HimmelCADApi {
     closeReady: () => Promise<void>;
     isMaximized: () => Promise<boolean>;
     onMaximizeChange: (cb: (m: boolean) => void) => () => void;
+  };
+  readonly renderer: {
+    readonly launchStatus: BuilderRendererStatus;
+    status: () => Promise<BuilderRendererStatus>;
+    requestSoftwareFallback: (reason: string) => Promise<boolean>;
+    tryHardwareAgain: () => Promise<boolean>;
+    onGpuProcessGone: (listener: (loss: BuilderGpuProcessLoss) => void) => () => void;
   };
   readonly sidecar: {
     status: () => Promise<boolean>;
@@ -210,6 +233,8 @@ export interface ArchiveSummary {
   readonly path: string;
 }
 
+const launchRendererStatus = ipcRenderer.sendSync('renderer:status-sync') as BuilderRendererStatus;
+
 const api: HimmelCADApi = {
   version: '0.0.0',
   platform: process.platform,
@@ -223,6 +248,17 @@ const api: HimmelCADApi = {
       const listener = (_e: unknown, m: boolean): void => cb(m);
       ipcRenderer.on('window:maximize-changed', listener);
       return () => ipcRenderer.off('window:maximize-changed', listener);
+    },
+  },
+  renderer: {
+    launchStatus: launchRendererStatus,
+    status: () => ipcRenderer.invoke('renderer:status'),
+    requestSoftwareFallback: (reason) => ipcRenderer.invoke('renderer:software-required', reason),
+    tryHardwareAgain: () => ipcRenderer.invoke('renderer:try-hardware-again'),
+    onGpuProcessGone: (listener) => {
+      const ipcListener = (_event: unknown, loss: BuilderGpuProcessLoss): void => listener(loss);
+      ipcRenderer.on('renderer:gpu-process-gone', ipcListener);
+      return () => ipcRenderer.off('renderer:gpu-process-gone', ipcListener);
     },
   },
   sidecar: {

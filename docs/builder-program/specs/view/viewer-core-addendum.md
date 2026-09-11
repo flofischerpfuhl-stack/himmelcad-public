@@ -460,10 +460,12 @@ it does not permit changing content equivalence or hiding the result.
 
 ## 6. Registry/automation additions
 
-| Id                      | Access                                    | Surface                                           | Perf class          | Automation                                                         | Status                                                      |
-| ----------------------- | ----------------------------------------- | ------------------------------------------------- | ------------------- | ------------------------------------------------------------------ | ----------------------------------------------------------- |
-| `view.quality-governor` | R C A                                     | View ▸ Diagnostics HUD detail / read-only popover | continuous observer | `view.quality_governor.get`                                        | specified; missing; view-local/effective state, no history  |
-| `view.transition-3d-2d` | existing `view.mode` controls; Escape C A | View ▸ Camera / viewport camera blend             | continuous          | `view.transition_3d_2d.get/cancel`; start remains `view.state.set` | specified; current blend partial; no duplicate mode command |
+| Id                           | Access                                    | Surface                                           | Perf class          | Automation                                                         | Status                                                      |
+| ---------------------------- | ----------------------------------------- | ------------------------------------------------- | ------------------- | ------------------------------------------------------------------ | ----------------------------------------------------------- |
+| `view.quality-governor`      | R C A                                     | View ▸ Diagnostics HUD detail / read-only popover | continuous observer | `view.quality_governor.get`                                        | specified; missing; view-local/effective state, no history  |
+| `view.transition-3d-2d`      | existing `view.mode` controls; Escape C A | View ▸ Camera / viewport camera blend             | continuous          | `view.transition_3d_2d.get/cancel`; start remains `view.state.set` | specified; current blend partial; no duplicate mode command |
+| `view.renderer.fallback`     | automatic; bottom-bar chip; HUD           | View ▸ Renderer / viewport                        | bounded → relaunch  | Electron `renderer:status`; V-01 `backend.fallback` telemetry      | implemented by V-08; owner: view-domain                     |
+| `view.renderer.try-hardware` | R (**Try hardware rendering again**)      | View ▸ Renderer                                   | bounded → relaunch  | Electron `renderer:try-hardware-again`                             | implemented by V-08; per-machine preference, no history     |
 
-Both are owner `view-domain`. The transition is user-visible but remains one
+All are owner `view-domain`. The transition is user-visible but remains one
 camera-state act; the registry row explicitly prevents a duplicate `view.mode`.

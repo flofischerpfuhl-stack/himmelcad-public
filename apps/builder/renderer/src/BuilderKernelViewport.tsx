@@ -19,6 +19,7 @@ import type { EntityId, SnapKind, SnapResult, SourcePosition3, Vec3 } from '@him
 import { ViewportHud, OverlayChip, registerEscapeRung } from '@himmelcad/ui';
 import {
   KernelCameraController,
+  KernelViewerSessionError,
   createKernelOverlayGlyphAtlas,
   cssColorToLinearRgba,
   EMPTY_RENDERER_OVERLAY,
@@ -45,6 +46,7 @@ import {
   type KernelViewingBoxFace,
   type KernelViewingBoxState,
   type KernelViewerEntityHandle,
+  type KernelViewerSessionOptions,
   type KernelViewMode,
   type KernelViewModeTransitionOptions,
   type KernelWorldCamera,
@@ -75,6 +77,7 @@ const DEV_RASTER_COMPONENTS_HASH = '01'.repeat(32);
 const DEV_RASTER_ATTRIBUTES_HASH = '02'.repeat(32);
 const DEV_RASTER_RELATIONS_HASH = '03'.repeat(32);
 const IDENTITY = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1] as const;
+const DEFAULT_BACKEND_FALLBACK = Object.freeze({ enabled: true as const });
 
 const viewerWasmUrl = new URL('viewer-wasm/himmelcad_wasm.js', window.location.href).href;
 const decodeWasmUrl = new URL('viewer-decode-wasm/himmelcad_decode_wasm.js', window.location.href)
@@ -238,6 +241,10 @@ export interface BuilderKernelViewportHandle {
   createViewingBoxFromSelection(
     entityIds: readonly EntityId[],
     id: string,
+    canonicalBounds?: {
+      readonly min: readonly [number, number, number];
+      readonly max: readonly [number, number, number];
+    } | null,
   ): KernelViewingBoxState | null;
   setViewingBox(state: KernelViewingBoxState | null): void;
   lockViewingBox(
@@ -256,6 +263,7 @@ export interface BuilderFenceOverlayState {
 }
 
 interface BuilderKernelViewportProps {
+  readonly backendFallback?: NonNullable<KernelViewerSessionOptions['backendFallback']>;
   readonly projectId?: string | undefined;
   readonly hudVisible?: boolean;
   readonly pointSize: number;
@@ -394,6 +402,7 @@ export const BuilderKernelViewport = forwardRef<
   BuilderKernelViewportProps
 >(function BuilderKernelViewport(
   {
+    backendFallback = DEFAULT_BACKEND_FALLBACK,
     pointSize,
     hudVisible = false,
     projectId,
@@ -589,6 +598,10 @@ export const BuilderKernelViewport = forwardRef<
     new Map<EntityId, readonly GeometryRepresentationBindingRef[]>(),
   );
   const drawSnapLatencyRef = useRef(new DrawSnapLatencyRing());
+  const pendingGpuProcessLossRef = useRef<{
+    readonly action: 'retryCurrent' | 'fallbackWebgl2';
+    readonly reason: string;
+  } | null>(null);
   callbacksRef.current = {
     onCursorSnap,
     onDropFiles,
@@ -620,6 +633,19 @@ export const BuilderKernelViewport = forwardRef<
     onFenceNavigationRejected,
     constructionOrigin,
   };
+
+  useEffect(() => {
+    const api = window.himmelcad?.renderer;
+    if (!api) return;
+    return api.onGpuProcessGone((loss) => {
+      const kernel = kernelRef.current;
+      if (!kernel) {
+        pendingGpuProcessLossRef.current = loss;
+        return;
+      }
+      kernel.session.recoverFromGpuProcessLoss(loss.reason, loss.action);
+    });
+  }, []);
   // A grip gesture owns its local preview until pointer-up/cancel. React state
   // updates (cursor/hover/job chrome) must not replace it with the last
   // committed prop mid-gesture.
@@ -1039,10 +1065,12 @@ export const BuilderKernelViewport = forwardRef<
       async loadPotreePointCloud(metadataUrl, options) {
         const kernel = await readyRef.current.promise;
         const entityId = options.admission.entity.id as EntityId;
-        const admission = withCurrentCanonicalGenerations([options.admission], (id) =>
-          kernel.session.canonicalEntityBindingsIfLoaded(id) ??
-          retiredCanonicalBindingsRef.current.get(id as EntityId) ??
-          null,
+        const admission = withCurrentCanonicalGenerations(
+          [options.admission],
+          (id) =>
+            kernel.session.canonicalEntityBindingsIfLoaded(id) ??
+            retiredCanonicalBindingsRef.current.get(id as EntityId) ??
+            null,
         )[0]!;
         if (options.admission.resolvedGeometry.kind !== 'pointCloud') {
           throw new Error('committed LAS admission does not resolve to point-cloud geometry');
@@ -1086,10 +1114,12 @@ export const BuilderKernelViewport = forwardRef<
         const manifestBytes = new Uint8Array(await response.arrayBuffer());
         const bounds = preparedHierarchyBounds(manifestBytes);
         const entityId = options.admission.entity.id as EntityId;
-        const admission = withCurrentCanonicalGenerations([options.admission], (id) =>
-          kernel.session.canonicalEntityBindingsIfLoaded(id) ??
-          retiredCanonicalBindingsRef.current.get(id as EntityId) ??
-          null,
+        const admission = withCurrentCanonicalGenerations(
+          [options.admission],
+          (id) =>
+            kernel.session.canonicalEntityBindingsIfLoaded(id) ??
+            retiredCanonicalBindingsRef.current.get(id as EntityId) ??
+            null,
         )[0]!;
         kernel.session.loadPreparedHierarchy({
           datasetId: options.datasetId,
@@ -1100,9 +1130,7 @@ export const BuilderKernelViewport = forwardRef<
             {
               admission,
               style:
-                admission.resolvedGeometry.kind === 'elevationSurface'
-                  ? RASTER_STYLE
-                  : IFC_STYLE,
+                admission.resolvedGeometry.kind === 'elevationSurface' ? RASTER_STYLE : IFC_STYLE,
               exaggerationDatum: bounds.min[2],
             },
           ],
@@ -1439,8 +1467,8 @@ export const BuilderKernelViewport = forwardRef<
           : camera.target;
         return createViewingBoxSeed(camera, target, id);
       },
-      createViewingBoxFromSelection(entityIds, id) {
-        let bounds: Bounds | null = null;
+      createViewingBoxFromSelection(entityIds, id, canonicalBounds = null) {
+        let bounds: Bounds | null = canonicalBounds;
         for (const entityId of entityIds) {
           const entityBounds = entityBoundsRef.current.get(entityId);
           if (entityBounds) bounds = unionBounds(bounds, entityBounds);
@@ -1753,6 +1781,11 @@ export const BuilderKernelViewport = forwardRef<
   const handleReady = useCallback(
     (handle: KernelViewportHandle) => {
       kernelRef.current = handle;
+      const pendingGpuLoss = pendingGpuProcessLossRef.current;
+      pendingGpuProcessLossRef.current = null;
+      if (pendingGpuLoss) {
+        handle.session.recoverFromGpuProcessLoss(pendingGpuLoss.reason, pendingGpuLoss.action);
+      }
       if (import.meta.env.DEV || import.meta.env.VITE_HCAD_PERF_DEBUG === '1') {
         const performanceHandle = Object.assign(handle, {
           setViewMode: changeViewMode,
@@ -1827,6 +1860,11 @@ export const BuilderKernelViewport = forwardRef<
 
   const handleError = useCallback((error: Error) => {
     readyRef.current.reject(error);
+    if (error instanceof KernelViewerSessionError && error.code === 'softwareRenderingRequired') {
+      callbacksRef.current.onLog('warn', error.message);
+      void window.himmelcad?.renderer.requestSoftwareFallback(error.message);
+      return;
+    }
     callbacksRef.current.onLog('error', error.message);
   }, []);
 
@@ -2445,6 +2483,7 @@ export const BuilderKernelViewport = forwardRef<
       <KernelViewport
         wasmLoader={wasmLoader}
         backend="automatic"
+        backendFallback={backendFallback}
         presentationMode="windowMask"
         decodeWasmModuleUrl={decodeWasmUrl}
         authoritativeSectionTolerance={0.001}
@@ -2525,6 +2564,12 @@ export const BuilderKernelViewport = forwardRef<
               fencePointerRef.current,
               true,
             );
+        }}
+        onBackendFallback={(fallback) => {
+          callbacksRef.current.onLog(
+            'warn',
+            `Renderer fallback ${fallback.from} → ${fallback.to}: ${fallback.reason}`,
+          );
         }}
         onError={handleError}
       />
@@ -4035,6 +4080,7 @@ function BuilderHud({
       const snapshot = kernel.session.hudDiagnosticsWindow();
       const frame = snapshot.lastFrame;
       const quality = kernel.session.qualitySnapshot();
+      const backend = kernel.session.rendererBackend;
       const reasons =
         frame?.deadlineReasonCodes.filter((reason) => reason !== 'within_target') ?? [];
       const budget = reasons[0] ? (budgetLabels[reasons[0]] ?? reasons[0]) : frame ? 'within' : '—';
@@ -4052,6 +4098,7 @@ function BuilderHud({
       setText('[data-hud-points]', frame ? (frame.primitives.points / 1_000_000).toFixed(1) : '—');
       setText('[data-hud-quality]', `${quality.class}-${quality.tier}`);
       setText('[data-hud-budget]', budget);
+      setText('[data-hud-backend]', backend);
       setText(
         '[data-hud-backlog]',
         frame ? String(frame.requestBacklog + frame.decodeBacklog + frame.uploadBacklog) : '—',
@@ -4094,6 +4141,7 @@ function BuilderHud({
       quality={null}
       budget="—"
       backlog={null}
+      backend={kernelRef.current?.session.rendererBackend ?? null}
     />
   );
 }

@@ -10,6 +10,7 @@ export interface ViewportHudProps {
   readonly quality: string | null;
   readonly budget: string;
   readonly backlog: number | null;
+  readonly backend?: string | null;
   readonly style?: CSSProperties;
   readonly outputRef?: Ref<HTMLOutputElement>;
 }
@@ -22,6 +23,7 @@ export function ViewportHud({
   quality,
   budget,
   backlog,
+  backend,
   style,
   outputRef,
 }: ViewportHudProps): JSX.Element {
@@ -34,22 +36,40 @@ export function ViewportHud({
   return (
     <output ref={outputRef} className={styles.hud} style={style} aria-label="Viewport diagnostics">
       <div>
-        <span data-hud-idle hidden={p95 !== null}>Idle — no frames presented</span>
+        <span data-hud-idle hidden={p95 !== null}>
+          Idle — no frames presented
+        </span>
         <span data-hud-metrics hidden={p95 === null}>
-            <span className={styles.number} data-hud-p95 data-tone={tone}>
-              {p95?.toFixed(1) ?? '—'}
-            </span>{' '}
-            ms p95 · <span className={styles.number} data-hud-p50>{p50?.toFixed(1) ?? '—'}</span> ms p50 ·{' '}
-            <span className={styles.number} data-hud-points>
-              {points === null ? '—' : (points / 1_000_000).toFixed(1)}
-            </span>{' '}
-            M pts
+          <span className={styles.number} data-hud-p95 data-tone={tone}>
+            {p95?.toFixed(1) ?? '—'}
+          </span>{' '}
+          ms p95 ·{' '}
+          <span className={styles.number} data-hud-p50>
+            {p50?.toFixed(1) ?? '—'}
+          </span>{' '}
+          ms p50 ·{' '}
+          <span className={styles.number} data-hud-points>
+            {points === null ? '—' : (points / 1_000_000).toFixed(1)}
+          </span>{' '}
+          M pts
         </span>
       </div>
       <div>
-        quality <span className={styles.quality} data-hud-quality>{quality ?? '—'}</span> · budget:{' '}
-        <span className={styles.budget} data-hud-budget>{budget}</span> · backlog{' '}
-        <span className={styles.backlog} data-hud-backlog>{backlog ?? '—'}</span>
+        quality{' '}
+        <span className={styles.quality} data-hud-quality>
+          {quality ?? '—'}
+        </span>{' '}
+        · budget:{' '}
+        <span className={styles.budget} data-hud-budget>
+          {budget}
+        </span>{' '}
+        · backlog{' '}
+        <span className={styles.backlog} data-hud-backlog>
+          {backlog ?? '—'}
+        </span>
+      </div>
+      <div>
+        backend <span data-hud-backend>{backend ?? '—'}</span>
       </div>
     </output>
   );

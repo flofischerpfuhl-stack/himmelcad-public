@@ -41,6 +41,27 @@
   justify-content: flex-end;
 }
 
+.rendererChip {
+  display: inline-flex;
+  height: 22px;
+  align-items: center;
+  padding: 0 7px;
+  border: 1px solid var(--hc-border-subtle);
+  border-radius: var(--hc-radius-sm);
+  color: var(--hc-fg-muted);
+  background: var(--hc-bg-island);
+  white-space: nowrap;
+}
+
+.rendererChip[data-degraded='true'] {
+  color: var(--hc-warning-fg);
+}
+
+.rendererChip:focus-visible {
+  outline: 2px solid var(--hc-focus-ring);
+  outline-offset: -2px;
+}
+
 .iconButton,
 .detachButton {
   display: inline-flex;

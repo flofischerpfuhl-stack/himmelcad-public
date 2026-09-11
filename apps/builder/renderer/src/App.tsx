@@ -159,6 +159,8 @@ import {
   type ProjectReplacementFailure,
 } from './projectReplacement.js';
 import { parseSidecarProgress } from './sidecarProgress.js';
+import { contextualPointcloudPayload } from './pointcloudSourcePredicates.js';
+import { canonicalSelectionBounds } from './selectionBounds.js';
 import { executeBuilderSnapshotCommand } from './snapshotCommands.js';
 import {
   canonicalViewingBoxCommandId,
@@ -167,6 +169,17 @@ import {
 } from './viewingBoxWorkflow.js';
 
 const DEFAULT_POINT_SIZE = 1;
+
+type BuilderRendererStatus =
+  | { readonly mode: 'hardware' }
+  | {
+      readonly mode: 'software';
+      readonly from: 'webgl2';
+      readonly reason: string;
+      readonly gpu: string;
+      readonly driver: string;
+      readonly decidedAt: string;
+    };
 
 interface SegmentFenceState {
   readonly kind: 'polygon' | 'rectangle';
@@ -326,6 +339,25 @@ export function App(): JSX.Element {
     ReadonlyMap<EntityId, CanonicalPointCloudMetadata>
   >(new Map());
   const [hudVisible, setHudVisible] = useState(false);
+  const [rendererStatus] = useState<BuilderRendererStatus>(
+    window.himmelcad?.renderer.launchStatus ?? { mode: 'hardware' },
+  );
+  const backendFallback = useMemo(
+    () => ({
+      enabled: true as const,
+      softwareRendering: rendererStatus.mode === 'software',
+      ...(rendererStatus.mode === 'software'
+        ? {
+            startupFallback: {
+              from: rendererStatus.from,
+              to: 'software' as const,
+              reason: rendererStatus.reason,
+            },
+          }
+        : {}),
+    }),
+    [rendererStatus],
+  );
   const [viewingBox, setViewingBox] = useState<KernelViewingBoxState | null>(null);
   const viewingBoxRef = useRef<KernelViewingBoxState | null>(null);
   const viewingBoxRevisionRef = useRef<number | null>(null);
@@ -1931,16 +1963,29 @@ export function App(): JSX.Element {
 
   const createViewingBoxFromSelection = useCallback((): void => {
     const id = `viewing-box-${crypto.randomUUID()}`;
-    const created = viewportRef.current?.createViewingBoxFromSelection([...selected], id);
+    const canonical = canonicalSelectionBounds(selected, drawCurves, measurements);
+    if (canonical.hasUnknownHeight) {
+      logEvent(
+        'warn',
+        'renderer',
+        'The current selection contains canonical geometry without a known height.',
+      );
+      return;
+    }
+    const created = viewportRef.current?.createViewingBoxFromSelection(
+      [...selected],
+      id,
+      canonical.bounds,
+    );
     if (!created) {
-      logEvent('warn', 'renderer', 'The current selection has no resident bounds.');
+      logEvent('warn', 'renderer', 'The current selection has no canonical or resident bounds.');
       return;
     }
     const name = `Viewing Box ${viewingBoxes.length + 1}`;
     viewingBoxNameRef.current = name;
     setViewingBoxName(name);
     commitCanonicalViewingBox(created);
-  }, [commitCanonicalViewingBox, selected, viewingBoxes.length]);
+  }, [commitCanonicalViewingBox, drawCurves, measurements, selected, viewingBoxes.length]);
 
   const createViewingBoxFromTypedExtents = useCallback(
     (
@@ -2569,7 +2614,6 @@ export function App(): JSX.Element {
         visibleClasses,
       };
       const operationId = requestedOperationId ?? `ground-${mode}-${crypto.randomUUID()}`;
-      const previewOperationId = `${operationId}-preview`;
       setGroundError(null);
       if (mode === 'preview') setGroundPreview(null);
       else setGroundResult(null);
@@ -2585,7 +2629,7 @@ export function App(): JSX.Element {
         expectedDurationMs: mode === 'preview' ? 2_000 : 60_000,
         progressKey: operationId,
         cancellable: true,
-        context: { sourceEntityId: sourceId, mode, previewOperationId },
+        context: { sourceEntityId: sourceId, mode },
       });
       try {
         const session = await ensureCanonicalProject();
@@ -2609,7 +2653,7 @@ export function App(): JSX.Element {
           );
           return preview;
         } else {
-          const extraction = session.extractGround({
+          const result = await session.extractGround({
             operationId,
             progressKey: operationId,
             sourceEntityId: sourceId,
@@ -2618,23 +2662,6 @@ export function App(): JSX.Element {
             parameters,
             scope,
           });
-          try {
-            const preview = await session.previewGround({
-              operationId: previewOperationId,
-              progressKey: `${operationId}-coarse-preview`,
-              sourceEntityId: sourceId,
-              parameters,
-              scope,
-            });
-            setGroundPreview(preview);
-          } catch (previewError) {
-            logEvent(
-              'warn',
-              'renderer',
-              `Ground preview unavailable: ${previewError instanceof Error ? previewError.message : String(previewError)}`,
-            );
-          }
-          const result = await extraction;
           setGroundResult(result);
           logEvent(
             'info',
@@ -4101,6 +4128,12 @@ export function App(): JSX.Element {
         onExport: openExport,
         onImport: () => activate('file.import'),
         onPhotoLabProductImport: () => setPhotoLabProductImportOpen(true),
+        rendererSoftware: rendererStatus.mode === 'software',
+        onTryHardwareRenderingAgain: () => {
+          void window.himmelcad?.renderer.tryHardwareAgain().catch((error: unknown) => {
+            logEvent('error', 'renderer', `Could not restart hardware rendering: ${String(error)}`);
+          });
+        },
         navigationMode,
         groundExtractionAvailable: selectedGroundCloud !== null,
         segmentationAvailable: segmentablePointClouds.length > 0,
@@ -4116,6 +4149,7 @@ export function App(): JSX.Element {
       segmentablePointClouds.length,
       recentProjects,
       replaceProject,
+      rendererStatus.mode,
       saveProjectAs,
       selectedGroundCloud,
       snapshots,
@@ -4498,6 +4532,7 @@ export function App(): JSX.Element {
           project ? (
             <EntityTree
               project={project}
+              productId="builder"
               selectedIds={selected}
               onSelect={(id, mode) => {
                 if (id === ('builder:viewing-boxes' as EntityId)) {
@@ -4535,6 +4570,22 @@ export function App(): JSX.Element {
               }}
               interactionState={(entity) => interactionState?.presentation(entity.id) ?? 'editable'}
               onInteractionStateChange={onInteractionStateChange}
+              onContextAction={(
+                commandId: string,
+                entityIds: readonly EntityId[],
+              ) => {
+                const command = commandById(commandId);
+                if (!command) {
+                  logEvent('warn', 'renderer', `Unknown entity context command: ${commandId}`);
+                  return;
+                }
+                void executeRegistryCommand({
+                  id: command.id,
+                  args: [],
+                  source: 'contextMenu',
+                  payload: contextualPointcloudPayload(entityIds),
+                });
+              }}
               secondaryLabel={(entity) => {
                 const count = pointCloudMetadata.get(entity.id)?.pointCount;
                 const published = treeProductProvenance.find(
@@ -4801,6 +4852,19 @@ export function App(): JSX.Element {
                       selectableKinds: selection.selectableKinds,
                       labels: display.state.labels,
                     }}
+                    renderer={
+                      rendererStatus.mode === 'software'
+                        ? {
+                            label: 'Software rendering',
+                            title: `${rendererStatus.gpu} · driver ${rendererStatus.driver} · ${rendererStatus.reason}`,
+                            degraded: true,
+                          }
+                        : {
+                            label: 'Hardware rendering',
+                            title: 'Hardware-accelerated renderer',
+                            degraded: false,
+                          }
+                    }
                     onSupportGeometryChange={(value) => displayStore.setSupportOverlay(value)}
                     onExplodePolylinesChange={(value) =>
                       selectionStore.setGranularity(value ? 'segments' : 'whole')
@@ -4820,6 +4884,7 @@ export function App(): JSX.Element {
             <div style={{ position: 'relative', width: '100%', height: '100%' }}>
               <BuilderKernelViewport
                 ref={viewportRef}
+                backendFallback={backendFallback}
                 pointSize={pointSize}
                 onViewModeSettled={settleNavigationMode}
                 onCursorSnap={(nextSnap) => {
@@ -5366,7 +5431,10 @@ export function App(): JSX.Element {
               id: commandId,
               args: [],
               source: 'contextMenu',
-              payload: target,
+              payload: {
+                ...target,
+                ...contextualPointcloudPayload(target.entityIds),
+              },
             })
           }
           onClose={() => setCommandSurface(null)}
@@ -6049,7 +6117,8 @@ function ViewingBoxPanel({
             Create from extents
           </Button>
           <p className={styles.toolHint}>
-            Create from resident selection bounds, type exact extents, or drag a box in the view.
+            Create from canonical geometry or resident cloud bounds, type exact extents, or drag a
+            box in the view.
           </p>
         </>
       ) : (

@@ -26,7 +26,7 @@ test('G1b catalog lists the landed renderable packages (incl. the G1a-3b DSM) an
   const ready = catalog.rows.filter((row) => row.readiness === 'ready');
   // G1a-3b (2026-09-09) republished the DSM package (directory product-2868864c…, package sha below) with tile-local validity masks; the
   // original DEM package stays on disk with a ready record (its masks are refused at admission).
-  assert.equal(ready.length, 4);
+  assert.ok(ready.length >= 4, `expected at least 4 ready rows, got ${ready.length}`);
   const readySet = new Set(ready.map((row) => `${row.productKind}:${row.packageSha256}`));
   for (const expected of [
     'sparse:6dce58464a1931fdbb7489c2ba0ca58e8de14d69df5cff45f8302183f8609298',

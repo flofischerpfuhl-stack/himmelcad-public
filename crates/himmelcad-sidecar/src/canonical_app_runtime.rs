@@ -290,6 +290,31 @@ pub struct CanonicalGroundSource {
     pub source_style: Option<serde_json::Value>,
 }
 
+/// Truthful byte progress while a prepared point cloud is captured for
+/// bounded sidecar work.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CanonicalSourceCaptureProgress {
+    pub artifact: String,
+    pub completed_bytes: u64,
+    pub total_bytes: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct CanonicalSourceCaptureArtifact {
+    pub artifact: String,
+    pub source_path: PathBuf,
+    pub destination_path: PathBuf,
+    pub object_hash: ObjectHash,
+    pub byte_length: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct CanonicalGroundSourceCapture {
+    pub source: CanonicalGroundSource,
+    pub artifacts: Vec<CanonicalSourceCaptureArtifact>,
+    pub total_bytes: u64,
+}
+
 /// One atomic PC-D19 source-edit plus derived-cloud publication.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -1545,6 +1570,47 @@ impl CanonicalAppRuntime {
         expected: EntityVersionRef,
         input_root: PathBuf,
     ) -> Result<CanonicalGroundSource, CanonicalAppRuntimeError> {
+        self.prepare_ground_source_with_progress(expected, input_root, &mut |_| true)
+    }
+
+    /// Captures a prepared point-cloud source with truthful byte progress and
+    /// cancellation checks during immutable-object verification.
+    pub fn prepare_ground_source_with_progress(
+        &self,
+        expected: EntityVersionRef,
+        input_root: PathBuf,
+        progress: &mut dyn FnMut(CanonicalSourceCaptureProgress) -> bool,
+    ) -> Result<CanonicalGroundSource, CanonicalAppRuntimeError> {
+        let capture = self.plan_ground_source_capture(expected, input_root)?;
+        let mut completed_bytes = 0_u64;
+        for artifact in &capture.artifacts {
+            let artifact_name = artifact.artifact.clone();
+            crate::canonical_project_store::materialize_verified_path_with_progress(
+                &artifact.source_path,
+                &artifact.destination_path,
+                &artifact.object_hash,
+                Some(artifact.byte_length),
+                &mut |bytes| {
+                    completed_bytes = completed_bytes.saturating_add(bytes);
+                    progress(CanonicalSourceCaptureProgress {
+                        artifact: artifact_name.clone(),
+                        completed_bytes,
+                        total_bytes: capture.total_bytes.max(1),
+                    })
+                },
+            )?;
+        }
+        Ok(capture.source)
+    }
+
+    /// Resolves one immutable capture under the project lock without doing
+    /// the long file verification. The caller can then verify/materialize the
+    /// returned paths while canonical range reads remain responsive.
+    pub fn plan_ground_source_capture(
+        &self,
+        expected: EntityVersionRef,
+        input_root: PathBuf,
+    ) -> Result<CanonicalGroundSourceCapture, CanonicalAppRuntimeError> {
         let bootstrap = self.residency_bootstrap()?;
         let entry = bootstrap
             .entries
@@ -1575,41 +1641,67 @@ impl CanonicalAppRuntime {
             .store
             .as_ref()
             .ok_or(CanonicalAppRuntimeError::ProjectNotOpen)?;
-        for artifact in &dataset.artifacts {
-            let Some(name) = artifact
-                .relative_path
-                .file_name()
-                .and_then(|value| value.to_str())
-            else {
-                continue;
-            };
-            if matches!(name, "metadata.json" | "hierarchy.bin" | "octree.bin") {
-                store.materialize_object(&artifact.resource.object_hash, input_root.join(name))?;
-            }
+        let captured_artifacts = dataset
+            .artifacts
+            .iter()
+            .filter_map(|artifact| {
+                let name = artifact.relative_path.file_name()?.to_str()?;
+                matches!(name, "metadata.json" | "hierarchy.bin" | "octree.bin")
+                    .then_some((name.to_owned(), artifact))
+            })
+            .collect::<Vec<_>>();
+        if captured_artifacts.len() != 3 {
+            return Err(CanonicalAppRuntimeError::InvalidResidency(
+                "prepared point cloud is missing metadata.json, hierarchy.bin, or octree.bin"
+                    .to_owned(),
+            ));
         }
-        for name in ["metadata.json", "hierarchy.bin", "octree.bin"] {
-            if !input_root.join(name).is_file() {
-                return Err(CanonicalAppRuntimeError::InvalidResidency(format!(
-                    "prepared point cloud is missing {name}"
-                )));
-            }
-        }
+        let artifacts = captured_artifacts
+            .into_iter()
+            .map(|(name, artifact)| {
+                let byte_length = artifact.resource.byte_length.map_or_else(
+                    || store.object_byte_length(&artifact.resource.object_hash),
+                    Ok,
+                )?;
+                Ok(CanonicalSourceCaptureArtifact {
+                    source_path: store
+                        .object_path_for_materialization(&artifact.resource.object_hash)?,
+                    destination_path: input_root.join(&name),
+                    object_hash: artifact.resource.object_hash.clone(),
+                    byte_length,
+                    artifact: name,
+                })
+            })
+            .collect::<Result<Vec<_>, CanonicalProjectStoreError>>()?;
+        let total_bytes = artifacts.iter().fold(0_u64, |total, artifact| {
+            total.saturating_add(artifact.byte_length)
+        });
         let entity = entry.admission.entity;
-        Ok(CanonicalGroundSource {
-            expected,
-            source_components: serde_json::from_slice(&store.read_object(&entity.components_ref)?)?,
-            source_attributes: serde_json::from_slice(&store.read_object(&entity.attributes_ref)?)?,
-            source_relations: serde_json::from_slice(&store.read_object(&entity.relations_ref)?)?,
-            source_style: entity
-                .style_ref
-                .as_ref()
-                .map(|hash| store.read_object(hash))
-                .transpose()?
-                .map(|bytes| serde_json::from_slice(&bytes))
-                .transpose()?,
-            entity,
-            representation_slot: entry.admission.representation_slot,
-            input_root,
+        Ok(CanonicalGroundSourceCapture {
+            source: CanonicalGroundSource {
+                expected,
+                source_components: serde_json::from_slice(
+                    &store.read_object(&entity.components_ref)?,
+                )?,
+                source_attributes: serde_json::from_slice(
+                    &store.read_object(&entity.attributes_ref)?,
+                )?,
+                source_relations: serde_json::from_slice(
+                    &store.read_object(&entity.relations_ref)?,
+                )?,
+                source_style: entity
+                    .style_ref
+                    .as_ref()
+                    .map(|hash| store.read_object(hash))
+                    .transpose()?
+                    .map(|bytes| serde_json::from_slice(&bytes))
+                    .transpose()?,
+                entity,
+                representation_slot: entry.admission.representation_slot,
+                input_root,
+            },
+            artifacts,
+            total_bytes,
         })
     }
 

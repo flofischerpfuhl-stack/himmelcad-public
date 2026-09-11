@@ -46,6 +46,11 @@ import {
 } from './projectLifecycle';
 import { listProductImportCatalog } from './productImportCatalog';
 import {
+  appendSoftwareRenderingSwitches,
+  BuilderRendererFallbackController,
+  BuilderRendererFallbackStore,
+} from './rendererFallback';
+import {
   registrationCancellationIsAlreadyComplete,
   registrationCancellationOutcomeIsComplete,
 } from './registrationCancellation';
@@ -84,13 +89,32 @@ const CACHE_CORS_HEADERS = {
 app.setName('HimmelCAD Builder');
 if (process.platform === 'linux') app.setDesktopName('himmelcad-builder.desktop');
 
+const rendererFallbackStore = new BuilderRendererFallbackStore(
+  resolve(app.getPath('userData'), 'builder-settings.v1.json'),
+);
+const launchRendererStatus = rendererFallbackStore.load();
+const rendererFallbackController = new BuilderRendererFallbackController(rendererFallbackStore);
+if (process.platform === 'win32' && launchRendererStatus.mode === 'hardware') {
+  app.commandLine.appendSwitch('use-angle', 'd3d11');
+}
+appendSoftwareRenderingSwitches(app.commandLine, launchRendererStatus, process.versions.electron);
+
 let mainWindow: BrowserWindow | null = null;
 let automationHost: ReturnType<typeof registerElectronAutomationHost> | null = null;
 let projectLifecycle: BuilderProjectLifecycleStore | null = null;
 let activeCanonicalProjectRoot: string | null = null;
 let allowWindowClose = false;
+let pendingRendererRelaunch = false;
+let gpuIdentity = { gpu: 'Unknown GPU', driver: 'Unknown driver' };
 const jobRegistry = new JobRegistry();
 jobRegistry.subscribe((event) => mainWindow?.webContents.send('jobs:event', event));
+
+app.on('child-process-gone', (_event, details) => {
+  if (details.type !== 'GPU' || details.reason === 'clean-exit') return;
+  void handleGpuProcessGone(
+    `GPU process ${details.reason} (exit code ${String(details.exitCode)})`,
+  );
+});
 
 function rendererSafeSidecarError(error: unknown): Error {
   if (error instanceof SidecarRpcError && error.data && typeof error.data === 'object') {
@@ -108,6 +132,61 @@ function rendererSafeSidecarError(error: unknown): Error {
     }
   }
   return error instanceof Error ? error : new Error('Sidecar request failed.');
+}
+
+async function handleGpuProcessGone(reason: string): Promise<void> {
+  gpuIdentity = await readGpuIdentity(gpuIdentity);
+  const action = rendererFallbackController.gpuProcessGone(
+    reason,
+    gpuIdentity.gpu,
+    gpuIdentity.driver,
+  );
+  if (action.kind === 'retryCurrent' || action.kind === 'fallbackWebgl2') {
+    mainWindow?.webContents.send('renderer:gpu-process-gone', {
+      action: action.kind,
+      reason: action.reason,
+    });
+    return;
+  }
+  if (action.kind === 'relaunchSoftware') requestRendererRelaunch();
+}
+
+async function readGpuIdentity(previous: typeof gpuIdentity): Promise<typeof gpuIdentity> {
+  try {
+    const info = await app.getGPUInfo('complete');
+    if (!info || typeof info !== 'object') return previous;
+    const devices = (info as Record<string, unknown>).gpuDevice;
+    const device = Array.isArray(devices)
+      ? devices.find((entry) => entry && typeof entry === 'object')
+      : null;
+    if (!device || typeof device !== 'object') return previous;
+    const fields = device as Record<string, unknown>;
+    return {
+      gpu: textField(fields, ['deviceString', 'deviceName', 'vendorString']) ?? previous.gpu,
+      driver: textField(fields, ['driverVersion', 'driverVersionString']) ?? previous.driver,
+    };
+  } catch {
+    return previous;
+  }
+}
+
+function textField(record: Record<string, unknown>, keys: readonly string[]): string | null {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return null;
+}
+
+function requestRendererRelaunch(): void {
+  if (pendingRendererRelaunch) return;
+  pendingRendererRelaunch = true;
+  if (mainWindow) {
+    mainWindow.webContents.send('canonical-project:close-requested');
+    return;
+  }
+  app.relaunch();
+  app.quit();
 }
 
 interface DevelopmentRasterTile {
@@ -433,6 +512,7 @@ async function createWindow(): Promise<void> {
 
 void app.whenReady().then(async () => {
   await fs.mkdir(CACHE_DIR, { recursive: true });
+  gpuIdentity = await readGpuIdentity(gpuIdentity);
 
   // Custom file-like protocol for the project cache.
   //
@@ -784,6 +864,9 @@ void app.whenReady().then(async () => {
 });
 
 function registerIpc(): void {
+  ipcMain.on('renderer:status-sync', (event) => {
+    event.returnValue = rendererFallbackStore.status();
+  });
   ipcMain.handle('window:minimize', () => {
     mainWindow?.minimize();
   });
@@ -801,9 +884,30 @@ function registerIpc(): void {
   });
   ipcMain.handle('window:close-ready', () => {
     allowWindowClose = true;
+    if (pendingRendererRelaunch) app.relaunch();
     mainWindow?.close();
   });
   ipcMain.handle('window:is-maximized', () => mainWindow?.isMaximized() ?? false);
+
+  ipcMain.handle('renderer:status', () => rendererFallbackStore.status());
+  ipcMain.handle('renderer:software-required', async (_event, reason: unknown) => {
+    if (typeof reason !== 'string' || !reason.trim()) {
+      throw new Error('renderer fallback reason is required');
+    }
+    gpuIdentity = await readGpuIdentity(gpuIdentity);
+    const action = rendererFallbackController.requestSoftware(
+      reason,
+      gpuIdentity.gpu,
+      gpuIdentity.driver,
+    );
+    if (action.kind === 'relaunchSoftware') requestRendererRelaunch();
+    return action.kind === 'relaunchSoftware';
+  });
+  ipcMain.handle('renderer:try-hardware-again', () => {
+    if (!rendererFallbackController.tryHardwareAgain()) return false;
+    requestRendererRelaunch();
+    return true;
+  });
 
   ipcMain.handle('sidecar:status', () => isSidecarRunning());
   ipcMain.handle('jobs:list', () => jobRegistry.list());

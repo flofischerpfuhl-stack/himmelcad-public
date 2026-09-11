@@ -1,5 +1,13 @@
 export const KERNEL_FRAME_DIAGNOSTICS_CAPACITY = 2_048;
 
+export interface KernelBackendFallbackTelemetry {
+  readonly type: 'backend.fallback';
+  readonly from: 'webgpu' | 'webgl2';
+  readonly to: 'webgl2' | 'software';
+  readonly reason: string;
+  readonly timestampMs: number;
+}
+
 export type KernelPresentSource = 'raf-render-complete';
 
 export type KernelDeadlineReasonCode =
@@ -185,6 +193,7 @@ export interface KernelDiagnosticsSnapshot {
     Record<keyof KernelFramePrimitiveCounts, KernelDistribution | null>
   >;
   readonly phases: Readonly<Record<keyof KernelFramePhaseTimers, KernelDistribution | null>>;
+  readonly backendFallbacks: readonly KernelBackendFallbackTelemetry[];
   readonly lastFrames: readonly KernelPresentedFrameSample[];
 }
 
@@ -207,6 +216,7 @@ interface PendingInput {
 /** Bounded, observational presented-frame recorder shared by the HUD and automation. */
 export class KernelFrameDiagnostics {
   private readonly values: KernelPresentedFrameSample[] = [];
+  private readonly backendFallbackValues: KernelBackendFallbackTelemetry[] = [];
   private first = 0;
   private nextFrameId = 1;
   private nextInputId = 1;
@@ -269,8 +279,30 @@ export class KernelFrameDiagnostics {
     return true;
   }
 
+  recordBackendFallback(
+    fallback: Omit<KernelBackendFallbackTelemetry, 'type' | 'timestampMs'> & {
+      readonly timestampMs?: number;
+    },
+  ): KernelBackendFallbackTelemetry {
+    if (!fallback.reason.trim()) throw new RangeError('backend fallback requires a reason');
+    const timestampMs = fallback.timestampMs ?? performance.now();
+    if (!finiteDuration(timestampMs)) throw new RangeError('backend fallback timestamp is invalid');
+    const value = Object.freeze({
+      type: 'backend.fallback' as const,
+      from: fallback.from,
+      to: fallback.to,
+      reason: fallback.reason,
+      timestampMs,
+    });
+    this.backendFallbackValues.push(value);
+    if (this.backendFallbackValues.length > KERNEL_FRAME_DIAGNOSTICS_CAPACITY) {
+      this.backendFallbackValues.shift();
+    }
+    return value;
+  }
+
   snapshot(lastFrames = 120): KernelDiagnosticsSnapshot {
-    return snapshotOf(this.ordered(), lastFrames);
+    return snapshotOf(this.ordered(), lastFrames, this.backendFallbackValues);
   }
 
   /** Same aggregation as sample(), restricted by actual presentation time. */
@@ -287,6 +319,9 @@ export class KernelFrameDiagnostics {
         (frame) => frame.presentTimestampMs >= startedAtMs && frame.presentTimestampMs <= endedAtMs,
       ),
       lastFrames,
+      this.backendFallbackValues.filter(
+        (fallback) => fallback.timestampMs >= startedAtMs && fallback.timestampMs <= endedAtMs,
+      ),
     );
   }
 
@@ -336,7 +371,13 @@ export class KernelFrameDiagnostics {
       const endedAtMs = performance.now();
       const frames = this.ordered().filter((frame) => frame.frameId >= firstFrameId);
       return Object.freeze({
-        ...snapshotOf(frames, lastFrames),
+        ...snapshotOf(
+          frames,
+          lastFrames,
+          this.backendFallbackValues.filter(
+            (fallback) => fallback.timestampMs >= startedAtMs && fallback.timestampMs <= endedAtMs,
+          ),
+        ),
         schemaId: 'hcad.view-diagnostics-sample@1',
         window: Object.freeze({ startedAtMs, endedAtMs }),
       });
@@ -356,6 +397,7 @@ export class KernelFrameDiagnostics {
 function snapshotOf(
   frames: readonly KernelPresentedFrameSample[],
   lastFrames: number,
+  backendFallbacks: readonly KernelBackendFallbackTelemetry[] = [],
 ): KernelDiagnosticsSnapshot {
   validateLastFrames(lastFrames);
   const primitive = <K extends keyof KernelFramePrimitiveCounts>(key: K) =>
@@ -393,6 +435,7 @@ function snapshotOf(
       cpuHostMs: phase('cpuHostMs'),
       cpuEncodeMs: phase('cpuEncodeMs'),
     }),
+    backendFallbacks: Object.freeze(backendFallbacks.map((fallback) => ({ ...fallback }))),
     lastFrames: Object.freeze(frames.slice(-lastFrames).map((frame) => structuredClone(frame))),
   });
 }

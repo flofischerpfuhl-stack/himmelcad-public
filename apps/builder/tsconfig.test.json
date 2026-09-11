@@ -3,14 +3,15 @@
   "compilerOptions": {
     "noEmit": false,
     "rootDir": "../..",
-    "outDir": "../../.build/tests/builder",
+    "outDir": ".build/tests",
     "declaration": false,
     "declarationMap": false,
     "sourceMap": false,
-    "types": ["node"]
+    "types": ["node", "react", "vite/client"]
   },
   "include": [
     "electron/productImportCatalog.ts",
+    "electron/rendererFallback.ts",
     "renderer/src/importDialogPolicy.ts",
     "renderer/src/projectProjection.ts",
     "renderer/src/productImportFailure.ts",
@@ -18,6 +19,7 @@
     "renderer/src/snapshotCommands.ts",
     "renderer/src/viewingBoxBake.ts",
     "renderer/src/viewingBoxWorkflow.ts",
-    "test"
+    "test",
+    "../../types"
   ]
 }

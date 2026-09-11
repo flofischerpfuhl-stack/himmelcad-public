@@ -8,7 +8,11 @@ import type {
 } from './KernelNavigationController.js';
 import type { EscapeRungRegistrar, PlatformGestureCallbacks } from './PlatformGestureArbiter.js';
 import type { KernelViewerScene } from './KernelViewerScene.js';
-import { KernelViewerSession, type KernelViewerSessionEvent } from './KernelViewerSession.js';
+import {
+  KernelViewerSession,
+  type KernelViewerSessionEvent,
+  type KernelViewerSessionOptions,
+} from './KernelViewerSession.js';
 import type {
   HimmelcadViewerWasmLoader,
   KernelBackendPreference,
@@ -34,6 +38,7 @@ export interface KernelViewportHandle {
 export interface KernelViewportProps {
   readonly wasmLoader: HimmelcadViewerWasmLoader;
   readonly backend?: KernelBackendPreference;
+  readonly backendFallback?: KernelViewerSessionOptions['backendFallback'];
   /** URL of the slim `himmelcad-decode-wasm` module used only inside workers. */
   readonly decodeWasmModuleUrl: string;
   /** Project-unit tolerance for exact authoritative clip-cap intersections. */
@@ -61,6 +66,9 @@ export interface KernelViewportProps {
     quality: KernelRuntimeQualityState,
     adjustment: Exclude<KernelRuntimeQualityAdjustment, 'unchanged'>,
   ) => void;
+  readonly onBackendFallback?: (
+    fallback: Extract<KernelViewerSessionEvent, { readonly type: 'backendFallback' }>['fallback'],
+  ) => void;
   readonly onError?: (error: Error) => void;
 }
 
@@ -68,6 +76,7 @@ export interface KernelViewportProps {
 export function KernelViewport({
   wasmLoader,
   backend,
+  backendFallback,
   decodeWasmModuleUrl,
   authoritativeSectionTolerance,
   presentationMode = 'container',
@@ -81,6 +90,7 @@ export function KernelViewport({
   onFrame,
   onHardwarePolicy,
   onRuntimeQuality,
+  onBackendFallback,
   onError,
 }: KernelViewportProps): JSX.Element {
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -96,6 +106,7 @@ export function KernelViewport({
     onFrame,
     onHardwarePolicy,
     onRuntimeQuality,
+    onBackendFallback,
     onError,
   });
   callbacksRef.current = {
@@ -108,6 +119,7 @@ export function KernelViewport({
     onFrame,
     onHardwarePolicy,
     onRuntimeQuality,
+    onBackendFallback,
     onError,
   };
 
@@ -174,6 +186,9 @@ export function KernelViewport({
           resizeViewport?.();
           requestFrame();
           return;
+        case 'backendFallback':
+          callbacksRef.current.onBackendFallback?.(event.fallback);
+          return;
         case 'error':
           fail(event.error);
           return;
@@ -190,6 +205,7 @@ export function KernelViewport({
           canvas,
           wasmLoader,
           ...(backend ? { backend } : {}),
+          ...(backendFallback ? { backendFallback } : {}),
           decodeWasmModuleUrl,
           authoritativeSectionTolerance,
           ...(windowMasked
@@ -241,8 +257,7 @@ export function KernelViewport({
             // governor owns the physical backbuffer scale. Ignoring this scale
             // here made Builder's adaptive tier observable but ineffective.
             const pixelRatio =
-              Math.min(globalThis.devicePixelRatio || 1, 2) *
-              session.runtimeQuality.renderScale;
+              Math.min(globalThis.devicePixelRatio || 1, 2) * session.runtimeQuality.renderScale;
             session.resize(globalThis.innerWidth, globalThis.innerHeight, pixelRatio);
             return;
           }
@@ -288,7 +303,14 @@ export function KernelViewport({
       if (windowMasked && resizeViewport) globalThis.removeEventListener('resize', resizeViewport);
       session?.dispose();
     };
-  }, [authoritativeSectionTolerance, backend, decodeWasmModuleUrl, presentationMode, wasmLoader]);
+  }, [
+    authoritativeSectionTolerance,
+    backend,
+    backendFallback,
+    decodeWasmModuleUrl,
+    presentationMode,
+    wasmLoader,
+  ]);
 
   return (
     <div

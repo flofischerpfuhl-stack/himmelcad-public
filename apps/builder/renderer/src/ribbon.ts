@@ -13,10 +13,8 @@ import {
   History,
   Mountain,
   Minus,
-  PaintBucket,
   PenLine,
   Pentagon,
-  Pipette,
   Redo2,
   Ruler,
   Save,
@@ -31,6 +29,8 @@ import {
 import { createElement, type ReactElement } from 'react';
 
 import type { RibbonTab } from '@himmelcad/ui';
+
+import { pointcloudSourceRequirementReason } from './pointcloudSourcePredicates.js';
 
 interface RecentProjectAction {
   readonly path: string;
@@ -63,6 +63,8 @@ interface FileRibbonHandlers {
   readonly navigationMode?: '3d' | '2.5d' | '2d';
   readonly groundExtractionAvailable?: boolean;
   readonly segmentationAvailable?: boolean;
+  readonly rendererSoftware?: boolean;
+  readonly onTryHardwareRenderingAgain: () => void;
 }
 
 const i = (Comp: typeof Box, size = 18): ReactElement =>
@@ -260,10 +262,26 @@ export function createRibbonTabs(handlers: FileRibbonHandlers): RibbonTab[] {
           id: 'view.style',
           label: 'Style',
           actions: [
-            { id: 'view.background', label: 'Background', icon: i(PaintBucket) },
             { id: 'view.point-size', label: 'Point Size', icon: i(CircleDot) },
             { id: 'view.hud.toggle', label: 'HUD', icon: i(Gauge) },
-            { id: 'view.color-mode', label: 'Color Mode', icon: i(Pipette) },
+          ],
+        },
+        {
+          id: 'view.renderer',
+          label: 'Renderer',
+          actions: [
+            {
+              id: 'view.renderer.try-hardware',
+              label: 'Try hardware rendering again',
+              icon: i(Gauge),
+              onActivate: handlers.onTryHardwareRenderingAgain,
+              ...(!handlers.rendererSoftware
+                ? {
+                    disabled: true,
+                    title: 'Hardware rendering is already enabled.',
+                  }
+                : {}),
+            },
           ],
         },
       ],
@@ -296,9 +314,8 @@ export function createRibbonTabs(handlers: FileRibbonHandlers): RibbonTab[] {
               icon: i(Mountain),
               disabled: handlers.groundExtractionAvailable === false,
               title:
-                handlers.groundExtractionAvailable === false
-                  ? 'Select exactly one point cloud.'
-                  : 'Classify ground and create a prepared ground-only cloud.',
+                pointcloudSourceRequirementReason(handlers.groundExtractionAvailable) ??
+                'Classify ground and create a prepared ground-only cloud.',
             },
             {
               id: 'pointcloud.rasterize',
@@ -306,9 +323,8 @@ export function createRibbonTabs(handlers: FileRibbonHandlers): RibbonTab[] {
               icon: i(Grid3x3),
               disabled: handlers.groundExtractionAvailable === false,
               title:
-                handlers.groundExtractionAvailable === false
-                  ? 'Select exactly one point cloud.'
-                  : 'Create a prepared height grid from the visible point set.',
+                pointcloudSourceRequirementReason(handlers.groundExtractionAvailable) ??
+                'Create a prepared height grid from the visible point set.',
             },
           ],
         },
@@ -322,9 +338,8 @@ export function createRibbonTabs(handlers: FileRibbonHandlers): RibbonTab[] {
               icon: i(Scissors),
               disabled: handlers.segmentationAvailable === false,
               title:
-                handlers.segmentationAvailable === false
-                  ? 'Select one or more editable, visible point clouds.'
-                  : 'Draw a projection-true fence and keep or remove its visible points.',
+                pointcloudSourceRequirementReason(handlers.segmentationAvailable) ??
+                'Draw a projection-true fence and keep or remove its visible points.',
             },
             {
               id: 'pointcloud.sample',
@@ -332,9 +347,8 @@ export function createRibbonTabs(handlers: FileRibbonHandlers): RibbonTab[] {
               icon: i(ScanLine),
               disabled: handlers.groundExtractionAvailable === false,
               title:
-                handlers.groundExtractionAvailable === false
-                  ? 'Select exactly one point cloud.'
-                  : 'Create a deterministic prepared sampled cloud.',
+                pointcloudSourceRequirementReason(handlers.groundExtractionAvailable) ??
+                'Create a deterministic prepared sampled cloud.',
             },
           ],
         },

@@ -243,7 +243,6 @@ pub(crate) struct SourceNode {
     pub(crate) point_count: u64,
     pub(crate) byte_offset: u64,
     pub(crate) byte_length: u64,
-    child_page: Option<(u64, u64)>,
 }
 
 /// Runs classification and prepares two ordinary Potree datasets without publishing partial state.
@@ -262,7 +261,7 @@ pub fn prepare_ground_datasets(
     let metadata: PotreeMetadata = serde_json::from_slice(&metadata_bytes)?;
     validate_metadata(&metadata)?;
     let hierarchy_bytes = fs::read(&request.hierarchy_path)?;
-    let nodes = parse_hierarchy(&metadata, &hierarchy_bytes)?;
+    let nodes = parse_hierarchy_cancellable(&metadata, &hierarchy_bytes, cancellation)?;
     let stride = metadata
         .attributes
         .iter()
@@ -287,8 +286,11 @@ pub fn prepare_ground_datasets(
                 "one node exceeds the bounded read limit",
             ));
         }
-        let bytes = read_node(&mut source, node)?;
-        for record in bytes.chunks_exact(stride) {
+        let bytes = read_node_cancellable(&mut source, node, cancellation)?;
+        for (record_index, record) in bytes.chunks_exact(stride).enumerate() {
+            if record_index % 65_536 == 0 {
+                check_cancelled(cancellation)?;
+            }
             let point = decode_point(record, position_offset, &metadata)?;
             let class = classification_offset.map_or(0, |offset| record[offset]);
             if request.scope.visible_classes.contains(&class)
@@ -359,9 +361,12 @@ pub fn prepare_ground_datasets(
     let mut edited = vec![0_u8; stride];
     for node in &nodes {
         check_cancelled(cancellation)?;
-        let bytes = read_node(&mut source_reader, node)?;
+        let bytes = read_node_cancellable(&mut source_reader, node, cancellation)?;
         let mut node_ground = 0_u64;
-        for record in bytes.chunks_exact(stride) {
+        for (record_index, record) in bytes.chunks_exact(stride).enumerate() {
+            if record_index % 65_536 == 0 {
+                check_cancelled(cancellation)?;
+            }
             let point = decode_point(record, position_offset, &metadata)?;
             let old_class = classification_offset.map_or(0, |offset| record[offset]);
             let included = request.scope.visible_classes.contains(&old_class)
@@ -442,8 +447,8 @@ pub fn prepare_ground_datasets(
         encode_flat_hierarchy(&nodes, &ground_counts, stride)?,
     )?;
 
-    let source_dataset = describe_dataset(source_root, metadata.points)?;
-    let extracted_dataset = describe_dataset(extracted_root, ground_points)?;
+    let source_dataset = describe_dataset(source_root, metadata.points, cancellation)?;
+    let extracted_dataset = describe_dataset(extracted_root, ground_points, cancellation)?;
     let membership_sha256 = ObjectHash(hex::encode(membership.finalize()));
     Ok(PreparedGroundResult {
         source: source_dataset,
@@ -479,7 +484,7 @@ pub fn preview_ground(
     let metadata: PotreeMetadata = serde_json::from_slice(&fs::read(&request.metadata_path)?)?;
     validate_metadata(&metadata)?;
     let hierarchy_bytes = fs::read(&request.hierarchy_path)?;
-    let nodes = parse_hierarchy(&metadata, &hierarchy_bytes)?;
+    let nodes = parse_hierarchy_cancellable(&metadata, &hierarchy_bytes, cancellation)?;
     let stride = metadata
         .attributes
         .iter()
@@ -498,8 +503,11 @@ pub fn preview_ground(
     let mut visited = 0_u64;
     'nodes: for node in &nodes {
         check_cancelled(cancellation)?;
-        let bytes = read_node(&mut source, node)?;
-        for record in bytes.chunks_exact(stride) {
+        let bytes = read_node_cancellable(&mut source, node, cancellation)?;
+        for (record_index, record) in bytes.chunks_exact(stride).enumerate() {
+            if record_index % 65_536 == 0 {
+                check_cancelled(cancellation)?;
+            }
             let point = decode_point(record, position_offset, &metadata)?;
             let class = classification_offset.map_or(0, |offset| record[offset]);
             if request.scope.visible_classes.contains(&class)
@@ -732,40 +740,57 @@ pub(crate) fn read_node(
     Ok(bytes)
 }
 
+fn read_node_cancellable(
+    reader: &mut (impl Read + Seek),
+    node: &SourceNode,
+    cancellation: &CancellationToken,
+) -> Result<Vec<u8>, PointcloudGroundError> {
+    reader.seek(SeekFrom::Start(node.byte_offset))?;
+    let length = usize::try_from(node.byte_length)
+        .map_err(|_| PointcloudGroundError::InvalidPayload("node byte length overflows"))?;
+    let mut bytes = vec![0_u8; length];
+    for chunk in bytes.chunks_mut(IO_CHUNK_BYTES) {
+        check_cancelled(cancellation)?;
+        reader.read_exact(chunk)?;
+    }
+    Ok(bytes)
+}
+
 pub(crate) fn parse_hierarchy(
     metadata: &PotreeMetadata,
     bytes: &[u8],
 ) -> Result<Vec<SourceNode>, PointcloudGroundError> {
+    parse_hierarchy_cancellable(metadata, bytes, &CancellationToken::new())
+}
+
+fn parse_hierarchy_cancellable(
+    metadata: &PotreeMetadata,
+    bytes: &[u8],
+    cancellation: &CancellationToken,
+) -> Result<Vec<SourceNode>, PointcloudGroundError> {
     let mut nodes = BTreeMap::new();
-    parse_page(
+    let mut pages = VecDeque::from(parse_page(
         &mut nodes,
         "r",
         metadata.bounding_box,
         false,
         page_slice(bytes, 0, metadata.hierarchy.first_chunk_size)?,
-    )?;
-    let mut pages = nodes
-        .values()
-        .filter_map(|node| node.child_page.map(|page| (node.id.clone(), page)))
-        .collect::<VecDeque<_>>();
+        cancellation,
+    )?);
     let mut loaded = BTreeSet::new();
     while let Some((root, (offset, length))) = pages.pop_front() {
+        check_cancelled(cancellation)?;
         if !loaded.insert(root.clone()) {
             continue;
         }
-        let before = nodes.keys().cloned().collect::<BTreeSet<_>>();
-        parse_page(
+        pages.extend(parse_page(
             &mut nodes,
             &root,
             metadata.bounding_box,
             true,
             page_slice(bytes, offset, length)?,
-        )?;
-        pages.extend(nodes.values().filter_map(|node| {
-            (!before.contains(&node.id))
-                .then_some(node.child_page.map(|page| (node.id.clone(), page)))
-                .flatten()
-        }));
+            cancellation,
+        )?);
     }
     let mut ordered = Vec::with_capacity(nodes.len());
     let mut pending = VecDeque::from(["r".to_owned()]);
@@ -791,12 +816,17 @@ fn parse_page(
     root_bounds: PotreeBounds,
     root_was_proxy: bool,
     bytes: &[u8],
-) -> Result<(), PointcloudGroundError> {
+    cancellation: &CancellationToken,
+) -> Result<Vec<(String, (u64, u64))>, PointcloudGroundError> {
     if bytes.is_empty() || !bytes.len().is_multiple_of(HIERARCHY_RECORD_BYTES) {
         return Err(PointcloudGroundError::InvalidHierarchy("page byte length"));
     }
     let mut pending = VecDeque::from([(root_id.to_owned(), root_bounds, root_was_proxy)]);
-    for record in bytes.chunks_exact(HIERARCHY_RECORD_BYTES) {
+    let mut proxy_pages = Vec::new();
+    for (record_index, record) in bytes.chunks_exact(HIERARCHY_RECORD_BYTES).enumerate() {
+        if record_index % 2_048 == 0 {
+            check_cancelled(cancellation)?;
+        }
         let (id, bounds, was_proxy) =
             pending
                 .pop_front()
@@ -809,6 +839,9 @@ fn parse_page(
         let byte_offset = u64::from_le_bytes(record[6..14].try_into().expect("offset"));
         let byte_length = u64::from_le_bytes(record[14..22].try_into().expect("length"));
         let is_proxy = node_type == PROXY_NODE && !was_proxy;
+        if is_proxy {
+            proxy_pages.push((id.clone(), (byte_offset, byte_length)));
+        }
         let mut children = Vec::new();
         if !is_proxy {
             for child in 0_u8..8 {
@@ -828,7 +861,6 @@ fn parse_page(
                 point_count,
                 byte_offset,
                 byte_length,
-                child_page: is_proxy.then_some((byte_offset, byte_length)),
             },
         );
     }
@@ -837,7 +869,7 @@ fn parse_page(
             "page ended before its children",
         ));
     }
-    Ok(())
+    Ok(proxy_pages)
 }
 
 fn page_slice(bytes: &[u8], offset: u64, length: u64) -> Result<&[u8], PointcloudGroundError> {
@@ -948,6 +980,7 @@ pub(crate) fn write_json(path: &Path, value: &impl Serialize) -> Result<(), Poin
 fn describe_dataset(
     root: PathBuf,
     point_count: u64,
+    cancellation: &CancellationToken,
 ) -> Result<PreparedGroundDataset, PointcloudGroundError> {
     let specifications = [
         ("metadata.json", "application/json"),
@@ -957,7 +990,7 @@ fn describe_dataset(
     let mut artifacts = Vec::with_capacity(specifications.len());
     for (relative_path, media_type) in specifications {
         let path = root.join(relative_path);
-        let (object_hash, byte_length) = hash_file(&path)?;
+        let (object_hash, byte_length) = hash_file_cancellable(&path, cancellation)?;
         artifacts.push(PreparedGroundArtifact {
             relative_path: relative_path.to_owned(),
             object_hash,
@@ -973,11 +1006,19 @@ fn describe_dataset(
 }
 
 pub(crate) fn hash_file(path: &Path) -> Result<(ObjectHash, u64), PointcloudGroundError> {
+    hash_file_cancellable(path, &CancellationToken::new())
+}
+
+fn hash_file_cancellable(
+    path: &Path,
+    cancellation: &CancellationToken,
+) -> Result<(ObjectHash, u64), PointcloudGroundError> {
     let mut reader = BufReader::with_capacity(IO_CHUNK_BYTES, File::open(path)?);
     let mut digest = Sha256::new();
     let mut length = 0_u64;
     let mut buffer = vec![0_u8; IO_CHUNK_BYTES];
     loop {
+        check_cancelled(cancellation)?;
         let read = reader.read(&mut buffer)?;
         if read == 0 {
             break;
