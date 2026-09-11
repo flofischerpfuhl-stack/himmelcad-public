@@ -7,7 +7,7 @@ landing by the PhotoLab session. Plan of record:
 `.claude/codex/prompts/photolab/`, the token ledger under
 `.claude/codex/logs/photolab/ledger.json`.
 
-Last update: 2026-09-09 20:30 (PhotoLab session back after an 11-h outage; takeovers G1a-3b/A7c reconciled; open PhotoLab items: DTM lineage identity G1a-3c, A7c smoke evidence + contract gaps, G1c oracle cells, SMRF pre-refactor identity running).
+Last update: 2026-09-11 09:20 (16 GB gate PASSED on the Windows PC — WIN-16; A7 series closed on Linux; G1c PhotoLab side complete; Builder-side items: DEM residency, PotreeConverter staging, four read-only fsync sites).
 
 ## Current work packages
 
@@ -214,3 +214,4 @@ workers) — otherwise plan a full day for the golden.
 - 2026-09-11 06:00 WIN-14-PL: compute PASS again on the 16 GB PC (24/24, 2h19, peak 6.0 GiB, disk min 17.4 GiB), publication FAIL with the same untyped access-denied — none of WIN-11-PL's typed context or retry lines appeared, so the failing operation bypasses publish_fs (candidates: `remove_dir_all`/`remove_path_if_exists` of scratch or a previous package dir, directory creation, copies). Hunting the site; WIN-15-PL follows.
 - 2026-09-11 06:15 ROOT CAUSE of the Windows publication failure found: `sync_package_artifacts` opens every package artifact and the manifest read-only and calls `sync_all` — on Windows FlushFileBuffers needs write access → os error 5, right before the ready publication (WIN-10/WIN-14 died exactly there). Same pattern 14× in the sidecar. WP-WIN-15-PL dispatched (durable_fs helpers, PhotoLab-owned sites replaced, step context). Builder-owned sites with the same defect, please fix on your side: canonical_project_store.rs:574, :585, :2375 (ready/journal sync) and brush_runtime.rs:1191.
 - 2026-09-11 06:25 WP-WIN-15-PL landed (a111627): `durable_fs::sync_file`/`sync_dir`; nine PhotoLab-owned read-only fsync sites replaced; publication steps carry context. WIN-16-PL (gate attempt 7) dispatched on the PC — the first attempt with the actual publication defect fixed.
+- 2026-09-11 09:20 **16 GB GATE PASSED** (WIN-16-PL, attempt 7): 24/24 aligned, sparse product complete/available (potree@2), atomic publication clean, peak 6.0 GiB, disk min 18.4 GiB, 2h21 + 28 min build, HEAD 67c327a. Report `.build/photolab-evidence/win16-report.md`. Owner gate D12/S23 evidence on the PhotoLab side is complete.

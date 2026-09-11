@@ -708,6 +708,19 @@ file/parent durability flushes are unchanged; Windows parent-directory sync
 remains the non-failing no-op adopted by WIN-01b. Local unit suites pass; the
 Windows build and 16 GB publication gate remain for the follow-up remote run.
 
+**16 GB gate PASSED** (WIN-16-PL, attempt 7, 2026-09-11 06:16–09:16, Windows PC
+DESKTOP-BNB2PBA, 4 cores / 16 GB, HEAD 67c327a, release sidecar, forced 2×1
+tiling, 24 Sulzberg images): `success: true`, 24/24 aligned, sparse point
+cloud 26,766 points published `complete/available` as potree@2 through the
+atomic publication (no `projectPublish` error, no retry lines), peak COLMAP
+working set 6.0 GiB, disk minimum 18.4 GiB, gate 2 h 21 min plus a 28 min
+build. Attempts 1–6 each surfaced one real defect or budget limit: missing
+PotreeConverter staging (WIN-07), typed toolchain preflight (WIN-08/09), disk
+rule too strict (WIN-09), untyped publication failure (WIN-10/14), session
+budget (WIN-12), PC disk (WIN-13), and finally the read-only fsync in
+`sync_package_artifacts` (WIN-15). Evidence:
+`.build/photolab-evidence/win16-report.md` (and win07…win14 reports).
+
 ### WP-A7d — Bound matching from the extracted feature set (Size M)
 
 Implemented 2026-09-09 (working tree, no commit): tiled ALIKED now records the
