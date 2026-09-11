@@ -1145,7 +1145,7 @@ mod tests {
         ]
     }
 
-    fn landed_tile_local_dem_package_roots() -> [PathBuf; 2] {
+    fn landed_tile_local_dem_package_roots() -> [PathBuf; 3] {
         [
             Path::new(env!("CARGO_MANIFEST_DIR")).join(
                 "../../.build/photolab-e2e/g1a3-dsm-smoke/photolab-e2e.hcad/.photolab/\
@@ -1154,6 +1154,10 @@ mod tests {
             Path::new(env!("CARGO_MANIFEST_DIR")).join(
                 "../../.build/photolab-e2e/g1a3-dtm-smoke/photolab-e2e.hcad/.photolab/\
                  product-import-packages/product-3d43364ef8b8740667cd94d8a26f4120994357c8e1a4569250605f36e6198fee",
+            ),
+            Path::new(env!("CARGO_MANIFEST_DIR")).join(
+                "../../.build/photolab-e2e/g1a3-dtm-smoke/photolab-e2e.hcad/.photolab/\
+                 product-import-packages/product-00e33bcd9b10cdb78c509648562488508c5263bfa8ed0dd249fec77ffb46a06c",
             ),
         ]
     }

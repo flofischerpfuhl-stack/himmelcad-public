@@ -28,6 +28,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
+use crate::durable_fs;
 use crate::job_runtime::{JobWorkerContext, JobWorkerError, JobWorkerResult};
 use crate::splat_tiler::PreparedSplatProduct;
 
@@ -1188,7 +1189,7 @@ fn report_new_brush_checkpoints(
             // Brush owns the path and may still be completing this export.
             continue;
         };
-        File::open(&path)?.sync_all()?;
+        sync_checkpoint_file(&path)?;
         let sequence = u64::from(iteration);
         context
             .checkpoints
@@ -1861,6 +1862,10 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), BrushRuntimeError> {
     Ok(())
 }
 
+fn sync_checkpoint_file(path: &Path) -> Result<(), BrushRuntimeError> {
+    durable_fs::sync_file(path).map_err(|error| io::Error::other(error).into())
+}
+
 fn atomic_copy(source: &Path, destination: &Path) -> Result<(), BrushRuntimeError> {
     let parent = destination
         .parent()
@@ -1993,6 +1998,24 @@ printf '[00:01] 3000/3000 Steps\n' >&2
             Some((123, 30_000))
         );
         assert_eq!(strip_ansi("\u{1b}[2Khello"), "hello");
+    }
+
+    #[test]
+    fn durable_checkpoint_sync_helper_uses_a_platform_safe_file_handle() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../.build/codex-scratch/pl-b1b")
+            .join(format!(
+                "brush-checkpoint-sync-{}-{}",
+                std::process::id(),
+                NEXT_SCRATCH_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+            ));
+        fs::create_dir_all(&root).expect("checkpoint test directory");
+        let checkpoint = root.join("checkpoint_1000.ply");
+        fs::write(&checkpoint, b"checkpoint").expect("checkpoint bytes");
+
+        sync_checkpoint_file(&checkpoint).expect("sync checkpoint");
+
+        fs::remove_dir_all(root).expect("cleanup");
     }
 
     #[cfg(target_os = "linux")]

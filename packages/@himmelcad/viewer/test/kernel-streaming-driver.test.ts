@@ -354,7 +354,7 @@ void test('dataset bootstrap fetches share the live kernel request ceiling', asy
   driver.dispose();
 });
 
-void test('raster hash-verifies and packs elevation, validity and confidence side-bands', async () => {
+void test('raster accepts known whole-file side-band lengths, hash-verifies, and packs them', async () => {
   const target = new RecordingTarget();
   const uris: string[] = [];
   const elevationBytes = new Uint8Array(new Float32Array([12]).buffer);
@@ -405,19 +405,19 @@ void test('raster hash-verifies and packs elevation, validity and confidence sid
               elevationReference: {
                 uri: 'height.raw',
                 byteOffset: null,
-                byteLength: null,
+                byteLength: elevationBytes.byteLength,
                 contentHash: await testSha256Hex(elevationBytes),
               },
               validityReference: {
                 uri: 'validity.bin',
                 byteOffset: null,
-                byteLength: null,
+                byteLength: validityBytes.byteLength,
                 contentHash: await testSha256Hex(validityBytes),
               },
               confidenceReference: {
                 uri: 'confidence.bin',
                 byteOffset: null,
-                byteLength: null,
+                byteLength: confidenceBytes.byteLength,
                 contentHash: await testSha256Hex(confidenceBytes),
                 encoding: 'unorm8',
               },

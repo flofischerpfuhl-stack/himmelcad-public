@@ -326,6 +326,11 @@ fn validate_decoded_raster_cardinality(cardinality: RasterCardinality) -> Result
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]
+fn raster_has_drawable_surface(decoded: &himmelcad_render::DecodedElevationRaster) -> bool {
+    !decoded.indices.is_empty()
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
 type RasterBandSlices<'a> = (
     &'a [u8],
     Option<&'a [u8]>,
@@ -11326,6 +11331,17 @@ fn compile_decoded_raster_content(
         metadata.exaggeration_datum,
     )
     .map_err(|error| error.to_string())?;
+    if !raster_has_drawable_surface(decoded) {
+        world
+            .set_compiled_metadata(
+                &id,
+                RenderProxyKind::Raster,
+                bounds,
+                raster_cost(request, decoded, pick_index_bytes, false),
+            )
+            .map_err(|error| error.to_string())?;
+        return Ok(());
+    }
     let mut batch = build_elevation_raster_batch(
         host.device(),
         host.queue(),
@@ -13918,6 +13934,7 @@ fn raster_cost(
     pick_index_bytes: u64,
     decoded_stage: bool,
 ) -> ResourceCost {
+    let drawable = raster_has_drawable_surface(decoded);
     let vertices = usize_to_u64(decoded.vertices.len());
     let indices = usize_to_u64(decoded.indices.len());
     let texture_bytes = u64::from(decoded.color_width)
@@ -13935,16 +13952,20 @@ fn raster_cost(
         } else {
             pick_index_bytes
         },
-        gpu_buffer_bytes: if decoded_stage {
+        gpu_buffer_bytes: if decoded_stage || !drawable {
             0
         } else {
             vertices
                 .saturating_mul(48)
                 .saturating_add(indices.saturating_mul(4))
         },
-        gpu_texture_bytes: if decoded_stage { 0 } else { texture_bytes },
+        gpu_texture_bytes: if decoded_stage || !drawable {
+            0
+        } else {
+            texture_bytes
+        },
         triangles: if decoded_stage { 0 } else { indices / 3 },
-        draw_calls: u32::from(!decoded_stage),
+        draw_calls: u32::from(!decoded_stage && drawable),
         ..ResourceCost::default()
     }
 }
@@ -14929,9 +14950,10 @@ fn parse_streaming_completion(
 #[cfg(test)]
 mod tests {
     use super::{
-        split_streamed_raster_bands, validate_decoded_potree_cardinality,
-        validate_decoded_raster_cardinality, validate_decoded_splat_cardinality, RasterCardinality,
-        RasterDimensions, WasmFrameTelemetryObservation,
+        raster_has_drawable_surface, split_streamed_raster_bands,
+        validate_decoded_potree_cardinality, validate_decoded_raster_cardinality,
+        validate_decoded_splat_cardinality, RasterCardinality, RasterDimensions,
+        WasmFrameTelemetryObservation,
     };
 
     fn raster_cardinality(
@@ -15018,6 +15040,30 @@ mod tests {
             5,
         ))
         .is_err());
+    }
+
+    #[test]
+    fn raster_without_admitted_triangles_is_valid_transparent_coverage() {
+        let empty = himmelcad_render::DecodedElevationRaster {
+            world_origin: himmelcad_render::WorldVec3 {
+                x: 0.0,
+                y: 0.0,
+                z: 0.0,
+            },
+            width: 1,
+            height: 1,
+            color_width: 1,
+            color_height: 1,
+            rgba8: vec![0, 0, 0, 0],
+            source_elevations: std::sync::Arc::from([f64::NAN]),
+            vertices: Vec::new(),
+            indices: Vec::new(),
+        };
+        assert!(!raster_has_drawable_surface(&empty));
+
+        let mut drawable = empty;
+        drawable.indices = vec![0, 1, 2];
+        assert!(raster_has_drawable_surface(&drawable));
     }
 
     #[test]

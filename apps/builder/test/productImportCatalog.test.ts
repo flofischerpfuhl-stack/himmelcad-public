@@ -14,6 +14,12 @@ const SPARSE = resolve(
   PROJECT,
   '.photolab/product-import-packages/product-9ad8b3224d97b1430358a6d3962cd7c0d55cb1f2c85cb89536b53f81a87c5be9',
 );
+const DTM_PROJECT = resolve(
+  process.cwd(),
+  '../..',
+  '.build/photolab-e2e/g1a3-dtm-smoke/photolab-e2e.hcad',
+);
+const DTM_PACKAGE = 'product-00e33bcd9b10cdb78c509648562488508c5263bfa8ed0dd249fec77ffb46a06c';
 
 test('G1b catalog lists the landed renderable packages (incl. the G1a-3b DSM) and refusal rows', async (context) => {
   try {
@@ -61,4 +67,23 @@ test('G1b chooser detects a manifest changed after publication', async (context)
   assert.equal(catalog.rows[0]?.readiness, 'notReady');
   assert.equal(catalog.rows[0]?.reasonCode, 'invalid_package');
   assert.match(catalog.rows[0]?.reason ?? '', /ready record and manifest do not match/i);
+});
+
+test('PL-B1b catalog admits the current DTM package with frozen DEM provenance', async (context) => {
+  try {
+    await fs.access(resolve(DTM_PROJECT, '.photolab/product-import-packages', DTM_PACKAGE));
+  } catch {
+    context.skip('landed DTM smoke fixture is not present');
+    return;
+  }
+  const catalog = await listProductImportCatalog(DTM_PROJECT);
+  const row = catalog.rows.find((candidate) => candidate.packagePath?.endsWith(DTM_PACKAGE));
+  assert.ok(row, `missing DTM package ${DTM_PACKAGE}`);
+  assert.equal(row.readiness, 'ready');
+  assert.equal(row.reasonCode, 'available');
+  assert.equal(row.productKind, 'dem');
+  assert.equal(
+    row.packageSha256,
+    '7579d65aed2260712ece0834bfe817c58d4dcd24ff83d5e5c5b24ff66fa83a05',
+  );
 });

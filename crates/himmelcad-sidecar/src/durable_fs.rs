@@ -44,10 +44,11 @@ pub fn sync_dir(path: &Path) -> Result<()> {
     Ok(())
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;
+    #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
     use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -77,6 +78,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn sync_file_accepts_a_read_only_file_on_unix() {
         let root = test_directory("read-only-file");
         let path = root.join("manifest.json");

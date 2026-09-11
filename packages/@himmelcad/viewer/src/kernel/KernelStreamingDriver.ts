@@ -2198,7 +2198,8 @@ function validByteReference(value: unknown): boolean {
   const offset = value.byteOffset;
   const length = value.byteLength;
   return (
-    (offset === null && length === null) ||
+    (offset === null &&
+      (length === null || (Number.isSafeInteger(length) && Number(length) > 0))) ||
     (Number.isSafeInteger(offset) &&
       Number(offset) >= 0 &&
       Number.isSafeInteger(length) &&

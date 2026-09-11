@@ -13,9 +13,6 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-#[cfg(windows)]
-use std::os::windows::fs::OpenOptionsExt;
-
 use fs2::FileExt;
 use himmelcad_core::canonical_document::{
     CanonicalCommandTransaction, CanonicalDocument, CanonicalDocumentError, CanonicalJournalEntry,
@@ -32,6 +29,8 @@ use himmelcad_io::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
+
+use crate::durable_fs;
 
 const STORE_SCHEMA_VERSION: u32 = 1;
 const PROJECT_FORMAT_VERSION: u32 = 1;
@@ -571,7 +570,7 @@ impl CanonicalProjectStore {
 
     fn flush_group_commit_files(&mut self) -> Result<(), CanonicalProjectStoreError> {
         for transaction_dir in &self.pending_group_commits {
-            File::open(transaction_dir.join("ready.json"))?.sync_all()?;
+            sync_file(&transaction_dir.join("ready.json"))?;
             sync_dir(transaction_dir)?;
         }
         sync_dir(&transactions_root(&self.root))?;
@@ -582,7 +581,7 @@ impl CanonicalProjectStore {
                 &transaction_dir.join("journal.json"),
                 &journal_path(&self.root, pending.journal.entry.sequence),
             )?;
-            File::open(transaction_dir.join("journal.json"))?.sync_all()?;
+            sync_file(&transaction_dir.join("journal.json"))?;
         }
         sync_dir(&canonical_root(&self.root).join("journal"))?;
         for transaction_dir in &self.pending_group_commits {
@@ -2370,37 +2369,14 @@ fn unix_timestamp_millis() -> u128 {
         .map_or(0, |duration| duration.as_millis())
 }
 
-#[cfg(unix)]
-fn sync_dir(path: &Path) -> Result<(), CanonicalProjectStoreError> {
-    File::open(path)?.sync_all()?;
-    Ok(())
+fn sync_file(path: &Path) -> Result<(), CanonicalProjectStoreError> {
+    durable_fs::sync_file(path)
+        .map_err(|error| CanonicalProjectStoreError::Io(io::Error::other(error)))
 }
 
-#[cfg(windows)]
 fn sync_dir(path: &Path) -> Result<(), CanonicalProjectStoreError> {
-    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
-
-    let directory = match OpenOptions::new()
-        .read(true)
-        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
-        .open(path)
-    {
-        Ok(directory) => directory,
-        Err(error) => {
-            // Directory handles can be denied by Windows policy or the backing filesystem.
-            // Publication remains recoverable through synchronized files, so this flush is
-            // deliberately best effort when the directory handle itself cannot be opened.
-            tracing::debug!(path = %path.display(), %error, "directory synchronization unavailable");
-            return Ok(());
-        }
-    };
-    directory.sync_all()?;
-    Ok(())
-}
-
-#[cfg(all(not(unix), not(windows)))]
-fn sync_dir(_path: &Path) -> Result<(), CanonicalProjectStoreError> {
-    Ok(())
+    durable_fs::sync_dir(path)
+        .map_err(|error| CanonicalProjectStoreError::Io(io::Error::other(error)))
 }
 
 #[cfg(test)]
@@ -2418,6 +2394,29 @@ mod tests {
     use himmelcad_io::{
         PreparedDatasetArtifact, PreparedResourceArtifact, CANONICAL_IO_SCHEMA_VERSION,
     };
+
+    #[test]
+    fn transaction_file_and_directory_sync_helpers_are_platform_safe() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../.build/codex-scratch/pl-b1b")
+            .join(format!(
+                "canonical-sync-{}-{}",
+                std::process::id(),
+                STAGING_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+            ));
+        let transaction = transactions_root(&root).join("helper-transaction");
+        fs::create_dir_all(&transaction).expect("transaction directory");
+        let ready = transaction.join("ready.json");
+        let journal = transaction.join("journal.json");
+        fs::write(&ready, b"{}\n").expect("ready marker");
+        fs::write(&journal, b"{}\n").expect("journal record");
+
+        sync_file(&ready).expect("sync ready marker");
+        sync_file(&journal).expect("sync journal record");
+        sync_dir(&transaction).expect("sync transaction directory");
+
+        fs::remove_dir_all(root).expect("cleanup");
+    }
 
     fn temp_project(label: &str) -> PathBuf {
         let sequence = STAGING_SEQUENCE.fetch_add(1, Ordering::Relaxed);
