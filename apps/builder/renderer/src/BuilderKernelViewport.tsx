@@ -303,6 +303,7 @@ interface BuilderKernelViewportProps {
   readonly onRegistryShortcut?: (event: KeyboardEvent) => void;
   readonly fence?: BuilderFenceOverlayState | null;
   readonly onFenceVertex?: (point: KernelWorldPoint) => void;
+  readonly onFencePickRejected?: () => void;
   readonly onFenceRectangle?: (vertices: readonly KernelWorldPoint[], closed: boolean) => void;
   readonly onFenceClose?: (volume: KernelFenceVolume) => void;
   readonly onFenceCancel?: () => void;
@@ -439,6 +440,7 @@ export const BuilderKernelViewport = forwardRef<
     onRegistryShortcut,
     fence = null,
     onFenceVertex,
+    onFencePickRejected,
     onFenceRectangle,
     onFenceClose,
     onFenceCancel,
@@ -576,6 +578,7 @@ export const BuilderKernelViewport = forwardRef<
     onContextSurface,
     onRegistryShortcut,
     onFenceVertex,
+    onFencePickRejected,
     onFenceRectangle,
     onFenceClose,
     onFenceCancel,
@@ -626,6 +629,7 @@ export const BuilderKernelViewport = forwardRef<
     onContextSurface,
     onRegistryShortcut,
     onFenceVertex,
+    onFencePickRejected,
     onFenceRectangle,
     onFenceClose,
     onFenceCancel,
@@ -698,7 +702,10 @@ export const BuilderKernelViewport = forwardRef<
               const currentFence = fenceRef.current;
               if (!currentFence || currentFence.closed) return;
               const next = point(originalEvent);
-              if (!next) return;
+              if (!next) {
+                callbacksRef.current.onFencePickRejected?.();
+                return;
+              }
               if (currentFence.kind === 'polygon') {
                 const first = currentFence.vertices[0];
                 const host = hostRef.current;
@@ -1129,6 +1136,7 @@ export const BuilderKernelViewport = forwardRef<
           admissions: [
             {
               admission,
+              datasetId: options.datasetId,
               style:
                 admission.resolvedGeometry.kind === 'elevationSurface' ? RASTER_STYLE : IFC_STYLE,
               exaggerationDatum: bounds.min[2],
@@ -1542,6 +1550,13 @@ export const BuilderKernelViewport = forwardRef<
           }
           activeViewingBoxBakeKeyRef.current = key;
         };
+        const cached = viewingBoxBakeCacheRef.current.get(bakeKey);
+        if (cached) {
+          await onProgress(1, `Restored ${cached.pointCount.toLocaleString()} baked points`);
+          throwIfViewingBoxBakeAborted(signal);
+          activatePreparedCache(bakeKey, cached);
+          return { ...state, lockMode: 'baked', bakeKey };
+        }
         if (
           state.lockMode === 'baked' &&
           state.bakeKey === bakeKey &&
@@ -1614,14 +1629,6 @@ export const BuilderKernelViewport = forwardRef<
             throw error;
           }
         }
-        const cached = viewingBoxBakeCacheRef.current.get(bakeKey);
-        if (cached) {
-          await onProgress(1, `Restored ${cached.pointCount.toLocaleString()} baked points`);
-          throwIfViewingBoxBakeAborted(signal);
-          activatePreparedCache(bakeKey, cached);
-          return { ...state, lockMode: 'baked', bakeKey };
-        }
-
         const baked: {
           sourceEntityId: EntityId;
           source: BuilderPointCloudOptions & { metadataUrl: string };
@@ -3502,19 +3509,56 @@ function preparedHierarchyBounds(manifestBytes: Uint8Array): Bounds {
   }
   let result: Bounds | null = null;
   for (const tile of parsed.tiles) {
-    if (!isRecord(tile) || !isRecord(tile.bounds) || tile.bounds.kind !== 'axisAlignedBox') {
-      continue;
+    if (!isRecord(tile) || !isRecord(tile.bounds)) continue;
+    const volume = tile.bounds;
+    let bounds: Bounds | null = null;
+    if (volume.kind === 'axisAlignedBox') {
+      const box = volume.bounds;
+      if (!isRecord(box) || !isRecord(box.min) || !isRecord(box.max)) continue;
+      const values = [box.min.x, box.min.y, box.min.z, box.max.x, box.max.y, box.max.z];
+      if (!values.every((value) => typeof value === 'number' && Number.isFinite(value))) continue;
+      bounds = {
+        min: [values[0] as number, values[1] as number, values[2] as number],
+        max: [values[3] as number, values[4] as number, values[5] as number],
+      };
+    } else if (volume.kind === 'sphere' && isRecord(volume.center)) {
+      const values = [volume.center.x, volume.center.y, volume.center.z, volume.radius];
+      if (!values.every((value) => typeof value === 'number' && Number.isFinite(value))) continue;
+      const [x, y, z, radius] = values as [number, number, number, number];
+      if (radius < 0) continue;
+      bounds = {
+        min: [x - radius, y - radius, z - radius],
+        max: [x + radius, y + radius, z + radius],
+      };
+    } else if (
+      volume.kind === 'orientedBox' &&
+      isRecord(volume.center) &&
+      Array.isArray(volume.halfAxes) &&
+      volume.halfAxes.length === 3 &&
+      volume.halfAxes.every(isRecord)
+    ) {
+      const axes = volume.halfAxes as Record<string, unknown>[];
+      const values = [
+        volume.center.x,
+        volume.center.y,
+        volume.center.z,
+        ...axes.flatMap((axis) => [axis.x, axis.y, axis.z]),
+      ];
+      if (!values.every((value) => typeof value === 'number' && Number.isFinite(value))) continue;
+      const [x, y, z, ax, ay, az, bx, by, bz, cx, cy, cz] = values as number[];
+      const half = [
+        Math.abs(ax!) + Math.abs(bx!) + Math.abs(cx!),
+        Math.abs(ay!) + Math.abs(by!) + Math.abs(cy!),
+        Math.abs(az!) + Math.abs(bz!) + Math.abs(cz!),
+      ] as const;
+      bounds = {
+        min: [x! - half[0], y! - half[1], z! - half[2]],
+        max: [x! + half[0], y! + half[1], z! + half[2]],
+      };
     }
-    const box = tile.bounds.bounds;
-    if (!isRecord(box) || !isRecord(box.min) || !isRecord(box.max)) continue;
-    const values = [box.min.x, box.min.y, box.min.z, box.max.x, box.max.y, box.max.z];
-    if (!values.every((value) => typeof value === 'number' && Number.isFinite(value))) continue;
-    result = unionBounds(result, {
-      min: [values[0] as number, values[1] as number, values[2] as number],
-      max: [values[3] as number, values[4] as number, values[5] as number],
-    });
+    if (bounds) result = unionBounds(result, bounds);
   }
-  if (!result) throw new Error('Prepared hierarchy manifest has no finite axis-aligned bounds');
+  if (!result) throw new Error('Prepared hierarchy manifest has no finite project bounds');
   return result;
 }
 

@@ -171,6 +171,8 @@ void test('G-DR-INPUT click, 45-degree constraint and typed XYZ converge to 1e-6
   for (const axis of ['x', 'y', 'z'] as const) {
     assert.ok(Math.abs(constrained[axis] - target[axis]) <= 1e-6);
   }
+  assert.equal(controller.snapshot().journalWrites, 0, 'accepted vertices remain view-local');
+  assert.equal(await controller.finish(), true);
   assert.equal(controller.snapshot().journalWrites, 1);
   assert.equal(
     (writes[0] as { acquisitions: { inputMode: string }[] }).acquisitions[1]!.inputMode,
@@ -194,7 +196,7 @@ void test('G-DR-INPUT rejects non-zero slope over zero horizontal run', async ()
   );
 });
 
-void test('G-DR-INPUT vertex undo compensates the latest journal root before the entity', async () => {
+void test('G-DR-INPUT vertex undo remains local before the one canonical publication', async () => {
   const targets: string[] = [];
   let revision = -1;
   const controller = new DrawToolController(
@@ -217,9 +219,44 @@ void test('G-DR-INPUT vertex undo compensates the latest journal root before the
   await controller.acceptTyped({ x: 2, y: 0, z: 0 });
   await controller.undoVertex();
   await controller.undoVertex();
-  assert.deepEqual(targets, ['write-1', 'write-0']);
+  assert.deepEqual(targets, []);
   assert.equal(controller.snapshot().entityId, null);
   assert.equal(controller.snapshot().vertices.length, 1);
+});
+
+void test('DR-D5 Boundary Close publishes once and a failed close preserves a retryable draft', async () => {
+  const writes: { closed: boolean; vertices: readonly unknown[] }[] = [];
+  let fail = true;
+  const controller = new DrawToolController(
+    {
+      write: async (input) => {
+        writes.push(input);
+        if (fail) throw new Error('canonical residency inventory is stale');
+        return { entityId: input.entityId, revision: 0, commandId: 'boundary-create' };
+      },
+      undo: async () => assert.fail('a view-local draft has nothing canonical to undo'),
+    },
+    () => ({ entityId: 'boundary-1', name: 'Boundary 1' }),
+  );
+  controller.arm('boundary');
+  await controller.acceptTyped({ x: 0, y: 0, z: 1 });
+  await controller.acceptTyped({ x: 10, y: 0, z: 2 });
+  await controller.acceptTyped({ x: 10, y: 10, z: 3 });
+  await assert.rejects(controller.finish(true), /canonical residency inventory is stale/);
+  assert.equal(controller.snapshot().armed, true);
+  assert.equal(controller.snapshot().vertices.length, 3);
+  assert.match(controller.snapshot().error ?? '', /canonical residency inventory is stale/);
+  fail = false;
+  assert.equal(await controller.finish(true), true);
+  assert.equal(controller.snapshot().armed, false);
+  assert.equal(controller.snapshot().journalWrites, 1);
+  assert.deepEqual(
+    writes.map((write) => [write.closed, write.vertices.length]),
+    [
+      [true, 3],
+      [true, 3],
+    ],
+  );
 });
 
 void test('G-DR-INPUT provenance distinguishes exact picks, typed and constrained vertices', () => {

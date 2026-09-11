@@ -219,6 +219,11 @@ export class PlatformGestureArbiter<Candidate> {
     return this.armedToolId;
   }
 
+  /** True when the armed tool, rather than idle selection, owns this gesture row. */
+  hasActiveClaim(row: PlatformGestureRow): boolean {
+    return this.armedTool()?.claims.has(row) ?? false;
+  }
+
   /** Pauses armed tool claims while leaving platform-owned selection/inspection live. */
   setClaimsBlocked(reason: string | null): void {
     this.claimBlockReason = reason;

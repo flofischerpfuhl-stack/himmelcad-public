@@ -881,14 +881,26 @@ export class KernelNavigationController {
         GEOMETRY_ACQUISITION_RADIUS_PHYSICAL_PIXELS,
       );
     } catch {
+      if (
+        !this.disposed &&
+        this.navigationEnabled() &&
+        generation === this.clickGeneration &&
+        event.button === 0 &&
+        this.gestures.hasActiveClaim('lmbClick')
+      ) {
+        this.gestures.handleClick(event, null, heldMilliseconds);
+      }
       return;
     }
-    if (
-      this.disposed ||
-      !this.navigationEnabled() ||
-      result.stale ||
-      generation !== this.clickGeneration
-    ) {
+    if (this.disposed || !this.navigationEnabled() || generation !== this.clickGeneration) {
+      return;
+    }
+    // Geometry tools such as a screen-plane fence do not require a scene hit.
+    // A stale GPU pick must not swallow the platform gesture they own.
+    if (result.stale) {
+      if (event.button === 0 && this.gestures.hasActiveClaim('lmbClick')) {
+        this.gestures.handleClick(event, null, heldMilliseconds);
+      }
       return;
     }
     this.candidates = result.candidates.filter(

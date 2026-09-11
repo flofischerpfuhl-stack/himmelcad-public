@@ -1877,6 +1877,7 @@ async fn handle_pointcloud_segment_rpc(
                     )?;
                     let scope = ground_scope(&source, source_params.scope);
                     let scope_value = serde_json::to_value(&scope)?;
+                    let mut last_progress_bucket = None;
                     let prepared: PreparedSegmentResult = prepare_segment_dataset(
                         &SegmentPrepareRequest {
                             metadata_path: source.input_root.join("metadata.json"),
@@ -1890,12 +1891,18 @@ async fn handle_pointcloud_segment_rpc(
                         },
                         &active.cancellation,
                         |progress| {
-                            emit_segment_progress(
-                                &params.progress_key,
-                                progress,
-                                index,
-                                total_sources,
-                            )
+                            let bucket = segment_progress_bucket(progress);
+                            if last_progress_bucket != Some(bucket)
+                                || progress.completed >= progress.total
+                            {
+                                last_progress_bucket = Some(bucket);
+                                emit_segment_progress(
+                                    &params.progress_key,
+                                    progress,
+                                    index,
+                                    total_sources,
+                                );
+                            }
                         },
                     )?;
                     prepared_sources.push((source, prepared, scope_value));
@@ -1953,6 +1960,15 @@ async fn handle_pointcloud_segment_rpc(
         }
         other => rpc_err(req.id, -32601, &format!("method not found: {other}")),
     }
+}
+
+fn segment_progress_bucket(progress: SegmentProgress) -> (SegmentPhase, u64) {
+    let bucket = if progress.total == 0 {
+        100
+    } else {
+        progress.completed.saturating_mul(100) / progress.total
+    };
+    (progress.phase, bucket.min(100))
 }
 
 #[allow(clippy::cast_precision_loss)]
@@ -12149,6 +12165,34 @@ mod tests {
             },
         })
         .expect("resume test job")
+    }
+
+    #[test]
+    fn segment_progress_is_bucketed_by_phase_and_percent() {
+        assert_eq!(
+            segment_progress_bucket(SegmentProgress {
+                phase: SegmentPhase::Scan,
+                completed: 49,
+                total: 10_000,
+            }),
+            (SegmentPhase::Scan, 0),
+        );
+        assert_eq!(
+            segment_progress_bucket(SegmentProgress {
+                phase: SegmentPhase::Scan,
+                completed: 100,
+                total: 10_000,
+            }),
+            (SegmentPhase::Scan, 1),
+        );
+        assert_eq!(
+            segment_progress_bucket(SegmentProgress {
+                phase: SegmentPhase::Bake,
+                completed: u64::MAX,
+                total: 1,
+            }),
+            (SegmentPhase::Bake, 100),
+        );
     }
 
     #[test]

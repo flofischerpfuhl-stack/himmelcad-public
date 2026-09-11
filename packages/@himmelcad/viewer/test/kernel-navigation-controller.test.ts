@@ -63,6 +63,33 @@ void test('sparse-cloud hover acquisition uses the bounded eight-pixel geometry 
   }
 });
 
+void test('an armed LMB geometry claim survives stale or failed GPU picking', async () => {
+  for (const outcome of ['stale', 'failed'] as const) {
+    const canvas = new NavigationCanvas();
+    const camera = new KernelCameraController(1_280, 720);
+    const target = navigationTarget();
+    target.pick = async () => {
+      if (outcome === 'failed') throw new Error('pick generation retired');
+      return { candidates: [], stale: true, generation: 1 };
+    };
+    const controller = new KernelNavigationController(
+      canvas as unknown as HTMLCanvasElement,
+      target,
+      camera,
+      {},
+    );
+    let accepted = 0;
+    controller.gestures.registerGestureClaims('pointcloud.fence', [
+      { row: 'lmbClick', handle: () => (accepted += 1) },
+    ]);
+    canvas.dispatchEvent(pointerInput('pointerdown', 0, 320, 240, 1));
+    canvas.dispatchEvent(pointerInput('pointerup', 0, 320, 240, 1));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(accepted, 1, `${outcome} pick must not swallow the armed fence click`);
+    controller.dispose();
+  }
+});
+
 void test('2D and 2.5D preserve one winner and differ only in acquired height', () => {
   const source = candidate('survey-point', { x: 500_001, y: 5_400_002, z: 137.25 }, 2, 0.3);
 

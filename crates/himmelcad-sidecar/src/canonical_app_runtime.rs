@@ -1424,6 +1424,41 @@ impl CanonicalAppRuntime {
         })
     }
 
+    /// Resolves the exact canonical hgrid payload behind a viewer-resident
+    /// height-grid dataset. The geometry binds to the prepared hierarchy root,
+    /// while surface creation consumes this immutable analytical artifact.
+    pub fn height_grid_artifact_source(
+        &self,
+        entity_id: &EntityId,
+    ) -> Result<AutomationObjectSource, CanonicalAppRuntimeError> {
+        let store = self
+            .store
+            .as_ref()
+            .ok_or(CanonicalAppRuntimeError::ProjectNotOpen)?;
+        let object_hash = store
+            .import_inventories()?
+            .into_iter()
+            .rev()
+            .flat_map(|inventory| inventory.datasets)
+            .find(|dataset| {
+                dataset.entity_id == entity_id.0 && dataset.format_id == HEIGHT_GRID_FORMAT_ID
+            })
+            .and_then(|dataset| {
+                dataset
+                    .artifacts
+                    .into_iter()
+                    .find(|artifact| artifact.relative_path == Path::new("height-grid.hgrid"))
+            })
+            .map(|artifact| artifact.resource.object_hash)
+            .ok_or_else(|| {
+                CanonicalAppRuntimeError::InvalidResidency(format!(
+                    "height-grid entity {:?} has no canonical height-grid.hgrid artifact",
+                    entity_id.0
+                ))
+            })?;
+        self.automation_object_source(&object_hash)
+    }
+
     /// Reads one bounded committed-resource range for the trusted desktop
     /// protocol bridge. The response is path-free for the renderer.
     pub fn read_residency_resource_range(
@@ -2400,9 +2435,9 @@ impl CanonicalAppRuntime {
     ) -> Result<CanonicalRasterizeCommit, CanonicalAppRuntimeError> {
         self.ensure_pointcloud_source_current(&source.expected)?;
         let resource = GeometryResource {
-            object_hash: prepared.artifact.object_hash.clone(),
-            media_type: prepared.artifact.media_type.clone(),
-            byte_length: Some(prepared.artifact.byte_length),
+            object_hash: prepared.viewer_manifest.object_hash.clone(),
+            media_type: prepared.viewer_manifest.media_type.clone(),
+            byte_length: Some(prepared.viewer_manifest.byte_length),
         };
         let mapping = OrthoGridMapping {
             origin: Vector3 {
@@ -2468,14 +2503,18 @@ impl CanonicalAppRuntime {
             entity_id: entity_id.clone(),
             representation_slot: "source".to_owned(),
             root_metadata: resource,
-            artifacts: vec![PreparedDatasetArtifact {
-                relative_path: PathBuf::from(&prepared.artifact.relative_path),
-                resource: GeometryResource {
-                    object_hash: prepared.artifact.object_hash.clone(),
-                    media_type: prepared.artifact.media_type.clone(),
-                    byte_length: Some(prepared.artifact.byte_length),
-                },
-            }],
+            artifacts: std::iter::once(&prepared.artifact)
+                .chain(std::iter::once(&prepared.viewer_manifest))
+                .chain(prepared.viewer_artifacts.iter())
+                .map(|artifact| PreparedDatasetArtifact {
+                    relative_path: PathBuf::from(&artifact.relative_path),
+                    resource: GeometryResource {
+                        object_hash: artifact.object_hash.clone(),
+                        media_type: artifact.media_type.clone(),
+                        byte_length: Some(artifact.byte_length),
+                    },
+                })
+                .collect(),
         };
         let recipe_parameters = serde_json::json!({
             "rasterize": parameters,
@@ -4860,7 +4899,7 @@ struct ExportSectionTopologyIndex {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 struct ExportSectionTopologyPart {
     part_id: String,
     topology_hash: String,
@@ -6811,6 +6850,13 @@ mod tests {
                 .expect("grid recipe");
         validate_recipe(&grid_recipe, &std::collections::BTreeMap::new())
             .expect("admitted height-grid recipe");
+        let mut analytical_grid = runtime
+            .height_grid_artifact_source(&EntityId("height-grid-a".to_owned()))
+            .expect("height-grid analytical artifact remains addressable");
+        let mut magic = [0_u8; 8];
+        std::io::Read::read_exact(&mut analytical_grid.source, &mut magic)
+            .expect("height-grid magic");
+        assert_eq!(&magic, crate::pointcloud_sampling::HEIGHT_GRID_MAGIC);
         runtime
             .store_mut()
             .expect("store")

@@ -338,7 +338,15 @@ pub fn create_surface_draft(
                             source.role == SurfaceSourceRole::Points,
                             "grid source requires points role"
                         );
-                        let mut object = runtime.automation_object_source(&raster.object_hash)?;
+                        // Viewer-resident grids bind the geometry to the prepared
+                        // hierarchy manifest, while meshing consumes the exact
+                        // analytical hgrid artifact from the same dataset
+                        // inventory. Grids published before that dual contract
+                        // used the hgrid itself as the geometry resource, so keep
+                        // the direct-object lookup as the compatibility fallback.
+                        let mut object = runtime
+                            .height_grid_artifact_source(&source.source.id)
+                            .or_else(|_| runtime.automation_object_source(&raster.object_hash))?;
                         points.extend(read_height_grid(
                             &mut object.source,
                             &source.source.id.0,
@@ -850,12 +858,7 @@ fn staged_edited_surface_package(
             }]
         }),
     )?;
-    let selected = Representation {
-        role: RepresentationRole::Canonical,
-        geometry_ref: geometry_ref.clone(),
-        authority: RepresentationAuthority::Authoritative,
-        dependency_hash: Some(source_fingerprint),
-    };
+    let selected = authoritative_baked_surface_representation(geometry_ref.clone());
     let mut entity = CanonicalEntity {
         id: entity_id.clone(),
         revision: 0,
@@ -1279,12 +1282,7 @@ fn staged_surface_package(
             "schemaId":"hcad.relations@1","relations":checkpoint.source_requests.iter().map(|value| serde_json::json!({"relationType":"hcad.derived-from@1","target":value.source.id,"expectedVersion":value.source.version_hash,"parameters":source_fingerprint})).collect::<Vec<_>>()
         }),
     )?;
-    let selected = Representation {
-        role: RepresentationRole::Canonical,
-        geometry_ref: geometry_ref.clone(),
-        authority: RepresentationAuthority::Authoritative,
-        dependency_hash: Some(source_fingerprint),
-    };
+    let selected = authoritative_baked_surface_representation(geometry_ref.clone());
     let mut entity = CanonicalEntity {
         id: entity_id.clone(),
         revision: 0,
@@ -1467,9 +1465,32 @@ fn source_role_name(role: SurfaceSourceRole) -> &'static str {
     }
 }
 
+fn authoritative_baked_surface_representation(geometry_ref: ObjectHash) -> Representation {
+    // Dependency provenance belongs to the recipe and relations. The selected
+    // baked TIN is canonical authoritative geometry and must be dependency-free.
+    Representation {
+        role: RepresentationRole::Canonical,
+        geometry_ref,
+        authority: RepresentationAuthority::Authoritative,
+        dependency_hash: None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn baked_surface_representation_satisfies_authoritative_dependency_contract() {
+        let representation =
+            authoritative_baked_surface_representation(ObjectHash::of_bytes(b"surface"));
+        assert_eq!(representation.role, RepresentationRole::Canonical);
+        assert_eq!(
+            representation.authority,
+            RepresentationAuthority::Authoritative
+        );
+        assert_eq!(representation.dependency_hash, None);
+    }
 
     #[test]
     fn mesh_surface_checkpoint_restarts_without_partial_publish_state() {

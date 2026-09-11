@@ -1116,6 +1116,59 @@ export function App(): JSX.Element {
     return unregister;
   }, [displayStore, selectionStore]);
 
+  const resetProjectRendererState = useCallback((): void => {
+    // React state updates are asynchronous. Clear every lifecycle-sensitive ref
+    // first so effects from the outgoing project cannot republish into the next.
+    viewingBoxBakeAbortRef.current?.abort();
+    viewingBoxBakeAbortRef.current = null;
+    viewingBoxBakeJobIdRef.current = null;
+    viewingBoxRef.current = null;
+    viewingBoxRevisionRef.current = null;
+    viewingBoxRevisionByIdRef.current.clear();
+    viewingBoxNameRef.current = 'Viewing Box';
+    pendingViewingBoxIdRef.current = null;
+    lockedViewingBoxSourceRevisionKeyRef.current = null;
+    measurementsRef.current = [];
+    drawCurvesRef.current = [];
+    segmentFenceRef.current = EMPTY_SEGMENT_FENCE;
+    entityGroupsRef.current = { cloud: [], ifc: [], orthophoto: [], mesh: [] };
+
+    setProject(null);
+    setSnapshots([]);
+    setSnapshotToRestore(null);
+    setMeasurements([]);
+    setDrawCurves([]);
+    setViewingBox(null);
+    setViewingBoxes([]);
+    setViewingBoxName('Viewing Box');
+    setPlacingViewingBoxCenter(false);
+    setViewingBoxBakeProgress(null);
+    setPointCloudMetadata(new Map());
+    setRegistrationItems([]);
+    setForegroundRegistrationJobId(null);
+    setBackgroundedRegistrationJobId(null);
+    setGroundPreview(null);
+    setGroundResult(null);
+    setGroundError(null);
+    setSegmentFence(EMPTY_SEGMENT_FENCE);
+    setSegmentError(null);
+    setSampleResult(null);
+    setRasterizeResult(null);
+    setPointcloudProcessingError(null);
+    setPropertyQuery(null);
+    setPropertyQueryError(null);
+    setProductProvenance([]);
+    setTreeProductProvenance([]);
+    setSurfaceEditTargetId(null);
+    setSurfaceEditPreview(null);
+    setSurfaceEditBoundaryRegion(null);
+    setCommandSurface(null);
+    setSnap(null);
+    setDurability(null);
+    setDurabilityFailureToast(false);
+    viewportRef.current?.resetProjectScene();
+  }, []);
+
   const closeCurrentProject = useCallback(
     async (mode: 'project' | 'window', preserveRenderer = false): Promise<boolean> => {
       const api = window.himmelcad;
@@ -1135,9 +1188,7 @@ export function App(): JSX.Element {
       try {
         for (const job of jobs) {
           if (
-            (job.owner === 'builder.import' ||
-              job.owner === 'builder.archive' ||
-              job.owner === 'builder.ground-extraction') &&
+            job.owner.startsWith('builder.') &&
             !['completed', 'failed', 'cancelled'].includes(job.state)
           ) {
             await api.jobs.cancel(job.id).catch(() => undefined);
@@ -1163,18 +1214,9 @@ export function App(): JSX.Element {
         setForegroundRegistrationJobId(null);
         setBackgroundedRegistrationJobId(null);
         if (!preserveRenderer) {
-          setProject(null);
-          setSnapshots([]);
-          setMeasurements([]);
-          setViewingBox(null);
-          setViewingBoxes([]);
-          viewingBoxRevisionByIdRef.current.clear();
-          viewingBoxRevisionRef.current = null;
+          resetProjectRendererState();
           setCurrentProjectPath(null);
           currentProjectPathRef.current = null;
-          setDurability(null);
-          entityGroupsRef.current = { cloud: [], ifc: [], orthophoto: [], mesh: [] };
-          viewportRef.current?.resetProjectScene();
         }
         if (mode === 'window') await api.window.closeReady();
         return true;
@@ -1200,6 +1242,7 @@ export function App(): JSX.Element {
       displayStore,
       drawToolStore,
       jobs,
+      resetProjectRendererState,
       selectionStore,
     ],
   );
@@ -1215,12 +1258,11 @@ export function App(): JSX.Element {
         prepare: async (root) => {
           durabilityRecoveryReportedRef.current = false;
           setRecoveryToast(null);
+          resetProjectRendererState();
           currentProjectPathRef.current = root;
           setCurrentProjectPath(root);
           canonicalReadyRef.current = null;
           canonicalSessionRef.current = null;
-          entityGroupsRef.current = { cloud: [], ifc: [], orthophoto: [], mesh: [] };
-          viewportRef.current?.resetProjectScene();
         },
         openPrepared: () => ensureCanonicalProjectRef.current().then(() => undefined),
         discardFailed: async () => {
@@ -1249,7 +1291,7 @@ export function App(): JSX.Element {
         currentProjectPathRef.current = null;
       }
     },
-    [closeCurrentProject],
+    [closeCurrentProject, resetProjectRendererState],
   );
 
   useEffect(() => {
@@ -1394,7 +1436,6 @@ export function App(): JSX.Element {
       new Set(Object.keys(refreshed.entities)),
       (entityId) => refreshed.entities[entityId]?.kind,
     );
-    setProject(refreshed);
     const restored = await restoreCanonicalResidency(
       viewport,
       await api.canonicalProject.residencyBootstrap(),
@@ -1403,6 +1444,11 @@ export function App(): JSX.Element {
     entityGroupsRef.current.cloud = restored.clouds;
     entityGroupsRef.current.ifc = restored.inlineMeshes;
     setPointCloudMetadata(restored.pointCloudMetadata);
+    // Publish the new revision key only after its protocol URLs are resident.
+    // A locked viewing box watches that key and immediately rebuilds its cache;
+    // exposing it earlier races the just-committed dataset mapping and yields a
+    // transient hcad-project://.../metadata.json 404.
+    setProject(refreshed);
   }, [selectionStore]);
   const reloadCanonicalResidencyRef = useRef(reloadCanonicalResidency);
   reloadCanonicalResidencyRef.current = reloadCanonicalResidency;
@@ -4570,10 +4616,7 @@ export function App(): JSX.Element {
               }}
               interactionState={(entity) => interactionState?.presentation(entity.id) ?? 'editable'}
               onInteractionStateChange={onInteractionStateChange}
-              onContextAction={(
-                commandId: string,
-                entityIds: readonly EntityId[],
-              ) => {
+              onContextAction={(commandId: string, entityIds: readonly EntityId[]) => {
                 const command = commandById(commandId);
                 if (!command) {
                   logEvent('warn', 'renderer', `Unknown entity context command: ${commandId}`);
@@ -5032,10 +5075,21 @@ export function App(): JSX.Element {
                     : null
                 }
                 onFenceVertex={(point) => {
+                  const acceptedCount = segmentFenceRef.current.closed
+                    ? segmentFenceRef.current.vertices.length
+                    : segmentFenceRef.current.vertices.length + 1;
                   setSegmentFence((current) => ({
                     ...current,
                     vertices: current.closed ? current.vertices : [...current.vertices, point],
                   }));
+                  setSegmentError(null);
+                  logEvent('info', 'renderer', `Fence vertex accepted · ${acceptedCount}`);
+                }}
+                onFencePickRejected={() => {
+                  const message =
+                    'Fence pick rejected — the current view cannot define a world point.';
+                  setSegmentError(message);
+                  logEvent('warn', 'renderer', message);
                 }}
                 onFenceRectangle={(vertices) => {
                   setSegmentFence((current) => ({
@@ -6767,6 +6821,12 @@ async function restoreCanonicalResidency(
         if (entry.dataset?.formatId === 'potree@2') {
           clouds.add(entityId);
           if (entry.pointCloud) pointCloudMetadata.set(entityId, entry.pointCloud);
+        } else if (
+          entry.dataset?.formatId === 'himmelcad-prepared-hierarchy@1' ||
+          (entry.dataset?.formatId === 'hcad.pointcloud.height-grid@1' &&
+            !entry.dataset.metadataUrl.split(/[?#]/, 1)[0]!.endsWith('.hgrid'))
+        ) {
+          inlineMeshes.add(entityId);
         } else if (entry.dataset === null) {
           inlineMeshes.add(entityId);
         }
@@ -6785,12 +6845,17 @@ async function restoreCanonicalResidency(
         });
         clouds.add(entityId);
         if (entry.pointCloud) pointCloudMetadata.set(entityId, entry.pointCloud);
-      } else if (entry.dataset?.formatId === 'himmelcad-prepared-hierarchy@1') {
+      } else if (
+        entry.dataset?.formatId === 'himmelcad-prepared-hierarchy@1' ||
+        (entry.dataset?.formatId === 'hcad.pointcloud.height-grid@1' &&
+          !entry.dataset.metadataUrl.split(/[?#]/, 1)[0]!.endsWith('.hgrid'))
+      ) {
         await viewport.loadPreparedHierarchy(entry.dataset.metadataUrl, {
           datasetId: entry.dataset.datasetId,
           formatId: entry.dataset.formatId,
           admission,
         });
+        inlineMeshes.add(entityId);
       } else if (entry.dataset === null) {
         inlineAdmissions.push(admission);
       } else {

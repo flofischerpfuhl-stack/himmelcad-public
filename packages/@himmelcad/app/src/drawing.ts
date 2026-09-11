@@ -104,9 +104,7 @@ export class DrawToolController {
   private entityRevision: number | null = null;
   private committing = false;
   private error: string | null = null;
-  private closed = false;
   private journalWrites = 0;
-  private readonly commandIds: string[] = [];
   private cached: DrawToolSnapshot | null = null;
   private readonly listeners = new Set<() => void>();
 
@@ -191,8 +189,17 @@ export class DrawToolController {
   }
 
   async finish(close = false): Promise<boolean> {
-    if (!this.kind || this.vertices.length < 2 || this.committing) return false;
-    if (close && !this.closed) await this.persist(true);
+    if (!this.kind || this.committing) return false;
+    const minimumVertices = this.kind === 'boundary' ? 3 : 2;
+    if (this.vertices.length < minimumVertices) {
+      this.error =
+        this.kind === 'boundary'
+          ? 'A boundary needs at least three accepted vertices before Close.'
+          : 'A line needs at least two accepted vertices before Finish.';
+      this.changed();
+      return false;
+    }
+    await this.persist(this.kind === 'boundary' || close);
     this.kind = null;
     this.preview = null;
     this.changed();
@@ -207,31 +214,17 @@ export class DrawToolController {
     return true;
   }
 
-  /** Explicit panel cancellation compensates every accepted vertex transaction. */
+  /** Accepted construction is view-local, so cancellation never has canonical work to undo. */
   async cancelAll(): Promise<boolean> {
     if (!this.kind || this.committing) return false;
-    this.committing = true;
+    this.kind = null;
+    this.preview = null;
+    this.vertices = [];
+    this.entityId = null;
+    this.entityRevision = null;
+    this.error = null;
     this.changed();
-    try {
-      while (this.commandIds.length > 0) {
-        const commandId = this.commandIds.pop()!;
-        await this.sink.undo(commandId);
-        this.journalWrites += 1;
-      }
-      this.kind = null;
-      this.preview = null;
-      this.vertices = [];
-      this.entityId = null;
-      this.entityRevision = null;
-      this.closed = false;
-      return true;
-    } catch (error) {
-      this.error = String(error);
-      throw error;
-    } finally {
-      this.committing = false;
-      this.changed();
-    }
+    return true;
   }
 
   revertPending(): boolean {
@@ -244,26 +237,9 @@ export class DrawToolController {
 
   async undoVertex(): Promise<boolean> {
     if (!this.kind || this.vertices.length === 0 || this.committing) return false;
-    const commandId = this.commandIds.pop();
-    let undoResult: { readonly entityId: string; readonly revision: number | null } | null = null;
-    if (commandId) {
-      this.committing = true;
-      this.changed();
-      try {
-        undoResult = await this.sink.undo(commandId);
-        this.journalWrites += 1;
-      } finally {
-        this.committing = false;
-      }
-    }
     this.vertices.pop();
-    if (undoResult?.revision === null || this.vertices.length < 2) {
-      this.entityId = null;
-      this.entityRevision = null;
-    } else if (undoResult) {
-      this.entityRevision = undoResult.revision;
-    }
     this.preview = null;
+    this.error = null;
     this.changed();
     return true;
   }
@@ -276,25 +252,16 @@ export class DrawToolController {
       this.vertices.length >= 3 &&
       samePoint(acquisition.point, this.vertices[0]!.point)
     ) {
-      await this.persist(true);
-      this.kind = null;
-      this.preview = null;
-      this.changed();
-      return true;
+      return this.finish(true);
     }
     this.vertices.push(
       Object.freeze({ ...acquisition, point: Object.freeze({ ...acquisition.point }) }),
     );
     this.preview = null;
-    if (this.vertices.length >= 2) {
-      try {
-        await this.persist(false);
-      } catch (error) {
-        this.vertices.pop();
-        throw error;
-      }
+    if (this.kind === 'line' && this.vertices.length === 2) {
+      await this.persist(false);
+      this.kind = null;
     }
-    if (this.kind === 'line' && this.vertices.length === 2) this.kind = null;
     this.changed();
     return true;
   }
@@ -321,9 +288,7 @@ export class DrawToolController {
       });
       this.entityId = result.entityId;
       this.entityRevision = result.revision;
-      this.commandIds.push(result.commandId);
       this.journalWrites += 1;
-      this.closed = closed;
     } catch (error) {
       this.error = String(error);
       throw error;
@@ -340,8 +305,6 @@ export class DrawToolController {
     this.entityRevision = null;
     this.committing = false;
     this.error = null;
-    this.closed = false;
-    this.commandIds.length = 0;
   }
 
   private changed(): void {
