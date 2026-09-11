@@ -19,6 +19,7 @@ pub mod crs_service;
 pub mod dedode_colmap_bridge;
 pub mod dedode_runtime;
 pub mod dense_raster_prep;
+pub mod durable_fs;
 pub mod gcp_local_estimate_runtime;
 pub mod gcp_optimization_runtime;
 pub mod gcp_runtime;

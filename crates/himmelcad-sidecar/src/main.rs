@@ -8090,9 +8090,8 @@ fn write_batch_checkpoint(
     file.sync_all()?;
     drop(file);
     std::fs::rename(temporary, path)?;
-    #[cfg(unix)]
     if let Some(parent) = path.parent() {
-        std::fs::File::open(parent)?.sync_all()?;
+        himmelcad_sidecar::durable_fs::sync_dir(parent)?;
     }
     Ok(ObjectHash::of_bytes(&bytes))
 }

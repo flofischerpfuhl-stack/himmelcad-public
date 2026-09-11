@@ -83,6 +83,7 @@ use himmelcad_sidecar::colmap_runtime::{
 };
 use himmelcad_sidecar::dedode_runtime::DedodeToolIdentity;
 use himmelcad_sidecar::dense_raster_prep::PreparedPotreeCloud;
+use himmelcad_sidecar::durable_fs;
 use himmelcad_sidecar::gcp_local_estimate_runtime::{
     compute_gcp_local_estimate, read_gcp_local_estimate, ComputeGcpLocalEstimateParams,
     GcpLocalEstimateArtifact, ReadGcpLocalEstimateParams,
@@ -2047,10 +2048,13 @@ fn write_product_import_package(
     );
 
     let result = (|| -> Result<PhotoLabProductPublicationRecordV1> {
-        fs::create_dir_all(&package_root)?;
+        fs::create_dir_all(&package_root)
+            .with_context(|| format!("publish {}", package_root.display()))?;
         cancellation.check()?;
         let executable = std::env::current_exe()?;
-        let executable_sha256 = hash_regular_file(&executable)?.0;
+        let executable_sha256 = hash_regular_file(&executable)
+            .with_context(|| format!("hash {}", executable.display()))?
+            .0;
         let frozen = freeze_product_lineage(
             session,
             candidate_manifest,
@@ -2343,11 +2347,15 @@ fn write_product_import_package(
         };
         himmelcad_core::product_import_package::validate_product_import_package_paths(&manifest)
             .map_err(anyhow::Error::msg)?;
-        manifest.package_sha256 = manifest.computed_package_sha256()?;
+        let manifest_path = package_root.join("manifest.json");
+        manifest.package_sha256 = manifest
+            .computed_package_sha256()
+            .with_context(|| format!("hash {}", manifest_path.display()))?;
         let manifest_bytes = canonical_json::to_vec(&manifest)?;
         let manifest_sha256 = ObjectHash::of_bytes(&manifest_bytes);
-        atomic_write_bytes(&package_root.join("manifest.json"), &manifest_bytes)?;
-        sync_package_artifacts(&package_root, &manifest, cancellation)?;
+        atomic_write_bytes(&manifest_path, &manifest_bytes)
+            .with_context(|| format!("publish {}", manifest_path.display()))?;
+        sync_package_artifacts(&package_root, &manifest.artifacts, cancellation)?;
 
         let ready = ProductImportPackageReadyRecordV1 {
             schema_id: PRODUCT_IMPORT_PACKAGE_READY_SCHEMA_ID.to_owned(),
@@ -2366,10 +2374,9 @@ fn write_product_import_package(
             package_sha256: manifest.package_sha256.clone(),
         };
         cancellation.check()?;
-        atomic_write_bytes(
-            &package_root.join("ready.json"),
-            &serde_json::to_vec(&ready)?,
-        )?;
+        let ready_path = package_root.join("ready.json");
+        atomic_write_bytes(&ready_path, &serde_json::to_vec(&ready)?)
+            .with_context(|| format!("publish {}", ready_path.display()))?;
         let publication = PhotoLabProductPublicationRecordV1 {
             schema_id: PRODUCT_PUBLICATION_SCHEMA_ID.to_owned(),
             publication_id: manifest_id,
@@ -2394,10 +2401,9 @@ fn write_product_import_package(
                 package_sha256: ready.package_sha256,
             }),
         };
-        atomic_write_json(
-            &product_import_publication_path(&session.working_path, &snapshot.id),
-            &publication,
-        )?;
+        let publication_path = product_import_publication_path(&session.working_path, &snapshot.id);
+        atomic_write_json(&publication_path, &publication)
+            .with_context(|| format!("publish {}", publication_path.display()))?;
         Ok(publication)
     })();
     if result.is_err() {
@@ -2735,26 +2741,36 @@ fn product_artifact_media_type(path: &Path) -> String {
 
 fn sync_package_artifacts(
     root: &Path,
-    manifest: &ProductImportPackageManifestV1,
+    artifacts: &[ProductImportPackageArtifactV1],
     cancellation: &CancellationToken,
 ) -> Result<()> {
-    let canonical_root = root.canonicalize()?;
-    for artifact in &manifest.artifacts {
+    let canonical_root = root
+        .canonicalize()
+        .with_context(|| format!("hash {}", root.display()))?;
+    for artifact in artifacts {
         cancellation.check()?;
-        let path = root.join(&artifact.path).canonicalize()?;
+        let artifact_path = root.join(&artifact.path);
+        let path = artifact_path
+            .canonicalize()
+            .with_context(|| format!("hash {}", artifact_path.display()))?;
         anyhow::ensure!(
             path.starts_with(&canonical_root),
-            "package artifact escaped its root"
+            "hash {}: package artifact escaped its root",
+            path.display()
         );
-        let (sha256, byte_length) = hash_regular_file_cancellable(&path, cancellation)?;
+        let (sha256, byte_length) = hash_regular_file_cancellable(&path, cancellation)
+            .with_context(|| format!("hash {}", path.display()))?;
         anyhow::ensure!(
             sha256 == artifact.sha256 && byte_length == artifact.byte_length,
-            "package artifact changed before ready publication"
+            "hash {}: package artifact changed before ready publication",
+            path.display()
         );
-        File::open(path)?.sync_all()?;
+        durable_fs::sync_file(&path)?;
     }
-    File::open(root.join("manifest.json"))?.sync_all()?;
-    sync_parent_directory(&root.join("manifest.json"))?;
+    let manifest_path = root.join("manifest.json");
+    durable_fs::sync_file(&manifest_path)?;
+    sync_parent_directory(&manifest_path)
+        .with_context(|| format!("publish {}", manifest_path.display()))?;
     Ok(())
 }
 
@@ -13538,15 +13554,8 @@ fn validate_archive_operation_id(operation_id: &str) -> Result<()> {
     Ok(())
 }
 
-#[cfg(unix)]
 fn sync_parent_directory(path: &Path) -> Result<()> {
-    File::open(path.parent().context("archive path has no parent")?)?.sync_all()?;
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn sync_parent_directory(_path: &Path) -> Result<()> {
-    Ok(())
+    durable_fs::sync_dir(path.parent().context("archive path has no parent")?)
 }
 
 fn is_hcadx_path(path: &Path) -> bool {
@@ -14123,6 +14132,46 @@ mod tests {
     use himmelcad_sidecar::viewer_raster_manifest::{
         publish_prepared_elevation_hierarchy, PreparedElevationHierarchyOptions,
     };
+
+    #[test]
+    fn sync_package_artifacts_succeeds_and_names_a_changed_artifact() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../.build/codex-scratch/win15")
+            .join(unique_id(
+                "package-artifacts",
+                unix_ms().expect("clock must work"),
+            ));
+        fs::create_dir_all(&root).expect("create package root");
+        let root = root.canonicalize().expect("canonical package root");
+        let artifact_path = root.join("dataset/artifact.bin");
+        fs::create_dir_all(artifact_path.parent().expect("artifact parent"))
+            .expect("create package directory");
+        let bytes = b"verified artifact";
+        fs::write(&artifact_path, bytes).expect("write package artifact");
+        fs::write(root.join("manifest.json"), b"{}\n").expect("write package manifest");
+        let artifacts = vec![ProductImportPackageArtifactV1 {
+            path: "dataset/artifact.bin".to_owned(),
+            sha256: ObjectHash::of_bytes(bytes),
+            byte_length: u64::try_from(bytes.len()).expect("artifact length"),
+            media_type: "application/octet-stream".to_owned(),
+            role: "dataset".to_owned(),
+        }];
+
+        sync_package_artifacts(&root, &artifacts, &CancellationToken::new())
+            .expect("matching package artifact must sync");
+
+        fs::write(&artifact_path, b"changed artifact").expect("change package artifact");
+        let error = sync_package_artifacts(&root, &artifacts, &CancellationToken::new())
+            .expect_err("changed package artifact must fail");
+        assert!(
+            error
+                .to_string()
+                .contains(&artifact_path.display().to_string()),
+            "mismatch must name {}: {error:#}",
+            artifact_path.display()
+        );
+        fs::remove_dir_all(root).expect("clean package test directory");
+    }
 
     #[test]
     fn legacy_product_provenance_is_never_complete() {

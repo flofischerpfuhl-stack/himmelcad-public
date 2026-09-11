@@ -22,6 +22,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crate::durable_fs;
 use crate::process_group::{self, ProcessGroupChild as Child};
 
 use himmelcad_core::{
@@ -5597,8 +5598,7 @@ fn publish_feature_cache(
         fs::remove_file(&database)?;
     }
     fs::rename(&temporary, &database)?;
-    #[cfg(unix)]
-    File::open(root)?.sync_all()?;
+    durable_fs::sync_dir(root).map_err(io::Error::other)?;
     atomic_write(
         &record_path,
         &serde_json::to_vec_pretty(&FeatureCacheRecord {
@@ -6359,8 +6359,7 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), ColmapRuntimeError> {
     file.write_all(bytes)?;
     file.sync_all()?;
     fs::rename(&temporary, path)?;
-    #[cfg(unix)]
-    File::open(parent)?.sync_all()?;
+    durable_fs::sync_dir(parent).map_err(io::Error::other)?;
     Ok(())
 }
 

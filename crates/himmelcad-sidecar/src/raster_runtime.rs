@@ -22,6 +22,7 @@ use thiserror::Error;
 #[cfg(target_os = "linux")]
 use crate::colmap_runtime::configure_systemd_user_bus_environment;
 use crate::colmap_runtime::{worker_command, WorkerMemoryLimitMode, WorkerMemoryLimitPlan};
+use crate::durable_fs;
 use crate::job_runtime::{CheckpointSink, JobMemorySink, RasterPreparationStagePlan};
 use crate::process_group;
 use tokio::task::JoinSet;
@@ -2690,8 +2691,7 @@ fn write_json_atomic(path: &Path, value: &impl Serialize) -> Result<(), RasterRu
         file.sync_all()?;
     }
     fs::rename(&temporary, path)?;
-    #[cfg(unix)]
-    File::open(parent)?.sync_all()?;
+    durable_fs::sync_dir(parent).map_err(std::io::Error::other)?;
     Ok(())
 }
 
@@ -2793,9 +2793,8 @@ async fn publish_directory(
             return Err(RasterRuntimeError::OutputExists(path_string(&destination)?));
         }
         fs::rename(&source, &destination)?;
-        #[cfg(unix)]
         if let Some(parent) = destination.parent() {
-            File::open(parent)?.sync_all()?;
+            durable_fs::sync_dir(parent).map_err(std::io::Error::other)?;
         }
         Ok(())
     })

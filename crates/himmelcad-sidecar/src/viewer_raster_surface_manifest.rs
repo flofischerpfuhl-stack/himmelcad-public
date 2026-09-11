@@ -14,6 +14,7 @@ use himmelcad_render::{
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
+use crate::durable_fs;
 use crate::raster_runtime::{
     OrthomosaicElevationSupport, RasterBounds, RasterBuildSummary, RasterByteOrder,
     RasterLevelSummary, RasterNoDataValue, RasterViewTileFormat,
@@ -633,8 +634,7 @@ fn write_bytes_atomically(
         fs::remove_file(destination)?;
     }
     fs::rename(&temporary, destination)?;
-    #[cfg(unix)]
-    File::open(parent)?.sync_all()?;
+    durable_fs::sync_dir(parent).map_err(std::io::Error::other)?;
     Ok(())
 }
 

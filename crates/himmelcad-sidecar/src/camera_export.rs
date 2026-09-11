@@ -12,6 +12,7 @@ use thiserror::Error;
 
 use crate::{
     colmap_runtime::ColmapIntrinsicsRefinement,
+    durable_fs,
     product_export::{publish_replace, ProductExportError},
 };
 
@@ -316,7 +317,7 @@ fn sync_directory_tree(root: &Path) -> Result<(), std::io::Error> {
             OpenOptions::new().write(true).open(path)?.sync_all()?;
         }
     }
-    File::open(root)?.sync_all()
+    durable_fs::sync_dir(root).map_err(std::io::Error::other)
 }
 
 fn safe_component(value: &str) -> String {

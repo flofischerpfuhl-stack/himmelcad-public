@@ -3233,6 +3233,21 @@ Footer
 
 Landed 2026-09-02 (b5fec8e): `pnpm photolab:evidence:ledger --out <file> [--candidate <rev>] [--e2e <dir>…] [--a11y <dir>] [--baselines <dir>] [--cargo-log …] [--node-log …]` writes the R1 ledger from executed artifacts only (presence plus each artifact's own verdict; never certifies closure). 14 unit tests. Implemented by the Grok wrapper (mechanical work under D8).
 
+### WP-WIN-15-PL — Windows-safe PhotoLab durability sync
+
+The PhotoLab lane replaces the read-only file flushes in
+`project_runtime.rs:2754` and `:2756` with the cross-platform file helper and
+the directory flushes in `project_runtime.rs:13543`, `raster_runtime.rs:2694`
+and `:2798`, `colmap_runtime.rs:5601` and `:6363`,
+`viewer_raster_surface_manifest.rs:637`, `camera_export.rs:319`, and the
+PhotoLab batch-checkpoint publisher in `main.rs:8249` with the directory
+helper. The Builder-owned sites in `canonical_project_store.rs:574`, `:585`,
+and `:2375`, plus `brush_runtime.rs:1191`, remain untouched for the Builder
+lane. File synchronization uses a read/write handle on Windows and a
+read-only handle on Unix; directory synchronization remains real on Unix and
+is a logged no-op on Windows. Product-import-package hash, file-sync, and
+publication failures carry their step and affected path.
+
 ## Execution order and review protocol
 
 Waves (sequential Codex runs; the reviewing session verifies each before the
