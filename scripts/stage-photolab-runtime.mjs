@@ -7,7 +7,7 @@ const root = resolve(import.meta.dirname, '..');
 const platform = process.argv[2] ?? `${process.platform}-${process.arch}`;
 const output = join(root, '.build', 'photolab-runtime', platform);
 
-rmSync(output, { recursive: true, force: true });
+if (platform !== 'win32-x64') rmSync(output, { recursive: true, force: true });
 mkdirSync(output, { recursive: true });
 
 if (platform === 'linux-x64') stageLinux();
@@ -36,6 +36,7 @@ function stageWindows() {
   });
   const colmapBin = stageColmapRuntime('win32-x64');
   stageDedodeRuntime('win32-x64');
+  stagePotreeConverter('win32-x64');
   stageGeoRuntime('win32-x64', [
     'gdal_grid.exe',
     'gdal_rasterize.exe',
@@ -90,6 +91,14 @@ function stageWindows() {
     join(msvcRuntime, 'LICENSE.rtf'),
     join(dedodePython, 'LICENSE-Microsoft-VC-Runtime.rtf'),
   );
+}
+
+function stagePotreeConverter(target) {
+  const source = join(root, 'vendor', 'potreeconverter', target);
+  const destination = join(output, 'workers', 'potree');
+  if (!existsSync(source)) throw new Error(`Required release runtime is missing: ${source}`);
+  rmSync(destination, { recursive: true, force: true });
+  copyRequired(source, destination);
 }
 
 function stageColmapRuntime(target) {
