@@ -8,6 +8,10 @@ use std::path::{Path, PathBuf};
 use himmelcad_core::hash::ObjectHash;
 use himmelcad_core::mesh_surface::SurfacePoint;
 use himmelcad_core::photolab_jobs::CancellationToken;
+use himmelcad_render::{
+    BoundingVolume, ContentKind, ContentReference, PreparedHierarchyManifest, RefinementMode,
+    TileDescriptor, TileId, WorldAabb, WorldTransform, WorldVec3,
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -198,6 +202,8 @@ pub struct RasterSummary {
 pub struct PreparedHeightGrid {
     pub root: PathBuf,
     pub artifact: PreparedGroundArtifact,
+    pub viewer_manifest: PreparedGroundArtifact,
+    pub viewer_artifacts: Vec<PreparedGroundArtifact>,
     pub summary: RasterSummary,
 }
 
@@ -361,6 +367,8 @@ pub enum PointcloudSamplingError {
     Json(#[from] serde_json::Error),
     #[error("point-cloud sampling input is invalid: {0}")]
     Invalid(&'static str),
+    #[error("prepared height-grid viewer manifest is invalid: {0}")]
+    ViewerManifest(String),
     #[error(transparent)]
     Prepared(#[from] PointcloudGroundError),
 }
@@ -824,6 +832,11 @@ pub fn prepare_height_grid(
     fs::create_dir_all(&output_root)?;
     let path = output_root.join("height-grid.hgrid");
     let mut output = BufWriter::with_capacity(IO_CHUNK_BYTES, File::create(&path)?);
+    let color_path = output_root.join("height-grid.rgba");
+    let elevation_path = output_root.join("height-grid.f64");
+    let mut color_output = BufWriter::with_capacity(IO_CHUNK_BYTES, File::create(&color_path)?);
+    let mut elevation_output =
+        BufWriter::with_capacity(IO_CHUNK_BYTES, File::create(&elevation_path)?);
     output.write_all(HEIGHT_GRID_MAGIC)?;
     output.write_all(&width.to_le_bytes())?;
     output.write_all(&height.to_le_bytes())?;
@@ -837,6 +850,8 @@ pub fn prepare_height_grid(
     output.write_all(&[aggregation_code(request.parameters.aggregation)])?;
     output.write_all(&[empty_policy_code(request.parameters.empty_cell_policy)])?;
     let mut empty_cells = 0_u64;
+    let mut minimum_value = f64::INFINITY;
+    let mut maximum_value = f64::NEG_INFINITY;
     for (index, cell) in cells.into_iter().enumerate() {
         if index % 65_536 == 0 {
             check_sampling_cancelled(cancellation)?;
@@ -865,8 +880,18 @@ pub fn prepare_height_grid(
         output.write_all(&value.to_le_bytes())?;
         output.write_all(&count.to_le_bytes())?;
         output.write_all(&variance.to_le_bytes())?;
+        elevation_output.write_all(&value.to_le_bytes())?;
+        if valid {
+            minimum_value = minimum_value.min(value);
+            maximum_value = maximum_value.max(value);
+            color_output.write_all(&[105, 154, 96, 255])?;
+        } else {
+            color_output.write_all(&[0, 0, 0, 0])?;
+        }
     }
     output.flush()?;
+    elevation_output.flush()?;
+    color_output.flush()?;
     check_sampling_cancelled(cancellation)?;
     progress(RasterizeProgress {
         phase: RasterizePhase::Bake,
@@ -880,9 +905,109 @@ pub fn prepare_height_grid(
         byte_length,
         media_type: HEIGHT_GRID_MEDIA_TYPE.to_owned(),
     };
+    let (color_hash, color_byte_length) = hash_file(&color_path)?;
+    let (elevation_hash, elevation_byte_length) = hash_file(&elevation_path)?;
+    let color_artifact = PreparedGroundArtifact {
+        relative_path: "height-grid.rgba".to_owned(),
+        object_hash: color_hash.clone(),
+        byte_length: color_byte_length,
+        media_type: "application/octet-stream".to_owned(),
+    };
+    let elevation_artifact = PreparedGroundArtifact {
+        relative_path: "height-grid.f64".to_owned(),
+        object_hash: elevation_hash.clone(),
+        byte_length: elevation_byte_length,
+        media_type: "application/vnd.himmelcad.depth-f64le".to_owned(),
+    };
+    let root_id = TileId("height-grid-root".to_owned());
+    let half_cell = size * 0.5;
+    let manifest_bytes = PreparedHierarchyManifest {
+        schema_version: 1,
+        roots: vec![root_id.clone()],
+        tiles: vec![TileDescriptor {
+            id: root_id,
+            parent: None,
+            children: Vec::new(),
+            bounds: BoundingVolume::AxisAlignedBox {
+                bounds: WorldAabb {
+                    min: WorldVec3 {
+                        x: grid_origin[0] - half_cell,
+                        y: grid_origin[1] - half_cell,
+                        z: minimum_value,
+                    },
+                    max: WorldVec3 {
+                        x: grid_origin[0] + (f64::from(width) - 0.5) * size,
+                        y: grid_origin[1] + (f64::from(height) - 0.5) * size,
+                        z: maximum_value,
+                    },
+                },
+            },
+            content_transform: WorldTransform::IDENTITY,
+            geometric_error: size,
+            refinement: RefinementMode::Replace,
+            contents: vec![ContentReference {
+                kind: ContentKind::Raster,
+                uri: "height-grid.rgba".to_owned(),
+                byte_offset: None,
+                // A standalone URI is an un-ranged resource. The prepared
+                // hierarchy contract requires byte offset and length to be
+                // either both present or both absent.
+                byte_length: None,
+                primitive_count: Some(cell_count),
+                content_hash: Some(color_hash.as_str().to_owned()),
+                decoder_parameters: Some(serde_json::json!({
+                    "schemaVersion": 1,
+                    "width": width,
+                    "height": height,
+                    "mapping": {
+                        "origin": grid_origin,
+                        "columnStep": [size, 0.0],
+                        "rowStep": [0.0, size],
+                    },
+                    "topology": { "kind": "pixelSteps" },
+                    "interpolation": "nearest",
+                    "colorEncoding": "rgba8",
+                    "elevationEncoding": { "kind": "float64LittleEndian" },
+                    "noData": { "kind": "nan" },
+                    "elevationReference": {
+                        "uri": "height-grid.f64",
+                        "byteOffset": null,
+                        "byteLength": elevation_byte_length,
+                        "contentHash": elevation_hash.as_str(),
+                    },
+                    "validityReference": null,
+                    "confidenceReference": null,
+                    "triangleMaskReference": null,
+                })),
+            }],
+            child_page: None,
+            prepared_point_metadata: None,
+            provider_metadata: Some(serde_json::json!({
+                "schemaId": "hcad.provider.height-grid@1",
+                "aggregation": request.parameters.aggregation,
+            })),
+        }],
+    }
+    .to_validated_json()
+    .map_err(|error| PointcloudSamplingError::ViewerManifest(error.to_string()))?;
+    let manifest_path = output_root.join("manifest.json");
+    fs::write(&manifest_path, manifest_bytes)?;
+    let (manifest_hash, manifest_byte_length) = hash_file(&manifest_path)?;
+    let viewer_manifest = PreparedGroundArtifact {
+        relative_path: "manifest.json".to_owned(),
+        object_hash: manifest_hash,
+        byte_length: manifest_byte_length,
+        // The canonical provider contract binds dataset format, geometry
+        // resource media type, and root-metadata resource exactly. The bytes
+        // are a validated prepared hierarchy, while this names the concrete
+        // height-grid dataset contract selected by the viewer bootstrap.
+        media_type: HEIGHT_GRID_FORMAT_ID.to_owned(),
+    };
     Ok(PreparedHeightGrid {
         root: output_root,
         artifact,
+        viewer_manifest,
+        viewer_artifacts: vec![color_artifact, elevation_artifact],
         summary: RasterSummary {
             source_points: source.metadata.points,
             scoped_points,

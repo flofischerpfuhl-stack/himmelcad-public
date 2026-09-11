@@ -21,7 +21,7 @@ for d in $(cd "$REPO" && find apps packages -maxdepth 3 -name node_modules -type
 echo "== root typecheck on the staged index"; (cd "$OUT" && pnpm typecheck >"$OUT/typecheck.log" 2>&1); TS=$?; echo "typecheck exit=$TS"; [ $TS -ne 0 ] && grep -E "error|ERR" "$OUT/typecheck.log" | head -6
 if git diff --cached --name-only | grep -q "^crates/"; then
   TREE=$(git write-tree); C=$(git commit-tree "$TREE" -p HEAD -m "staged snapshot"); git worktree remove --force "$RS" 2>/dev/null; git worktree add --detach "$RS" "$C" >/dev/null 2>&1
-  echo "== sidecar check on the staged snapshot"; (cd "$RS" && PATH="$HOME/.cargo/bin:$PATH" CARGO_TARGET_DIR="${VERIFY_TARGET_DIR:-$REPO/target/verify}" cargo check -p himmelcad-sidecar --tests --bins 2>&1 | grep -E "^error|Finished" | head -3); RSX=${PIPESTATUS[0]}
+  echo "== sidecar check on the staged snapshot"; (cd "$RS" && PATH="$HOME/.cargo/bin:$PATH" CARGO_TARGET_DIR="${VERIFY_TARGET_DIR:-$REPO/target/verify}" cargo check -p himmelcad-sidecar --tests --bins > "$REPO/.build/verify-staged-cargo.log" 2>&1; echo $? > "$REPO/.build/verify-staged-cargo.exit"); RSX=$(cat "$REPO/.build/verify-staged-cargo.exit"); grep -E "^error|Finished" "$REPO/.build/verify-staged-cargo.log" | head -3
   git worktree remove --force "$RS" 2>/dev/null
 else RSX=0; echo "== no crate changes staged; sidecar check skipped"; fi
 cp "$OUT/typecheck.log" "$REPO/.build/verify-staged.log" 2>/dev/null; rm -rf "$OUT"
