@@ -12,8 +12,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::{BufRead, BufReader as StdBufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
-use std::time::SystemTime;
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::{Context, Result};
 use himmelcad_core::app_protocol::{
@@ -11962,12 +11962,103 @@ fn emit_progress(progress_key: Option<&str>, fraction: f64, message: &str) {
     let Some(progress_key) = progress_key else {
         return;
     };
+    let fraction = fraction.clamp(0.0, 1.0);
+    let phase = progress_phase_signature(message);
+    let started = PROGRESS_CLOCK.get_or_init(Instant::now);
+    let mut coalescer = PROGRESS_COALESCER
+        .get_or_init(|| Mutex::new(ProgressEventCoalescer::default()))
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if !coalescer.should_emit_at(progress_key, &phase, fraction, started.elapsed()) {
+        return;
+    }
     let payload = serde_json::json!({
         "progressKey": progress_key,
-        "fraction": fraction.clamp(0.0, 1.0),
+        "fraction": fraction,
         "message": message,
     });
     eprintln!("{PROGRESS_PREFIX}{payload}");
+}
+
+const PROGRESS_EVENT_INTERVAL: Duration = Duration::from_millis(100);
+const MAX_TRACKED_PROGRESS_JOBS: usize = 4_096;
+static PROGRESS_CLOCK: OnceLock<Instant> = OnceLock::new();
+static PROGRESS_COALESCER: OnceLock<Mutex<ProgressEventCoalescer>> = OnceLock::new();
+
+#[derive(Default)]
+struct ProgressEventCoalescer {
+    jobs: BTreeMap<String, ProgressEmission>,
+}
+
+struct ProgressEmission {
+    phase: String,
+    fraction: f64,
+    emitted_at: Duration,
+}
+
+impl ProgressEventCoalescer {
+    fn should_emit_at(
+        &mut self,
+        progress_key: &str,
+        phase: &str,
+        fraction: f64,
+        now: Duration,
+    ) -> bool {
+        let emit = self.jobs.get(progress_key).is_none_or(|previous| {
+            previous.phase != phase
+                || fraction < previous.fraction
+                || (fraction >= 1.0 && previous.fraction < 1.0)
+                || now.saturating_sub(previous.emitted_at) >= PROGRESS_EVENT_INTERVAL
+        });
+        if !emit {
+            return false;
+        }
+        if self.jobs.len() >= MAX_TRACKED_PROGRESS_JOBS && !self.jobs.contains_key(progress_key) {
+            if let Some(oldest) = self
+                .jobs
+                .iter()
+                .min_by_key(|(_, emission)| emission.emitted_at)
+                .map(|(key, _)| key.clone())
+            {
+                self.jobs.remove(&oldest);
+            }
+        }
+        self.jobs.insert(
+            progress_key.to_owned(),
+            ProgressEmission {
+                phase: phase.to_owned(),
+                fraction,
+                emitted_at: now,
+            },
+        );
+        true
+    }
+}
+
+fn progress_phase_signature(message: &str) -> String {
+    let trimmed = message.trim();
+    if trimmed.starts_with("Converting ") {
+        return "Converting source".to_owned();
+    }
+    trimmed
+        .split(['·', ':'])
+        .next()
+        .unwrap_or(trimmed)
+        .split_whitespace()
+        .take(2)
+        .map(|word| {
+            word.chars()
+                .map(|character| {
+                    if character.is_ascii_digit() {
+                        '#'
+                    } else {
+                        character
+                    }
+                })
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 #[allow(clippy::cast_precision_loss)]
@@ -12193,6 +12284,37 @@ mod tests {
             }),
             (SegmentPhase::Bake, 100),
         );
+    }
+
+    #[test]
+    fn job_progress_is_coalesced_to_ten_hz_and_phase_changes_are_immediate() {
+        let mut coalescer = ProgressEventCoalescer::default();
+        let emitted = (0_u64..200)
+            .filter(|index| {
+                coalescer.should_emit_at(
+                    "segment-road",
+                    "Scanning points",
+                    *index as f64 / 1_000.0,
+                    Duration::from_millis(index * 5),
+                )
+            })
+            .count();
+        assert_eq!(
+            emitted, 10,
+            "steady per-batch updates must publish at most 10 Hz"
+        );
+        assert!(coalescer.should_emit_at(
+            "segment-road",
+            "Baking hierarchy",
+            0.2,
+            Duration::from_millis(997),
+        ));
+        assert!(!coalescer.should_emit_at(
+            "segment-road",
+            "Baking hierarchy",
+            0.21,
+            Duration::from_millis(999),
+        ));
     }
 
     #[test]

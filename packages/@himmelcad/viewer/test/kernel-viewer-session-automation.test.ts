@@ -6,6 +6,7 @@ import { KernelFrameDiagnostics } from '../src/kernel/KernelFrameDiagnostics.js'
 import type { KernelViewMode } from '../src/kernel/KernelNavigationController.js';
 import {
   KernelViewerSession,
+  kernelFrameNeedsContinuation,
   type KernelPresentedFrameOptions,
   type KernelPresentedFrameOutcome,
   type KernelQualitySnapshot,
@@ -217,6 +218,50 @@ void test('view.quality.get seam reports the exact class, tier, tunables and eff
   assert.deepEqual(quality.currentReasons, ['within_target']);
   assert.equal(quality.lastAdjustment, 'reduced');
   assert.equal(Object.isFrozen(quality), true);
+});
+
+void test('rest-state governor stops without input, streaming completion, or quality work', () => {
+  assert.equal(
+    kernelFrameNeedsContinuation({
+      pendingPickMappings: 0,
+      motionActive: false,
+      qualityAdjustment: 'unchanged',
+      renderScale: 1,
+      detailScale: 1,
+      maximumRenderScale: 1,
+      maximumDetailScale: 1,
+      recreateSurface: false,
+    }),
+    false,
+  );
+  assert.equal(
+    kernelFrameNeedsContinuation({
+      pendingPickMappings: 1,
+      motionActive: false,
+      qualityAdjustment: 'unchanged',
+      renderScale: 1,
+      detailScale: 1,
+      maximumRenderScale: 1,
+      maximumDetailScale: 1,
+      recreateSurface: false,
+    }),
+    true,
+    'pending input readback remains an explicit invalidation source',
+  );
+  assert.equal(
+    kernelFrameNeedsContinuation({
+      pendingPickMappings: 0,
+      motionActive: false,
+      qualityAdjustment: 'unchanged',
+      renderScale: 0.85,
+      detailScale: 0.8,
+      maximumRenderScale: 1,
+      maximumDetailScale: 1,
+      recreateSurface: false,
+    }),
+    false,
+    'a reduced quality tier is state, not a self-sustaining invalidation source',
+  );
 });
 
 interface SessionHarness {

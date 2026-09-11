@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { exportDisclosureRows } from '../renderer/src/exportDisclosure.js';
+import {
+  exportDisclosureRows,
+  landXmlProjectUnitDefault,
+} from '../renderer/src/exportDisclosure.js';
 
 test('DXF plan-loss disclosure accounts for measurement and cloud omissions exactly', () => {
   const losses = [
@@ -28,4 +31,26 @@ test('DXF plan-loss disclosure accounts for measurement and cloud omissions exac
     new Set(losses),
     'the UI must disclose every provider plan loss and no invented code',
   );
+});
+
+test('LandXML unit defaults use declared project truth and refuse ambiguity', () => {
+  assert.equal(landXmlProjectUnitDefault([{ sourceCrs: 'EPSG:25832', sourceUnits: 'm' }]), 'meter');
+  assert.equal(
+    landXmlProjectUnitDefault([
+      {
+        sourceCrs: 'PROJCRS["State Plane",LENGTHUNIT["US survey foot",0.304800609601219]]',
+        sourceUnits: 'US survey ft',
+      },
+    ]),
+    'USSurveyFoot',
+  );
+  assert.equal(landXmlProjectUnitDefault([{ sourceCrs: null, sourceUnits: 'ft' }]), 'foot');
+  assert.equal(
+    landXmlProjectUnitDefault([
+      { sourceCrs: 'EPSG:25832', sourceUnits: 'm' },
+      { sourceCrs: null, sourceUnits: 'ft' },
+    ]),
+    null,
+  );
+  assert.equal(landXmlProjectUnitDefault([{ sourceCrs: null, sourceUnits: null }]), null);
 });

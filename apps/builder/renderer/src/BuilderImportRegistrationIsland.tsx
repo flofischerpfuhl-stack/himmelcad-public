@@ -20,7 +20,7 @@ import {
   type BuilderKernelViewportHandle,
 } from './BuilderKernelViewport.js';
 import type { BuilderCanonicalProjectSession } from './project.js';
-import { importStageNeedsFurtherInput } from './importDialogPolicy.js';
+import { importPlacementMetadata, importStageNeedsFurtherInput } from './importDialogPolicy.js';
 
 interface StagedResidency {
   readonly sessionId: string;
@@ -702,16 +702,9 @@ function fileLabel(path: string): string {
 }
 
 function placementSummary(state: ImportRegistrationState): string {
-  const package_ = isRecord(state.sourcePreview) ? state.sourcePreview : {};
-  const objects = Array.isArray(package_.objects) ? package_.objects : [];
-  const source = objects
-    .filter(isRecord)
-    .map((object) => (isRecord(object.value) ? object.value['hcad.point-cloud-import@1'] : null))
-    .filter(isRecord)
-    .map((attributes) => attributes.source)
-    .find(isRecord);
-  const crs = typeof source?.declaredCrs === 'string' ? source.declaredCrs : 'Not declared';
-  const units = typeof source?.declaredUnits === 'string' ? source.declaredUnits : 'Not declared';
+  const metadata = importPlacementMetadata(state.sourcePreview);
+  const crs = metadata.declaredCrs ?? 'Not declared';
+  const units = metadata.declaredUnits ?? 'Not declared';
   const transform = state.preview?.transform;
   const offset = transform ? [transform.tx, transform.ty, transform.tz] : [0, 0, 0];
   return `CRS: ${crs} · offset ${offset.map(formatOffset).join(' ')} · source units ${units}`;

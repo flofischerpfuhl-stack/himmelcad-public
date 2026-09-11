@@ -8,6 +8,9 @@ import {
   exportDisclosureRows,
   exportFormatChoices,
   exportFormatLabel,
+  landXmlProjectUnitDefault,
+  type LandXmlLinearUnit,
+  type ProjectUnitSource,
 } from './exportDisclosure.js';
 
 interface ExportEntity {
@@ -21,6 +24,7 @@ export function BuilderExportIsland({
   entities,
   selectedIds,
   visibleIds,
+  projectUnitSources,
   initialScope,
   detached,
   onDetachedChange,
@@ -31,16 +35,22 @@ export function BuilderExportIsland({
   readonly entities: readonly ExportEntity[];
   readonly selectedIds: readonly string[];
   readonly visibleIds: readonly string[];
+  readonly projectUnitSources: readonly ProjectUnitSource[];
   readonly initialScope: ExportScope;
   readonly detached: boolean;
   readonly onDetachedChange: (detached: boolean) => void;
   readonly onClose: () => void;
   readonly onConsole: (level: 'info' | 'error', message: string) => void;
 }): JSX.Element {
+  const projectUnitDefault = useMemo(
+    () => landXmlProjectUnitDefault(projectUnitSources),
+    [projectUnitSources],
+  );
   const [descriptors, setDescriptors] = useState<readonly IoFormatDescriptor[]>([]);
   const [scope, setScope] = useState<ExportScope>(initialScope);
   const [formatId, setFormatId] = useState('');
   const [path, setPath] = useState('');
+  const [linearUnit, setLinearUnit] = useState<LandXmlLinearUnit | ''>(projectUnitDefault ?? '');
   const [acceptedPlan, setAcceptedPlan] = useState<IoExportPlanEnvelope | null>(null);
   const [planning, setPlanning] = useState(false);
   const [running, setRunning] = useState<ExportRunningState | null>(null);
@@ -69,6 +79,8 @@ export function BuilderExportIsland({
   const selectedDescriptor = descriptors.find((descriptor) =>
     descriptor.formatIds.includes(formatId),
   );
+  const isLandXml = exportFormatLabel(formatId) === 'LandXML';
+  const plannedUnitLabel = acceptedPlan && isLandXml ? landXmlUnitLabel(linearUnit || null) : null;
   const planRows = acceptedPlan
     ? exportDisclosureRows(
         scopedEntities.map((entity) => ({
@@ -137,6 +149,13 @@ export function BuilderExportIsland({
 
   const plan = async (): Promise<void> => {
     if (!selectedDescriptor || ids.length === 0 || !path) return;
+    if (isLandXml && !linearUnit) {
+      const message = 'LandXML export requires Units. Choose metre, feet, or US feet.';
+      setAcceptedPlan(null);
+      setError(message);
+      onConsole('error', `io.export.plan refused · ${message}`);
+      return;
+    }
     setPlanning(true);
     setError(null);
     try {
@@ -148,7 +167,7 @@ export function BuilderExportIsland({
         providerVersion: selectedDescriptor.providerVersion,
         targetPath: path,
         formatId,
-        options: cloneJson(selectedDescriptor.exportOptions?.defaults ?? {}),
+        options: exportOptions(selectedDescriptor.exportOptions?.defaults ?? {}, linearUnit),
       });
       setAcceptedPlan(next);
       onConsole(
@@ -231,6 +250,17 @@ export function BuilderExportIsland({
       scope={scope}
       selectionCount={selectedIds.filter((id) => exportableIds.has(id)).length}
       path={path}
+      {...(isLandXml
+        ? {
+            unitChoices: LANDXML_UNIT_CHOICES,
+            unitId: linearUnit,
+            plannedUnitLabel,
+            onUnitChange: (value: string) => {
+              setLinearUnit(isLandXmlLinearUnit(value) ? value : '');
+              invalidate();
+            },
+          }
+        : {})}
       planRows={planRows}
       {...(acceptedPlan
         ? { outputs: acceptedPlan.plan.outputs.map((output) => output.relativePath) }
@@ -256,6 +286,35 @@ export function BuilderExportIsland({
       onClose={onClose}
     />
   );
+}
+
+const LANDXML_UNIT_CHOICES = [
+  { id: '', label: 'Not set' },
+  { id: 'meter', label: 'Metre' },
+  { id: 'foot', label: 'Feet' },
+  { id: 'USSurveyFoot', label: 'US feet' },
+] as const;
+
+function isLandXmlLinearUnit(value: string): value is LandXmlLinearUnit {
+  return value === 'meter' || value === 'foot' || value === 'USSurveyFoot';
+}
+
+function landXmlUnitLabel(unit: LandXmlLinearUnit | null): string | null {
+  return LANDXML_UNIT_CHOICES.find((choice) => choice.id === unit)?.label ?? null;
+}
+
+function exportOptions(defaults: JsonValue, linearUnit: LandXmlLinearUnit | ''): JsonValue {
+  const options = cloneJson(defaults);
+  if (!linearUnit) return options;
+  const record = options && typeof options === 'object' && !Array.isArray(options) ? options : {};
+  return {
+    ...record,
+    units: {
+      system: linearUnit === 'meter' ? 'Metric' : 'Imperial',
+      linearUnit,
+      attributes: {},
+    },
+  };
 }
 
 async function pollExport(

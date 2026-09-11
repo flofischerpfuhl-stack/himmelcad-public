@@ -29,12 +29,20 @@ export interface ExportRunningState {
   readonly cancelling?: boolean;
 }
 
+export interface ExportUnitChoice {
+  readonly id: string;
+  readonly label: string;
+}
+
 export interface ExportIslandProps {
   readonly formats: readonly ExportFormatChoice[];
   readonly formatId: string;
   readonly scope: ExportScope;
   readonly selectionCount: number;
   readonly path: string;
+  readonly unitChoices?: readonly ExportUnitChoice[];
+  readonly unitId?: string;
+  readonly plannedUnitLabel?: string | null;
   readonly planRows: readonly ExportPlanRow[] | null;
   readonly outputs?: readonly string[];
   readonly planning?: boolean;
@@ -44,6 +52,7 @@ export interface ExportIslandProps {
   readonly onDetachedChange?: (detached: boolean) => void;
   readonly onFormatChange: (formatId: string) => void;
   readonly onScopeChange: (scope: ExportScope) => void;
+  readonly onUnitChange?: (unitId: string) => void;
   readonly onChoosePath: () => void;
   readonly onPlan: () => void;
   readonly onExport: () => void;
@@ -57,6 +66,9 @@ export function ExportIsland({
   scope,
   selectionCount,
   path,
+  unitChoices = [],
+  unitId = '',
+  plannedUnitLabel = null,
   planRows,
   outputs = [],
   planning = false,
@@ -66,6 +78,7 @@ export function ExportIsland({
   onDetachedChange,
   onFormatChange,
   onScopeChange,
+  onUnitChange,
   onChoosePath,
   onPlan,
   onExport,
@@ -124,6 +137,19 @@ export function ExportIsland({
           </p>
         ) : null}
 
+        {unitChoices.length > 0 && onUnitChange ? (
+          <label className={styles.field}>
+            <span>Units</span>
+            <Select
+              aria-label="Export units"
+              value={unitId}
+              disabled={running !== null}
+              options={unitChoices.map((unit) => ({ value: unit.id, label: unit.label }))}
+              onChange={(event) => onUnitChange(event.currentTarget.value)}
+            />
+          </label>
+        ) : null}
+
         <fieldset className={styles.scope} disabled={running !== null}>
           <legend>Scope</legend>
           <div className={styles.segments}>
@@ -173,6 +199,7 @@ export function ExportIsland({
             {outputs.length > 0 ? (
               <p className={styles.outputs}>Writes {outputs.join(', ')}</p>
             ) : null}
+            {plannedUnitLabel ? <p className={styles.outputs}>Units: {plannedUnitLabel}</p> : null}
             <div className={styles.tableWrap}>
               <table>
                 <thead>

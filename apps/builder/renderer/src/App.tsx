@@ -5229,6 +5229,10 @@ export function App(): JSX.Element {
                   displayStore.effective(entity.id) !== 'hidden',
               )
               .map((entity) => entity.id)}
+            projectUnitSources={[...pointCloudMetadata.values()].map((metadata) => ({
+              sourceCrs: metadata.sourceCrs,
+              sourceUnits: metadata.sourceUnits,
+            }))}
             initialScope={exportInitialScope}
             detached={exportDetached}
             onDetachedChange={setExportDetached}

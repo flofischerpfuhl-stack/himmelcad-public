@@ -41,6 +41,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use las::crs::GeoTiffData;
 use las::Reader as LasReader;
 
 use himmelcad_core::canonical_resources::PointCloudDisplayStyle;
@@ -458,20 +459,33 @@ fn inspect_las_header(path: &Path) -> Result<LasHeaderSummary, ImportError> {
     let wkt = header
         .get_wkt_crs_bytes()
         .and_then(|bytes| std::str::from_utf8(bytes).ok());
-    let geotiff_epsg = header
+    let geotiff = header
         .get_geotiff_crs()
-        .map_err(|error| ImportError::Metadata(format!("read LAS GeoTIFF CRS: {error}")))?
+        .map_err(|error| ImportError::Metadata(format!("read LAS GeoTIFF CRS: {error}")))?;
+    let geotiff_epsg = geotiff
+        .as_ref()
         .and_then(|crs| {
             crs.get_projected_crs_geo_key_value()
                 .or_else(|| crs.get_geodetic_crs_geo_key_value())
         })
         .filter(|code| (1024..=32766).contains(code));
+    let geotiff_units = geotiff.as_ref().and_then(|crs| {
+        crs.entries
+            .iter()
+            .find(|entry| entry.id == 3076)
+            .and_then(|entry| match entry.data {
+                GeoTiffData::U16(9001) => Some("m".to_owned()),
+                GeoTiffData::U16(9002) => Some("ft".to_owned()),
+                GeoTiffData::U16(9003) => Some("US survey ft".to_owned()),
+                _ => None,
+            })
+    });
     Ok(LasHeaderSummary {
         point_count: header.number_of_points(),
         declared_crs: wkt
             .and_then(epsg_label_from_wkt)
             .or_else(|| geotiff_epsg.map(|code| format!("EPSG:{code}"))),
-        declared_units: wkt.and_then(unit_label_from_wkt),
+        declared_units: wkt.and_then(unit_label_from_wkt).or(geotiff_units),
     })
 }
 
@@ -494,9 +508,18 @@ pub(crate) fn epsg_label_from_wkt(wkt: &str) -> Option<String> {
 
 fn unit_label_from_wkt(wkt: &str) -> Option<String> {
     let lower = wkt.to_ascii_lowercase();
-    if lower.contains("lengthunit[\"metre\",1") || lower.contains("unit[\"metre\",1") {
+    let start = ["lengthunit[", "unit["]
+        .into_iter()
+        .filter_map(|marker| lower.rfind(marker))
+        .max()?;
+    let declaration = lower[start..]
+        .split_once(']')
+        .map_or(&lower[start..], |(value, _)| value);
+    if declaration.contains("\"metre\",1") || declaration.contains("\"meter\",1") {
         Some("m".to_owned())
-    } else if lower.contains("lengthunit[\"foot") || lower.contains("unit[\"foot") {
+    } else if declaration.contains("us survey foot") || declaration.contains("0.3048006096") {
+        Some("US survey ft".to_owned())
+    } else if declaration.contains("\"foot") {
         Some("ft".to_owned())
     } else {
         None
@@ -1689,6 +1712,24 @@ mod tests {
             declared_crs: Some("EPSG:25832".to_owned()),
             declared_units: Some("m".to_owned()),
         }
+    }
+
+    #[test]
+    fn wkt_unit_truth_distinguishes_international_and_us_survey_feet() {
+        assert_eq!(
+            unit_label_from_wkt(
+                "PROJCRS[\"State Plane\",LENGTHUNIT[\"US survey foot\",0.304800609601219]]"
+            ),
+            Some("US survey ft".to_owned())
+        );
+        assert_eq!(
+            unit_label_from_wkt("PROJCRS[\"Local\",LENGTHUNIT[\"foot\",0.3048]]"),
+            Some("ft".to_owned())
+        );
+        assert_eq!(
+            unit_label_from_wkt("PROJCRS[\"UTM\",LENGTHUNIT[\"metre\",1]]"),
+            Some("m".to_owned())
+        );
     }
 
     fn write_prepared_files(directory: &Path) {

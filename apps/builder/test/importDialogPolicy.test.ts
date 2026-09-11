@@ -3,9 +3,27 @@ import test from 'node:test';
 
 import {
   droppedImportPaths,
+  importPlacementMetadata,
   importStageNeedsFurtherInput,
   registeredImportExtensions,
 } from '../renderer/src/importDialogPolicy.js';
+
+void test('placement summary reads exact LandXML linear units from canonical provenance', () => {
+  assert.deepEqual(
+    importPlacementMetadata({
+      objects: [
+        {
+          value: {
+            'hcad.landxml-import@1': {
+              document: { units: { system: 'Metric', linearUnit: 'meter', attributes: {} } },
+            },
+          },
+        },
+      ],
+    }),
+    { declaredCrs: null, declaredUnits: 'meter' },
+  );
+});
 
 void test('import modal remains only while registration still needs user input', () => {
   assert.equal(importStageNeedsFurtherInput('sourceCoordinates'), false);

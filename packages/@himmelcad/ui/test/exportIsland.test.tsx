@@ -80,3 +80,36 @@ test('export island shows phase, progress, and cancel while running', () => {
   assert.match(html, />Cancel<\/span><\/button>/);
   assert.match(html, /disabled=""[^>]*><span>Export/);
 });
+
+test('export island exposes LandXML units and repeats the accepted unit in the plan', () => {
+  const html = renderToStaticMarkup(
+    <ExportIsland
+      formats={[{ id: 'landxml@1.2', label: 'LandXML', enabled: true }]}
+      formatId="landxml@1.2"
+      scope="project"
+      selectionCount={0}
+      path="/projects/road.xml"
+      unitChoices={[
+        { id: '', label: 'Not set' },
+        { id: 'meter', label: 'Metre' },
+        { id: 'foot', label: 'Feet' },
+        { id: 'USSurveyFoot', label: 'US feet' },
+      ]}
+      unitId="meter"
+      plannedUnitLabel="Metre"
+      planRows={[]}
+      outputs={['road.xml']}
+      onFormatChange={noop}
+      onUnitChange={noop}
+      onScopeChange={noop}
+      onChoosePath={noop}
+      onPlan={noop}
+      onExport={noop}
+      onCancel={noop}
+      onClose={noop}
+    />,
+  );
+  assert.match(html, /Export units/);
+  assert.match(html, /Metre/);
+  assert.match(html, /Units: Metre/);
+});

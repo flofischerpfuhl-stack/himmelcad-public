@@ -1230,15 +1230,16 @@ export class KernelViewerSession {
         });
       }
       if (
-        this.pendingPickMappings > 0 ||
-        plan.actions.some(
-          (action) => action.kind !== 'fetchTile' && action.kind !== 'fetchHierarchyPage',
-        ) ||
-        (!motionActive &&
-          observation.adjustment !== 'reduced' &&
-          (this.qualityState.renderScale + 1e-4 < this.policyState.maximumRenderScale ||
-            this.qualityState.detailScale + 1e-4 < this.policyState.maximumDetailScale)) ||
-        outcome.status === 'recreateSurface'
+        kernelFrameNeedsContinuation({
+          pendingPickMappings: this.pendingPickMappings,
+          motionActive,
+          qualityAdjustment: observation.adjustment,
+          renderScale: this.qualityState.renderScale,
+          detailScale: this.qualityState.detailScale,
+          maximumRenderScale: this.policyState.maximumRenderScale,
+          maximumDetailScale: this.policyState.maximumDetailScale,
+          recreateSurface: outcome.status === 'recreateSurface',
+        })
       ) {
         this.options.requestFrame?.();
       }
@@ -1614,6 +1615,23 @@ export class KernelViewerSession {
       );
     }
   }
+}
+
+export function kernelFrameNeedsContinuation(state: {
+  readonly pendingPickMappings: number;
+  readonly motionActive: boolean;
+  readonly qualityAdjustment: KernelRuntimeQualityAdjustment;
+  readonly renderScale: number;
+  readonly detailScale: number;
+  readonly maximumRenderScale: number;
+  readonly maximumDetailScale: number;
+  readonly recreateSurface: boolean;
+}): boolean {
+  // Camera motion, the rest-refinement timer, and every asynchronous
+  // streaming transition already invalidate the host explicitly. A quality
+  // tier below its maximum is state, not work: using it as a continuation
+  // condition traps minimum-quality scenes in a permanent present loop.
+  return state.pendingPickMappings > 0 || state.recreateSurface;
 }
 
 interface ExtendedLaneWorkBudget {

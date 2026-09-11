@@ -22,6 +22,47 @@ export interface ExportDisclosureEntity {
   readonly label?: string;
 }
 
+export type LandXmlLinearUnit = 'meter' | 'foot' | 'USSurveyFoot';
+
+export interface ProjectUnitSource {
+  readonly sourceCrs: string | null;
+  readonly sourceUnits: string | null;
+}
+
+/**
+ * Resolves only declared project/source truth. Unknown declarations are ignored,
+ * while conflicting recognized declarations deliberately leave LandXML unset.
+ */
+export function landXmlProjectUnitDefault(
+  sources: readonly ProjectUnitSource[],
+): LandXmlLinearUnit | null {
+  const declared = new Set(
+    sources.flatMap((source) => {
+      const unit = landXmlUnitFromDeclaration(source.sourceUnits, source.sourceCrs);
+      return unit === null ? [] : [unit];
+    }),
+  );
+  return declared.size === 1 ? ([...declared][0] ?? null) : null;
+}
+
+function landXmlUnitFromDeclaration(
+  sourceUnits: string | null,
+  sourceCrs: string | null,
+): LandXmlLinearUnit | null {
+  const declaration = `${sourceUnits ?? ''} ${sourceCrs ?? ''}`.trim().toLowerCase();
+  if (!declaration) return null;
+  if (
+    /us[ _-]?(?:survey[ _-]?)?(?:foot|feet|ft)|survey[ _-]?(?:foot|feet|ft)|0\.3048006096/u.test(
+      declaration,
+    )
+  ) {
+    return 'USSurveyFoot';
+  }
+  if (/\b(?:foot|feet|ft)\b|0\.3048(?:0+)?\b/u.test(declaration)) return 'foot';
+  if (/\b(?:m|meter|metre|meters|metres)\b/u.test(declaration)) return 'meter';
+  return null;
+}
+
 export function exportFormatChoices(
   descriptors: readonly IoFormatDescriptor[],
   kinds: readonly EntityKind[],

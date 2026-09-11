@@ -2830,7 +2830,13 @@ mod tests {
         fs::write(&source, CIVIL_ZOO).expect("write fixture");
         let package = import_fixture(&source);
         let provider = LandXmlProvider::new();
-        let options = serde_json::json!({});
+        let options = serde_json::json!({
+            "units": {
+                "system": "Imperial",
+                "linearUnit": "USSurveyFoot",
+                "attributes": {}
+            }
+        });
         let request = CanonicalExportRequest {
             target: &target,
             format_id: LANDXML_FORMAT_ID,
@@ -2863,6 +2869,11 @@ mod tests {
         assert!(unaccepted.to_string().contains("reviewed loss code"));
 
         let accepted_options = serde_json::json!({
+            "units": {
+                "system": "Imperial",
+                "linearUnit": "USSurveyFoot",
+                "attributes": {}
+            },
             "acceptedLossCodes": plan.semantic_losses.clone(),
         });
         let accepted_request = CanonicalExportRequest {
@@ -2882,6 +2893,11 @@ mod tests {
 
         let roundtrip = import_fixture(&target);
         roundtrip.validate().expect("roundtrip package");
+        let roundtrip_report = package_report(&roundtrip)
+            .expect("roundtrip report")
+            .expect("roundtrip LandXML metadata");
+        assert_eq!(roundtrip_report.units.system, "Imperial");
+        assert_eq!(roundtrip_report.units.linear_unit, "USSurveyFoot");
         assert_eq!(roundtrip.admissions.len(), package.admissions.len());
         assert_eq!(
             tin_geometry(&package),
