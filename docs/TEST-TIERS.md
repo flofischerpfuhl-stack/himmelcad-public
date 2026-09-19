@@ -95,6 +95,39 @@ Release capability names currently are `browser-gpu`, `real-data`,
 skip is never a certification pass, which is why the release runner fails on a
 missing capability instead of reporting a skip.
 
+## Private Linux UI display
+
+Agent-driven Builder and PhotoLab UI runs on the Linux laptop must use
+`scripts/ui-test-display.sh`; `DISPLAY=:0` is forbidden. The launcher creates an
+authenticated 1920×1080×24 Xvfb display at a free number from `:90`, gives that
+display only to an isolated dev profile, exposes a printed CDP URL, and captures
+screenshots with CDP `Page.captureScreenshot`. It tries NVIDIA ANGLE/Vulkan,
+then NVIDIA EGL PRIME, and labels SwiftShader as the last resort. A full Vulkan
+trial is not accepted on the current Electron/NVIDIA pair unless the viewer
+lands on the proven WebGL2 backend; Chromium can enumerate WebGPU here while
+its Xvfb presentation path is not sustainable. The test-only
+`VITE_HIMMELCAD_VIEWER_BACKEND=webgl2` selection does not affect ordinary dev
+or production launches.
+
+The app runs in a user systemd scope with a 12 GiB default memory cap (override
+with `UI_TEST_MEM`), no swap, a 400% CPU cap, nice level 10, and core dumps
+disabled. This host's systemd 255 rejects `LimitCORE=` on scope units, so the
+launcher records that rejection and enforces the equivalent `ulimit -c 0`
+inside the scope. The trap stops the complete app scope and Xvfb on exit,
+signal, or timeout. Example self-test:
+
+```sh
+scripts/ui-test-display.sh builder \
+  --screenshot .build/ui-test-display/selftest.png \
+  --exit-after-probe
+```
+
+For longer CDP work, pass `--ready-file .build/ui-test-display/run.env`, read
+`CDP_URL` from that file, and terminate the launcher when finished. The retained
+GPU proof combines `SystemInfo.getInfo`, kernel capabilities, the Builder
+renderer chip, and HUD backend. `process-displays.txt` audits the owned cgroup's
+environments without connecting to the owner's X server.
+
 ## Where each tier actually runs
 
 - **GitLab CI** runs the portable, deterministic gates only: `node:typecheck`,
