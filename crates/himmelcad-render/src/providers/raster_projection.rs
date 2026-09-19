@@ -258,6 +258,7 @@ pub fn project_raster_sample(
             }
             Ok(world(position))
         }
+        RasterMapping::PlanGrid2D(_) => Err(RasterProjectionError::UnsupportedDepthSemantics),
         RasterMapping::Planar { homography, frame } => {
             if depth.is_some() {
                 return Err(RasterProjectionError::UnsupportedDepthSemantics);

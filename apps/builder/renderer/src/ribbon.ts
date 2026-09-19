@@ -70,6 +70,11 @@ interface FileRibbonHandlers {
 const i = (Comp: typeof Box, size = 18): ReactElement =>
   createElement(Comp, { size, strokeWidth: 1.6 });
 
+export const UNSHIPPED_RIBBON_ACTIONS = Object.freeze({
+  'select.box': 'Box selection is not available in this release.',
+  'select.lasso': 'Lasso selection is not available in this release.',
+});
+
 export function createRibbonTabs(handlers: FileRibbonHandlers): RibbonTab[] {
   return [
     {
@@ -294,8 +299,20 @@ export function createRibbonTabs(handlers: FileRibbonHandlers): RibbonTab[] {
           id: 'select.tools',
           label: 'Tools',
           actions: [
-            { id: 'select.box', label: 'Box', icon: i(SquareDashed) },
-            { id: 'select.lasso', label: 'Lasso', icon: i(ScanLine) },
+            {
+              id: 'select.box',
+              label: 'Box',
+              icon: i(SquareDashed),
+              disabled: true,
+              title: UNSHIPPED_RIBBON_ACTIONS['select.box'],
+            },
+            {
+              id: 'select.lasso',
+              label: 'Lasso',
+              icon: i(ScanLine),
+              disabled: true,
+              title: UNSHIPPED_RIBBON_ACTIONS['select.lasso'],
+            },
           ],
         },
       ],

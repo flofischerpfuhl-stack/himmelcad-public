@@ -512,6 +512,19 @@ pub struct OrthoGridMapping {
     pub row_step: Vector3,
 }
 
+/// Pixel-center mapping for a plan-only grid with no authored height.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct PlanGrid2DMapping {
+    /// Project-plan XY coordinate of pixel center `(0, 0)`.
+    pub origin_xy: [f64; 2],
+    /// Project-plan XY step when the pixel column increases.
+    pub column_step_xy: [f64; 2],
+    /// Project-plan XY step when the pixel row increases.
+    pub row_step_xy: [f64; 2],
+}
+
 /// Raster image mapping model.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
@@ -523,6 +536,8 @@ pub struct OrthoGridMapping {
 pub enum RasterMapping {
     /// Orthographic/projected pixel grid.
     OrthoGrid(OrthoGridMapping),
+    /// Project-plan pixel grid with deliberately unknown Z.
+    PlanGrid2D(PlanGrid2DMapping),
     /// Image embedded on an arbitrary entity-local plane by a homography.
     Planar {
         /// Column-major 3x3 homography from integer pixel-center coordinates

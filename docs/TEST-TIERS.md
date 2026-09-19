@@ -128,6 +128,27 @@ GPU proof combines `SystemInfo.getInfo`, kernel capabilities, the Builder
 renderer chip, and HUD backend. `process-displays.txt` audits the owned cgroup's
 environments without connecting to the owner's X server.
 
+Native file dialogs are separate X windows and are not visible to CDP. Builder
+development runs may therefore pass `--dialog-queue <queue.json>`. The launcher
+sets `HIMMELCAD_TEST_DIALOG_QUEUE` only in its owned app process, and the Electron
+main process consumes one FIFO response for each open/save request while logging
+`dialog.responded`. The responder is disabled when `app.isPackaged` is true;
+without the option, native dialog behavior is unchanged. Queue files are JSON
+arrays whose entries are either
+`{"kind":"open","filePaths":["/absolute/input.las"],"canceled":false}` or
+`{"kind":"save","filePath":"/absolute/output.xml","canceled":false}`. A
+cancelled response uses `canceled:true` and an empty `filePaths` array or omitted
+`filePath`. Append a response atomically before or during a run with:
+
+```sh
+scripts/ui-test-display.sh dialog-push .build/r02g/dialogs.json \
+  '{"kind":"open","filePaths":["libs/polyshapev01/dist/PW_GHT_251215_Orscholz_Deponie-1-1.las"],"canceled":false}'
+
+scripts/ui-test-display.sh builder \
+  --dialog-queue .build/r02g/dialogs.json \
+  --ready-file .build/r02g/run.env
+```
+
 ## Where each tier actually runs
 
 - **GitLab CI** runs the portable, deterministic gates only: `node:typecheck`,

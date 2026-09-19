@@ -154,10 +154,12 @@ import {
 } from './project.js';
 import { createRibbonTabs } from './ribbon.js';
 import { registeredImportExtensions } from './importDialogPolicy.js';
+import { IMPORT_FUNCTION_PANEL } from './importFunctionPanelState.js';
 import {
   replaceProjectWithRecovery,
   type ProjectReplacementFailure,
 } from './projectReplacement.js';
+import { retireProjectInteractionState } from './projectInteractionLifecycle.js';
 import { parseSidecarProgress } from './sidecarProgress.js';
 import { contextualPointcloudPayload } from './pointcloudSourcePredicates.js';
 import { canonicalSelectionBounds } from './selectionBounds.js';
@@ -455,6 +457,8 @@ export function App(): JSX.Element {
   const [registrationItems, setRegistrationItems] = useState<
     readonly { readonly jobId: string; readonly sourcePath: string }[]
   >([]);
+  const [importDialogPending, setImportDialogPending] = useState(false);
+  const importDialogPendingRef = useRef(false);
   const [foregroundRegistrationJobId, setForegroundRegistrationJobId] = useState<string | null>(
     null,
   );
@@ -1134,6 +1138,7 @@ export function App(): JSX.Element {
     entityGroupsRef.current = { cloud: [], ifc: [], orthophoto: [], mesh: [] };
 
     setProject(null);
+    useLayoutStore.setState({ activeFunctionId: null, openFunctionIds: [] });
     setSnapshots([]);
     setSnapshotToRestore(null);
     setMeasurements([]);
@@ -1164,6 +1169,14 @@ export function App(): JSX.Element {
     setSurfaceEditBoundaryRegion(null);
     setCommandSurface(null);
     setSnap(null);
+    setHudVisible(false);
+    setSpecsOpen(false);
+    setPlanOpen(false);
+    setDgmOpen(false);
+    setExportOpen(false);
+    setExportMounted(false);
+    setPhotoLabProductImportOpen(false);
+    setRightPanelTab('function');
     setDurability(null);
     setDurabilityFailureToast(false);
     viewportRef.current?.resetProjectScene();
@@ -1194,11 +1207,28 @@ export function App(): JSX.Element {
             await api.jobs.cancel(job.id).catch(() => undefined);
           }
         }
-        if (drawToolStore.snapshot().armed) await drawToolStore.cancelAll();
-        constructionInputStore.disarm();
-        if (activeFunctionId) closeFunction(activeFunctionId);
+        await retireProjectInteractionState({
+          draw: drawToolStore,
+          measurement: measurementToolStore,
+          construction: constructionInputStore,
+          clearSelection: () => selectionStore.closeProject(),
+          clearHudOverlays: () => {
+            setHudVisible(false);
+            setSnap(null);
+            setCommandSurface(null);
+            setGroundPreview(null);
+            setSurfaceEditPreview(null);
+            setSurfaceEditBoundaryRegion(null);
+          },
+          clearArmedPlacement: () => {
+            pendingViewingBoxIdRef.current = null;
+            setPlacingViewingBoxCenter(false);
+            setSegmentFence(EMPTY_SEGMENT_FENCE);
+          },
+          closeFunctionTabs: () =>
+            useLayoutStore.setState({ activeFunctionId: null, openFunctionIds: [] }),
+        });
         await viewingBoxPersistTailRef.current;
-        await selectionStore.closeProject();
         await displayStore.closeProject();
         const closed = await session.close();
         if (!closed) throw new Error('the journal flush did not complete');
@@ -1235,13 +1265,12 @@ export function App(): JSX.Element {
       }
     },
     [
-      activeFunctionId,
-      closeFunction,
       closeMode,
       constructionInputStore,
       displayStore,
       drawToolStore,
       jobs,
+      measurementToolStore,
       resetProjectRendererState,
       selectionStore,
     ],
@@ -1686,6 +1715,33 @@ export function App(): JSX.Element {
       });
   }, [ensureCanonicalProject]);
 
+  const chooseImportFiles = useCallback(async (): Promise<void> => {
+    if (importDialogPendingRef.current) return;
+    importDialogPendingRef.current = true;
+    setImportDialogPending(true);
+    try {
+      const api = window.himmelcad;
+      if (!api) {
+        logEvent('warn', 'renderer', 'no electron bridge: skipping import dialog');
+        return;
+      }
+      const session = await ensureCanonicalProject();
+      const formats = await session.listIoFormats();
+      const extensions = registeredImportExtensions(formats);
+      const paths = await api.dialog.openImport(extensions);
+      if (paths.length > 0) {
+        const items = await registerImportJobs(api, paths);
+        setRegistrationItems((current) => [...current, ...items]);
+      }
+    } catch (error: unknown) {
+      logEvent('error', 'renderer', `Import selection failed: ${String(error)}`);
+    } finally {
+      importDialogPendingRef.current = false;
+      setImportDialogPending(false);
+      closeFunction('file.import');
+    }
+  }, [closeFunction, ensureCanonicalProject]);
+
   // Hook ribbon actions to real handlers.
   useEffect(() => {
     if (!activeFunctionId) return;
@@ -1712,27 +1768,8 @@ export function App(): JSX.Element {
         `${measurementKindLabel(measurementKind)}: pick or type an exact anchor.`,
       );
     } else if (id === 'file.import') {
-      void (async () => {
-        try {
-          const api = window.himmelcad;
-          if (!api) {
-            logEvent('warn', 'renderer', 'no electron bridge: skipping import dialog');
-            return;
-          }
-          const session = await ensureCanonicalProject();
-          const formats = await session.listIoFormats();
-          const extensions = registeredImportExtensions(formats);
-          const paths = await api.dialog.openImport(extensions);
-          if (paths.length > 0) {
-            const items = await registerImportJobs(api, paths);
-            setRegistrationItems((current) => [...current, ...items]);
-          }
-        } catch (error: unknown) {
-          logEvent('error', 'renderer', `Import selection failed: ${String(error)}`);
-        } finally {
-          closeFunction(id);
-        }
-      })();
+      setRightPanelTab('function');
+      void chooseImportFiles();
     } else if (id === 'view.frame') {
       viewportRef.current?.frameAll();
       closeFunction(id);
@@ -1796,6 +1833,7 @@ export function App(): JSX.Element {
   }, [
     activeFunctionId,
     closeFunction,
+    chooseImportFiles,
     ensureCanonicalProject,
     flushProject,
     drawToolStore,
@@ -3357,7 +3395,7 @@ export function App(): JSX.Element {
         case 'view.preset.right':
         case 'view.preset.isometric':
         case 'view.preset.perspective':
-          viewportRef.current?.setPreset(
+          await viewportRef.current?.setPreset(
             invocation.id.slice('view.preset.'.length) as
               | 'top'
               | 'front'
@@ -4828,6 +4866,8 @@ export function App(): JSX.Element {
             ) : (
               functionBody(
                 activeFunctionId,
+                importDialogPending,
+                () => void chooseImportFiles(),
                 pointSize,
                 setPointSize,
                 viewingBox,
@@ -5516,6 +5556,7 @@ function functionTitle(id: string | null): string | undefined {
   if (id === 'measure.distance') return 'Measure distance';
   if (id === 'measure.dz') return 'Measure height difference';
   if (id === 'measurement.list' || id === 'measurements.panel') return 'Measurements';
+  if (id === 'file.import') return IMPORT_FUNCTION_PANEL.title;
   if (id === 'view.performance') return 'point cloud performance';
   if (id === 'view.point-size') return 'point size';
   if (id === 'view.viewing-box') return 'Viewing Box';
@@ -5684,6 +5725,8 @@ function measurementPixelsPerMetre(
 
 function functionBody(
   id: string | null,
+  importDialogPending: boolean,
+  onChooseImport: () => void,
   pointSize: number,
   onPointSizeChange: (value: number) => void,
   viewingBox: KernelViewingBoxState | null,
@@ -5705,6 +5748,24 @@ function functionBody(
   bakeProgress: { readonly fraction: number; readonly phase: string } | null,
 ): ReactNode {
   if (!id) return null;
+  if (id === 'file.import') {
+    return (
+      <div style={{ display: 'grid', gap: 12, alignContent: 'start' }}>
+        <p style={{ margin: 0, color: 'var(--hc-fg-muted)', fontSize: 12 }}>
+          {IMPORT_FUNCTION_PANEL.body}
+        </p>
+        <Button
+          variant={IMPORT_FUNCTION_PANEL.actionVariant}
+          size={IMPORT_FUNCTION_PANEL.actionSize}
+          loading={importDialogPending}
+          loadingLabel="Choosing files"
+          onClick={onChooseImport}
+        >
+          {IMPORT_FUNCTION_PANEL.action}
+        </Button>
+      </div>
+    );
+  }
   if (id === 'view.performance' || id === 'view.point-size') {
     return (
       <div style={{ display: 'grid', gap: 12 }}>
@@ -5746,11 +5807,7 @@ function functionBody(
       />
     );
   }
-  return (
-    <div style={{ color: 'var(--hc-fg-muted)', fontSize: 12, lineHeight: 1.6 }}>
-      Parameters for <code>{id}</code> appear here once the function ships.
-    </div>
-  );
+  return null;
 }
 
 interface BuilderPropertiesPanelProps {

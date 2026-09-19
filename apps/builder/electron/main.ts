@@ -22,6 +22,7 @@ import {
 import {
   JobRegistry,
   parseSidecarJobProgress,
+  TestDialogResponder,
   type AppJob,
   type RegisterJobInput,
 } from '@himmelcad/app';
@@ -56,6 +57,13 @@ import {
 } from './registrationCancellation';
 
 const isDev = !app.isPackaged;
+const testDialogResponder = new TestDialogResponder({
+  isPackaged: app.isPackaged,
+  ...(process.env.HIMMELCAD_TEST_DIALOG_QUEUE
+    ? { queuePath: process.env.HIMMELCAD_TEST_DIALOG_QUEUE }
+    : {}),
+  log: (event, response) => console.info(event, JSON.stringify(response)),
+});
 const CACHE_DIR = resolve(tmpdir(), 'himmelcad-cache');
 const CANONICAL_PROJECTS_DIRECTORY = 'canonical-projects';
 const DEFAULT_CANONICAL_PROJECT_DIRECTORY = 'builder-default.hcad';
@@ -176,6 +184,22 @@ function textField(record: Record<string, unknown>, keys: readonly string[]): st
     if (typeof value === 'string' && value.trim()) return value.trim();
   }
   return null;
+}
+
+async function showOpenDialog(
+  parent: BrowserWindow,
+  options: Electron.OpenDialogOptions,
+): Promise<Electron.OpenDialogReturnValue> {
+  const response = await testDialogResponder.open();
+  return response ?? dialog.showOpenDialog(parent, options);
+}
+
+async function showSaveDialog(
+  parent: BrowserWindow,
+  options: Electron.SaveDialogOptions,
+): Promise<Electron.SaveDialogReturnValue> {
+  const response = await testDialogResponder.save();
+  return response ?? dialog.showSaveDialog(parent, options);
 }
 
 function requestRendererRelaunch(): void {
@@ -998,7 +1022,7 @@ function registerIpc(): void {
     return requireProjectLifecycle().opened(root);
   });
   ipcMain.handle('canonical-project:new', async () => {
-    const selected = await dialog.showSaveDialog(requireMainWindow(), {
+    const selected = await showSaveDialog(requireMainWindow(), {
       title: 'Create HimmelCAD project',
       defaultPath: resolve(app.getPath('documents'), 'Untitled.hcad'),
       buttonLabel: 'Create project',
@@ -1012,7 +1036,7 @@ function registerIpc(): void {
     return projectRoot;
   });
   ipcMain.handle('canonical-project:open', async () => {
-    const selected = await dialog.showOpenDialog(requireMainWindow(), {
+    const selected = await showOpenDialog(requireMainWindow(), {
       title: 'Open HimmelCAD project',
       buttonLabel: 'Open project',
       defaultPath: resolve(app.getPath('documents')),
@@ -1022,7 +1046,7 @@ function registerIpc(): void {
     return assertProjectRoot(resolve(selected.filePaths[0]));
   });
   ipcMain.handle('canonical-project:open-archive', async () => {
-    const selected = await dialog.showOpenDialog(requireMainWindow(), {
+    const selected = await showOpenDialog(requireMainWindow(), {
       title: 'Open HimmelCAD archive',
       buttonLabel: 'Choose archive',
       defaultPath: resolve(app.getPath('documents')),
@@ -1050,7 +1074,7 @@ function registerIpc(): void {
   });
   ipcMain.handle('canonical-project:save-as', async (_event, projectRoot: unknown) => {
     const root = assertProjectRoot(projectRoot);
-    const selected = await dialog.showSaveDialog(requireMainWindow(), {
+    const selected = await showSaveDialog(requireMainWindow(), {
       title: 'Save archive copy',
       defaultPath: resolve(app.getPath('documents'), `${projectDisplayName(root)}.hcadx`),
       buttonLabel: 'Save archive',
@@ -1110,7 +1134,7 @@ function registerIpc(): void {
     };
   });
   ipcMain.handle('product-import:choose', async () => {
-    const selected = await dialog.showOpenDialog(requireMainWindow(), {
+    const selected = await showOpenDialog(requireMainWindow(), {
       title: 'Choose PhotoLab project or product package',
       buttonLabel: 'Choose',
       defaultPath: resolve(app.getPath('documents')),
@@ -1268,7 +1292,7 @@ function registerIpc(): void {
           )
           .slice(0, 128)
       : [];
-    const result = await dialog.showOpenDialog(mainWindow, {
+    const result = await showOpenDialog(mainWindow, {
       title: 'Import into HimmelCAD',
       filters: [
         ...(extensions.length > 0 ? [{ name: 'Supported formats', extensions }] : []),
@@ -1280,7 +1304,7 @@ function registerIpc(): void {
   });
   ipcMain.handle('dialog:openTransform', async () => {
     if (!mainWindow) return null;
-    const result = await dialog.showOpenDialog(mainWindow, {
+    const result = await showOpenDialog(mainWindow, {
       title: 'Open transformation',
       filters: [
         { name: 'HimmelCAD transformation', extensions: ['hctransform', 'json', 'cal', 'txt'] },
@@ -1293,7 +1317,7 @@ function registerIpc(): void {
   ipcMain.handle('dialog:saveTransform', async (_event, value: unknown) => {
     if (!mainWindow) return null;
     const transform = validateSavedTransform(value);
-    const result = await dialog.showSaveDialog(mainWindow, {
+    const result = await showSaveDialog(mainWindow, {
       title: 'Save transformation',
       defaultPath: 'himmelcad-transformation.hctransform',
       filters: [{ name: 'HimmelCAD transformation', extensions: ['hctransform'] }],
@@ -1324,7 +1348,7 @@ function registerIpc(): void {
       typeof request.suggestedName === 'string' && request.suggestedName.trim()
         ? request.suggestedName
         : `export.${extensions[0]}`;
-    const result = await dialog.showSaveDialog(requireMainWindow(), {
+    const result = await showSaveDialog(requireMainWindow(), {
       title: 'Export',
       buttonLabel: 'Choose',
       defaultPath: resolve(app.getPath('documents'), suggestedName),
@@ -1789,7 +1813,7 @@ async function pathAvailability(path: string, timeoutMs: number): Promise<boolea
 }
 
 async function chooseArchiveDestination(source: string): Promise<string | null> {
-  const target = await dialog.showSaveDialog(requireMainWindow(), {
+  const target = await showSaveDialog(requireMainWindow(), {
     title: 'Choose unpacked project location',
     buttonLabel: 'Unpack project',
     defaultPath: resolve(app.getPath('documents'), `${projectDisplayName(source)}.hcad`),

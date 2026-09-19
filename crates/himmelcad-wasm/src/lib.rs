@@ -9902,6 +9902,9 @@ fn compile_raster_image_entity(
             }
             raster_ortho_mesh(raster, *mapping, depth, validity, connectivity)?
         }
+        RasterMapping::PlanGrid2D(_) => {
+            return Err("plan-only raster images have no 3D presentation geometry".to_owned())
+        }
         RasterMapping::Planar { homography, frame } => {
             if raster.depth.is_some() {
                 return Err("planar raster images cannot carry a depth field".to_owned());

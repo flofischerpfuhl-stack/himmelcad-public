@@ -243,6 +243,12 @@ struct RpcError {
     data: Option<serde_json::Value>,
 }
 
+#[derive(Debug, thiserror::Error)]
+#[error("COLMAP worker is unavailable at {resolved_path}")]
+struct ColmapWorkerMissing {
+    resolved_path: String,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct SavePhotolabProjectParams {
@@ -5750,7 +5756,7 @@ async fn handle_job_rpc(
                                 .await;
                             job_start_response(req.id, result)
                         }
-                        Err(error) => rpc_err(req.id, -32000, &error.to_string()),
+                        Err(error) => alignment_admission_rpc_err(req.id, &error),
                     }
                 }
                 Err(error) => rpc_err(req.id, -32602, &format!("invalid params: {error}")),
@@ -6039,7 +6045,7 @@ async fn handle_job_rpc(
                             .await;
                             job_start_response(req.id, result)
                         }
-                        Err(error) => rpc_err(req.id, -32000, &error.to_string()),
+                        Err(error) => alignment_admission_rpc_err(req.id, &error),
                     }
                 }
                 Err(error) => rpc_err(req.id, -32602, &format!("invalid params: {error}")),
@@ -11482,6 +11488,8 @@ fn development_colmap_runtime(project_root: &Path) -> anyhow::Result<ColmapRunti
             model_root.join("sift-lightglue.onnx"),
         ),
     ]);
+    ensure_colmap_worker_executable(&executable)?;
+    let resolved_path = executable.to_string_lossy().into_owned();
     ColmapRuntime::development_preflight(&DevColmapRuntimeConfig {
         executable,
         version: "4.1.0".into(),
@@ -11489,12 +11497,36 @@ fn development_colmap_runtime(project_root: &Path) -> anyhow::Result<ColmapRunti
         scratch_root: project_root.join("tmp").join("colmap"),
         allowed_project_roots: vec![project_root.to_path_buf()],
     })
-    .map_err(anyhow::Error::from)
+    .map_err(|error| map_colmap_worker_preflight_error(error, resolved_path))
+}
+
+fn map_colmap_worker_preflight_error(
+    error: himmelcad_sidecar::colmap_runtime::ColmapRuntimeError,
+    resolved_path: String,
+) -> anyhow::Error {
+    use himmelcad_sidecar::colmap_runtime::ColmapRuntimeError;
+
+    match error {
+        ColmapRuntimeError::InvalidConfig(_)
+        | ColmapRuntimeError::InvalidPath { .. }
+        | ColmapRuntimeError::Io(_) => anyhow::Error::new(ColmapWorkerMissing { resolved_path }),
+        other => anyhow::Error::from(other),
+    }
+}
+
+fn ensure_colmap_worker_executable(path: &Path) -> anyhow::Result<()> {
+    if path.is_file() {
+        Ok(())
+    } else {
+        Err(anyhow::Error::new(ColmapWorkerMissing {
+            resolved_path: path.to_string_lossy().into_owned(),
+        }))
+    }
 }
 
 fn development_colmap_executable() -> anyhow::Result<PathBuf> {
     let workspace = discover_workspace_root()?;
-    Ok(std::env::var_os("HIMMELCAD_COLMAP_EXECUTABLE")
+    let path = std::env::var_os("HIMMELCAD_COLMAP_EXECUTABLE")
         .map(PathBuf::from)
         .unwrap_or_else(|| {
             workspace
@@ -11507,7 +11539,12 @@ fn development_colmap_executable() -> anyhow::Result<PathBuf> {
                 } else {
                     "colmap"
                 })
-        }))
+        });
+    if path.is_absolute() {
+        Ok(path)
+    } else {
+        Ok(std::env::current_dir()?.join(path))
+    }
 }
 
 fn discover_workspace_root() -> anyhow::Result<PathBuf> {
@@ -12155,6 +12192,28 @@ fn product_rpc_err(id: serde_json::Value, error: &anyhow::Error) -> RpcResponse 
     rpc_err(id, -32000, &error.to_string())
 }
 
+fn alignment_admission_rpc_err(id: serde_json::Value, error: &anyhow::Error) -> RpcResponse {
+    if let Some(missing) = error
+        .chain()
+        .find_map(|cause| cause.downcast_ref::<ColmapWorkerMissing>())
+    {
+        const MESSAGE: &str = "The COLMAP worker is missing or invalid.";
+        return rpc_err_with_data(
+            id,
+            -32044,
+            MESSAGE,
+            serde_json::json!({
+                "code": "colmapWorkerMissing",
+                "reasonCode": "colmapWorkerMissing",
+                "message": MESSAGE,
+                "resolvedPath": missing.resolved_path,
+                "retryable": false,
+            }),
+        );
+    }
+    rpc_err(id, -32000, &error.to_string())
+}
+
 fn rpc_resume_err(id: serde_json::Value, error: &ResumeRpcFailure) -> RpcResponse {
     RpcResponse {
         jsonrpc: "2.0",
@@ -12338,6 +12397,54 @@ mod tests {
         assert_eq!(data["code"], "insufficientDisk");
         assert_eq!(data["available_bytes"], TEST_GIB);
         assert_eq!(data["required_bytes"], 2 * TEST_GIB);
+    }
+
+    #[test]
+    fn publish_alignment_admission_types_a_missing_or_invalid_colmap_worker() {
+        let resolved_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../.build/codex-scratch/pl-i1/missing-colmap-worker")
+            .canonicalize()
+            .unwrap_or_else(|_| {
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../.build/codex-scratch/pl-i1/missing-colmap-worker")
+            });
+        let error = ensure_colmap_worker_executable(&resolved_path)
+            .expect_err("missing worker must be refused before process launch");
+        let response = alignment_admission_rpc_err(serde_json::json!(41), &error);
+        assert!(response.result.is_none());
+        let rpc_error = response.error.expect("typed alignment admission refusal");
+        assert_eq!(rpc_error.code, -32044);
+        assert_eq!(
+            rpc_error.message,
+            "The COLMAP worker is missing or invalid."
+        );
+        assert!(!rpc_error.message.contains("No such file"));
+        let data = rpc_error.data.expect("domain error payload");
+        assert_eq!(data["code"], "colmapWorkerMissing");
+        assert_eq!(data["reasonCode"], "colmapWorkerMissing");
+        assert_eq!(
+            data["resolvedPath"],
+            resolved_path.to_string_lossy().as_ref()
+        );
+        assert_eq!(data["retryable"], false);
+
+        let invalid = map_colmap_worker_preflight_error(
+            himmelcad_sidecar::colmap_runtime::ColmapRuntimeError::InvalidConfig(
+                "fixture is not a COLMAP worker".to_owned(),
+            ),
+            resolved_path.to_string_lossy().into_owned(),
+        );
+        let response = alignment_admission_rpc_err(serde_json::json!(42), &invalid);
+        let rpc_error = response.error.expect("typed invalid-worker refusal");
+        assert_eq!(rpc_error.code, -32044);
+        assert_eq!(
+            rpc_error.message,
+            "The COLMAP worker is missing or invalid."
+        );
+        assert_eq!(
+            rpc_error.data.expect("domain error payload")["reasonCode"],
+            "colmapWorkerMissing"
+        );
     }
 
     #[test]

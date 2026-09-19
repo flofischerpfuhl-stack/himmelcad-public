@@ -2371,12 +2371,14 @@ Footer
 
 ### WP-G2 — PhotoLab automation parity (doctrine P11, re-scoped 2026-09-02)
 
-PL-I2 closed the R22 Python surface and brokered-smoke gap on 2026-09-19: all
-72 automation-exposed `photolab.*` rows now generate sync and async SDK
-methods, and the lightweight real-sidecar smoke passes through connection-
-bound filesystem grants. The PhotoLab console dispatcher remains hand-listed,
-so the broader WP-G2 package is not yet complete. Per `COORDINATION.md`, the
-one generated command table remains shared across products:
+PL-I2 closed the R22 Python surface and brokered-smoke gap on 2026-09-19, and
+PL-I3 closed the remaining console-adapter gap the same day: all 72 automation-
+exposed `photolab.*` rows generate sync and async SDK methods, the lightweight
+real-sidecar smoke passes through connection-bound filesystem grants, and the
+PhotoLab console now derives its vocabulary, typed argument help, execution
+kind, RPC mapping, and cancellation route from the shared generated table.
+Per `COORDINATION.md`, the one generated command table remains shared across
+products:
 
 1. **Command rows** — for every UI-reachable PhotoLab operation (import
    inspect/commit, CRS discover/freeze, capture groups create/confirm/draft/
@@ -2406,17 +2408,17 @@ Footer
 - A1 outcome: The user, embedded agent, console, and Python client address the same PhotoLab capabilities and lifecycle without privileged raw-RPC shortcuts.
 - A2 reference: `docs/photolab-metashape-reference-2026-09.md` row "Automation" with ADR 0006/0013 network-processing deviation
 - A3 siblings: Builder generated command table/router/SDK, PhotoLab ribbon/panel actions, console vocabulary, and automation host trust boundary
-- B1 reachability: ribbon — present; context menu — present; console — generated rows exist but the PhotoLab adapter remains hand-listed; automation — 72 generated sync/async methods present; shortcut — present
+- B1 reachability: ribbon — present; context menu — present; console — generated table consumed with exact row coverage and legacy aliases retained; automation — 72 generated sync/async methods present; shortcut — present
 - B2 open/close: canonical commands preserve each owning surface's UIP-D14 lifecycle; user-only confirmation grants remain absent from automation
 - B3 surface: inline + this package supplies command metadata/gates and reuses existing product surfaces
 - C1 numeric parity / C2 selection / C3 freezability / C4 persistence+undo: schemas expose the same typed numeric inputs as UI; commands take explicit entity/selection ids and reject stale ids; long operations freeze request/config/input identity; deliberate state is canonical/journaled and an agent-presented batch is one undo step
 - D1 performance class: bounded + G-1 UI-action-to-row coverage, then long-running + Python smoke; D2 degradation: unavailable generated substrate keeps external automation closed and never widens raw allowlists
-- E1 visual reference: none — open
+- E1 visual reference: private-display console `help`, query, job start, and active cancellation screenshots under `.build/pl-i3/`
 - E2 conflicts/failure/crash: command rows name validation/status/cancel owners and all state changes retain atomic publication and durable job identity
 - E3 verification: G-1 complete UI-action row enumeration, trust-class assertions, generated vocabulary consumption, and brokered sync/async Python create→inspect/commit→jobs→start/cancel→close smoke
 - Decision record: cited unchanged: P11
-- Evidence: `docs/builder-program/evidence/PL-I2-photolab-automation-sdk-2026-09-19.md` — SDK 16/16, app 83/83, automation host 49 passed/1 pinned-version skip, PhotoLab renderer 88/88 plus Electron/contracts, and real brokered sync/async smoke passed; generated PhotoLab console adapter remains open
-- Status: partial — R22 SDK/brokered smoke complete; generated console consumption open
+- Evidence: `docs/builder-program/evidence/PL-I2-photolab-automation-sdk-2026-09-19.md` and `docs/builder-program/evidence/PL-I3-photolab-console-table-2026-09-19.md` — SDK/brokered smoke plus generated console consumption, exact help-row coverage, legacy-command preservation, and visible query/start/cancel proof complete
+- Status: complete — generated rows, SDK/brokered smoke, G-1 coverage, and generated PhotoLab console consumption landed
 ```
 
 ## Phase R — Fehlerbehebung: repair workflows (owner directive 2026-09-08)
@@ -3225,7 +3227,7 @@ unchecked items may be `PARTIAL`, `NOT EXECUTED`, or `PARKED` in the
 - [ ] WP-G1a: target admission plus crash-safe all-release-kind publication/provenance acceptance.
 - [ ] WP-G1b: Builder list/register/undo/Save As/reopen and WeltView opening.
 - [ ] WP-G1c: every Available row passes exact identity/provenance/render/pick/snap R1 gate 8.
-- [ ] WP-G2: command rows, G-1 coverage, generated SDK, and brokered sync/async smoke complete ([PL-I2 evidence](../builder-program/evidence/PL-I2-photolab-automation-sdk-2026-09-19.md)); generated PhotoLab console consumption remains.
+- [x] WP-G2: command rows, G-1 coverage, generated SDK, brokered sync/async smoke, and generated PhotoLab console consumption complete ([PL-I2 evidence](../builder-program/evidence/PL-I2-photolab-automation-sdk-2026-09-19.md), [PL-I3 evidence](../builder-program/evidence/PL-I3-photolab-console-table-2026-09-19.md)).
 - [ ] WP-H1: archive Save and close-refusal/Force-quit acceptance.
 - [ ] WP-H2: all-operation reload rehydration, global jobs chain, cancel, and drain bounds.
 - [ ] WP-H3: complete Escape ladder, close/cancelling, and selection lifecycle matrix.

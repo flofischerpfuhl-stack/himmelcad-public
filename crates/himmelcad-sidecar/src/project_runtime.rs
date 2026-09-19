@@ -17,10 +17,10 @@ use himmelcad_core::canonical_json;
 use himmelcad_core::entity::{EntityId, EntityKind, EntitySnapshot, VisibilityState};
 use himmelcad_core::entity_model::{
     built_in_type, CanonicalEntity, DepthSampling, DepthSemantics, ElevationSurfaceGeometry,
-    EntityTypeId, GeometryObject, GeometryResource, OrthoGridMapping, RasterCellDiagonal,
-    RasterConnectivity, RasterInterpolation, Representation, RepresentationAuthority,
-    RepresentationRole, SolidGeometry, StreamedGeometry, TriangleMeshGeometry, TriangleMeshStorage,
-    Vector3,
+    EntityTypeId, GeometryObject, GeometryResource, OrthoGridMapping, PlanGrid2DMapping,
+    RasterCellDiagonal, RasterConnectivity, RasterImageGeometry, RasterInterpolation,
+    RasterMapping, Representation, RepresentationAuthority, RepresentationRole, SolidGeometry,
+    StreamedGeometry, TriangleMeshGeometry, TriangleMeshStorage, Vector3,
 };
 use himmelcad_core::entity_validation::{
     canonical_entity_version_hash, geometry_object_content_hash, validate_resolved_representation,
@@ -1483,6 +1483,30 @@ fn package_prepared_mesh_dataset(
                 .map_err(|error| anyhow::anyhow!(error.to_string()))?,
         );
     }
+    let canonical_root = dataset_root.canonicalize()?;
+    let prepared_root = render_path.parent().map_or_else(
+        || canonical_root.clone(),
+        |parent| canonical_root.join(parent),
+    );
+    let mut prepared_files = Vec::new();
+    collect_regular_dataset_files(&canonical_root, &prepared_root, &mut prepared_files)?;
+    for relative_path in prepared_files {
+        if artifacts
+            .iter()
+            .any(|artifact| artifact.relative_path == relative_path)
+        {
+            continue;
+        }
+        let (object_hash, byte_length) = hash_regular_file(&canonical_root.join(&relative_path))?;
+        artifacts.push(PreparedDatasetArtifact {
+            resource: GeometryResource {
+                object_hash,
+                media_type: prepared_mesh_artifact_media_type(&relative_path),
+                byte_length: Some(byte_length),
+            },
+            relative_path,
+        });
+    }
     let typed_manifest = TypedArtifactManifest {
         schema_version: TypedArtifactManifest::SCHEMA_VERSION,
         artifacts: descriptors,
@@ -1521,6 +1545,27 @@ fn package_prepared_mesh_dataset(
     };
     dataset.validate_typed_artifact_layouts(&typed_manifest)?;
     Ok(dataset)
+}
+
+fn prepared_mesh_artifact_media_type(path: &Path) -> String {
+    let name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default();
+    let media_type = if name.starts_with("hierarchy-") && name.ends_with(".json") {
+        "himmelcad-prepared-hierarchy-page@1"
+    } else if name.ends_with(".positions.f32") {
+        "hcad.positions-f32le-xyz@1"
+    } else if name.ends_with(".indices.u32") {
+        "hcad.indices-u32le@1"
+    } else if name.ends_with(".texcoords.f32") {
+        "hcad.texcoords-f32le-uv@1"
+    } else if name.ends_with(".gltf") {
+        "model/gltf+json"
+    } else {
+        return product_artifact_media_type(path);
+    };
+    media_type.to_owned()
 }
 
 fn safe_mesh_artifact_url(url: &str) -> Result<PathBuf> {
@@ -2208,7 +2253,9 @@ fn write_product_import_package(
                     object_sha256: canonical.admission.selected.geometry_ref.clone(),
                 }],
             });
-            let artifact_paths = if kind == "dem" {
+            let declared_inventory =
+                canonical.dataset.format_id == "himmelcad-prepared-hierarchy@1";
+            let artifact_paths = if declared_inventory {
                 copy_declared_dataset_inventory(
                     dataset_root,
                     &canonical.dataset.artifacts,
@@ -2226,7 +2273,7 @@ fn write_product_import_package(
                     cancellation,
                 )?
             };
-            let root_path = if kind == "dem" {
+            let root_path = if declared_inventory {
                 format!(
                     "dataset/{}",
                     normalized_relative_posix_path(dataset_root_relative)?
@@ -2245,7 +2292,7 @@ fn write_product_import_package(
                 "canonical dataset root disagrees with its immutable resource"
             );
             for declared in &canonical.dataset.artifacts {
-                let scoped = if kind == "dem" {
+                let scoped = if declared_inventory {
                     &declared.relative_path
                 } else {
                     declared
@@ -2895,6 +2942,131 @@ fn canonical_potree_product_contract(
     })
 }
 
+fn canonical_splat_product_contract(
+    snapshot: &EntitySnapshot,
+    dataset_root: &Path,
+    prepared: &PreparedSplatProduct,
+) -> Result<ProductPackageCanonicalContract> {
+    let root_relative_path = prepared
+        .kernel_manifest_relative_path
+        .as_ref()
+        .context("prepared splat has no canonical hierarchy path")?;
+    let root_resource = prepared
+        .kernel_manifest_resource
+        .as_ref()
+        .context("prepared splat has no canonical hierarchy resource")?;
+    let root_bytes = fs::read(dataset_root.join(root_relative_path))?;
+    anyhow::ensure!(
+        ObjectHash::of_bytes(&root_bytes) == root_resource.object_hash
+            && root_resource.byte_length == Some(u64::try_from(root_bytes.len())?),
+        "prepared splat hierarchy changed before publication"
+    );
+    let geometry = GeometryObject::GaussianSplatCloud {
+        dataset: StreamedGeometry {
+            format_id: "himmelcad-prepared-hierarchy@1".to_owned(),
+            metadata: root_resource.clone(),
+            element_count: Some(prepared.splat_count),
+        },
+    };
+    let canonical_objects = [
+        (
+            "application/vnd.himmelcad.components+json",
+            serde_json::json!({
+                "hcad.prepared-dataset@1": {
+                    "formatId": "himmelcad-prepared-hierarchy@1",
+                    "manifestRef": root_resource.object_hash,
+                }
+            }),
+        ),
+        (
+            "application/vnd.himmelcad.attributes+json",
+            serde_json::json!({}),
+        ),
+        (
+            "application/vnd.himmelcad.relations+json",
+            serde_json::json!([]),
+        ),
+    ]
+    .into_iter()
+    .map(|(media_type, value)| {
+        let bytes = serde_json::to_vec(&value)?;
+        Ok(CanonicalImportJsonObject {
+            object_hash: ObjectHash::of_bytes(&bytes),
+            media_type: media_type.to_owned(),
+            value,
+        })
+    })
+    .collect::<Result<Vec<_>>>()?;
+    let selected = Representation {
+        role: RepresentationRole::Canonical,
+        geometry_ref: geometry_object_content_hash(&geometry)?,
+        authority: RepresentationAuthority::Authoritative,
+        dependency_hash: None,
+    };
+    let mut entity = CanonicalEntity {
+        id: snapshot.id.clone(),
+        revision: 0,
+        type_id: EntityTypeId(built_in_type::GAUSSIAN_SPLAT_CLOUD.to_owned()),
+        name: snapshot.name.clone(),
+        owner: None,
+        layer_ids: Vec::new(),
+        placement: None,
+        representations: vec![selected.clone()],
+        components_ref: canonical_objects[0].object_hash.clone(),
+        attributes_ref: canonical_objects[1].object_hash.clone(),
+        relations_ref: canonical_objects[2].object_hash.clone(),
+        style_ref: None,
+        schema_version: 1,
+        version_hash: ObjectHash::of_bytes(b"pending"),
+    };
+    entity.version_hash = canonical_entity_version_hash(&entity)?;
+    validate_resolved_representation(&entity, &selected, &geometry)?;
+    let canonical_root = dataset_root.canonicalize()?;
+    let prepared_root = root_relative_path
+        .parent()
+        .context("prepared splat hierarchy has no parent")?;
+    let mut relative_files = Vec::new();
+    collect_regular_dataset_files(
+        &canonical_root,
+        &canonical_root.join(prepared_root),
+        &mut relative_files,
+    )?;
+    relative_files.sort();
+    let artifacts = relative_files
+        .into_iter()
+        .map(|relative_path| {
+            let (object_hash, byte_length) =
+                hash_regular_file(&canonical_root.join(&relative_path))?;
+            Ok(PreparedDatasetArtifact {
+                relative_path: relative_path.clone(),
+                resource: GeometryResource {
+                    object_hash,
+                    media_type: product_artifact_media_type(&relative_path),
+                    byte_length: Some(byte_length),
+                },
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(ProductPackageCanonicalContract {
+        admission: CanonicalRepresentationAdmission {
+            entity,
+            selected,
+            representation_slot: "source".to_owned(),
+            expected_generation: None,
+            resolved_geometry: geometry,
+        },
+        objects: canonical_objects,
+        dataset: CanonicalPreparedDataset {
+            dataset_id: format!("prepared-splat-{}", root_resource.object_hash.as_str()),
+            format_id: "himmelcad-prepared-hierarchy@1".to_owned(),
+            entity_id: snapshot.id.0.clone(),
+            representation_slot: "source".to_owned(),
+            root_metadata: root_resource.clone(),
+            artifacts,
+        },
+    })
+}
+
 fn canonical_dem_product_contract(
     snapshot: &EntitySnapshot,
     dataset_root: &Path,
@@ -3222,6 +3394,140 @@ fn canonical_dem_product_contract(
         },
         dem_facts,
     ))
+}
+
+fn canonical_orthomosaic_product_contract(
+    snapshot: &EntitySnapshot,
+    dataset_root: &Path,
+    summary: &RasterBuildSummary,
+) -> Result<ProductPackageCanonicalContract> {
+    let viewer_relative_path = PathBuf::from("viewer/manifest.json");
+    let viewer_bytes = fs::read(dataset_root.join(&viewer_relative_path))?;
+    let viewer_resource = GeometryResource {
+        object_hash: ObjectHash::of_bytes(&viewer_bytes),
+        media_type: "himmelcad-prepared-hierarchy@1".to_owned(),
+        byte_length: Some(u64::try_from(viewer_bytes.len())?),
+    };
+    let geometry = GeometryObject::RasterImage {
+        raster: Box::new(RasterImageGeometry {
+            pixels: viewer_resource.clone(),
+            width: summary.grid.width_pixels,
+            height: summary.grid.height_pixels,
+            mapping: RasterMapping::PlanGrid2D(PlanGrid2DMapping {
+                origin_xy: [
+                    summary.grid.bounds.minimum_east + summary.grid.gsd * 0.5,
+                    summary.grid.bounds.maximum_north - summary.grid.gsd * 0.5,
+                ],
+                column_step_xy: [summary.grid.gsd, 0.0],
+                row_step_xy: [0.0, -summary.grid.gsd],
+            }),
+            depth: None,
+        }),
+    };
+    let canonical_objects = [
+        (
+            "application/vnd.himmelcad.components+json",
+            serde_json::json!({
+                "hcad.prepared-dataset@1": {
+                    "formatId": "himmelcad-prepared-hierarchy@1",
+                    "manifestRef": viewer_resource.object_hash,
+                }
+            }),
+        ),
+        (
+            "application/vnd.himmelcad.attributes+json",
+            serde_json::json!({}),
+        ),
+        (
+            "application/vnd.himmelcad.relations+json",
+            serde_json::json!([]),
+        ),
+    ]
+    .into_iter()
+    .map(|(media_type, value)| {
+        let bytes = serde_json::to_vec(&value)?;
+        Ok(CanonicalImportJsonObject {
+            object_hash: ObjectHash::of_bytes(&bytes),
+            media_type: media_type.to_owned(),
+            value,
+        })
+    })
+    .collect::<Result<Vec<_>>>()?;
+    let selected = Representation {
+        role: RepresentationRole::Canonical,
+        geometry_ref: geometry_object_content_hash(&geometry)?,
+        authority: RepresentationAuthority::Authoritative,
+        dependency_hash: None,
+    };
+    let mut entity = CanonicalEntity {
+        id: snapshot.id.clone(),
+        revision: 0,
+        type_id: EntityTypeId(built_in_type::RASTER_IMAGE.to_owned()),
+        name: snapshot.name.clone(),
+        owner: None,
+        layer_ids: Vec::new(),
+        placement: None,
+        representations: vec![selected.clone()],
+        components_ref: canonical_objects[0].object_hash.clone(),
+        attributes_ref: canonical_objects[1].object_hash.clone(),
+        relations_ref: canonical_objects[2].object_hash.clone(),
+        style_ref: None,
+        schema_version: 2,
+        version_hash: ObjectHash::of_bytes(b"pending"),
+    };
+    entity.version_hash = canonical_entity_version_hash(&entity)?;
+    validate_resolved_representation(&entity, &selected, &geometry)?;
+
+    let canonical_root = dataset_root.canonicalize()?;
+    let mut relative_files = Vec::new();
+    collect_regular_dataset_files(
+        &canonical_root,
+        &canonical_root.join("viewer"),
+        &mut relative_files,
+    )?;
+    collect_regular_dataset_files(
+        &canonical_root,
+        &canonical_root.join("view"),
+        &mut relative_files,
+    )?;
+    relative_files.sort();
+    relative_files.dedup();
+    let artifacts = relative_files
+        .into_iter()
+        .map(|relative_path| {
+            let (object_hash, byte_length) =
+                hash_regular_file(&canonical_root.join(&relative_path))?;
+            Ok(PreparedDatasetArtifact {
+                relative_path: relative_path.clone(),
+                resource: GeometryResource {
+                    object_hash,
+                    media_type: product_artifact_media_type(&relative_path),
+                    byte_length: Some(byte_length),
+                },
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(ProductPackageCanonicalContract {
+        admission: CanonicalRepresentationAdmission {
+            entity,
+            selected,
+            representation_slot: "source".to_owned(),
+            expected_generation: None,
+            resolved_geometry: geometry,
+        },
+        objects: canonical_objects,
+        dataset: CanonicalPreparedDataset {
+            dataset_id: format!(
+                "prepared-orthomosaic-{}",
+                viewer_resource.object_hash.as_str()
+            ),
+            format_id: "himmelcad-prepared-hierarchy@1".to_owned(),
+            entity_id: snapshot.id.0.clone(),
+            representation_slot: "source".to_owned(),
+            root_metadata: viewer_resource,
+            artifacts,
+        },
+    })
 }
 
 fn read_prepared_dem_validity_resource(
@@ -8344,30 +8650,56 @@ impl ProjectRuntime {
             .get(&entity_id.0)
             .context("Gaussian splat disappeared before lineage publication")?;
         let camera_scope = frozen_product_camera_scope(session, lineage)?;
-        let prepared = record.prepared_splats.is_some();
-        write_lineage_only_product_publication(
-            session,
-            &candidate,
-            snapshot,
-            "gaussianSplat",
-            if prepared { "prepared" } else { "brushPly" },
-            prepared.then_some("himmelcad-prepared-hierarchy@1"),
-            "Gaussian splat",
-            &record.job_id,
-            PhotolabJobKind::BuildGaussianSplat,
-            lineage,
-            &camera_scope,
-            vec![ProductLineageIdentityV1 {
-                id: format!("brush@{}", record.summary.brush_version),
-                sha256: record.summary.executable_sha256.clone(),
-            }],
-            Vec::new(),
-            if prepared {
-                ProductPublicationReasonCodeV1::NoPackage
-            } else {
-                ProductPublicationReasonCodeV1::NeedsPreparation
-            },
-        )?;
+        let product_tools = vec![ProductLineageIdentityV1 {
+            id: format!("brush@{}", record.summary.brush_version),
+            sha256: record.summary.executable_sha256.clone(),
+        }];
+        if let Some(prepared) = record.prepared_splats.as_ref().filter(|prepared| {
+            prepared.kernel_manifest_relative_path.is_some()
+                && prepared.kernel_manifest_resource.is_some()
+        }) {
+            let canonical = canonical_splat_product_contract(snapshot, &dataset_path, prepared)?;
+            write_product_import_package(
+                session,
+                &candidate,
+                snapshot,
+                "gaussianSplat",
+                "prepared",
+                "gaussianSplats",
+                "Gaussian splat",
+                "himmelcad-prepared-hierarchy@1",
+                &dataset_path,
+                prepared
+                    .kernel_manifest_relative_path
+                    .as_deref()
+                    .context("prepared splat has no canonical hierarchy path")?,
+                lineage,
+                &camera_scope,
+                &record.job_id,
+                PhotolabJobKind::BuildGaussianSplat,
+                product_tools,
+                None,
+                canonical,
+                &CancellationToken::new(),
+            )?;
+        } else {
+            write_lineage_only_product_publication(
+                session,
+                &candidate,
+                snapshot,
+                "gaussianSplat",
+                "brushPly",
+                None,
+                "Gaussian splat",
+                &record.job_id,
+                PhotolabJobKind::BuildGaussianSplat,
+                lineage,
+                &camera_scope,
+                product_tools,
+                Vec::new(),
+                ProductPublicationReasonCodeV1::NeedsPreparation,
+            )?;
+        }
         let journal = PhotolabJournalEntry {
             recovered: false,
             orphaned: false,
@@ -8881,21 +9213,27 @@ impl ProjectRuntime {
                 &CancellationToken::new(),
             )?;
         } else {
-            write_lineage_only_product_publication(
+            let canonical =
+                canonical_orthomosaic_product_contract(snapshot, &output, &record.summary)?;
+            write_product_import_package(
                 session,
                 &candidate,
                 snapshot,
                 "orthomosaic",
                 "rasterPyramid",
-                None,
+                "raster",
                 "Orthomosaic",
-                job_id,
-                PhotolabJobKind::BuildOrthomosaic,
+                "himmelcad-prepared-hierarchy@1",
+                &output,
+                Path::new("viewer/manifest.json"),
                 lineage,
                 &camera_scope,
+                job_id,
+                PhotolabJobKind::BuildOrthomosaic,
                 product_tools,
-                Vec::new(),
-                ProductPublicationReasonCodeV1::UnsupportedFormat,
+                None,
+                canonical,
+                &CancellationToken::new(),
             )?;
         }
         let journal = PhotolabJournalEntry {
@@ -14108,6 +14446,8 @@ fn parse_capture_time_seconds(value: &str) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use himmelcad_core::canonical_document::EntityVersionRef;
+    use himmelcad_core::canonical_resources::CanonicalResourceRef;
     use himmelcad_core::photolab_images::{
         CaptureTime, CaptureTimeReference, DiscoveredPhoto, ImageDimensions, PhotoFormat,
         PhotoMetadata,
@@ -14115,6 +14455,13 @@ mod tests {
     use himmelcad_core::photolab_jobs::{
         CheckpointDescriptor, CheckpointId, JobProgress, NewPendingCheckpoint, NewPhotolabJob,
         PhotolabJobId, PhotolabJobKind, PhotolabStage, PhotolabStageKind, ProgressMetrics,
+    };
+    use himmelcad_io::{
+        CanonicalImportProvider, CanonicalImportRequest, PhotoLabProductPackageProvider,
+        ProviderOperationContext, ProviderProgress, PRODUCT_IMPORT_PACKAGE_FORMAT_ID,
+    };
+    use himmelcad_sidecar::brush_runtime::{
+        BrushCheckpointSummary, BrushCommandReport, BrushTrainingSettings,
     };
     use himmelcad_sidecar::colmap_runtime::{
         ColmapOutputSummary, PinnedIntrinsicsReadjustmentPath, SelectedFeatureStore,
@@ -14126,12 +14473,25 @@ mod tests {
         PreparedTriangleMeshOptions, TriangleRecord,
     };
     use himmelcad_sidecar::raster_runtime::{
-        RasterBounds, RasterByteOrder, RasterCrs, RasterGrid, RasterLevelSummary, RasterViewLayer,
-        RasterViewTileFormat,
+        OrthomosaicElevationSupport, RasterBounds, RasterByteOrder, RasterCrs, RasterGrid,
+        RasterLevelSummary, RasterViewLayer, RasterViewTileFormat,
     };
+    use himmelcad_sidecar::splat_tiler::tile_brush_ply;
     use himmelcad_sidecar::viewer_raster_manifest::{
         publish_prepared_elevation_hierarchy, PreparedElevationHierarchyOptions,
     };
+    use himmelcad_sidecar::viewer_raster_surface_manifest::publish_prepared_raster_surface_hierarchy;
+
+    #[derive(Default)]
+    struct ProductImportTestContext;
+
+    impl ProviderOperationContext for ProductImportTestContext {
+        fn is_cancelled(&self) -> bool {
+            false
+        }
+
+        fn report_progress(&mut self, _progress: ProviderProgress) {}
+    }
 
     #[test]
     fn sync_package_artifacts_succeeds_and_names_a_changed_artifact() {
@@ -14226,7 +14586,7 @@ mod tests {
     }
 
     #[test]
-    fn cancelled_package_inventory_never_creates_a_ready_record() {
+    fn publish_product_import_cancelled_inventory_never_creates_a_ready_record() {
         let root = temp_test_dir("cancelled-product-package");
         let source = root.join("source");
         let package = root.join("package");
@@ -15748,6 +16108,87 @@ mod tests {
         std::env::temp_dir().join(unique_id(name, unix_ms().expect("clock must work")))
     }
 
+    fn pl_i1_test_dir(name: &str) -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../.build/codex-scratch/pl-i1")
+            .join(unique_id(name, unix_ms().expect("clock must work")))
+    }
+
+    fn assert_product_import_package(
+        project_root: &Path,
+        entity_id: &EntityId,
+        expected_kind: &str,
+        expected_type_id: &str,
+    ) {
+        let publication_bytes = fs::read(product_import_publication_path(project_root, entity_id))
+            .expect("publication record");
+        let publication: PhotoLabProductPublicationRecordV1 =
+            serde_json::from_slice(&publication_bytes).expect("valid publication record");
+        assert_eq!(
+            publication.reason_code,
+            ProductPublicationReasonCodeV1::Available
+        );
+        assert_eq!(publication.provenance_status, ProvenanceStatus::Complete);
+        assert!(publication.missing_field_ids.is_empty());
+        let package = publication.package.as_ref().expect("published package");
+        let package_root = project_root.join(&package.package_relative_path);
+        let manifest_bytes = fs::read(package_root.join("manifest.json")).expect("manifest");
+        let manifest: ProductImportPackageManifestV1 =
+            serde_json::from_slice(&manifest_bytes).expect("valid package manifest");
+        assert_eq!(manifest.product.kind, expected_kind);
+        assert_eq!(manifest.admissions[0].type_id, expected_type_id);
+        assert_eq!(manifest.lineage.payload, publication.lineage.payload);
+        assert_eq!(
+            manifest.package_sha256,
+            manifest
+                .computed_package_sha256()
+                .expect("recomputed package hash")
+        );
+        assert_eq!(manifest.package_sha256, package.package_sha256);
+
+        let ready_bytes = fs::read(package_root.join("ready.json")).expect("ready record");
+        let ready_text = std::str::from_utf8(&ready_bytes).expect("UTF-8 ready record");
+        assert!(
+            ready_text.rfind("package_sha256") > ready_text.rfind("total_bytes"),
+            "ready package hash must be written last"
+        );
+        let ready: ProductImportPackageReadyRecordV1 =
+            serde_json::from_slice(&ready_bytes).expect("valid ready record");
+        assert_eq!(ready.package_sha256, manifest.package_sha256);
+        assert_eq!(
+            ready.lineage_object_sha256,
+            manifest.lineage.lineage_object_sha256
+        );
+        assert_eq!(
+            ready.publication_generation,
+            manifest.source.publication_generation
+        );
+        assert_eq!(ready.artifact_count, manifest.counts.artifact_count);
+        assert_eq!(ready.object_count, manifest.counts.object_count);
+        assert_eq!(ready.total_bytes, manifest.counts.total_bytes);
+
+        let imported = PhotoLabProductPackageProvider::new()
+            .import(
+                CanonicalImportRequest {
+                    source: &package_root,
+                    format_id: PRODUCT_IMPORT_PACKAGE_FORMAT_ID,
+                    options: &serde_json::json!({}),
+                },
+                &mut ProductImportTestContext,
+            )
+            .expect("Builder package reader accepts publication");
+        assert_eq!(imported.admissions.len(), 1);
+        assert_eq!(imported.admissions[0].entity.type_id.0, expected_type_id);
+        assert_eq!(imported.datasets.len(), 1);
+        assert_eq!(
+            imported.datasets[0].format_id,
+            "himmelcad-prepared-hierarchy@1"
+        );
+        assert!(package_root.join("manifest.json").is_file());
+        assert!(package_root.join("ready.json").is_file());
+        assert!(!package_root.with_extension("pending").exists());
+    }
+
     fn prepared_dem_summary(dataset_root: &Path, no_data: RasterNoDataValue) -> RasterBuildSummary {
         fs::create_dir_all(dataset_root.join("view/preview/L00/0")).expect("preview directory");
         fs::create_dir_all(dataset_root.join("view/height/L00/0")).expect("height directory");
@@ -15836,6 +16277,71 @@ mod tests {
             &CancellationToken::new(),
         )
         .expect("prepared DEM hierarchy");
+        summary
+    }
+
+    fn prepared_orthomosaic_summary(
+        dataset_root: &Path,
+        support_root: &Path,
+    ) -> RasterBuildSummary {
+        let support_summary =
+            prepared_dem_summary(support_root, RasterNoDataValue::Numeric(-9999.0));
+        fs::create_dir_all(dataset_root.join("view/rgba/L00/0")).expect("RGBA directory");
+        let mut image = image::RgbaImage::from_pixel(512, 512, image::Rgba([30, 90, 170, 255]));
+        image.put_pixel(1, 0, image::Rgba([30, 90, 170, 0]));
+        image
+            .save(dataset_root.join("view/rgba/L00/0/0.png"))
+            .expect("RGBA tile");
+        let bounds = support_summary.grid.bounds;
+        let summary = RasterBuildSummary {
+            output_directory: path_string(dataset_root),
+            cog_path: "product.cog.tif".into(),
+            pyramid_manifest_path: "pyramid/manifest.json".into(),
+            levels: vec![RasterLevelSummary {
+                level: 0,
+                columns: 1,
+                rows: 1,
+                tile_count: 1,
+                bounds,
+                gsd: 1.0,
+                relative_directory: "pyramid/L00".into(),
+                metric_tile_url_template: "pyramid/L00/{x}/{y}.tif".into(),
+                view_layers: vec![RasterViewLayer {
+                    name: "rgba".into(),
+                    format: RasterViewTileFormat::RgbaPng,
+                    url_template: "view/rgba/L00/{x}/{y}.png".into(),
+                }],
+            }],
+            crs: support_summary.crs.clone(),
+            grid: RasterGrid {
+                bounds,
+                width_pixels: 3,
+                height_pixels: 2,
+                gsd: 1.0,
+                no_data: RasterNoDataValue::AlphaMask,
+            },
+            audit: support_summary.audit.clone(),
+        };
+        publish_prepared_raster_surface_hierarchy(
+            dataset_root,
+            &summary,
+            &OrthomosaicElevationSupport {
+                dataset_root: path_string(support_root),
+                summary: support_summary,
+                source_surface: EntityVersionRef {
+                    id: EntityId("fixture:raster:dem".into()),
+                    revision: 1,
+                    version_hash: ObjectHash::of_bytes(b"fixture DEM record"),
+                },
+                derivation: CanonicalResourceRef {
+                    resource_id: "fixture:raster-surface-drape".into(),
+                    schema_id: "hcad.derivation.raster-surface-drape@1".into(),
+                    content_hash: ObjectHash::of_bytes(b"fixture drape recipe"),
+                },
+            },
+            &CancellationToken::new(),
+        )
+        .expect("prepared orthomosaic hierarchy");
         summary
     }
 
@@ -17475,8 +17981,8 @@ mod tests {
     }
 
     #[test]
-    fn prepared_colmap_meshes_list_canonical_contracts_and_export_originals() {
-        let root = temp_test_dir("raw-colmap-mesh-product");
+    fn publish_product_import_prepared_colmap_meshes_and_export_originals() {
+        let root = pl_i1_test_dir("raw-colmap-mesh-product");
         let runtime = ProjectRuntime::default();
         runtime
             .create(CreateProjectParams {
@@ -17484,13 +17990,17 @@ mod tests {
                 name: "Raw COLMAP mesh product".into(),
             })
             .expect("project");
-        let camera_id = {
+        let (camera_id, image_mask_scope_sha256) = {
             let mut guard = runtime.session.lock().expect("session");
             let session = guard.as_mut().expect("open project");
             let images =
                 unique_entity_of_kind(&session.manifest, EntityKind::ImageCollection, "images")
                     .expect("images");
-            insert_test_camera(session, &images, "mesh-source", [])
+            let camera = insert_test_camera(session, &images, "mesh-source", []);
+            let scope =
+                build_image_mask_compute_scope(session, std::slice::from_ref(&camera.0), None)
+                    .expect("image mask scope");
+            (camera, scope.scope_sha256)
         };
         let scratch = root.join("colmap-mesh-scratch");
         fs::create_dir_all(scratch.join("sparse/0")).expect("sparse model directory");
@@ -17555,7 +18065,7 @@ mod tests {
             executable_sha256: ObjectHash::of_bytes(b"colmap"),
             colmap_version: "test".into(),
             camera_entity_ids: vec![camera_id.0],
-            image_mask_scope_sha256: None,
+            image_mask_scope_sha256: Some(image_mask_scope_sha256),
             calibration_groups: Vec::new(),
             intrinsics_refinement: ColmapIntrinsicsRefinement::Refine,
             intrinsics_strategy: ColmapIntrinsicsStrategy::AllRefine,
@@ -17714,6 +18224,18 @@ mod tests {
         assert_eq!(textured_export.kind, ProductExportSourceKind::Directory);
         assert!(textured_export.source_path.ends_with("dense/textured"));
         assert!(textured_export.suggested_name.ends_with("-mesh"));
+        assert_product_import_package(
+            &root.join("project.hcad"),
+            &published.entity_ids[1],
+            "mesh",
+            built_in_type::SURFACE_3D,
+        );
+        assert_product_import_package(
+            &root.join("project.hcad"),
+            &published.entity_ids[2],
+            "mesh",
+            built_in_type::SURFACE_3D,
+        );
         runtime.close().expect("close");
         fs::remove_dir_all(root).expect("cleanup");
     }
@@ -18013,6 +18535,162 @@ mod tests {
             ProductPublicationReasonCodeV1::NoPackage
         );
 
+        runtime.close().expect("close");
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn publish_product_import_orthomosaic_package_is_reader_ready() {
+        let root = pl_i1_test_dir("orthomosaic-product-package");
+        let project_root = root.join("project.hcad");
+        let runtime = ProjectRuntime::default();
+        runtime
+            .create(CreateProjectParams {
+                path: path_string(&project_root),
+                name: "Orthomosaic product package".into(),
+            })
+            .expect("project");
+        let (alignment_id, image_mask_scope_sha256) = {
+            let mut guard = runtime.session.lock().expect("session");
+            let session = guard.as_mut().expect("open project");
+            let images =
+                unique_entity_of_kind(&session.manifest, EntityKind::ImageCollection, "images")
+                    .expect("images");
+            let camera = insert_test_camera(session, &images, "orthomosaic-source", []);
+            let alignment = insert_test_alignment(
+                session,
+                "orthomosaic-source",
+                1,
+                std::slice::from_ref(&camera),
+            );
+            let scope =
+                build_image_mask_compute_scope(session, std::slice::from_ref(&camera.0), None)
+                    .expect("image mask scope");
+            (alignment, scope.scope_sha256)
+        };
+        let lineage = ProductLineage {
+            source_alignment_entity_id: alignment_id,
+            processing_set_id: None,
+            gcp_optimization_entity_id: None,
+            gcp_optimization_snapshot_sha256: None,
+            image_mask_scope_sha256,
+        };
+        let dataset_root = project_root.join("datasets/raster/orthomosaic-fixture");
+        let support_root = root.join("support-dem");
+        let summary = prepared_orthomosaic_summary(&dataset_root, &support_root);
+        let published = runtime
+            .publish_raster_summary(
+                "orthomosaic-fixture",
+                PublishedRasterKind::Orthomosaic,
+                summary,
+                &lineage,
+                None,
+            )
+            .expect("publish orthomosaic");
+        let entity_id = published.entity_ids.first().expect("orthomosaic entity");
+        assert_product_import_package(
+            &project_root,
+            entity_id,
+            "orthomosaic",
+            built_in_type::RASTER_IMAGE,
+        );
+        let validity =
+            fs::read(dataset_root.join("view/validity/L00/0/0.bin")).expect("tile-local validity");
+        assert_eq!(validity.len(), 512 * 512 / 8);
+        assert_eq!(validity[0] & 0b11, 0b01, "alpha=0 pixel must be invalid");
+        runtime.close().expect("close");
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn publish_product_import_gaussian_splat_package_is_reader_ready() {
+        let root = pl_i1_test_dir("gaussian-splat-product-package");
+        let project_root = root.join("project.hcad");
+        let runtime = ProjectRuntime::default();
+        runtime
+            .create(CreateProjectParams {
+                path: path_string(&project_root),
+                name: "Gaussian splat product package".into(),
+            })
+            .expect("project");
+        let (alignment_id, image_mask_scope_sha256) = {
+            let mut guard = runtime.session.lock().expect("session");
+            let session = guard.as_mut().expect("open project");
+            let images =
+                unique_entity_of_kind(&session.manifest, EntityKind::ImageCollection, "images")
+                    .expect("images");
+            let camera = insert_test_camera(session, &images, "splat-source", []);
+            let alignment =
+                insert_test_alignment(session, "splat-source", 1, std::slice::from_ref(&camera));
+            let scope =
+                build_image_mask_compute_scope(session, std::slice::from_ref(&camera.0), None)
+                    .expect("image mask scope");
+            (alignment, scope.scope_sha256)
+        };
+        let lineage = ProductLineage {
+            source_alignment_entity_id: alignment_id,
+            processing_set_id: None,
+            gcp_optimization_entity_id: None,
+            gcp_optimization_snapshot_sha256: None,
+            image_mask_scope_sha256,
+        };
+        let scratch = root.join("splat-worker-output");
+        fs::create_dir_all(scratch.join("output")).expect("worker output");
+        let output_path = scratch.join("output/gaussian-splat.ply");
+        let ply = b"ply\nformat ascii 1.0\nelement vertex 2\nproperty float x\nproperty float y\nproperty float z\nproperty float scale_0\nproperty float scale_1\nproperty float scale_2\nproperty float opacity\nproperty float rot_0\nproperty float rot_1\nproperty float rot_2\nproperty float rot_3\nproperty float f_dc_0\nproperty float f_dc_1\nproperty float f_dc_2\nend_header\n0 0 0 -2 -2 -2 2 1 0 0 0 0 0 0\n1 1 1 -2 -2 -2 2 1 0 0 0 0 0 0\n";
+        fs::write(&output_path, ply).expect("Brush PLY fixture");
+        let prepared_splats = tile_brush_ply(
+            &output_path,
+            &scratch.join("prepared-splats"),
+            None,
+            &CancellationToken::new(),
+        )
+        .expect("prepare shared splat hierarchy");
+        let summary = BrushOutputSummary {
+            schema_version: 1,
+            job_id: "splat-fixture".into(),
+            brush_version: "fixture".into(),
+            executable_sha256: ObjectHash::of_bytes(b"Brush fixture"),
+            dataset_sha256: ObjectHash::of_bytes(b"COLMAP fixture"),
+            resumed_from_sha256: None,
+            settings: BrushTrainingSettings::default(),
+            command: BrushCommandReport {
+                argv: vec!["brush".into()],
+                exit_code: Some(0),
+                duration_ms: 1,
+                log_tail: Vec::new(),
+            },
+            final_output: BrushCheckpointSummary {
+                iteration: 30_000,
+                relative_path: PathBuf::from("output/gaussian-splat.ply"),
+                sha256: ObjectHash::of_bytes(ply),
+                bytes: u64::try_from(ply.len()).expect("PLY length"),
+                splat_count: 2,
+            },
+            retained_checkpoints: Vec::new(),
+        };
+        let summary_bytes = serde_json::to_vec(&summary).expect("summary JSON");
+        let summary_path = scratch.join("output-summary.json");
+        fs::write(&summary_path, &summary_bytes).expect("summary");
+        let published = runtime
+            .publish_brush_outcome(
+                BrushRunOutcome {
+                    scratch_path: scratch,
+                    output_path,
+                    summary_path,
+                    summary_sha256: ObjectHash::of_bytes(&summary_bytes),
+                    summary,
+                    prepared_splats: Some(prepared_splats),
+                },
+                &lineage,
+            )
+            .expect("publish gaussian splat");
+        assert_product_import_package(
+            &project_root,
+            published.entity_ids.first().expect("splat entity"),
+            "gaussianSplat",
+            built_in_type::GAUSSIAN_SPLAT_CLOUD,
+        );
         runtime.close().expect("close");
         fs::remove_dir_all(root).expect("cleanup");
     }

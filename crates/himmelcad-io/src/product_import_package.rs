@@ -8,7 +8,8 @@ use std::sync::Mutex;
 
 use himmelcad_core::entity_model::{
     built_in_type, CanonicalEntity, DepthSemantics, ElevationSurfaceGeometry, GeometryObject,
-    RasterCellDiagonal, RasterConnectivity, RasterInterpolation, RasterTriangleMaskEncoding,
+    RasterCellDiagonal, RasterConnectivity, RasterInterpolation, RasterMapping,
+    RasterTriangleMaskEncoding,
 };
 use himmelcad_core::entity_validation::canonical_entity_version_hash;
 use himmelcad_core::geometry_representation_registry::CanonicalRepresentationAdmission;
@@ -58,16 +59,6 @@ impl ProductImportPackageRefusal {
             reason_code: "unsupported_package_schema",
             message: format!(
                 "This product package version is not supported by this version of Builder. {}",
-                diagnostic.into()
-            ),
-        }
-    }
-
-    fn unprepared(diagnostic: impl Into<String>) -> Self {
-        Self {
-            reason_code: "needs_preparation",
-            message: format!(
-                "Prepare this product in PhotoLab before importing. {}",
                 diagnostic.into()
             ),
         }
@@ -271,6 +262,7 @@ fn read_and_validate_package(
         built_in_type::POINT_CLOUD.to_owned(),
         built_in_type::GAUSSIAN_SPLAT_CLOUD.to_owned(),
         built_in_type::ELEVATION_SURFACE.to_owned(),
+        built_in_type::RASTER_IMAGE.to_owned(),
         built_in_type::SURFACE_3D.to_owned(),
         built_in_type::OBJECT_3D.to_owned(),
     ]);
@@ -468,10 +460,10 @@ fn validate_arrival_row(
                 && dataset.content_kind == "gaussianSplats"
         }
         "orthomosaic" => {
-            return Err(ProductImportPackageRefusal::unprepared(
-                "PlanGrid2D admission is not available in this schema revision",
-            )
-            .into());
+            admission.type_id == built_in_type::RASTER_IMAGE
+                && admission.schema_version == 2
+                && dataset.format_id == "himmelcad-prepared-hierarchy@1"
+                && dataset.content_kind == "raster"
         }
         _ => false,
     };
@@ -773,6 +765,35 @@ fn validate_prepared_root(
         )
         .into());
     }
+    for content in &contents {
+        let path = resolve_posix_reference(&dataset.root_path, &content.uri)?;
+        let artifact = manifest
+            .artifacts
+            .iter()
+            .find(|artifact| artifact.path == path)
+            .ok_or_else(|| {
+                ProductImportPackageRefusal::invalid(format!(
+                    "prepared hierarchy content artifact is absent: {path}"
+                ))
+            })?;
+        if !dataset
+            .artifact_paths
+            .iter()
+            .any(|candidate| candidate == &path)
+            || content
+                .content_hash
+                .as_deref()
+                .is_some_and(|hash| hash != artifact.sha256.as_str())
+            || content
+                .byte_length
+                .is_some_and(|length| length != artifact.byte_length)
+        {
+            return Err(ProductImportPackageRefusal::invalid(
+                "prepared hierarchy content does not match its declared artifact",
+            )
+            .into());
+        }
+    }
     if manifest.product.kind == "dem" {
         let facts = manifest
             .lineage
@@ -790,6 +811,105 @@ fn validate_prepared_root(
                 content.decoder_parameters.as_ref(),
             )?;
         }
+    } else if manifest.product.kind == "orthomosaic" {
+        validate_orthomosaic_geometry(root_artifact, geometry)?;
+        for content in contents {
+            validate_orthomosaic_decoder(manifest, dataset, content)?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_orthomosaic_geometry(
+    root_artifact: &himmelcad_core::product_import_package::ProductImportPackageArtifactV1,
+    geometry: &GeometryObject,
+) -> Result<(), ProviderContractError> {
+    let GeometryObject::RasterImage { raster } = geometry else {
+        return Err(ProductImportPackageRefusal::invalid(
+            "orthomosaic geometry is not a raster image",
+        )
+        .into());
+    };
+    if raster.pixels.object_hash != root_artifact.sha256
+        || raster.pixels.byte_length != Some(root_artifact.byte_length)
+        || raster.pixels.media_type != "himmelcad-prepared-hierarchy@1"
+        || !matches!(raster.mapping, RasterMapping::PlanGrid2D(_))
+        || raster.depth.is_some()
+    {
+        return Err(ProductImportPackageRefusal::invalid(
+            "orthomosaic geometry does not bind the plan-only prepared hierarchy",
+        )
+        .into());
+    }
+    Ok(())
+}
+
+fn validate_orthomosaic_decoder(
+    manifest: &ProductImportPackageManifestV1,
+    dataset: &himmelcad_core::product_import_package::ProductImportPackageDatasetV1,
+    content: &himmelcad_render::ContentReference,
+) -> Result<(), ProviderContractError> {
+    let parameters = content
+        .decoder_parameters
+        .as_ref()
+        .and_then(Value::as_object)
+        .ok_or_else(|| {
+            ProductImportPackageRefusal::invalid(
+                "orthomosaic Raster content has no decoder parameters",
+            )
+        })?;
+    let width = parameters
+        .get("width")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| ProductImportPackageRefusal::invalid("orthomosaic width is absent"))?;
+    let height = parameters
+        .get("height")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| ProductImportPackageRefusal::invalid("orthomosaic height is absent"))?;
+    let validity = parameters
+        .get("validityReference")
+        .and_then(Value::as_object)
+        .ok_or_else(|| {
+            ProductImportPackageRefusal::invalid(
+                "orthomosaic tile-local validityReference is absent",
+            )
+        })?;
+    let expected_length = width
+        .checked_mul(height)
+        .and_then(|bits| bits.checked_add(7))
+        .map(|bits| bits / 8)
+        .ok_or_else(|| {
+            ProductImportPackageRefusal::invalid("orthomosaic validity size overflow")
+        })?;
+    let content_path = resolve_posix_reference(&dataset.root_path, &content.uri)?;
+    let validity_uri = validity.get("uri").and_then(Value::as_str).ok_or_else(|| {
+        ProductImportPackageRefusal::invalid("orthomosaic validity URI is absent")
+    })?;
+    let validity_path = resolve_posix_reference(&content_path, validity_uri)?;
+    let artifact = manifest
+        .artifacts
+        .iter()
+        .find(|artifact| artifact.path == validity_path)
+        .ok_or_else(|| {
+            ProductImportPackageRefusal::invalid(format!(
+                "orthomosaic tile validity artifact is absent: {validity_path}"
+            ))
+        })?;
+    if !dataset
+        .artifact_paths
+        .iter()
+        .any(|path| path == &validity_path)
+        || artifact.byte_length != expected_length
+        || validity.get("byteLength").and_then(Value::as_u64) != Some(expected_length)
+        || validity
+            .get("byteOffset")
+            .is_none_or(|value| !value.is_null())
+        || validity.get("contentHash").and_then(Value::as_str) != Some(artifact.sha256.as_str())
+    {
+        return Err(ProductImportPackageRefusal::invalid(
+            "orthomosaic tile validity does not match its declared artifact",
+        )
+        .into());
     }
     Ok(())
 }
@@ -1093,6 +1213,16 @@ mod tests {
     use std::fs;
 
     use super::*;
+    use himmelcad_core::photolab_capture::PhotolabSpatialReference;
+    use himmelcad_core::product_import_package::{
+        ProductImportPackageAdmissionV1, ProductImportPackageCountsV1,
+        ProductImportPackageDatasetV1, ProductImportPackageLineageV1,
+        ProductImportPackageProducerV1, ProductImportPackageProductV1,
+        ProductImportPackageRepresentationSlotV1, ProductImportPackageSourceV1,
+        ProductLineageAlignmentKindV1, ProductLineageGcpChoiceV1, ProductLineageMaskScopeV1,
+        ProductLineageProcessingSetChoiceV1, ProductLineageReferenceFrameV1, ProductLineageV1,
+        PRODUCT_IMPORT_PACKAGE_SCHEMA_ID, PRODUCT_LINEAGE_SCHEMA_ID,
+    };
 
     #[derive(Default)]
     struct Context;
@@ -1123,6 +1253,122 @@ mod tests {
             .descriptor()
             .validate()
             .expect("descriptor");
+    }
+
+    fn arrival_manifest(
+        kind: &str,
+        type_id: &str,
+        schema_version: u32,
+        content_kind: &str,
+    ) -> ProductImportPackageManifestV1 {
+        let hash = ObjectHash::of_bytes(b"product-import-arrival-row");
+        let entity_id = "product-fixture".to_owned();
+        ProductImportPackageManifestV1 {
+            schema_id: PRODUCT_IMPORT_PACKAGE_SCHEMA_ID.to_owned(),
+            manifest_id: "fixture-manifest".to_owned(),
+            producer: ProductImportPackageProducerV1 {
+                product_id: "photolab".to_owned(),
+                product_version: "test".to_owned(),
+                build_hash: hash.clone(),
+                canonical_schema_versions: Vec::new(),
+            },
+            source: ProductImportPackageSourceV1 {
+                project_id: "source-project".to_owned(),
+                project_fingerprint: hash.clone(),
+                publication_generation: 1,
+            },
+            product: ProductImportPackageProductV1 {
+                entity_id: entity_id.clone(),
+                entity_version_hash: hash.clone(),
+                content_hash: hash.clone(),
+                kind: kind.to_owned(),
+                label: "Fixture product".to_owned(),
+                dataset_label: "Fixture dataset".to_owned(),
+            },
+            lineage: ProductImportPackageLineageV1 {
+                schema_id: PRODUCT_LINEAGE_SCHEMA_ID.to_owned(),
+                lineage_object_sha256: hash.clone(),
+                payload: ProductLineageV1 {
+                    source_project_id: "source-project".to_owned(),
+                    source_project_fingerprint: hash.clone(),
+                    product_entity_id: entity_id.clone(),
+                    product_entity_version_hash: hash.clone(),
+                    product_content_hash: hash.clone(),
+                    publication_generation: 1,
+                    product_kind: kind.to_owned(),
+                    product_label: "Fixture product".to_owned(),
+                    dataset_label: "Fixture dataset".to_owned(),
+                    source_format: "fixture".to_owned(),
+                    normalized_format_id: Some("himmelcad-prepared-hierarchy@1".to_owned()),
+                    source_alignment_kind: ProductLineageAlignmentKindV1::Single,
+                    source_alignment_entity_id: "alignment".to_owned(),
+                    source_alignment_entity_version_hash: hash.clone(),
+                    source_alignment_content_hash: hash.clone(),
+                    source_alignment_inputs: None,
+                    processing_set_choice: ProductLineageProcessingSetChoiceV1::None,
+                    camera_selection_sha256: hash.clone(),
+                    image_mask_scope: ProductLineageMaskScopeV1::None,
+                    gcp_choice: ProductLineageGcpChoiceV1::None,
+                    spatial_reference: PhotolabSpatialReference::default(),
+                    reference_frame: ProductLineageReferenceFrameV1::LocalFrame,
+                    algorithms: Vec::new(),
+                    configurations: Vec::new(),
+                    tools: Vec::new(),
+                    registration_audit: None,
+                    dem_facts: None,
+                },
+            },
+            admissions: vec![ProductImportPackageAdmissionV1 {
+                entity_id: entity_id.clone(),
+                type_id: type_id.to_owned(),
+                schema_version,
+                entity_object_path: "objects/entity.json".to_owned(),
+                entity_object_sha256: hash.clone(),
+                representation_slots: vec![ProductImportPackageRepresentationSlotV1 {
+                    slot: "geometry".to_owned(),
+                    kind: "primary".to_owned(),
+                    object_sha256: hash.clone(),
+                }],
+            }],
+            datasets: vec![ProductImportPackageDatasetV1 {
+                dataset_id: "fixture-dataset".to_owned(),
+                entity_id,
+                slot: "geometry".to_owned(),
+                format_id: "himmelcad-prepared-hierarchy@1".to_owned(),
+                content_kind: content_kind.to_owned(),
+                root_path: "dataset/manifest.json".to_owned(),
+                root_sha256: hash.clone(),
+                artifact_paths: vec!["dataset/manifest.json".to_owned()],
+            }],
+            resources: Vec::new(),
+            artifacts: Vec::new(),
+            required_features: Vec::new(),
+            counts: ProductImportPackageCountsV1 {
+                object_count: 0,
+                artifact_count: 0,
+                total_bytes: 0,
+            },
+            package_sha256: hash,
+        }
+    }
+
+    #[test]
+    fn product_import_reader_accepts_new_release_kinds() {
+        for manifest in [
+            arrival_manifest("orthomosaic", built_in_type::RASTER_IMAGE, 2, "raster"),
+            arrival_manifest("mesh", built_in_type::SURFACE_3D, 1, "gltf"),
+            arrival_manifest(
+                "gaussianSplat",
+                built_in_type::GAUSSIAN_SPLAT_CLOUD,
+                1,
+                "gaussianSplats",
+            ),
+        ] {
+            validate_arrival_row(&manifest).expect("admitted PhotoLab release kind");
+        }
+
+        let invalid = arrival_manifest("orthomosaic", built_in_type::RASTER_IMAGE, 1, "raster");
+        assert!(validate_arrival_row(&invalid).is_err());
     }
 
     fn landed_package_root() -> PathBuf {

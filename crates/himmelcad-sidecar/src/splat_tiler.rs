@@ -8,7 +8,12 @@ use std::{
 };
 
 use himmelcad_core::{
+    entity_model::GeometryResource, hash::ObjectHash,
     photolab_gcp_optimization::GcpSimilarityTransform, photolab_jobs::CancellationToken,
+};
+use himmelcad_render::{
+    BoundingVolume, ContentKind, ContentReference, PreparedHierarchyManifest, RefinementMode,
+    TileDescriptor, TileId, WorldAabb, WorldTransform, WorldVec3,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -23,6 +28,10 @@ const SH_C0: f64 = 0.282_094_791_773_878_14;
 #[serde(rename_all = "camelCase")]
 pub struct PreparedSplatProduct {
     pub manifest_relative_path: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kernel_manifest_relative_path: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kernel_manifest_resource: Option<GeometryResource>,
     #[serde(default)]
     pub export_relative_path: PathBuf,
     pub splat_count: u64,
@@ -273,8 +282,71 @@ pub fn tile_brush_ply(
     let temporary = output_root.join("manifest.json.pending");
     fs::write(&temporary, serde_json::to_vec(&manifest)?)?;
     fs::rename(temporary, &manifest_path)?;
+    let kernel_tiles = manifest
+        .tiles
+        .iter()
+        .map(|tile| {
+            let bytes = fs::read(output_root.join(&tile.data_url))?;
+            Ok(TileDescriptor {
+                id: TileId(tile.id.clone()),
+                parent: tile.parent.clone().map(TileId),
+                children: tile.children.iter().cloned().map(TileId).collect(),
+                bounds: BoundingVolume::AxisAlignedBox {
+                    bounds: WorldAabb {
+                        min: WorldVec3 {
+                            x: tile.bounds.min.x,
+                            y: tile.bounds.min.y,
+                            z: tile.bounds.min.z,
+                        },
+                        max: WorldVec3 {
+                            x: tile.bounds.max.x,
+                            y: tile.bounds.max.y,
+                            z: tile.bounds.max.z,
+                        },
+                    },
+                },
+                content_transform: WorldTransform::IDENTITY,
+                geometric_error: tile.geometric_error,
+                refinement: RefinementMode::Replace,
+                contents: vec![ContentReference {
+                    kind: ContentKind::GaussianSplats,
+                    uri: tile.data_url.clone(),
+                    byte_offset: Some(0),
+                    byte_length: Some(u64::try_from(bytes.len()).unwrap_or(u64::MAX)),
+                    primitive_count: Some(tile.splat_count),
+                    content_hash: Some(ObjectHash::of_bytes(&bytes).0),
+                    decoder_parameters: Some(serde_json::json!({
+                        "encoding": "hcsplatInterleavedV1",
+                        "origin": tile.origin,
+                    })),
+                }],
+                child_page: None,
+                prepared_point_metadata: None,
+                provider_metadata: Some(serde_json::json!({
+                    "schemaId": "hcad.provider.photolab-splat-tile@1",
+                })),
+            })
+        })
+        .collect::<Result<Vec<_>, std::io::Error>>()?;
+    let kernel_bytes = PreparedHierarchyManifest {
+        schema_version: 1,
+        roots: vec![TileId(manifest.root_tile_id.to_owned())],
+        tiles: kernel_tiles,
+    }
+    .to_validated_json()
+    .map_err(|error| SplatTilerError::InvalidPly(error.to_string()))?;
+    let kernel_path = output_root.join("kernel-manifest.json");
+    let kernel_temporary = output_root.join("kernel-manifest.json.pending");
+    fs::write(&kernel_temporary, &kernel_bytes)?;
+    fs::rename(kernel_temporary, kernel_path)?;
     Ok(PreparedSplatProduct {
         manifest_relative_path: PathBuf::from("prepared-splats/manifest.json"),
+        kernel_manifest_relative_path: Some(PathBuf::from("prepared-splats/kernel-manifest.json")),
+        kernel_manifest_resource: Some(GeometryResource {
+            object_hash: ObjectHash::of_bytes(&kernel_bytes),
+            media_type: "himmelcad-prepared-hierarchy@1".to_owned(),
+            byte_length: Some(u64::try_from(kernel_bytes.len()).unwrap_or(u64::MAX)),
+        }),
         export_relative_path: PathBuf::from("prepared-splats/export.ply"),
         splat_count: header.count,
         tile_count: u32::try_from(manifest.tiles.len()).unwrap_or(u32::MAX),
@@ -692,6 +764,15 @@ mod tests {
         .unwrap();
         assert_eq!(result.splat_count, 2);
         assert!(root.join("prepared-splats/manifest.json").is_file());
+        assert!(root.join("prepared-splats/kernel-manifest.json").is_file());
+        assert_eq!(
+            result
+                .kernel_manifest_resource
+                .as_ref()
+                .expect("kernel hierarchy")
+                .media_type,
+            "himmelcad-prepared-hierarchy@1"
+        );
         assert!(root.join("prepared-splats/export.ply").is_file());
         let _ = fs::remove_dir_all(root);
     }

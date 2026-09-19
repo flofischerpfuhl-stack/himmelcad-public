@@ -7,10 +7,17 @@ umask 077
 unset DISPLAY XAUTHORITY
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+if [[ "${1:-}" == "dialog-push" ]]; then
+  shift
+  exec env -u DISPLAY -u XAUTHORITY node "${repo_root}/scripts/dialog-push.mjs" "$@"
+fi
+
 state_root="${repo_root}/.build/ui-test-display"
 app="builder"
 screenshot=""
 ready_file=""
+dialog_queue=""
 exit_after_probe=0
 timeout_seconds="${UI_TEST_TIMEOUT:-3600}"
 
@@ -21,6 +28,7 @@ Usage: scripts/ui-test-display.sh [builder|photolab] [options]
 Options:
   --screenshot <png>   Capture the selected app through CDP Page.captureScreenshot.
   --ready-file <path>  Write DISPLAY, CDP_URL, profile and probe paths when ready.
+  --dialog-queue <file> Supply queued dev-only native open/save dialog responses.
   --exit-after-probe   Stop immediately after backend proof/screenshot (self-test mode).
   --timeout <seconds>  Stop and clean up after this time (default: UI_TEST_TIMEOUT or 3600).
   --help               Show this help.
@@ -28,6 +36,10 @@ Options:
 The first hardware result is kept: ANGLE/Vulkan, then NVIDIA EGL PRIME. If
 neither is hardware-backed, the script starts a clearly labelled SwiftShader
 software session. DISPLAY=:0 is never inherited or contacted.
+
+Queue a response before or during a run with:
+  scripts/ui-test-display.sh dialog-push queue.json \
+    '{"kind":"open","filePaths":["/data/scan.las"],"canceled":false}'
 EOF
 }
 
@@ -45,6 +57,11 @@ while (($# > 0)); do
     --ready-file)
       [[ $# -ge 2 ]] || { echo "--ready-file needs a path" >&2; exit 2; }
       ready_file="$2"
+      shift 2
+      ;;
+    --dialog-queue)
+      [[ $# -ge 2 ]] || { echo "--dialog-queue needs a path" >&2; exit 2; }
+      dialog_queue="$2"
       shift 2
       ;;
     --exit-after-probe)
@@ -73,6 +90,12 @@ done
   exit 2
 }
 overall_deadline=$((SECONDS + timeout_seconds))
+
+if [[ -n "$dialog_queue" ]]; then
+  dialog_queue="$(realpath -m "$dialog_queue")"
+  [[ -f "$dialog_queue" ]] || { echo "Dialog queue does not exist: $dialog_queue" >&2; exit 2; }
+  node -e 'const fs=require("node:fs"); const value=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(!Array.isArray(value)) throw new Error("dialog queue must be a JSON array")' "$dialog_queue"
+fi
 
 for command_name in Xvfb xauth mcookie systemd-run systemctl curl node pnpm realpath rg ss timeout; do
   command -v "$command_name" >/dev/null 2>&1 || {
@@ -323,16 +346,21 @@ EOF
     -p CPUQuota=400%
   )
   if ((limit_core_property)); then properties+=(-p LimitCORE=0); fi
+  local -a dialog_environment=()
+  if [[ -n "$dialog_queue" ]]; then
+    dialog_environment+=("HIMMELCAD_TEST_DIALOG_QUEUE=${dialog_queue}")
+  fi
 
   systemd-run --user --scope --quiet --unit="$scope_unit" \
     "${properties[@]}" --nice=10 \
     bash -c 'ulimit -c 0; exec env "$@"' bash \
       "DISPLAY=${child_display}" \
       "XAUTHORITY=${auth_file}" \
-      "CARGO_TARGET_DIR=${repo_root}/target/builder" \
+      "CARGO_TARGET_DIR=${repo_root}/target/${app}" \
       "HIMMELCAD_VITE_HMR=0" \
       "HIMMELCAD_REMOTE_DEBUGGING_PORT=${port}" \
       "HIMMELCAD_ELECTRON_USER_DATA_DIR=${profile_dir}" \
+      "${dialog_environment[@]}" \
       "HIMMELCAD_ELECTRON_EXTRA_ARGS_JSON=${extra_args_json}" \
       "HIMMELCAD_GPU=" \
       "VITE_HIMMELCAD_VIEWER_BACKEND=${viewer_backend}" \
@@ -473,6 +501,7 @@ XAUTHORITY=${auth_file}
 CDP_URL=${cdp_url}
 RUN_DIRECTORY=${run_dir}
 PROFILE_DIRECTORY=${profile_dir}
+HIMMELCAD_TEST_DIALOG_QUEUE=${dialog_queue}
 GPU_PROOF=${probe_json}
 PROCESS_DISPLAY_PROOF=${process_display_proof}
 BACKEND_ATTEMPT=${selected_attempt}

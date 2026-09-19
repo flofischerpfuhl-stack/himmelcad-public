@@ -116,7 +116,16 @@ pub fn publish_prepared_raster_surface_hierarchy(
                     "view/rgba/L{:02}/{column}/{row}.png",
                     color_level.level
                 ));
-                let (color_hash, _) = hash_file(&product_root.join(&color_relative), cancellation)?;
+                let color_path = product_root.join(&color_relative);
+                let (color_hash, _) = hash_file(&color_path, cancellation)?;
+                let validity_relative = PathBuf::from(format!(
+                    "view/validity/L{:02}/{column}/{row}.bin",
+                    color_level.level
+                ));
+                let validity_bytes = rgba_validity(&color_path, cancellation)?;
+                write_bytes_atomically(&product_root.join(&validity_relative), &validity_bytes)?;
+                let (validity_hash, validity_length) =
+                    hash_file(&product_root.join(&validity_relative), cancellation)?;
                 let minimum_height = prepared.minimum_height.unwrap_or(global_range[0]);
                 let maximum_height = prepared.maximum_height.unwrap_or(global_range[1]);
                 let id = tile_id(color_level.level, column, row);
@@ -199,7 +208,15 @@ pub fn publish_prepared_raster_surface_hierarchy(
                                 "byteLength": support_length,
                                 "contentHash": support_hash,
                             },
-                            "validityReference": null,
+                            "validityReference": {
+                                "uri": format!(
+                                    "../../../validity/L{:02}/{column}/{row}.bin",
+                                    color_level.level
+                                ),
+                                "byteOffset": null,
+                                "byteLength": validity_length,
+                                "contentHash": validity_hash,
+                            },
                             "confidenceReference": null,
                             "triangleMaskReference": null,
                         })),
@@ -231,6 +248,33 @@ pub fn publish_prepared_raster_surface_hierarchy(
     .to_validated_json()?;
     write_bytes_atomically(&product_root.join("viewer/manifest.json"), &bytes)?;
     Ok(())
+}
+
+fn rgba_validity(
+    path: &Path,
+    cancellation: &CancellationToken,
+) -> Result<Vec<u8>, PreparedRasterSurfaceHierarchyError> {
+    check_cancelled(cancellation)?;
+    let rgba = image::open(path)
+        .map_err(|error| {
+            PreparedRasterSurfaceHierarchyError::InvalidInput(format!(
+                "invalid orthomosaic RGBA tile: {error}"
+            ))
+        })?
+        .into_rgba8();
+    if rgba.width() != TILE_SIZE || rgba.height() != TILE_SIZE {
+        return Err(invalid("orthomosaic RGBA tile must be 512x512"));
+    }
+    let mut validity = vec![0_u8; (TILE_SIZE as usize * TILE_SIZE as usize).div_ceil(8)];
+    for (index, pixel) in rgba.pixels().enumerate() {
+        if index % 4096 == 0 {
+            check_cancelled(cancellation)?;
+        }
+        if pixel.0[3] != 0 {
+            validity[index / 8] |= 1 << (index % 8);
+        }
+    }
+    Ok(validity)
 }
 
 fn validate_inputs(

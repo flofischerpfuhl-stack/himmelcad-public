@@ -19,6 +19,30 @@ const quickSurfaceOrder = [
   'select.clear',
   'edit.clipboard.paste_in_place',
 ];
+
+function schemaArgumentHelp(requestSchema) {
+  const definition = schema.$defs?.[requestSchema];
+  if (!definition || definition['x-open-object'] === true) return `<json:${requestSchema}>`;
+  const required = new Set(definition.required ?? []);
+  const properties = Object.entries(definition.properties ?? {});
+  if (properties.length === 0) return '';
+  const typeName = (property) => {
+    if (property.$ref) return property.$ref.split('/').at(-1);
+    if (property.type === 'array') return `${typeName(property.items ?? {})}[]`;
+    if (Array.isArray(property.type)) return property.type.filter((value) => value !== 'null').join('|');
+    return property.type ?? 'json';
+  };
+  return `{${properties
+    .map(([name, property]) => `${name}${required.has(name) ? '' : '?'}:${typeName(property)}`)
+    .join(',')}}`;
+}
+
+function generatedConsoleMetadata(definition, requestSchema) {
+  return {
+    argumentHelp: definition.console?.argumentHelp ?? schemaArgumentHelp(requestSchema),
+    aliases: definition.console?.aliases ?? [],
+  };
+}
 const builderOnlyRows = new Set([
   'draw.line',
   'draw.polyline',
@@ -70,6 +94,8 @@ const builderOnlyRows = new Set([
 const photolabMethods = Object.fromEntries(
   (schema['x-photolabCommands'] ?? []).map((definition) => {
     const id = definition.id;
+    const requestSchema = definition.request ?? 'PhotolabCommandRequestV1';
+    const responseSchema = definition.response ?? 'PhotolabCommandResultV1';
     return [
       id,
       {
@@ -96,6 +122,13 @@ const photolabMethods = Object.fromEntries(
           ownerSpec: 'PhotoLab WP-G2',
           host: 'sidecar',
           rpcMethod: definition.rpcMethod ?? id,
+          requestSchema,
+          responseSchema,
+          execution: {
+            kind: definition.execution ?? (definition.kind === 'query' ? 'query' : 'transaction'),
+            cancelRoute: definition.cancelRoute ?? null,
+          },
+          console: generatedConsoleMetadata(definition, requestSchema),
           ...(definition.grantFields ? { grantFields: definition.grantFields } : {}),
           ...(definition.responseWrap ? { responseWrap: definition.responseWrap } : {}),
         },
@@ -106,7 +139,24 @@ const photolabMethods = Object.fromEntries(
 const methods = { ...schema.methods, ...photolabMethods };
 const rows = Object.entries(methods)
   .filter(([, method]) => method.command)
-  .map(([id, method]) => ({ id, ...method.command }))
+  .map(([id, method]) => {
+    const command = method.command;
+    const requestSchema = command.requestSchema ?? method.request ?? 'EmptyRequest';
+    return {
+      id,
+      ...command,
+      requestSchema,
+      responseSchema: command.responseSchema ?? method.response ?? null,
+      execution: command.execution ?? {
+        kind: command.kind === 'query' ? 'query' : 'transaction',
+        cancelRoute: null,
+      },
+      console: command.console ?? {
+        argumentHelp: schemaArgumentHelp(requestSchema),
+        aliases: [],
+      },
+    };
+  })
   .sort((left, right) => {
     const order = { selection: 0, edit: 1, view: 2, 'entity-specific': 3 };
     return order[left.group] - order[right.group];
@@ -185,6 +235,40 @@ for (const row of rows) {
   }
   if (row.allowMultiSelect != null && typeof row.allowMultiSelect !== 'boolean') {
     throw new Error(`Command allowMultiSelect must be boolean: ${row.id}`);
+  }
+  if (!['query', 'transaction', 'job'].includes(row.execution.kind)) {
+    throw new Error(`Command execution kind is invalid: ${row.id}`);
+  }
+  if (
+    row.execution.cancelRoute !== null &&
+    typeof row.execution.cancelRoute !== 'string'
+  ) {
+    throw new Error(`Command cancel route is invalid: ${row.id}`);
+  }
+  if (
+    typeof row.console.argumentHelp !== 'string' ||
+    !Array.isArray(row.console.aliases) ||
+    row.console.aliases.some(
+      (alias) =>
+        typeof alias?.name !== 'string' ||
+        alias.name.length === 0 ||
+        typeof alias?.action !== 'string' ||
+        alias.action.length === 0,
+    )
+  ) {
+    throw new Error(`Command console metadata is invalid: ${row.id}`);
+  }
+}
+
+const consoleNames = new Map();
+for (const row of rows.filter((candidate) => candidate.surfaces.console)) {
+  for (const name of [row.id, ...row.console.aliases.map((alias) => alias.name)]) {
+    const normalized = name.toLowerCase();
+    const collision = consoleNames.get(normalized);
+    if (collision && collision !== row.id) {
+      throw new Error(`Console name collision: ${name} (${collision}, ${row.id})`);
+    }
+    consoleNames.set(normalized, row.id);
   }
 }
 

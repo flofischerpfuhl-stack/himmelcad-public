@@ -4,6 +4,7 @@ import {
   parseViewModeTransitionRequest,
   parseViewStateV1,
   validateScreenshotRequest,
+  type CommandContext,
   type Quaternion,
   type ScopedClip,
   type ScreenshotRequestV1,
@@ -143,6 +144,10 @@ import {
   type ProductRunConfiguration,
 } from './ProductPanel.js';
 import type { ProductPrerequisiteArtifact } from './productPrerequisites.js';
+import {
+  runPhotolabConsoleCommand,
+  type PhotolabConsoleInvocation,
+} from './photolabConsoleAdapter.js';
 import { ProjectFileOperationDialog } from './ProjectFileOperationDialog.js';
 import { RecentProjects, type RecentProjectAvailability } from './RecentProjects.js';
 import {
@@ -4085,29 +4090,140 @@ export function App(): JSX.Element {
     });
   };
 
-  const onCommand = (raw: string) => {
-    const [command, argument] = raw.trim().split(/\s+/, 2);
-    if (command === 'alignment.resolve') {
-      void resolveProfile();
-    } else if (command === 'alignment.run') {
-      void startAlignment();
-    } else if (command === 'alignment.profile' && isProfile(argument)) {
-      setProfile(argument);
-      activate('alignment.run');
-    } else if (command === 'product.run' && isProductOperation(argument)) {
-      void startProduct(defaultProductConfiguration(argument));
-    } else if (command === 'batch.run') {
-      activate('batch.configure');
-    } else if (command === 'project.save') {
-      void saveProject();
-    } else {
-      logEvent(
-        'warn',
-        'renderer',
-        'Commands: alignment.resolve · alignment.run · alignment.profile qualityHybrid|maximumRobustness|fast · product.run depth|dense|dem|ortho|mesh|splat · batch.run · project.save',
+  const consoleCommandContext = useMemo<CommandContext>(() => {
+    const selectedEntityIds = [...selected];
+    return {
+      hasProject: projectReady,
+      productId: 'photolab',
+      selectedEntityIds,
+      selectedEntityKinds: selectedEntityIds.map(() => 'other' as const),
+      selectedCanonicalEntityKinds: selectedEntityIds.map(
+        (entityId) => project.entities[entityId]?.kind ?? 'Unknown',
+      ),
+      selectionEditable: true,
+      selectionExportable: selectedEntityIds.length > 0,
+      clipboardAdmissible: false,
+    };
+  }, [project.entities, projectReady, selected]);
+
+  const executeConsoleInvocation = useCallback(
+    async (invocation: PhotolabConsoleInvocation): Promise<void> => {
+      const aliasAction = invocation.alias?.action;
+      switch (aliasAction) {
+        case 'resolveAlignment':
+          await resolveProfile();
+          return;
+        case 'startAlignment':
+          await startAlignment();
+          return;
+        case 'setAlignmentProfile': {
+          const requested = invocation.args[0];
+          if (!isProfile(requested)) {
+            throw new Error(
+              'alignment.profile expects qualityHybrid, maximumRobustness, or fast',
+            );
+          }
+          setProfile(requested);
+          activate('alignment.run');
+          return;
+        }
+        case 'startProduct': {
+          const requested = invocation.args[0];
+          if (!isProductOperation(requested)) {
+            throw new Error('product.run expects depth, dense, dem, ortho, mesh, or splat');
+          }
+          await startProduct(defaultProductConfiguration(requested));
+          return;
+        }
+        case 'openBatch':
+          activate('batch.configure');
+          return;
+        case undefined:
+          break;
+        default:
+          throw new Error(`Unsupported generated console action: ${aliasAction}`);
+      }
+
+      switch (invocation.entry.id) {
+        case 'project.new':
+          await createProject();
+          return;
+        case 'project.open':
+          await openProject();
+          return;
+        case 'project.recent':
+          activate('project.recent');
+          return;
+        case 'project.save':
+          await saveProject();
+          return;
+        case 'project.save_as':
+          await saveProjectAs();
+          return;
+        case 'file.import':
+          await inspectImages('files');
+          return;
+      }
+
+      if (invocation.entry.host !== 'sidecar') {
+        throw new Error(`Command is not implemented by the PhotoLab renderer: ${invocation.entry.id}`);
+      }
+      const api = window.himmelcad;
+      if (!api) throw new Error('Desktop bridge is missing. Start PhotoLab through Electron.');
+      const result = await api.sidecar.call<unknown>(
+        invocation.entry.rpcMethod ?? invocation.entry.id,
+        invocation.payload,
       );
-    }
-  };
+      const record =
+        typeof result === 'object' && result !== null
+          ? (result as Record<string, unknown>)
+          : null;
+      if (record?.job && typeof record.job === 'object') {
+        const job = record.job as PhotolabJob;
+        setJobs((previous) => [...previous.filter((candidate) => candidate.id !== job.id), job]);
+      }
+      if (record?.session && record.manifest) {
+        acceptProject(result as OpenPhotolabProjectResult);
+      }
+      const serialized = JSON.stringify(result, null, 2) ?? String(result);
+      const cancellation =
+        invocation.entry.execution.cancelRoute && record?.job
+          ? `\nCancel: ${invocation.entry.execution.cancelRoute} {"jobId":"${String((record.job as PhotolabJob).id)}"}`
+          : '';
+      logEvent(
+        'info',
+        'sidecar',
+        `${invocation.entry.id}\n${serialized.slice(0, 16_000)}${cancellation}`,
+      );
+    },
+    [
+      acceptProject,
+      activate,
+      createProject,
+      inspectImages,
+      openProject,
+      resolveProfile,
+      saveProject,
+      saveProjectAs,
+      startAlignment,
+      startProduct,
+    ],
+  );
+
+  const onCommand = useCallback(
+    (raw: string): void => {
+      void runPhotolabConsoleCommand(raw, consoleCommandContext, executeConsoleInvocation).then(
+        (result) => {
+          if (result.kind === 'help') {
+            for (const line of result.lines) logEvent('info', 'renderer', line);
+          }
+        },
+        (error: unknown) =>
+          logEvent('warn', 'renderer', error instanceof Error ? error.message : String(error)),
+      );
+    },
+    [consoleCommandContext, executeConsoleInvocation],
+  );
 
   const productOperation = productOperationFromFunctionId(activeFunctionId);
 

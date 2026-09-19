@@ -1,5 +1,6 @@
 import type { CameraModel } from "./CameraModel";
 import type { OrthoGridMapping } from "./OrthoGridMapping";
+import type { PlanGrid2DMapping } from "./PlanGrid2DMapping";
 import type { PlaneFrame } from "./PlaneFrame";
 import type { Transform3d } from "./Transform3d";
 /**
@@ -8,6 +9,8 @@ import type { Transform3d } from "./Transform3d";
 export type RasterMapping = {
     "kind": "orthoGrid";
 } & OrthoGridMapping | {
+    "kind": "planGrid2D";
+} & PlanGrid2DMapping | {
     "kind": "planar";
     /**
      * Column-major 3x3 homography from integer pixel-center coordinates

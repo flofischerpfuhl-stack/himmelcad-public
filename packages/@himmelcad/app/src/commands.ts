@@ -47,6 +47,22 @@ export interface RuntimeCommandEntry {
   readonly entityKinds: readonly string[] | null;
   readonly allowMultiSelect: boolean;
   readonly productPredicates: Readonly<Record<string, ProductCommandPredicate>> | null;
+  readonly host: string;
+  readonly rpcMethod: string | null;
+  readonly requestSchema: string;
+  readonly responseSchema: string | null;
+  readonly execution: {
+    readonly kind: 'query' | 'transaction' | 'job';
+    readonly cancelRoute: string | null;
+  };
+  readonly console: {
+    readonly argumentHelp: string;
+    readonly aliases: readonly {
+      readonly name: string;
+      readonly action: string;
+      readonly argumentHelp?: string;
+    }[];
+  };
   readonly isEnabled: (context: CommandContext) => boolean;
 }
 
@@ -107,6 +123,12 @@ export const COMMAND_REGISTRY: readonly RuntimeCommandEntry[] = Object.freeze(
         'productPredicates' in row
           ? (row.productPredicates as Readonly<Record<string, ProductCommandPredicate>>)
           : null,
+      host: row.host,
+      rpcMethod: 'rpcMethod' in row ? row.rpcMethod : null,
+      requestSchema: row.requestSchema,
+      responseSchema: row.responseSchema,
+      execution: row.execution,
+      console: row.console,
       isEnabled: predicate(row.enablement),
     }),
   ),
@@ -231,9 +253,12 @@ export function consoleHelpEntries(context?: CommandContext): readonly RuntimeCo
   );
 }
 
-export function completeConsoleCommand(prefix: string): readonly string[] {
+export function completeConsoleCommand(
+  prefix: string,
+  context?: CommandContext,
+): readonly string[] {
   const normalized = prefix.trim().toLowerCase();
-  return consoleHelpEntries()
+  return consoleHelpEntries(context)
     .map((entry) => entry.id)
     .filter((id) => id.startsWith(normalized));
 }

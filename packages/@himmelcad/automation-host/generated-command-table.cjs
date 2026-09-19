@@ -20,7 +20,17 @@ module.exports = Object.freeze([
     },
     "group": "selection",
     "ownerSpec": "UI Platform UIP-D16",
-    "host": "renderer"
+    "host": "renderer",
+    "requestSchema": "AdmissionOperationRequest",
+    "responseSchema": "AdmissionOperationResult",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:string,payload:json}",
+      "aliases": []
+    }
   },
   {
     "id": "select.clear",
@@ -41,7 +51,17 @@ module.exports = Object.freeze([
     },
     "group": "selection",
     "ownerSpec": "UI Platform UIP-D13",
-    "host": "renderer"
+    "host": "renderer",
+    "requestSchema": "AdmissionOperationRequest",
+    "responseSchema": "AdmissionOperationResult",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:string,payload:json}",
+      "aliases": []
+    }
   },
   {
     "id": "edit.clipboard.paste_in_place",
@@ -62,7 +82,17 @@ module.exports = Object.freeze([
     },
     "group": "edit",
     "ownerSpec": "Select/Edit SE-D7",
-    "host": "renderer"
+    "host": "renderer",
+    "requestSchema": "AdmissionOperationRequest",
+    "responseSchema": "AdmissionOperationResult",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:string,payload:json}",
+      "aliases": []
+    }
   },
   {
     "id": "entity.rename",
@@ -83,7 +113,17 @@ module.exports = Object.freeze([
     },
     "group": "edit",
     "ownerSpec": "UI Platform UIP-D5",
-    "host": "renderer"
+    "host": "renderer",
+    "requestSchema": "AdmissionOperationRequest",
+    "responseSchema": "AdmissionOperationResult",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:string,payload:json}",
+      "aliases": []
+    }
   },
   {
     "id": "photolab.images.remove",
@@ -107,7 +147,17 @@ module.exports = Object.freeze([
     "entityKinds": [
       "CameraImage"
     ],
-    "allowMultiSelect": true
+    "allowMultiSelect": true,
+    "requestSchema": "AdmissionOperationRequest",
+    "responseSchema": "AdmissionOperationResult",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:string,payload:json}",
+      "aliases": []
+    }
   },
   {
     "id": "file.import",
@@ -128,7 +178,17 @@ module.exports = Object.freeze([
     },
     "group": "edit",
     "ownerSpec": "Import/Export IF-D1–IF-D14",
-    "host": "renderer"
+    "host": "renderer",
+    "requestSchema": "ImportOpenRequest",
+    "responseSchema": "AdmissionOperationResult",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:json,payload:object}",
+      "aliases": []
+    }
   },
   {
     "id": "io.import.product_dataset.list",
@@ -149,7 +209,17 @@ module.exports = Object.freeze([
     "group": "edit",
     "owner": "import-formats",
     "ownerSpec": "Import Formats IF-D20",
-    "host": "renderer"
+    "host": "renderer",
+    "requestSchema": "ProductDatasetListRequestV1",
+    "responseSchema": "ProductDatasetListResultV1",
+    "execution": {
+      "kind": "query",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schema_version:json,source_grant_id:string,cursor?:string,limit?:integer}",
+      "aliases": []
+    }
   },
   {
     "id": "io.import.product_dataset.register",
@@ -170,7 +240,17 @@ module.exports = Object.freeze([
     "group": "edit",
     "owner": "import-formats",
     "ownerSpec": "Import Formats IF-D20",
-    "host": "renderer"
+    "host": "renderer",
+    "requestSchema": "ProductDatasetRegisterRequestV1",
+    "responseSchema": "ProductDatasetRegisterResultV1",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schema_version:json,command_id:string,source_grant_id:string,source_snapshot:ProductDatasetSourceSnapshotIdentityV1,product:ProductDatasetRegisterProductV1,destination:ProductDatasetDestinationV1,admission_choice:ProductDatasetAdmissionChoiceV1,placement:ProductDatasetPlacementV1,update_target?:ProductDatasetUpdateTargetV1,confirmation_grant_id?:string}",
+      "aliases": []
+    }
   },
   {
     "id": "project.new",
@@ -191,7 +271,17 @@ module.exports = Object.freeze([
     },
     "group": "edit",
     "ownerSpec": "File/project FP-D1",
-    "host": "renderer"
+    "host": "renderer",
+    "requestSchema": "AdmissionOperationRequest",
+    "responseSchema": "AdmissionOperationResult",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:string,payload:json}",
+      "aliases": []
+    }
   },
   {
     "id": "project.open",
@@ -212,7 +302,17 @@ module.exports = Object.freeze([
     },
     "group": "edit",
     "ownerSpec": "File/project FP-D1",
-    "host": "renderer"
+    "host": "renderer",
+    "requestSchema": "AdmissionOperationRequest",
+    "responseSchema": "AdmissionOperationResult",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:string,payload:json}",
+      "aliases": []
+    }
   },
   {
     "id": "project.recent",
@@ -233,7 +333,17 @@ module.exports = Object.freeze([
     },
     "group": "edit",
     "ownerSpec": "File/project FP-D1",
-    "host": "renderer"
+    "host": "renderer",
+    "requestSchema": "AdmissionOperationRequest",
+    "responseSchema": "AdmissionOperationResult",
+    "execution": {
+      "kind": "query",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:string,payload:json}",
+      "aliases": []
+    }
   },
   {
     "id": "project.undo",
@@ -253,7 +363,17 @@ module.exports = Object.freeze([
     },
     "group": "edit",
     "ownerSpec": "Decision Doctrine P8; S-07 journal",
-    "host": "renderer"
+    "host": "renderer",
+    "requestSchema": "AdmissionOperationRequest",
+    "responseSchema": "AdmissionOperationResult",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:string,payload:json}",
+      "aliases": []
+    }
   },
   {
     "id": "project.redo",
@@ -273,7 +393,17 @@ module.exports = Object.freeze([
     },
     "group": "edit",
     "ownerSpec": "Decision Doctrine P8; S-07 journal",
-    "host": "renderer"
+    "host": "renderer",
+    "requestSchema": "AdmissionOperationRequest",
+    "responseSchema": "AdmissionOperationResult",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:string,payload:json}",
+      "aliases": []
+    }
   },
   {
     "id": "project.save",
@@ -294,7 +424,17 @@ module.exports = Object.freeze([
     },
     "group": "edit",
     "ownerSpec": "File/project FP-D2/FP-D19",
-    "host": "renderer"
+    "host": "renderer",
+    "requestSchema": "EmptyRequest",
+    "responseSchema": "AdmissionOperationResult",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "",
+      "aliases": []
+    }
   },
   {
     "id": "project.save_as",
@@ -315,7 +455,17 @@ module.exports = Object.freeze([
     },
     "group": "edit",
     "ownerSpec": "File/project FP-D3/FP-D20",
-    "host": "renderer"
+    "host": "renderer",
+    "requestSchema": "AdmissionOperationRequest",
+    "responseSchema": "AdmissionOperationResult",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:string,payload:json}",
+      "aliases": []
+    }
   },
   {
     "id": "project.close",
@@ -336,7 +486,17 @@ module.exports = Object.freeze([
     },
     "group": "edit",
     "ownerSpec": "File/project FP-D1/FP-D21",
-    "host": "renderer"
+    "host": "renderer",
+    "requestSchema": "AdmissionOperationRequest",
+    "responseSchema": "AdmissionOperationResult",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:string,payload:json}",
+      "aliases": []
+    }
   },
   {
     "id": "photolab.alignment.resolve",
@@ -357,7 +517,22 @@ module.exports = Object.freeze([
     "group": "edit",
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
-    "rpcMethod": "photolab.alignment.resolve"
+    "rpcMethod": "photolab.alignment.resolve",
+    "requestSchema": "PhotolabCommandRequestV1",
+    "responseSchema": "PhotolabCommandResultV1",
+    "execution": {
+      "kind": "query",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "<json:PhotolabCommandRequestV1>",
+      "aliases": [
+        {
+          "name": "alignment.resolve",
+          "action": "resolveAlignment"
+        }
+      ]
+    }
   },
   {
     "id": "photolab.alignment.settings.update",
@@ -378,7 +553,23 @@ module.exports = Object.freeze([
     "group": "edit",
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
-    "rpcMethod": "photolab.alignment.settings.update"
+    "rpcMethod": "photolab.alignment.settings.update",
+    "requestSchema": "PhotolabCommandRequestV1",
+    "responseSchema": "PhotolabCommandResultV1",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "<json:PhotolabCommandRequestV1>",
+      "aliases": [
+        {
+          "name": "alignment.profile",
+          "action": "setAlignmentProfile",
+          "argumentHelp": "qualityHybrid|maximumRobustness|fast"
+        }
+      ]
+    }
   },
   {
     "id": "photolab.alignment.start",
@@ -399,7 +590,22 @@ module.exports = Object.freeze([
     "group": "edit",
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
-    "rpcMethod": "photolab.jobs.startAlignment"
+    "rpcMethod": "photolab.jobs.startAlignment",
+    "requestSchema": "PhotolabCommandRequestV1",
+    "responseSchema": "PhotolabCommandResultV1",
+    "execution": {
+      "kind": "job",
+      "cancelRoute": "photolab.jobs.cancel"
+    },
+    "console": {
+      "argumentHelp": "<json:PhotolabCommandRequestV1>",
+      "aliases": [
+        {
+          "name": "alignment.run",
+          "action": "startAlignment"
+        }
+      ]
+    }
   },
   {
     "id": "photolab.processing_sets.list",
@@ -420,7 +626,17 @@ module.exports = Object.freeze([
     "group": "edit",
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
-    "rpcMethod": "photolab.project.processingSet.list"
+    "rpcMethod": "photolab.project.processingSet.list",
+    "requestSchema": "PhotolabCommandRequestV1",
+    "responseSchema": "PhotolabCommandResultV1",
+    "execution": {
+      "kind": "query",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "<json:PhotolabCommandRequestV1>",
+      "aliases": []
+    }
   },
   {
     "id": "photolab.processing_sets.create",
@@ -441,7 +657,17 @@ module.exports = Object.freeze([
     "group": "edit",
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
-    "rpcMethod": "photolab.project.processingSet.create"
+    "rpcMethod": "photolab.project.processingSet.create",
+    "requestSchema": "PhotolabCommandRequestV1",
+    "responseSchema": "PhotolabCommandResultV1",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "<json:PhotolabCommandRequestV1>",
+      "aliases": []
+    }
   },
   {
     "id": "photolab.alignment.merge.candidates",
@@ -462,7 +688,17 @@ module.exports = Object.freeze([
     "group": "edit",
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
-    "rpcMethod": "photolab.project.alignmentMerge.candidates"
+    "rpcMethod": "photolab.project.alignmentMerge.candidates",
+    "requestSchema": "PhotolabCommandRequestV1",
+    "responseSchema": "PhotolabCommandResultV1",
+    "execution": {
+      "kind": "query",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "<json:PhotolabCommandRequestV1>",
+      "aliases": []
+    }
   },
   {
     "id": "photolab.alignment.merge.list",
@@ -483,7 +719,17 @@ module.exports = Object.freeze([
     "group": "edit",
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
-    "rpcMethod": "photolab.project.alignmentMerge.list"
+    "rpcMethod": "photolab.project.alignmentMerge.list",
+    "requestSchema": "PhotolabCommandRequestV1",
+    "responseSchema": "PhotolabCommandResultV1",
+    "execution": {
+      "kind": "query",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "<json:PhotolabCommandRequestV1>",
+      "aliases": []
+    }
   },
   {
     "id": "photolab.alignment.merge.preflight",
@@ -504,7 +750,17 @@ module.exports = Object.freeze([
     "group": "edit",
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
-    "rpcMethod": "photolab.alignmentMerge.preflight"
+    "rpcMethod": "photolab.alignmentMerge.preflight",
+    "requestSchema": "PhotolabCommandRequestV1",
+    "responseSchema": "PhotolabCommandResultV1",
+    "execution": {
+      "kind": "query",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "<json:PhotolabCommandRequestV1>",
+      "aliases": []
+    }
   },
   {
     "id": "photolab.alignment.merge.plan",
@@ -525,7 +781,17 @@ module.exports = Object.freeze([
     "group": "edit",
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
-    "rpcMethod": "photolab.project.alignmentMerge.create"
+    "rpcMethod": "photolab.project.alignmentMerge.create",
+    "requestSchema": "PhotolabCommandRequestV1",
+    "responseSchema": "PhotolabCommandResultV1",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "<json:PhotolabCommandRequestV1>",
+      "aliases": []
+    }
   },
   {
     "id": "photolab.alignment.merge.start",
@@ -546,7 +812,17 @@ module.exports = Object.freeze([
     "group": "edit",
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
-    "rpcMethod": "photolab.jobs.startAlignmentMerge"
+    "rpcMethod": "photolab.jobs.startAlignmentMerge",
+    "requestSchema": "PhotolabCommandRequestV1",
+    "responseSchema": "PhotolabCommandResultV1",
+    "execution": {
+      "kind": "job",
+      "cancelRoute": "photolab.jobs.cancel"
+    },
+    "console": {
+      "argumentHelp": "<json:PhotolabCommandRequestV1>",
+      "aliases": []
+    }
   },
   {
     "id": "photolab.capture.capabilities",
@@ -567,7 +843,17 @@ module.exports = Object.freeze([
     "group": "edit",
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
-    "rpcMethod": "photolab.capture.capabilities"
+    "rpcMethod": "photolab.capture.capabilities",
+    "requestSchema": "PhotolabCommandRequestV1",
+    "responseSchema": "PhotolabCommandResultV1",
+    "execution": {
+      "kind": "query",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "<json:PhotolabCommandRequestV1>",
+      "aliases": []
+    }
   },
   {
     "id": "photolab.capture.scale.evaluate",
@@ -588,7 +874,17 @@ module.exports = Object.freeze([
     "group": "edit",
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
-    "rpcMethod": "photolab.capture.scale.evaluate"
+    "rpcMethod": "photolab.capture.scale.evaluate",
+    "requestSchema": "PhotolabCommandRequestV1",
+    "responseSchema": "PhotolabCommandResultV1",
+    "execution": {
+      "kind": "query",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "<json:PhotolabCommandRequestV1>",
+      "aliases": []
+    }
   },
   {
     "id": "photolab.capture.image.prepare",
@@ -610,6 +906,16 @@ module.exports = Object.freeze([
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
     "rpcMethod": "photolab.capture.image.prepare",
+    "requestSchema": "PhotolabCommandRequestV1",
+    "responseSchema": "PhotolabCommandResultV1",
+    "execution": {
+      "kind": "job",
+      "cancelRoute": "photolab.capture.cancel"
+    },
+    "console": {
+      "argumentHelp": "<json:PhotolabCommandRequestV1>",
+      "aliases": []
+    },
     "grantFields": [
       {
         "field": "sourceGrantId",
@@ -643,6 +949,16 @@ module.exports = Object.freeze([
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
     "rpcMethod": "photolab.capture.video.prepare",
+    "requestSchema": "PhotolabCommandRequestV1",
+    "responseSchema": "PhotolabCommandResultV1",
+    "execution": {
+      "kind": "job",
+      "cancelRoute": "photolab.capture.cancel"
+    },
+    "console": {
+      "argumentHelp": "<json:PhotolabCommandRequestV1>",
+      "aliases": []
+    },
     "grantFields": [
       {
         "field": "sourceGrantId",
@@ -681,6 +997,16 @@ module.exports = Object.freeze([
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
     "rpcMethod": "photolab.himmelcap.inspect",
+    "requestSchema": "PhotolabCommandRequestV1",
+    "responseSchema": "PhotolabCommandResultV1",
+    "execution": {
+      "kind": "job",
+      "cancelRoute": "photolab.himmelcap.cancel"
+    },
+    "console": {
+      "argumentHelp": "<json:PhotolabCommandRequestV1>",
+      "aliases": []
+    },
     "grantFields": [
       {
         "field": "sourceGrantId",
@@ -709,6 +1035,16 @@ module.exports = Object.freeze([
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
     "rpcMethod": "photolab.images.inspect",
+    "requestSchema": "PhotolabImagesImportInspectRequestV1",
+    "responseSchema": "PhotolabPhotoImportBatchV1",
+    "execution": {
+      "kind": "job",
+      "cancelRoute": "photolab.images.inspect.cancel"
+    },
+    "console": {
+      "argumentHelp": "{sourceGrantIds:string[],operationId?:string,progressKey?:string}",
+      "aliases": []
+    },
     "grantFields": [
       {
         "field": "sourceGrantIds",
@@ -737,7 +1073,17 @@ module.exports = Object.freeze([
     "group": "edit",
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
-    "rpcMethod": "photolab.crs.discover"
+    "rpcMethod": "photolab.crs.discover",
+    "requestSchema": "PhotolabCommandRequestV1",
+    "responseSchema": "PhotolabCommandResultV1",
+    "execution": {
+      "kind": "job",
+      "cancelRoute": "photolab.crs.cancel"
+    },
+    "console": {
+      "argumentHelp": "<json:PhotolabCommandRequestV1>",
+      "aliases": []
+    }
   },
   {
     "id": "photolab.crs.freeze",
@@ -758,7 +1104,17 @@ module.exports = Object.freeze([
     "group": "edit",
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
-    "rpcMethod": "photolab.crs.freeze"
+    "rpcMethod": "photolab.crs.freeze",
+    "requestSchema": "PhotolabCommandRequestV1",
+    "responseSchema": "PhotolabCommandResultV1",
+    "execution": {
+      "kind": "job",
+      "cancelRoute": "photolab.crs.cancel"
+    },
+    "console": {
+      "argumentHelp": "<json:PhotolabCommandRequestV1>",
+      "aliases": []
+    }
   },
   {
     "id": "photolab.images.import.commit",
@@ -779,7 +1135,17 @@ module.exports = Object.freeze([
     "group": "edit",
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
-    "rpcMethod": "photolab.images.commit"
+    "rpcMethod": "photolab.images.commit",
+    "requestSchema": "PhotolabImagesImportCommitRequestV1",
+    "responseSchema": "PhotolabImagesImportCommitResultV1",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": "photolab.images.commit.cancel"
+    },
+    "console": {
+      "argumentHelp": "{operationId:string,images:object[],transformation?:object,localMetric?:boolean}",
+      "aliases": []
+    }
   },
   {
     "id": "photolab.images.list",
@@ -800,7 +1166,17 @@ module.exports = Object.freeze([
     "group": "edit",
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
-    "rpcMethod": "photolab.images.list"
+    "rpcMethod": "photolab.images.list",
+    "requestSchema": "PhotolabCommandRequestV1",
+    "responseSchema": "PhotolabCommandResultV1",
+    "execution": {
+      "kind": "query",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "<json:PhotolabCommandRequestV1>",
+      "aliases": []
+    }
   },
   {
     "id": "photolab.images.quality.list",
@@ -821,7 +1197,17 @@ module.exports = Object.freeze([
     "group": "edit",
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
-    "rpcMethod": "photolab.images.quality.list"
+    "rpcMethod": "photolab.images.quality.list",
+    "requestSchema": "PhotolabCommandRequestV1",
+    "responseSchema": "PhotolabCommandResultV1",
+    "execution": {
+      "kind": "query",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "<json:PhotolabCommandRequestV1>",
+      "aliases": []
+    }
   },
   {
     "id": "photolab.images.quality.start",
@@ -842,7 +1228,17 @@ module.exports = Object.freeze([
     "group": "edit",
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
-    "rpcMethod": "photolab.jobs.startImageQuality"
+    "rpcMethod": "photolab.jobs.startImageQuality",
+    "requestSchema": "PhotolabImageQualityStartRequestV1",
+    "responseSchema": "PhotolabStartJobResultV1",
+    "execution": {
+      "kind": "job",
+      "cancelRoute": "photolab.jobs.cancel"
+    },
+    "console": {
+      "argumentHelp": "{operationId:string,cameraEntityIds?:string[],processingSetId?:string}",
+      "aliases": []
+    }
   },
   {
     "id": "photolab.image_masks.list",
@@ -863,7 +1259,17 @@ module.exports = Object.freeze([
     "group": "edit",
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
-    "rpcMethod": "photolab.project.imageMask.list"
+    "rpcMethod": "photolab.project.imageMask.list",
+    "requestSchema": "PhotolabCommandRequestV1",
+    "responseSchema": "PhotolabCommandResultV1",
+    "execution": {
+      "kind": "query",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "<json:PhotolabCommandRequestV1>",
+      "aliases": []
+    }
   },
   {
     "id": "photolab.image_masks.edit",
@@ -884,7 +1290,17 @@ module.exports = Object.freeze([
     "group": "edit",
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
-    "rpcMethod": "photolab.project.imageMask.edit"
+    "rpcMethod": "photolab.project.imageMask.edit",
+    "requestSchema": "PhotolabCommandRequestV1",
+    "responseSchema": "PhotolabCommandResultV1",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": "photolab.project.imageMask.cancel"
+    },
+    "console": {
+      "argumentHelp": "<json:PhotolabCommandRequestV1>",
+      "aliases": []
+    }
   },
   {
     "id": "photolab.capture_groups.list",
@@ -905,7 +1321,17 @@ module.exports = Object.freeze([
     "group": "edit",
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
-    "rpcMethod": "photolab.project.captureGroup.list"
+    "rpcMethod": "photolab.project.captureGroup.list",
+    "requestSchema": "PhotolabCommandRequestV1",
+    "responseSchema": "PhotolabCommandResultV1",
+    "execution": {
+      "kind": "query",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "<json:PhotolabCommandRequestV1>",
+      "aliases": []
+    }
   },
   {
     "id": "photolab.capture_groups.create",
@@ -926,7 +1352,17 @@ module.exports = Object.freeze([
     "group": "edit",
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
-    "rpcMethod": "photolab.project.captureGroup.create"
+    "rpcMethod": "photolab.project.captureGroup.create",
+    "requestSchema": "PhotolabCommandRequestV1",
+    "responseSchema": "PhotolabCommandResultV1",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "<json:PhotolabCommandRequestV1>",
+      "aliases": []
+    }
   },
   {
     "id": "photolab.capture_groups.confirm",
@@ -947,7 +1383,17 @@ module.exports = Object.freeze([
     "group": "edit",
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
-    "rpcMethod": "photolab.project.captureGroup.confirm"
+    "rpcMethod": "photolab.project.captureGroup.confirm",
+    "requestSchema": "PhotolabCommandRequestV1",
+    "responseSchema": "PhotolabCommandResultV1",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "<json:PhotolabCommandRequestV1>",
+      "aliases": []
+    }
   },
   {
     "id": "photolab.capture_groups.draft",
@@ -968,7 +1414,17 @@ module.exports = Object.freeze([
     "group": "edit",
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
-    "rpcMethod": "photolab.project.captureGroup.duplicateAsDraft"
+    "rpcMethod": "photolab.project.captureGroup.duplicateAsDraft",
+    "requestSchema": "PhotolabCommandRequestV1",
+    "responseSchema": "PhotolabCommandResultV1",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "<json:PhotolabCommandRequestV1>",
+      "aliases": []
+    }
   },
   {
     "id": "photolab.capture_groups.merge",
@@ -989,7 +1445,17 @@ module.exports = Object.freeze([
     "group": "edit",
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
-    "rpcMethod": "photolab.project.captureGroup.mergeProposals"
+    "rpcMethod": "photolab.project.captureGroup.mergeProposals",
+    "requestSchema": "PhotolabCommandRequestV1",
+    "responseSchema": "PhotolabCommandResultV1",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "<json:PhotolabCommandRequestV1>",
+      "aliases": []
+    }
   },
   {
     "id": "photolab.calibration_groups.list",
@@ -1010,7 +1476,17 @@ module.exports = Object.freeze([
     "group": "edit",
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
-    "rpcMethod": "photolab.project.calibrationGroup.list"
+    "rpcMethod": "photolab.project.calibrationGroup.list",
+    "requestSchema": "PhotolabCommandRequestV1",
+    "responseSchema": "PhotolabCommandResultV1",
+    "execution": {
+      "kind": "query",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "<json:PhotolabCommandRequestV1>",
+      "aliases": []
+    }
   },
   {
     "id": "photolab.calibration_groups.intrinsics.update",
@@ -1031,7 +1507,17 @@ module.exports = Object.freeze([
     "group": "edit",
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
-    "rpcMethod": "photolab.project.calibrationGroup.updateIntrinsics"
+    "rpcMethod": "photolab.project.calibrationGroup.updateIntrinsics",
+    "requestSchema": "PhotolabCommandRequestV1",
+    "responseSchema": "PhotolabCommandResultV1",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "<json:PhotolabCommandRequestV1>",
+      "aliases": []
+    }
   },
   {
     "id": "photolab.calibration_groups.initial_calibration.set",
@@ -1052,7 +1538,17 @@ module.exports = Object.freeze([
     "group": "edit",
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
-    "rpcMethod": "photolab.project.calibrationGroup.setInitialCalibration"
+    "rpcMethod": "photolab.project.calibrationGroup.setInitialCalibration",
+    "requestSchema": "PhotolabCommandRequestV1",
+    "responseSchema": "PhotolabCommandResultV1",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "<json:PhotolabCommandRequestV1>",
+      "aliases": []
+    }
   },
   {
     "id": "photolab.gcp.import.preview",
@@ -1074,6 +1570,16 @@ module.exports = Object.freeze([
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
     "rpcMethod": "photolab.gcp.preview",
+    "requestSchema": "PhotolabCommandRequestV1",
+    "responseSchema": "PhotolabCommandResultV1",
+    "execution": {
+      "kind": "query",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "<json:PhotolabCommandRequestV1>",
+      "aliases": []
+    },
     "grantFields": [
       {
         "field": "sourceGrantId",
@@ -1102,6 +1608,16 @@ module.exports = Object.freeze([
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
     "rpcMethod": "photolab.gcp.commit",
+    "requestSchema": "PhotolabCommandRequestV1",
+    "responseSchema": "PhotolabCommandResultV1",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": "photolab.gcp.cancel"
+    },
+    "console": {
+      "argumentHelp": "<json:PhotolabCommandRequestV1>",
+      "aliases": []
+    },
     "grantFields": [
       {
         "field": "sourceGrantId",
@@ -1129,7 +1645,17 @@ module.exports = Object.freeze([
     "group": "edit",
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
-    "rpcMethod": "photolab.gcp.list"
+    "rpcMethod": "photolab.gcp.list",
+    "requestSchema": "PhotolabCommandRequestV1",
+    "responseSchema": "PhotolabCommandResultV1",
+    "execution": {
+      "kind": "query",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "<json:PhotolabCommandRequestV1>",
+      "aliases": []
+    }
   },
   {
     "id": "photolab.gcp.observation.upsert",
@@ -1150,7 +1676,17 @@ module.exports = Object.freeze([
     "group": "edit",
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
-    "rpcMethod": "photolab.gcp.observation.upsert"
+    "rpcMethod": "photolab.gcp.observation.upsert",
+    "requestSchema": "PhotolabCommandRequestV1",
+    "responseSchema": "PhotolabCommandResultV1",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "<json:PhotolabCommandRequestV1>",
+      "aliases": []
+    }
   },
   {
     "id": "photolab.gcp.observation.upsert_assisted",
@@ -1171,7 +1707,17 @@ module.exports = Object.freeze([
     "group": "edit",
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
-    "rpcMethod": "photolab.gcp.observation.upsertAssisted"
+    "rpcMethod": "photolab.gcp.observation.upsertAssisted",
+    "requestSchema": "PhotolabCommandRequestV1",
+    "responseSchema": "PhotolabCommandResultV1",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "<json:PhotolabCommandRequestV1>",
+      "aliases": []
+    }
   },
   {
     "id": "photolab.gcp.observation.edit",
@@ -1192,7 +1738,17 @@ module.exports = Object.freeze([
     "group": "edit",
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
-    "rpcMethod": "photolab.gcp.observation.edit"
+    "rpcMethod": "photolab.gcp.observation.edit",
+    "requestSchema": "PhotolabCommandRequestV1",
+    "responseSchema": "PhotolabCommandResultV1",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "<json:PhotolabCommandRequestV1>",
+      "aliases": []
+    }
   },
   {
     "id": "photolab.gcp.local_estimate.compute",
@@ -1213,7 +1769,17 @@ module.exports = Object.freeze([
     "group": "edit",
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
-    "rpcMethod": "photolab.gcp.localEstimate.compute"
+    "rpcMethod": "photolab.gcp.localEstimate.compute",
+    "requestSchema": "PhotolabCommandRequestV1",
+    "responseSchema": "PhotolabCommandResultV1",
+    "execution": {
+      "kind": "query",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "<json:PhotolabCommandRequestV1>",
+      "aliases": []
+    }
   },
   {
     "id": "photolab.gcp.aligned_cameras",
@@ -1234,7 +1800,17 @@ module.exports = Object.freeze([
     "group": "edit",
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
-    "rpcMethod": "photolab.gcp.alignedCameras"
+    "rpcMethod": "photolab.gcp.alignedCameras",
+    "requestSchema": "PhotolabCommandRequestV1",
+    "responseSchema": "PhotolabCommandResultV1",
+    "execution": {
+      "kind": "query",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "<json:PhotolabCommandRequestV1>",
+      "aliases": []
+    }
   },
   {
     "id": "photolab.gcp.calibration_report",
@@ -1255,7 +1831,17 @@ module.exports = Object.freeze([
     "group": "edit",
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
-    "rpcMethod": "photolab.gcp.calibrationReport"
+    "rpcMethod": "photolab.gcp.calibrationReport",
+    "requestSchema": "PhotolabCommandRequestV1",
+    "responseSchema": "PhotolabCommandResultV1",
+    "execution": {
+      "kind": "query",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "<json:PhotolabCommandRequestV1>",
+      "aliases": []
+    }
   },
   {
     "id": "photolab.gcp.optimization.snapshot",
@@ -1276,7 +1862,17 @@ module.exports = Object.freeze([
     "group": "edit",
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
-    "rpcMethod": "photolab.gcp.optimization.snapshot"
+    "rpcMethod": "photolab.gcp.optimization.snapshot",
+    "requestSchema": "PhotolabCommandRequestV1",
+    "responseSchema": "PhotolabCommandResultV1",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "<json:PhotolabCommandRequestV1>",
+      "aliases": []
+    }
   },
   {
     "id": "photolab.gcp.optimization.start",
@@ -1297,7 +1893,17 @@ module.exports = Object.freeze([
     "group": "edit",
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
-    "rpcMethod": "photolab.jobs.startGcpOptimization"
+    "rpcMethod": "photolab.jobs.startGcpOptimization",
+    "requestSchema": "PhotolabCommandRequestV1",
+    "responseSchema": "PhotolabCommandResultV1",
+    "execution": {
+      "kind": "job",
+      "cancelRoute": "photolab.jobs.cancel"
+    },
+    "console": {
+      "argumentHelp": "<json:PhotolabCommandRequestV1>",
+      "aliases": []
+    }
   },
   {
     "id": "photolab.gcp.optimization.latest",
@@ -1318,7 +1924,17 @@ module.exports = Object.freeze([
     "group": "edit",
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
-    "rpcMethod": "photolab.gcp.optimization.latest"
+    "rpcMethod": "photolab.gcp.optimization.latest",
+    "requestSchema": "PhotolabCommandRequestV1",
+    "responseSchema": "PhotolabCommandResultV1",
+    "execution": {
+      "kind": "query",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "<json:PhotolabCommandRequestV1>",
+      "aliases": []
+    }
   },
   {
     "id": "photolab.gcp.optimization.list",
@@ -1339,7 +1955,17 @@ module.exports = Object.freeze([
     "group": "edit",
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
-    "rpcMethod": "photolab.gcp.optimization.list"
+    "rpcMethod": "photolab.gcp.optimization.list",
+    "requestSchema": "PhotolabCommandRequestV1",
+    "responseSchema": "PhotolabCommandResultV1",
+    "execution": {
+      "kind": "query",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "<json:PhotolabCommandRequestV1>",
+      "aliases": []
+    }
   },
   {
     "id": "photolab.products.list",
@@ -1360,7 +1986,17 @@ module.exports = Object.freeze([
     "group": "edit",
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
-    "rpcMethod": "photolab.products.list"
+    "rpcMethod": "photolab.products.list",
+    "requestSchema": "PhotolabCommandRequestV1",
+    "responseSchema": "PhotolabCommandResultV1",
+    "execution": {
+      "kind": "query",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "<json:PhotolabCommandRequestV1>",
+      "aliases": []
+    }
   },
   {
     "id": "photolab.products.resolve_inputs",
@@ -1381,7 +2017,17 @@ module.exports = Object.freeze([
     "group": "edit",
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
-    "rpcMethod": "photolab.products.resolveInputs"
+    "rpcMethod": "photolab.products.resolveInputs",
+    "requestSchema": "PhotolabCommandRequestV1",
+    "responseSchema": "PhotolabCommandResultV1",
+    "execution": {
+      "kind": "query",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "<json:PhotolabCommandRequestV1>",
+      "aliases": []
+    }
   },
   {
     "id": "photolab.products.start",
@@ -1402,7 +2048,23 @@ module.exports = Object.freeze([
     "group": "edit",
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
-    "rpcMethod": "photolab.jobs.startProduct"
+    "rpcMethod": "photolab.jobs.startProduct",
+    "requestSchema": "PhotolabCommandRequestV1",
+    "responseSchema": "PhotolabCommandResultV1",
+    "execution": {
+      "kind": "job",
+      "cancelRoute": "photolab.jobs.cancel"
+    },
+    "console": {
+      "argumentHelp": "<json:PhotolabCommandRequestV1>",
+      "aliases": [
+        {
+          "name": "product.run",
+          "action": "startProduct",
+          "argumentHelp": "depth|dense|dem|ortho|mesh|splat"
+        }
+      ]
+    }
   },
   {
     "id": "photolab.products.export",
@@ -1424,6 +2086,16 @@ module.exports = Object.freeze([
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
     "rpcMethod": "photolab.jobs.startProductExport",
+    "requestSchema": "PhotolabCommandRequestV1",
+    "responseSchema": "PhotolabCommandResultV1",
+    "execution": {
+      "kind": "job",
+      "cancelRoute": "photolab.jobs.cancel"
+    },
+    "console": {
+      "argumentHelp": "<json:PhotolabCommandRequestV1>",
+      "aliases": []
+    },
     "grantFields": [
       {
         "field": "destinationGrantId",
@@ -1451,7 +2123,22 @@ module.exports = Object.freeze([
     "group": "edit",
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
-    "rpcMethod": "photolab.jobs.startBatch"
+    "rpcMethod": "photolab.jobs.startBatch",
+    "requestSchema": "PhotolabCommandRequestV1",
+    "responseSchema": "PhotolabCommandResultV1",
+    "execution": {
+      "kind": "job",
+      "cancelRoute": "photolab.jobs.cancel"
+    },
+    "console": {
+      "argumentHelp": "<json:PhotolabCommandRequestV1>",
+      "aliases": [
+        {
+          "name": "batch.run",
+          "action": "openBatch"
+        }
+      ]
+    }
   },
   {
     "id": "photolab.jobs.list",
@@ -1473,6 +2160,16 @@ module.exports = Object.freeze([
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
     "rpcMethod": "photolab.jobs.list",
+    "requestSchema": "PhotolabJobsListRequestV1",
+    "responseSchema": "PhotolabJobsListResultV1",
+    "execution": {
+      "kind": "query",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{includeTerminal?:boolean}",
+      "aliases": []
+    },
     "responseWrap": "jobs"
   },
   {
@@ -1494,7 +2191,17 @@ module.exports = Object.freeze([
     "group": "edit",
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
-    "rpcMethod": "photolab.jobs.status"
+    "rpcMethod": "photolab.jobs.status",
+    "requestSchema": "PhotolabJobIdRequestV1",
+    "responseSchema": "PhotolabCommandResultV1",
+    "execution": {
+      "kind": "query",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{jobId:string}",
+      "aliases": []
+    }
   },
   {
     "id": "photolab.jobs.cancel",
@@ -1515,7 +2222,17 @@ module.exports = Object.freeze([
     "group": "edit",
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
-    "rpcMethod": "photolab.jobs.cancel"
+    "rpcMethod": "photolab.jobs.cancel",
+    "requestSchema": "PhotolabJobIdRequestV1",
+    "responseSchema": "PhotolabCancelJobResultV1",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{jobId:string}",
+      "aliases": []
+    }
   },
   {
     "id": "photolab.jobs.resume",
@@ -1536,7 +2253,17 @@ module.exports = Object.freeze([
     "group": "edit",
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
-    "rpcMethod": "photolab.jobs.resume"
+    "rpcMethod": "photolab.jobs.resume",
+    "requestSchema": "PhotolabCommandRequestV1",
+    "responseSchema": "PhotolabCommandResultV1",
+    "execution": {
+      "kind": "job",
+      "cancelRoute": "photolab.jobs.cancel"
+    },
+    "console": {
+      "argumentHelp": "<json:PhotolabCommandRequestV1>",
+      "aliases": []
+    }
   },
   {
     "id": "photolab.report.survey_data",
@@ -1557,7 +2284,17 @@ module.exports = Object.freeze([
     "group": "edit",
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
-    "rpcMethod": "photolab.report.surveyData"
+    "rpcMethod": "photolab.report.surveyData",
+    "requestSchema": "PhotolabCommandRequestV1",
+    "responseSchema": "PhotolabCommandResultV1",
+    "execution": {
+      "kind": "query",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "<json:PhotolabCommandRequestV1>",
+      "aliases": []
+    }
   },
   {
     "id": "photolab.report.export",
@@ -1579,6 +2316,16 @@ module.exports = Object.freeze([
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
     "rpcMethod": "photolab.report.export",
+    "requestSchema": "PhotolabCommandRequestV1",
+    "responseSchema": "PhotolabCommandResultV1",
+    "execution": {
+      "kind": "job",
+      "cancelRoute": "automation.commands.cancel"
+    },
+    "console": {
+      "argumentHelp": "<json:PhotolabCommandRequestV1>",
+      "aliases": []
+    },
     "grantFields": [
       {
         "field": "targetGrantId",
@@ -1606,7 +2353,17 @@ module.exports = Object.freeze([
     "group": "edit",
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
-    "rpcMethod": "photolab.hardware.probe"
+    "rpcMethod": "photolab.hardware.probe",
+    "requestSchema": "PhotolabCommandRequestV1",
+    "responseSchema": "PhotolabCommandResultV1",
+    "execution": {
+      "kind": "query",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "<json:PhotolabCommandRequestV1>",
+      "aliases": []
+    }
   },
   {
     "id": "photolab.project.create",
@@ -1628,6 +2385,16 @@ module.exports = Object.freeze([
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
     "rpcMethod": "photolab.project.create",
+    "requestSchema": "PhotolabProjectCreateRequestV1",
+    "responseSchema": "PhotolabCommandResultV1",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{destinationGrantId:string,name:string}",
+      "aliases": []
+    },
     "grantFields": [
       {
         "field": "destinationGrantId",
@@ -1656,6 +2423,16 @@ module.exports = Object.freeze([
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
     "rpcMethod": "photolab.project.open",
+    "requestSchema": "PhotolabCommandRequestV1",
+    "responseSchema": "PhotolabCommandResultV1",
+    "execution": {
+      "kind": "job",
+      "cancelRoute": "photolab.project.archive.cancel"
+    },
+    "console": {
+      "argumentHelp": "<json:PhotolabCommandRequestV1>",
+      "aliases": []
+    },
     "grantFields": [
       {
         "field": "sourceGrantId",
@@ -1688,7 +2465,17 @@ module.exports = Object.freeze([
     "group": "edit",
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
-    "rpcMethod": "photolab.project.reopen_without_recovery"
+    "rpcMethod": "photolab.project.reopen_without_recovery",
+    "requestSchema": "PhotolabCommandRequestV1",
+    "responseSchema": "PhotolabCommandResultV1",
+    "execution": {
+      "kind": "job",
+      "cancelRoute": "photolab.project.archive.cancel"
+    },
+    "console": {
+      "argumentHelp": "<json:PhotolabCommandRequestV1>",
+      "aliases": []
+    }
   },
   {
     "id": "photolab.project.snapshot",
@@ -1709,7 +2496,17 @@ module.exports = Object.freeze([
     "group": "edit",
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
-    "rpcMethod": "photolab.project.snapshot"
+    "rpcMethod": "photolab.project.snapshot",
+    "requestSchema": "PhotolabCommandRequestV1",
+    "responseSchema": "PhotolabCommandResultV1",
+    "execution": {
+      "kind": "query",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "<json:PhotolabCommandRequestV1>",
+      "aliases": []
+    }
   },
   {
     "id": "photolab.project.diagnostics",
@@ -1730,7 +2527,17 @@ module.exports = Object.freeze([
     "group": "edit",
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
-    "rpcMethod": "photolab.project.diagnostics"
+    "rpcMethod": "photolab.project.diagnostics",
+    "requestSchema": "PhotolabCommandRequestV1",
+    "responseSchema": "PhotolabCommandResultV1",
+    "execution": {
+      "kind": "query",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "<json:PhotolabCommandRequestV1>",
+      "aliases": []
+    }
   },
   {
     "id": "photolab.project.autosave",
@@ -1751,7 +2558,17 @@ module.exports = Object.freeze([
     "group": "edit",
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
-    "rpcMethod": "photolab.project.autosave"
+    "rpcMethod": "photolab.project.autosave",
+    "requestSchema": "PhotolabCommandRequestV1",
+    "responseSchema": "PhotolabCommandResultV1",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "<json:PhotolabCommandRequestV1>",
+      "aliases": []
+    }
   },
   {
     "id": "photolab.project.save",
@@ -1772,7 +2589,17 @@ module.exports = Object.freeze([
     "group": "edit",
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
-    "rpcMethod": "photolab.project.save"
+    "rpcMethod": "photolab.project.save",
+    "requestSchema": "PhotolabCommandRequestV1",
+    "responseSchema": "PhotolabCommandResultV1",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "<json:PhotolabCommandRequestV1>",
+      "aliases": []
+    }
   },
   {
     "id": "photolab.project.save_as",
@@ -1794,6 +2621,16 @@ module.exports = Object.freeze([
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
     "rpcMethod": "photolab.project.saveAs",
+    "requestSchema": "PhotolabCommandRequestV1",
+    "responseSchema": "PhotolabCommandResultV1",
+    "execution": {
+      "kind": "job",
+      "cancelRoute": "photolab.project.archive.cancel"
+    },
+    "console": {
+      "argumentHelp": "<json:PhotolabCommandRequestV1>",
+      "aliases": []
+    },
     "grantFields": [
       {
         "field": "targetGrantId",
@@ -1821,7 +2658,17 @@ module.exports = Object.freeze([
     "group": "edit",
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
-    "rpcMethod": "photolab.project.close"
+    "rpcMethod": "photolab.project.close",
+    "requestSchema": "EmptyRequest",
+    "responseSchema": "PhotolabCommandResultV1",
+    "execution": {
+      "kind": "job",
+      "cancelRoute": "automation.commands.cancel"
+    },
+    "console": {
+      "argumentHelp": "",
+      "aliases": []
+    }
   },
   {
     "id": "photolab.project.recent.list",
@@ -1842,7 +2689,17 @@ module.exports = Object.freeze([
     "group": "edit",
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
-    "rpcMethod": "photolab.project.recent.list"
+    "rpcMethod": "photolab.project.recent.list",
+    "requestSchema": "PhotolabCommandRequestV1",
+    "responseSchema": "PhotolabCommandResultV1",
+    "execution": {
+      "kind": "query",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "<json:PhotolabCommandRequestV1>",
+      "aliases": []
+    }
   },
   {
     "id": "photolab.project.recent.remove",
@@ -1863,7 +2720,17 @@ module.exports = Object.freeze([
     "group": "edit",
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
-    "rpcMethod": "photolab.project.recent.remove"
+    "rpcMethod": "photolab.project.recent.remove",
+    "requestSchema": "PhotolabCommandRequestV1",
+    "responseSchema": "PhotolabCommandResultV1",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "<json:PhotolabCommandRequestV1>",
+      "aliases": []
+    }
   },
   {
     "id": "photolab.project.untitled.cleanup",
@@ -1884,7 +2751,17 @@ module.exports = Object.freeze([
     "group": "edit",
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
-    "rpcMethod": "photolab.project.untitled.cleanup"
+    "rpcMethod": "photolab.project.untitled.cleanup",
+    "requestSchema": "PhotolabCommandRequestV1",
+    "responseSchema": "PhotolabCommandResultV1",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "<json:PhotolabCommandRequestV1>",
+      "aliases": []
+    }
   },
   {
     "id": "photolab.entities.rename",
@@ -1905,7 +2782,17 @@ module.exports = Object.freeze([
     "group": "edit",
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
-    "rpcMethod": "photolab.project.entity.rename"
+    "rpcMethod": "photolab.project.entity.rename",
+    "requestSchema": "PhotolabCommandRequestV1",
+    "responseSchema": "PhotolabCommandResultV1",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "<json:PhotolabCommandRequestV1>",
+      "aliases": []
+    }
   },
   {
     "id": "photolab.entities.move",
@@ -1926,7 +2813,17 @@ module.exports = Object.freeze([
     "group": "edit",
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
-    "rpcMethod": "photolab.project.entity.move"
+    "rpcMethod": "photolab.project.entity.move",
+    "requestSchema": "PhotolabCommandRequestV1",
+    "responseSchema": "PhotolabCommandResultV1",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "<json:PhotolabCommandRequestV1>",
+      "aliases": []
+    }
   },
   {
     "id": "photolab.entities.visibility.set",
@@ -1947,7 +2844,17 @@ module.exports = Object.freeze([
     "group": "edit",
     "ownerSpec": "PhotoLab WP-G2",
     "host": "sidecar",
-    "rpcMethod": "photolab.project.entity.visibility"
+    "rpcMethod": "photolab.project.entity.visibility",
+    "requestSchema": "PhotolabCommandRequestV1",
+    "responseSchema": "PhotolabCommandResultV1",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "<json:PhotolabCommandRequestV1>",
+      "aliases": []
+    }
   },
   {
     "id": "view.frame",
@@ -1968,7 +2875,17 @@ module.exports = Object.freeze([
     },
     "group": "view",
     "ownerSpec": "View VD-D1",
-    "host": "renderer"
+    "host": "renderer",
+    "requestSchema": "AdmissionOperationRequest",
+    "responseSchema": "AdmissionOperationResult",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:string,payload:json}",
+      "aliases": []
+    }
   },
   {
     "id": "view.camera.undo",
@@ -1989,7 +2906,17 @@ module.exports = Object.freeze([
     },
     "group": "view",
     "ownerSpec": "View VD-D14",
-    "host": "renderer"
+    "host": "renderer",
+    "requestSchema": "AdmissionOperationRequest",
+    "responseSchema": "AdmissionOperationResult",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:string,payload:json}",
+      "aliases": []
+    }
   },
   {
     "id": "view.camera.redo",
@@ -2010,7 +2937,17 @@ module.exports = Object.freeze([
     },
     "group": "view",
     "ownerSpec": "View VD-D14",
-    "host": "renderer"
+    "host": "renderer",
+    "requestSchema": "AdmissionOperationRequest",
+    "responseSchema": "AdmissionOperationResult",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:string,payload:json}",
+      "aliases": []
+    }
   },
   {
     "id": "view.preset.perspective",
@@ -2031,7 +2968,17 @@ module.exports = Object.freeze([
     },
     "group": "view",
     "ownerSpec": "View VD-D9",
-    "host": "renderer"
+    "host": "renderer",
+    "requestSchema": "AdmissionOperationRequest",
+    "responseSchema": "AdmissionOperationResult",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:string,payload:json}",
+      "aliases": []
+    }
   },
   {
     "id": "view.hud.toggle",
@@ -2052,7 +2999,17 @@ module.exports = Object.freeze([
     },
     "group": "view",
     "ownerSpec": "View VD-D10",
-    "host": "renderer"
+    "host": "renderer",
+    "requestSchema": "AdmissionOperationRequest",
+    "responseSchema": "AdmissionOperationResult",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:string,payload:json}",
+      "aliases": []
+    }
   },
   {
     "id": "view.display.undo",
@@ -2073,7 +3030,17 @@ module.exports = Object.freeze([
     },
     "group": "view",
     "ownerSpec": "View VD-D14",
-    "host": "renderer"
+    "host": "renderer",
+    "requestSchema": "AdmissionOperationRequest",
+    "responseSchema": "AdmissionOperationResult",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:string,payload:json}",
+      "aliases": []
+    }
   },
   {
     "id": "view.display.redo",
@@ -2094,7 +3061,17 @@ module.exports = Object.freeze([
     },
     "group": "view",
     "ownerSpec": "View VD-D14",
-    "host": "renderer"
+    "host": "renderer",
+    "requestSchema": "AdmissionOperationRequest",
+    "responseSchema": "AdmissionOperationResult",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:string,payload:json}",
+      "aliases": []
+    }
   },
   {
     "id": "view.bookmark.create",
@@ -2115,7 +3092,17 @@ module.exports = Object.freeze([
     },
     "group": "view",
     "ownerSpec": "View VD-D3",
-    "host": "renderer"
+    "host": "renderer",
+    "requestSchema": "AdmissionOperationRequest",
+    "responseSchema": "AdmissionOperationResult",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:string,payload:json}",
+      "aliases": []
+    }
   },
   {
     "id": "view.bookmark.restore",
@@ -2139,7 +3126,17 @@ module.exports = Object.freeze([
     "entityKinds": [
       "ViewBookmark"
     ],
-    "allowMultiSelect": false
+    "allowMultiSelect": false,
+    "requestSchema": "AdmissionOperationRequest",
+    "responseSchema": "AdmissionOperationResult",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:string,payload:json}",
+      "aliases": []
+    }
   },
   {
     "id": "view.preset.top",
@@ -2160,7 +3157,17 @@ module.exports = Object.freeze([
     },
     "group": "view",
     "ownerSpec": "View VD-D1",
-    "host": "renderer"
+    "host": "renderer",
+    "requestSchema": "AdmissionOperationRequest",
+    "responseSchema": "AdmissionOperationResult",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:string,payload:json}",
+      "aliases": []
+    }
   },
   {
     "id": "view.preset.front",
@@ -2181,7 +3188,17 @@ module.exports = Object.freeze([
     },
     "group": "view",
     "ownerSpec": "View VD-D1",
-    "host": "renderer"
+    "host": "renderer",
+    "requestSchema": "AdmissionOperationRequest",
+    "responseSchema": "AdmissionOperationResult",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:string,payload:json}",
+      "aliases": []
+    }
   },
   {
     "id": "view.preset.right",
@@ -2202,7 +3219,17 @@ module.exports = Object.freeze([
     },
     "group": "view",
     "ownerSpec": "View VD-D1",
-    "host": "renderer"
+    "host": "renderer",
+    "requestSchema": "AdmissionOperationRequest",
+    "responseSchema": "AdmissionOperationResult",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:string,payload:json}",
+      "aliases": []
+    }
   },
   {
     "id": "view.preset.isometric",
@@ -2223,7 +3250,17 @@ module.exports = Object.freeze([
     },
     "group": "view",
     "ownerSpec": "View VD-D1",
-    "host": "renderer"
+    "host": "renderer",
+    "requestSchema": "AdmissionOperationRequest",
+    "responseSchema": "AdmissionOperationResult",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:string,payload:json}",
+      "aliases": []
+    }
   },
   {
     "id": "entity.zoom_to",
@@ -2244,7 +3281,17 @@ module.exports = Object.freeze([
     },
     "group": "view",
     "ownerSpec": "UI Platform UIP-D5",
-    "host": "renderer"
+    "host": "renderer",
+    "requestSchema": "AdmissionOperationRequest",
+    "responseSchema": "AdmissionOperationResult",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:string,payload:json}",
+      "aliases": []
+    }
   },
   {
     "id": "entity.hide",
@@ -2265,7 +3312,17 @@ module.exports = Object.freeze([
     },
     "group": "view",
     "ownerSpec": "UI Platform UIP-D5",
-    "host": "renderer"
+    "host": "renderer",
+    "requestSchema": "AdmissionOperationRequest",
+    "responseSchema": "AdmissionOperationResult",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:string,payload:json}",
+      "aliases": []
+    }
   },
   {
     "id": "entity.show",
@@ -2286,7 +3343,17 @@ module.exports = Object.freeze([
     },
     "group": "view",
     "ownerSpec": "UI Platform UIP-D5",
-    "host": "renderer"
+    "host": "renderer",
+    "requestSchema": "AdmissionOperationRequest",
+    "responseSchema": "AdmissionOperationResult",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:string,payload:json}",
+      "aliases": []
+    }
   },
   {
     "id": "entity.isolate",
@@ -2306,7 +3373,17 @@ module.exports = Object.freeze([
     },
     "group": "view",
     "ownerSpec": "UI Platform UIP-D5",
-    "host": "renderer"
+    "host": "renderer",
+    "requestSchema": "AdmissionOperationRequest",
+    "responseSchema": "AdmissionOperationResult",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:string,payload:json}",
+      "aliases": []
+    }
   },
   {
     "id": "measure.point",
@@ -2326,7 +3403,17 @@ module.exports = Object.freeze([
     },
     "group": "view",
     "ownerSpec": "Measurement/Inspect MI-D1–MI-D14; owner: measure-inspect",
-    "host": "renderer"
+    "host": "renderer",
+    "requestSchema": "AdmissionOperationRequest",
+    "responseSchema": "AdmissionOperationResult",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:string,payload:json}",
+      "aliases": []
+    }
   },
   {
     "id": "measure.distance",
@@ -2346,7 +3433,17 @@ module.exports = Object.freeze([
     },
     "group": "view",
     "ownerSpec": "Measurement/Inspect MI-D1–MI-D14; owner: measure-inspect",
-    "host": "renderer"
+    "host": "renderer",
+    "requestSchema": "AdmissionOperationRequest",
+    "responseSchema": "AdmissionOperationResult",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:string,payload:json}",
+      "aliases": []
+    }
   },
   {
     "id": "measure.dz",
@@ -2366,7 +3463,17 @@ module.exports = Object.freeze([
     },
     "group": "view",
     "ownerSpec": "Measurement/Inspect MI-D1–MI-D14; owner: measure-inspect",
-    "host": "renderer"
+    "host": "renderer",
+    "requestSchema": "AdmissionOperationRequest",
+    "responseSchema": "AdmissionOperationResult",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:string,payload:json}",
+      "aliases": []
+    }
   },
   {
     "id": "measurement.list",
@@ -2386,7 +3493,17 @@ module.exports = Object.freeze([
     },
     "group": "view",
     "ownerSpec": "Measurement/Inspect MI-D3–MI-D5; owner: measure-inspect",
-    "host": "renderer"
+    "host": "renderer",
+    "requestSchema": "AdmissionOperationRequest",
+    "responseSchema": "AdmissionOperationResult",
+    "execution": {
+      "kind": "query",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:string,payload:json}",
+      "aliases": []
+    }
   },
   {
     "id": "view.box.place",
@@ -2406,7 +3523,17 @@ module.exports = Object.freeze([
     },
     "group": "view",
     "ownerSpec": "Viewing Box VB-D1/VB-D3",
-    "host": "renderer"
+    "host": "renderer",
+    "requestSchema": "AdmissionOperationRequest",
+    "responseSchema": "AdmissionOperationResult",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:string,payload:json}",
+      "aliases": []
+    }
   },
   {
     "id": "view.box.update",
@@ -2426,7 +3553,17 @@ module.exports = Object.freeze([
     },
     "group": "view",
     "ownerSpec": "Viewing Box VB-D2/VB-D5",
-    "host": "renderer"
+    "host": "renderer",
+    "requestSchema": "AdmissionOperationRequest",
+    "responseSchema": "AdmissionOperationResult",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:string,payload:json}",
+      "aliases": []
+    }
   },
   {
     "id": "view.box.set_operation",
@@ -2446,7 +3583,17 @@ module.exports = Object.freeze([
     },
     "group": "view",
     "ownerSpec": "Viewing Box VB-D5",
-    "host": "renderer"
+    "host": "renderer",
+    "requestSchema": "AdmissionOperationRequest",
+    "responseSchema": "AdmissionOperationResult",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:string,payload:json}",
+      "aliases": []
+    }
   },
   {
     "id": "view.box.lock",
@@ -2466,7 +3613,17 @@ module.exports = Object.freeze([
     },
     "group": "view",
     "ownerSpec": "Viewing Box VB-D6–VB-D8",
-    "host": "renderer"
+    "host": "renderer",
+    "requestSchema": "AdmissionOperationRequest",
+    "responseSchema": "AdmissionOperationResult",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:string,payload:json}",
+      "aliases": []
+    }
   },
   {
     "id": "view.box.unlock",
@@ -2486,7 +3643,17 @@ module.exports = Object.freeze([
     },
     "group": "view",
     "ownerSpec": "Viewing Box VB-D6",
-    "host": "renderer"
+    "host": "renderer",
+    "requestSchema": "AdmissionOperationRequest",
+    "responseSchema": "AdmissionOperationResult",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:string,payload:json}",
+      "aliases": []
+    }
   },
   {
     "id": "view.box.rename",
@@ -2510,7 +3677,17 @@ module.exports = Object.freeze([
     "entityKinds": [
       "Object"
     ],
-    "allowMultiSelect": false
+    "allowMultiSelect": false,
+    "requestSchema": "AdmissionOperationRequest",
+    "responseSchema": "AdmissionOperationResult",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:string,payload:json}",
+      "aliases": []
+    }
   },
   {
     "id": "view.box.activate",
@@ -2534,7 +3711,17 @@ module.exports = Object.freeze([
     "entityKinds": [
       "Object"
     ],
-    "allowMultiSelect": false
+    "allowMultiSelect": false,
+    "requestSchema": "AdmissionOperationRequest",
+    "responseSchema": "AdmissionOperationResult",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:string,payload:json}",
+      "aliases": []
+    }
   },
   {
     "id": "view.box.deactivate",
@@ -2558,7 +3745,17 @@ module.exports = Object.freeze([
     "entityKinds": [
       "Object"
     ],
-    "allowMultiSelect": false
+    "allowMultiSelect": false,
+    "requestSchema": "AdmissionOperationRequest",
+    "responseSchema": "AdmissionOperationResult",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:string,payload:json}",
+      "aliases": []
+    }
   },
   {
     "id": "view.box.remove",
@@ -2582,7 +3779,17 @@ module.exports = Object.freeze([
     "entityKinds": [
       "Object"
     ],
-    "allowMultiSelect": false
+    "allowMultiSelect": false,
+    "requestSchema": "AdmissionOperationRequest",
+    "responseSchema": "AdmissionOperationResult",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:string,payload:json}",
+      "aliases": []
+    }
   },
   {
     "id": "view.box.list",
@@ -2602,7 +3809,17 @@ module.exports = Object.freeze([
     },
     "group": "view",
     "ownerSpec": "Viewing Box VB-D4",
-    "host": "renderer"
+    "host": "renderer",
+    "requestSchema": "AdmissionOperationRequest",
+    "responseSchema": "AdmissionOperationResult",
+    "execution": {
+      "kind": "query",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:string,payload:json}",
+      "aliases": []
+    }
   },
   {
     "id": "entity.properties",
@@ -2623,7 +3840,17 @@ module.exports = Object.freeze([
     },
     "group": "entity-specific",
     "ownerSpec": "UI Platform UIP-D5",
-    "host": "renderer"
+    "host": "renderer",
+    "requestSchema": "AdmissionOperationRequest",
+    "responseSchema": "AdmissionOperationResult",
+    "execution": {
+      "kind": "query",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:string,payload:json}",
+      "aliases": []
+    }
   },
   {
     "id": "entity.export",
@@ -2659,7 +3886,17 @@ module.exports = Object.freeze([
     },
     "group": "entity-specific",
     "ownerSpec": "Import/Export IF-D20",
-    "host": "renderer"
+    "host": "renderer",
+    "requestSchema": "AdmissionOperationRequest",
+    "responseSchema": "AdmissionOperationResult",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:string,payload:json}",
+      "aliases": []
+    }
   },
   {
     "id": "photolab.gcp.images",
@@ -2683,7 +3920,17 @@ module.exports = Object.freeze([
     "entityKinds": [
       "GroundControlPoint"
     ],
-    "allowMultiSelect": false
+    "allowMultiSelect": false,
+    "requestSchema": "AdmissionOperationRequest",
+    "responseSchema": "AdmissionOperationResult",
+    "execution": {
+      "kind": "query",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:string,payload:json}",
+      "aliases": []
+    }
   },
   {
     "id": "measurement.delete",
@@ -2707,7 +3954,17 @@ module.exports = Object.freeze([
     "entityKinds": [
       "Object"
     ],
-    "allowMultiSelect": false
+    "allowMultiSelect": false,
+    "requestSchema": "AdmissionOperationRequest",
+    "responseSchema": "AdmissionOperationResult",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:string,payload:json}",
+      "aliases": []
+    }
   },
   {
     "id": "pointcloud.display.set",
@@ -2731,7 +3988,17 @@ module.exports = Object.freeze([
     "entityKinds": [
       "PointCloud"
     ],
-    "allowMultiSelect": true
+    "allowMultiSelect": true,
+    "requestSchema": "PointCloudDisplaySetRequest",
+    "responseSchema": "AdmissionOperationResult",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:json,payload:object}",
+      "aliases": []
+    }
   },
   {
     "id": "pointcloud.ground.extract",
@@ -2755,7 +4022,17 @@ module.exports = Object.freeze([
     "entityKinds": [
       "PointCloud"
     ],
-    "allowMultiSelect": false
+    "allowMultiSelect": false,
+    "requestSchema": "PointCloudGroundRequest",
+    "responseSchema": "PointCloudGroundResult",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:json,payload:PointCloudGroundRequestPayload}",
+      "aliases": []
+    }
   },
   {
     "id": "pointcloud.ground.preview",
@@ -2776,7 +4053,17 @@ module.exports = Object.freeze([
     "group": "entity-specific",
     "ownerSpec": "Point cloud PC-D19; MASTER-PLAN row 17; owner: pointcloud",
     "host": "renderer",
-    "allowMultiSelect": false
+    "allowMultiSelect": false,
+    "requestSchema": "PointCloudGroundRequest",
+    "responseSchema": "PointCloudGroundPreviewResult",
+    "execution": {
+      "kind": "query",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:json,payload:PointCloudGroundRequestPayload}",
+      "aliases": []
+    }
   },
   {
     "id": "pointcloud.ground.cancel",
@@ -2796,7 +4083,17 @@ module.exports = Object.freeze([
     },
     "group": "entity-specific",
     "ownerSpec": "Point cloud PC-D19; S-05 jobs; MASTER-PLAN row 17; owner: pointcloud",
-    "host": "renderer"
+    "host": "renderer",
+    "requestSchema": "PointCloudGroundCancelRequest",
+    "responseSchema": "AdmissionOperationResult",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:json,payload:PointCloudGroundCancelPayload}",
+      "aliases": []
+    }
   },
   {
     "id": "pointcloud.sample",
@@ -2820,7 +4117,17 @@ module.exports = Object.freeze([
     "entityKinds": [
       "PointCloud"
     ],
-    "allowMultiSelect": false
+    "allowMultiSelect": false,
+    "requestSchema": "PointCloudSampleRequest",
+    "responseSchema": "PointCloudSampleResult",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:json,payload:PointCloudSampleRequestPayload}",
+      "aliases": []
+    }
   },
   {
     "id": "pointcloud.rasterize",
@@ -2844,7 +4151,17 @@ module.exports = Object.freeze([
     "entityKinds": [
       "PointCloud"
     ],
-    "allowMultiSelect": false
+    "allowMultiSelect": false,
+    "requestSchema": "PointCloudRasterizeRequest",
+    "responseSchema": "PointCloudRasterizeResult",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:json,payload:PointCloudRasterizeRequestPayload}",
+      "aliases": []
+    }
   },
   {
     "id": "pointcloud.fence.begin",
@@ -2868,7 +4185,17 @@ module.exports = Object.freeze([
     "entityKinds": [
       "PointCloud"
     ],
-    "allowMultiSelect": true
+    "allowMultiSelect": true,
+    "requestSchema": "PointCloudFenceRequest",
+    "responseSchema": "AdmissionOperationResult",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:json,payload:PointCloudFencePayload}",
+      "aliases": []
+    }
   },
   {
     "id": "pointcloud.fence.commit",
@@ -2888,7 +4215,17 @@ module.exports = Object.freeze([
     },
     "group": "entity-specific",
     "ownerSpec": "Point cloud PC-D5; owner: pointcloud",
-    "host": "renderer"
+    "host": "renderer",
+    "requestSchema": "PointCloudFenceCommitRequest",
+    "responseSchema": "AdmissionOperationResult",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:json,payload:json}",
+      "aliases": []
+    }
   },
   {
     "id": "pointcloud.fence.cancel",
@@ -2908,7 +4245,17 @@ module.exports = Object.freeze([
     },
     "group": "entity-specific",
     "ownerSpec": "Point cloud PC-D5; owner: pointcloud",
-    "host": "renderer"
+    "host": "renderer",
+    "requestSchema": "AdmissionOperationRequest",
+    "responseSchema": "AdmissionOperationResult",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:string,payload:json}",
+      "aliases": []
+    }
   },
   {
     "id": "pointcloud.segment.keep_inside",
@@ -2932,7 +4279,17 @@ module.exports = Object.freeze([
     "entityKinds": [
       "PointCloud"
     ],
-    "allowMultiSelect": true
+    "allowMultiSelect": true,
+    "requestSchema": "PointCloudSegmentRequest",
+    "responseSchema": "AdmissionOperationResult",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:json,payload:json}",
+      "aliases": []
+    }
   },
   {
     "id": "pointcloud.segment.remove_inside",
@@ -2956,7 +4313,17 @@ module.exports = Object.freeze([
     "entityKinds": [
       "PointCloud"
     ],
-    "allowMultiSelect": true
+    "allowMultiSelect": true,
+    "requestSchema": "PointCloudSegmentRequest",
+    "responseSchema": "AdmissionOperationResult",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:json,payload:json}",
+      "aliases": []
+    }
   },
   {
     "id": "mesh.surface.draft.create",
@@ -2977,7 +4344,17 @@ module.exports = Object.freeze([
     "group": "entity-specific",
     "ownerSpec": "Mesh/Terrain MT-D1–MT-D12; S-01; owner: mesh-terrain",
     "host": "renderer",
-    "allowMultiSelect": true
+    "allowMultiSelect": true,
+    "requestSchema": "AdmissionOperationRequest",
+    "responseSchema": "AdmissionOperationResult",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:string,payload:json}",
+      "aliases": []
+    }
   },
   {
     "id": "mesh.surface.draft.apply_fix",
@@ -2997,7 +4374,17 @@ module.exports = Object.freeze([
     },
     "group": "entity-specific",
     "ownerSpec": "Mesh/Terrain MT-D7–MT-D9; S-01; owner: mesh-terrain",
-    "host": "renderer"
+    "host": "renderer",
+    "requestSchema": "AdmissionOperationRequest",
+    "responseSchema": "AdmissionOperationResult",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:string,payload:json}",
+      "aliases": []
+    }
   },
   {
     "id": "mesh.surface.check",
@@ -3017,7 +4404,17 @@ module.exports = Object.freeze([
     },
     "group": "entity-specific",
     "ownerSpec": "Mesh/Terrain MT-D7–MT-D9; S-01; owner: mesh-terrain",
-    "host": "renderer"
+    "host": "renderer",
+    "requestSchema": "AdmissionOperationRequest",
+    "responseSchema": "AdmissionOperationResult",
+    "execution": {
+      "kind": "query",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:string,payload:json}",
+      "aliases": []
+    }
   },
   {
     "id": "mesh.surface.create",
@@ -3045,7 +4442,17 @@ module.exports = Object.freeze([
       "Surface",
       "DigitalElevationModel"
     ],
-    "allowMultiSelect": true
+    "allowMultiSelect": true,
+    "requestSchema": "AdmissionOperationRequest",
+    "responseSchema": "AdmissionOperationResult",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:string,payload:json}",
+      "aliases": []
+    }
   },
   {
     "id": "mesh.edit.region.select",
@@ -3065,7 +4472,17 @@ module.exports = Object.freeze([
     },
     "group": "entity-specific",
     "ownerSpec": "Mesh/Terrain MT-D15, MT-D33; MASTER-PLAN row 21; S-01; owner: mesh-terrain",
-    "host": "renderer"
+    "host": "renderer",
+    "requestSchema": "AdmissionOperationRequest",
+    "responseSchema": "AdmissionOperationResult",
+    "execution": {
+      "kind": "query",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:string,payload:json}",
+      "aliases": []
+    }
   },
   {
     "id": "mesh.edit.smooth",
@@ -3089,7 +4506,17 @@ module.exports = Object.freeze([
     "entityKinds": [
       "Surface",
       "DigitalElevationModel"
-    ]
+    ],
+    "requestSchema": "AdmissionOperationRequest",
+    "responseSchema": "AdmissionOperationResult",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:string,payload:json}",
+      "aliases": []
+    }
   },
   {
     "id": "mesh.edit.downsample",
@@ -3113,7 +4540,17 @@ module.exports = Object.freeze([
     "entityKinds": [
       "Surface",
       "DigitalElevationModel"
-    ]
+    ],
+    "requestSchema": "AdmissionOperationRequest",
+    "responseSchema": "AdmissionOperationResult",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:string,payload:json}",
+      "aliases": []
+    }
   },
   {
     "id": "draw.line",
@@ -3133,7 +4570,17 @@ module.exports = Object.freeze([
     },
     "group": "entity-specific",
     "ownerSpec": "Draw DR-D1/DR-D17/DR-D21",
-    "host": "renderer"
+    "host": "renderer",
+    "requestSchema": "AdmissionOperationRequest",
+    "responseSchema": "AdmissionOperationResult",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:string,payload:json}",
+      "aliases": []
+    }
   },
   {
     "id": "draw.polyline",
@@ -3153,7 +4600,17 @@ module.exports = Object.freeze([
     },
     "group": "entity-specific",
     "ownerSpec": "Draw DR-D1/DR-D5/DR-D17",
-    "host": "renderer"
+    "host": "renderer",
+    "requestSchema": "AdmissionOperationRequest",
+    "responseSchema": "AdmissionOperationResult",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:string,payload:json}",
+      "aliases": []
+    }
   },
   {
     "id": "draw.boundary",
@@ -3173,7 +4630,17 @@ module.exports = Object.freeze([
     },
     "group": "entity-specific",
     "ownerSpec": "Draw DR-D5/DR-D18",
-    "host": "renderer"
+    "host": "renderer",
+    "requestSchema": "AdmissionOperationRequest",
+    "responseSchema": "AdmissionOperationResult",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:string,payload:json}",
+      "aliases": []
+    }
   },
   {
     "id": "draw.vertex.add",
@@ -3193,7 +4660,17 @@ module.exports = Object.freeze([
     },
     "group": "entity-specific",
     "ownerSpec": "Draw DR-D5/DR-D21",
-    "host": "renderer"
+    "host": "renderer",
+    "requestSchema": "AdmissionOperationRequest",
+    "responseSchema": "AdmissionOperationResult",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:string,payload:json}",
+      "aliases": []
+    }
   },
   {
     "id": "draw.vertex.constrain",
@@ -3213,7 +4690,17 @@ module.exports = Object.freeze([
     },
     "group": "entity-specific",
     "ownerSpec": "Draw DR-D1/DR-D17",
-    "host": "renderer"
+    "host": "renderer",
+    "requestSchema": "AdmissionOperationRequest",
+    "responseSchema": "AdmissionOperationResult",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:string,payload:json}",
+      "aliases": []
+    }
   },
   {
     "id": "draw.vertex.type",
@@ -3233,7 +4720,17 @@ module.exports = Object.freeze([
     },
     "group": "entity-specific",
     "ownerSpec": "Draw DR-D1/DR-D17/DR-D21",
-    "host": "renderer"
+    "host": "renderer",
+    "requestSchema": "AdmissionOperationRequest",
+    "responseSchema": "AdmissionOperationResult",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:string,payload:json}",
+      "aliases": []
+    }
   },
   {
     "id": "draw.vertex.undo",
@@ -3253,6 +4750,16 @@ module.exports = Object.freeze([
     },
     "group": "entity-specific",
     "ownerSpec": "Draw DR-D5",
-    "host": "renderer"
+    "host": "renderer",
+    "requestSchema": "AdmissionOperationRequest",
+    "responseSchema": "AdmissionOperationResult",
+    "execution": {
+      "kind": "transaction",
+      "cancelRoute": null
+    },
+    "console": {
+      "argumentHelp": "{schemaId:string,payload:json}",
+      "aliases": []
+    }
   }
 ]);

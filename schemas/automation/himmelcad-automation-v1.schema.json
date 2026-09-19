@@ -2374,12 +2374,32 @@
     }
   },
   "x-photolabCommands": [
-    { "id": "photolab.alignment.resolve", "capability": "document.read", "kind": "query" },
-    { "id": "photolab.alignment.settings.update", "capability": "document.write" },
+    {
+      "id": "photolab.alignment.resolve",
+      "capability": "document.read",
+      "kind": "query",
+      "console": { "aliases": [{ "name": "alignment.resolve", "action": "resolveAlignment" }] }
+    },
+    {
+      "id": "photolab.alignment.settings.update",
+      "capability": "document.write",
+      "console": {
+        "aliases": [
+          {
+            "name": "alignment.profile",
+            "action": "setAlignmentProfile",
+            "argumentHelp": "qualityHybrid|maximumRobustness|fast"
+          }
+        ]
+      }
+    },
     {
       "id": "photolab.alignment.start",
       "capability": "document.write",
-      "rpcMethod": "photolab.jobs.startAlignment"
+      "rpcMethod": "photolab.jobs.startAlignment",
+      "execution": "job",
+      "cancelRoute": "photolab.jobs.cancel",
+      "console": { "aliases": [{ "name": "alignment.run", "action": "startAlignment" }] }
     },
     {
       "id": "photolab.processing_sets.list",
@@ -2418,13 +2438,17 @@
     {
       "id": "photolab.alignment.merge.start",
       "capability": "document.write",
-      "rpcMethod": "photolab.jobs.startAlignmentMerge"
+      "rpcMethod": "photolab.jobs.startAlignmentMerge",
+      "execution": "job",
+      "cancelRoute": "photolab.jobs.cancel"
     },
     { "id": "photolab.capture.capabilities", "capability": "document.read", "kind": "query" },
     { "id": "photolab.capture.scale.evaluate", "capability": "document.read", "kind": "query" },
     {
       "id": "photolab.capture.image.prepare",
       "capability": "document.write",
+      "execution": "job",
+      "cancelRoute": "photolab.capture.cancel",
       "grantFields": [
         { "field": "sourceGrantId", "target": "sourcePath", "access": "read" },
         { "field": "artifactGrantId", "target": "artifactRoot", "access": "write" }
@@ -2433,6 +2457,8 @@
     {
       "id": "photolab.capture.video.prepare",
       "capability": "document.write",
+      "execution": "job",
+      "cancelRoute": "photolab.capture.cancel",
       "grantFields": [
         { "field": "sourceGrantId", "target": "sourcePath", "access": "read" },
         { "field": "artifactGrantId", "target": "artifactRoot", "access": "write" },
@@ -2442,6 +2468,8 @@
     {
       "id": "photolab.images.himmelcap.inspect",
       "capability": "document.read",
+      "execution": "job",
+      "cancelRoute": "photolab.himmelcap.cancel",
       "rpcMethod": "photolab.himmelcap.inspect",
       "grantFields": [{ "field": "sourceGrantId", "target": "path", "access": "read" }]
     },
@@ -2451,18 +2479,31 @@
       "request": "PhotolabImagesImportInspectRequestV1",
       "response": "PhotolabPhotoImportBatchV1",
       "rpcMethod": "photolab.images.inspect",
+      "execution": "job",
+      "cancelRoute": "photolab.images.inspect.cancel",
       "grantFields": [
         { "field": "sourceGrantIds", "target": "paths", "access": "read", "multiple": true }
       ]
     },
-    { "id": "photolab.crs.discover", "capability": "document.read" },
-    { "id": "photolab.crs.freeze", "capability": "document.read" },
+    {
+      "id": "photolab.crs.discover",
+      "capability": "document.read",
+      "execution": "job",
+      "cancelRoute": "photolab.crs.cancel"
+    },
+    {
+      "id": "photolab.crs.freeze",
+      "capability": "document.read",
+      "execution": "job",
+      "cancelRoute": "photolab.crs.cancel"
+    },
     {
       "id": "photolab.images.import.commit",
       "capability": "document.write",
       "request": "PhotolabImagesImportCommitRequestV1",
       "response": "PhotolabImagesImportCommitResultV1",
-      "rpcMethod": "photolab.images.commit"
+      "rpcMethod": "photolab.images.commit",
+      "cancelRoute": "photolab.images.commit.cancel"
     },
     { "id": "photolab.images.list", "capability": "document.read", "kind": "query" },
     { "id": "photolab.images.quality.list", "capability": "document.read", "kind": "query" },
@@ -2471,7 +2512,9 @@
       "capability": "document.write",
       "request": "PhotolabImageQualityStartRequestV1",
       "response": "PhotolabStartJobResultV1",
-      "rpcMethod": "photolab.jobs.startImageQuality"
+      "rpcMethod": "photolab.jobs.startImageQuality",
+      "execution": "job",
+      "cancelRoute": "photolab.jobs.cancel"
     },
     {
       "id": "photolab.image_masks.list",
@@ -2482,7 +2525,8 @@
     {
       "id": "photolab.image_masks.edit",
       "capability": "document.write",
-      "rpcMethod": "photolab.project.imageMask.edit"
+      "rpcMethod": "photolab.project.imageMask.edit",
+      "cancelRoute": "photolab.project.imageMask.cancel"
     },
     {
       "id": "photolab.capture_groups.list",
@@ -2537,6 +2581,7 @@
       "id": "photolab.gcp.import.commit",
       "capability": "document.write",
       "rpcMethod": "photolab.gcp.commit",
+      "cancelRoute": "photolab.gcp.cancel",
       "grantFields": [{ "field": "sourceGrantId", "target": "path", "access": "read" }]
     },
     { "id": "photolab.gcp.list", "capability": "document.read", "kind": "query" },
@@ -2569,7 +2614,9 @@
     {
       "id": "photolab.gcp.optimization.start",
       "capability": "document.write",
-      "rpcMethod": "photolab.jobs.startGcpOptimization"
+      "rpcMethod": "photolab.jobs.startGcpOptimization",
+      "execution": "job",
+      "cancelRoute": "photolab.jobs.cancel"
     },
     { "id": "photolab.gcp.optimization.latest", "capability": "document.read", "kind": "query" },
     { "id": "photolab.gcp.optimization.list", "capability": "document.read", "kind": "query" },
@@ -2583,12 +2630,25 @@
     {
       "id": "photolab.products.start",
       "capability": "document.write",
-      "rpcMethod": "photolab.jobs.startProduct"
+      "rpcMethod": "photolab.jobs.startProduct",
+      "execution": "job",
+      "cancelRoute": "photolab.jobs.cancel",
+      "console": {
+        "aliases": [
+          {
+            "name": "product.run",
+            "action": "startProduct",
+            "argumentHelp": "depth|dense|dem|ortho|mesh|splat"
+          }
+        ]
+      }
     },
     {
       "id": "photolab.products.export",
       "capability": "document.write",
       "rpcMethod": "photolab.jobs.startProductExport",
+      "execution": "job",
+      "cancelRoute": "photolab.jobs.cancel",
       "grantFields": [
         { "field": "destinationGrantId", "target": "destinationPath", "access": "write" }
       ]
@@ -2596,7 +2656,10 @@
     {
       "id": "photolab.batch.start",
       "capability": "document.write",
-      "rpcMethod": "photolab.jobs.startBatch"
+      "rpcMethod": "photolab.jobs.startBatch",
+      "execution": "job",
+      "cancelRoute": "photolab.jobs.cancel",
+      "console": { "aliases": [{ "name": "batch.run", "action": "openBatch" }] }
     },
     {
       "id": "photolab.jobs.list",
@@ -2619,7 +2682,12 @@
       "request": "PhotolabJobIdRequestV1",
       "response": "PhotolabCancelJobResultV1"
     },
-    { "id": "photolab.jobs.resume", "capability": "document.write" },
+    {
+      "id": "photolab.jobs.resume",
+      "capability": "document.write",
+      "execution": "job",
+      "cancelRoute": "photolab.jobs.cancel"
+    },
     {
       "id": "photolab.report.survey_data",
       "capability": "document.read",
@@ -2629,6 +2697,8 @@
     {
       "id": "photolab.report.export",
       "capability": "document.write",
+      "execution": "job",
+      "cancelRoute": "automation.commands.cancel",
       "grantFields": [{ "field": "targetGrantId", "target": "destinationPath", "access": "write" }]
     },
     { "id": "photolab.hardware.probe", "capability": "document.read", "kind": "query" },
@@ -2644,12 +2714,19 @@
       "id": "photolab.project.open",
       "capability": "document.write",
       "enablement": "always",
+      "execution": "job",
+      "cancelRoute": "photolab.project.archive.cancel",
       "grantFields": [
         { "field": "sourceGrantId", "target": "path", "access": "read" },
         { "field": "cacheGrantId", "target": "workingRoot", "access": "write" }
       ]
     },
-    { "id": "photolab.project.reopen_without_recovery", "capability": "document.write" },
+    {
+      "id": "photolab.project.reopen_without_recovery",
+      "capability": "document.write",
+      "execution": "job",
+      "cancelRoute": "photolab.project.archive.cancel"
+    },
     { "id": "photolab.project.snapshot", "capability": "document.read", "kind": "query" },
     { "id": "photolab.project.diagnostics", "capability": "document.read", "kind": "query" },
     { "id": "photolab.project.autosave", "capability": "document.write" },
@@ -2662,11 +2739,15 @@
       "id": "photolab.project.save_as",
       "capability": "document.write",
       "rpcMethod": "photolab.project.saveAs",
+      "execution": "job",
+      "cancelRoute": "photolab.project.archive.cancel",
       "grantFields": [{ "field": "targetGrantId", "target": "path", "access": "write" }]
     },
     {
       "id": "photolab.project.close",
       "capability": "document.write",
+      "execution": "job",
+      "cancelRoute": "automation.commands.cancel",
       "request": "EmptyRequest",
       "response": "PhotolabCommandResultV1"
     },

@@ -11,6 +11,7 @@ export * from './localHistoryPersistence.js';
 export * from './measurement.js';
 export * from './protocol.js';
 export * from './selection.js';
+export * from './testDialogResponder.js';
 export * from './view.js';
 export * from './viewDisplay.js';
 export * from './viewHistory.js';

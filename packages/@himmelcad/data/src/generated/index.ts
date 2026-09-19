@@ -92,6 +92,7 @@ export type * from "./NetworkTopology";
 export type * from "./ObjectHash";
 export type * from "./OrthoGridMapping";
 export type * from "./PanoramaGeometry";
+export type * from "./PlanGrid2DMapping";
 export type * from "./PlaneDefinition";
 export type * from "./PlaneFrame";
 export type * from "./PointAcquisitionKindV1";

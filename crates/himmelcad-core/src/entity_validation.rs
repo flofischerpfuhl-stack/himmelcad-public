@@ -12,11 +12,11 @@ use crate::entity_model::{
     AlignmentGeometry, AnnotationAnchor, AreaGeometry, BuiltInEntityType, CameraModel,
     CanonicalEntity, CsgNode, CurveGeometry, CurveLoop, CurveUse, DepthSampling, DimensionGeometry,
     ElevationSurfaceGeometry, GeometryObject, GeometryResource, LabelGeometry, OrthoGridMapping,
-    PanoramaGeometry, PlaneDefinition, PlaneFrame, Position, RasterConfidenceEncoding,
-    RasterConnectivity, RasterImageGeometry, RasterInterpolation, RasterMapping, Representation,
-    RepresentationAuthority, RepresentationRole, SolidGeometry, SolidPrimitive, StationFunction,
-    StreamedGeometry, TextGeometry, Transform3d, TriangleMeshGeometry, TriangleMeshStorage,
-    Vector3,
+    PanoramaGeometry, PlanGrid2DMapping, PlaneDefinition, PlaneFrame, Position,
+    RasterConfidenceEncoding, RasterConnectivity, RasterImageGeometry, RasterInterpolation,
+    RasterMapping, Representation, RepresentationAuthority, RepresentationRole, SolidGeometry,
+    SolidPrimitive, StationFunction, StreamedGeometry, TextGeometry, Transform3d,
+    TriangleMeshGeometry, TriangleMeshStorage, Vector3,
 };
 use crate::hash::ObjectHash;
 
@@ -184,6 +184,13 @@ pub fn validate_resolved_representation(
     }
     if let Some(entity_type) = BuiltInEntityType::from_type_id(&entity.type_id) {
         validate_built_in_compatibility(entity_type, selected, geometry)?;
+    }
+    if let GeometryObject::RasterImage { raster } = geometry {
+        if matches!(raster.mapping, RasterMapping::PlanGrid2D(_))
+            && (entity.schema_version != 2 || entity.placement.is_some() || raster.depth.is_some())
+        {
+            return Err(EntityValidationError::InvalidRaster);
+        }
     }
     Ok(())
 }
@@ -779,6 +786,7 @@ fn validate_raster(raster: &RasterImageGeometry) -> Result<(), EntityValidationE
     validate_resource(&raster.pixels)?;
     match &raster.mapping {
         RasterMapping::OrthoGrid(mapping) => validate_grid(*mapping)?,
+        RasterMapping::PlanGrid2D(mapping) => validate_plan_grid_2d(*mapping)?,
         RasterMapping::Planar { homography, frame } => {
             if homography.iter().any(|value| !value.is_finite())
                 || homography_determinant(*homography).abs() <= f64::EPSILON
@@ -853,6 +861,7 @@ fn validate_raster_depth_mapping(
         )
         | (RasterMapping::Camera { .. }, DepthSemantics::ElevationZ) => Ok(()),
         (RasterMapping::OrthoGrid(_), _)
+        | (RasterMapping::PlanGrid2D(_), _)
         | (RasterMapping::Planar { .. }, _)
         | (
             RasterMapping::Camera {
@@ -862,6 +871,24 @@ fn validate_raster_depth_mapping(
             DepthSemantics::OpticalAxisDepth,
         ) => Err(EntityValidationError::InvalidRaster),
     }
+}
+
+fn validate_plan_grid_2d(mapping: PlanGrid2DMapping) -> Result<(), EntityValidationError> {
+    if mapping
+        .origin_xy
+        .into_iter()
+        .chain(mapping.column_step_xy)
+        .chain(mapping.row_step_xy)
+        .any(|value| !value.is_finite())
+    {
+        return Err(EntityValidationError::InvalidRaster);
+    }
+    let determinant = mapping.column_step_xy[0] * mapping.row_step_xy[1]
+        - mapping.column_step_xy[1] * mapping.row_step_xy[0];
+    if !determinant.is_finite() || determinant.abs() <= f64::EPSILON {
+        return Err(EntityValidationError::InvalidRaster);
+    }
+    Ok(())
 }
 
 fn validate_solid(solid: &SolidGeometry) -> Result<(), EntityValidationError> {

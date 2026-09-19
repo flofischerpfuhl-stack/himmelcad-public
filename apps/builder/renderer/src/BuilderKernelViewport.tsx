@@ -521,6 +521,7 @@ export const BuilderKernelViewport = forwardRef<
           kernel.session.adoptWorldCamera(state.camera);
           viewModeRef.current = state.mode;
           setViewModeState(state.mode);
+          callbacksRef.current.onViewModeSettled?.(state.mode);
           cameraHistoryRef.current = history;
         } finally {
           restoringCameraRef.current = false;
@@ -561,6 +562,7 @@ export const BuilderKernelViewport = forwardRef<
     onViewportPoint,
     onViewportBox,
     onViewingBoxChange,
+    onViewModeSettled,
     selectedEntityIds,
     onSelectEntity,
     onClearSelection,
@@ -612,6 +614,7 @@ export const BuilderKernelViewport = forwardRef<
     onViewportPoint,
     onViewportBox,
     onViewingBoxChange,
+    onViewModeSettled,
     selectedEntityIds,
     onSelectEntity,
     onClearSelection,
@@ -1278,6 +1281,7 @@ export const BuilderKernelViewport = forwardRef<
           kernel.session.adoptWorldCamera(state.camera);
           viewModeRef.current = state.mode;
           setViewModeState(state.mode);
+          callbacksRef.current.onViewModeSettled?.(state.mode);
           if (action === 'undo') history.undo();
           else history.redo();
         } finally {

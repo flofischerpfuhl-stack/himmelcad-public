@@ -9,6 +9,9 @@ export default defineConfig({
   plugins: [react()],
   resolve: {
     alias: {
+      '@himmelcad/app/commands': fileURLToPath(
+        new URL('../../packages/@himmelcad/app/src/commands.ts', import.meta.url),
+      ),
       '@himmelcad/app': fileURLToPath(
         new URL('../../packages/@himmelcad/app/src/index.ts', import.meta.url),
       ),
