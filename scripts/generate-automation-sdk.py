@@ -62,6 +62,69 @@ def annotation(node: dict[str, Any]) -> str:
     return desc[1]
 
 
+def protocol_methods(schema: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Return the canonical methods plus compact product-command extensions."""
+    methods = dict(schema["methods"])
+    for definition in schema.get("x-photolabCommands", []):
+        method_id = definition["id"]
+        if method_id in methods:
+            raise RuntimeError(f"duplicate PhotoLab automation method {method_id!r}")
+        methods[method_id] = {
+            "capability": definition["capability"],
+            "request": definition.get("request", "PhotolabCommandRequestV1"),
+            "response": definition.get("response", "PhotolabCommandResultV1"),
+            "command": {
+                "label": definition.get("label", method_id.removeprefix("photolab.").replace("_", " ").replace(".", " ").capitalize()),
+                "products": ["photolab"],
+                "kind": definition.get("kind", "command"),
+                "shortcut": None,
+                "enablement": definition.get("enablement", "hasProject"),
+                "surfaces": {
+                    "ribbon": False,
+                    "contextMenu": False,
+                    "quickSurface": False,
+                    "console": True,
+                    "automation": True,
+                },
+                "group": "edit",
+                "ownerSpec": "PhotoLab WP-G2",
+                "host": "sidecar",
+                "rpcMethod": definition.get("rpcMethod", method_id),
+                **({"grantFields": definition["grantFields"]} if "grantFields" in definition else {}),
+                **({"responseWrap": definition["responseWrap"]} if "responseWrap" in definition else {}),
+            },
+        }
+    return methods
+
+
+def python_method_name(method_id: str) -> str:
+    return re.sub(r"[^a-zA-Z0-9]+", "_", method_id).strip("_")
+
+
+def generated_product_methods(schema: dict[str, Any], *, asynchronous: bool) -> str:
+    blocks: list[str] = []
+    for method_id, definition in sorted(protocol_methods(schema).items()):
+        command = definition.get("command")
+        if not command or "photolab" not in command.get("products", []):
+            continue
+        if not command.get("surfaces", {}).get("automation", False):
+            continue
+        request_type = definition["request"]
+        response_type = definition["response"]
+        name = python_method_name(method_id)
+        await_prefix = "await " if asynchronous else ""
+        async_prefix = "async " if asynchronous else ""
+        if request_type == "EmptyRequest":
+            signature = "request: EmptyRequest | None = None"
+        else:
+            signature = f"request: {request_type}"
+        blocks.append(
+            f"    {async_prefix}def {name}(self, {signature}) -> {response_type}:\n"
+            f"        return {response_type}.from_dict({await_prefix}self._call({method_id!r}, _params(request)))"
+        )
+    return "\n\n".join(blocks)
+
+
 def model_source(schema: dict[str, Any]) -> str:
     definitions = schema["$defs"]
     blocks: list[str] = []
@@ -69,6 +132,21 @@ def model_source(schema: dict[str, Any]) -> str:
     variants: dict[str, Any] = {}
     for name, definition in definitions.items():
         if definition.get("type") != "object" or "properties" not in definition:
+            continue
+        if definition.get("x-open-object") is True:
+            blocks.append(
+                f"@dataclass(frozen=True, slots=True)\nclass {name}(WireModel):\n"
+                "    values: Mapping[str, Any]\n"
+                "    _ALIASES: ClassVar[Mapping[str, str]] = MappingProxyType({})\n\n"
+                "    @classmethod\n"
+                f"    def from_dict(cls, value: Mapping[str, Any]) -> {name}:\n"
+                "        if not isinstance(value, Mapping):\n"
+                f"            raise TypeError(\"{name} requires a mapping\")\n"
+                "        return cls(values=_freeze(value))\n\n"
+                "    def to_dict(self) -> dict[str, Any]:\n"
+                "        return _wire(self.values)\n"
+            )
+            specs[name] = {}
             continue
         properties = definition["properties"]
         required = set(definition.get("required", []))
@@ -552,15 +630,7 @@ from typing import Any, Protocol
 
 from .errors import GenerationChangedError, ProtocolError, ValidationError, error_from_payload
 from .leases import AsyncBulkLease, BulkLease
-from .models import (
-    BulkLeaseDescriptor, BulkReadResult, BulkReleaseResult, CanonicalCommandTransaction, CanonicalEntity,
-    CanonicalEntityEdit, CanonicalEntityMutation,
-    CasDescription, CommandCancelResult, CommandStatus, CommandValidationPlan, EntityPage,
-    EntityVersionRef, JournalPage, PropertyId, PropertyQueryResult, ProtocolNegotiationResponse, ScreenshotResultV1,
-    ProductDatasetListRequestV1, ProductDatasetListResultV1,
-    ProductDatasetRegisterRequestV1, ProductDatasetRegisterResultV1,
-    ViewModeTransitionRequest, ViewStateV2, WireModel, to_wire,
-)
+from .models import *
 
 LIMITS = MappingProxyType({limits})
 METHOD_CAPABILITIES = MappingProxyType({method_capabilities})
@@ -757,6 +827,8 @@ class HimmelcadClient:
             return BulkLease(self, result.lease)
         raise ProtocolError(raw_code="invalidRequest", message="screenshot result lacks data for its encoding")
 
+{sync_product_methods}
+
     def _bulk_read(self, descriptor: BulkLeaseDescriptor, offset: int, length: int) -> BulkReadResult:
         return BulkReadResult.from_dict(self._call("automation.bulk.read", {{"leaseId": descriptor.lease_id, "accessToken": descriptor.access_token, "offset": offset, "length": length}}))
 
@@ -911,6 +983,8 @@ class AsyncHimmelcadClient:
             return AsyncBulkLease(self, result.lease)
         raise ProtocolError(raw_code="invalidRequest", message="screenshot result lacks data for its encoding")
 
+{async_product_methods}
+
     async def _bulk_read(self, descriptor: BulkLeaseDescriptor, offset: int, length: int) -> BulkReadResult:
         return BulkReadResult.from_dict(await self._call("automation.bulk.read", {{"leaseId": descriptor.lease_id, "accessToken": descriptor.access_token, "offset": offset, "length": length}}))
 
@@ -1008,6 +1082,7 @@ Regenerate with `python3.12 scripts/generate-automation-sdk.py`. CI/stale checks
 
 def outputs(schema: dict[str, Any]) -> dict[str, bytes]:
     errors = "\n".join(f"    {snake(code).upper()} = {code!r}" for code in schema["errors"])
+    methods = protocol_methods(schema)
     return {
         "README.md": README_TEMPLATE.encode(),
         "pyproject.toml": PYPROJECT.encode(),
@@ -1017,8 +1092,10 @@ def outputs(schema: dict[str, Any]) -> dict[str, bytes]:
         "src/himmelcad/leases.py": LEASES_TEMPLATE.replace("__MAX_SHAPE_ELEMENTS__", str(schema["limits"]["maxShapeElements"])).encode(),
         "src/himmelcad/client.py": CLIENT_TEMPLATE.format(
             limits=repr(schema["limits"]),
-            method_capabilities=repr({name: definition.get("capability") for name, definition in schema["methods"].items() if definition.get("capability") is not None}),
+            method_capabilities=repr({name: definition.get("capability") for name, definition in methods.items() if definition.get("capability") is not None}),
             app_method_capabilities=repr(schema["methods"]["app.protocol"]["capabilityByRequestMethod"]),
+            sync_product_methods=generated_product_methods(schema, asynchronous=False),
+            async_product_methods=generated_product_methods(schema, asynchronous=True),
         ).encode(),
         "src/himmelcad/py.typed": b"",
     }

@@ -35,6 +35,17 @@ from himmelcad.models import (  # noqa: E402
     PointCloudRasterizeResult,
     PointCloudSampleRequest,
     PointCloudSampleResult,
+    PhotolabCancelJobResultV1,
+    PhotolabImageQualityStartRequestV1,
+    PhotolabImagesImportCommitRequestV1,
+    PhotolabImagesImportCommitResultV1,
+    PhotolabImagesImportInspectRequestV1,
+    PhotolabJobIdRequestV1,
+    PhotolabJobsListRequestV1,
+    PhotolabJobsListResultV1,
+    PhotolabPhotoImportBatchV1,
+    PhotolabProjectCreateRequestV1,
+    PhotolabStartJobResultV1,
     PropertyId,
 )
 
@@ -116,6 +127,7 @@ class FixtureTransport:
         self.selected_version = 1
         self.capabilities = ALL_CAPABILITIES
         self.screenshot_width_delta = 0
+        self.refuse_photolab = False
 
     def request(self, method: str, params: Mapping[str, Any]) -> Mapping[str, Any]:
         self.calls.append((method, params))
@@ -149,6 +161,24 @@ class FixtureTransport:
             return {"leaseId": "lease", "released": True}
         if method == "app.protocol":
             return self._app_protocol(params)
+        if method.startswith("photolab."):
+            if self.refuse_photolab:
+                return {"error": {"code": "permissionDenied", "message": "grant required"}}
+            if method == "photolab.project.create":
+                return {"session": {"sessionId": "session"}, "manifest": {"projectId": "project"}}
+            if method == "photolab.images.import.inspect":
+                return {"photos": [{"sourcePath": "/brokered/image.png", "sha256": HASH_A}], "warnings": []}
+            if method == "photolab.images.import.commit":
+                return {"operationId": params["operationId"], "images": [{"entityId": "image-1", "duplicate": False}], "importedEntityCount": 1, "duplicateCount": 0, "autosaveGeneration": 2, "journalSequence": 1, "transformationObjectHash": HASH_B}
+            if method == "photolab.jobs.list":
+                return {"jobs": []}
+            if method == "photolab.images.quality.start":
+                return {"job": {"id": "quality-1", "state": {"kind": "queued"}}}
+            if method == "photolab.jobs.cancel":
+                return {"firstRequest": True, "job": {"id": params["jobId"], "state": {"kind": "cancelRequested"}}}
+            if method == "photolab.project.close":
+                return {"closed": True}
+            return {"method": method}
         raise AssertionError(method)
 
     def lease_descriptor(self) -> dict[str, Any]:
@@ -525,6 +555,55 @@ class SdkTests(unittest.TestCase):
             async with lease as opened:
                 self.assertEqual(await opened.read_all(), fixture.bulk)
             self.assertTrue(fixture.released)
+        asyncio.run(exercise())
+
+    def test_generated_photolab_methods_are_typed_and_fail_closed(self) -> None:
+        created = self.client.photolab_project_create(
+            PhotolabProjectCreateRequestV1(destination_grant_id="destination", name="Project")
+        )
+        self.assertEqual(created.values["manifest"]["projectId"], "project")
+        inspected = self.client.photolab_images_import_inspect(
+            PhotolabImagesImportInspectRequestV1(source_grant_ids=("images",))
+        )
+        self.assertIsInstance(inspected, PhotolabPhotoImportBatchV1)
+        committed = self.client.photolab_images_import_commit(
+            PhotolabImagesImportCommitRequestV1(
+                operation_id="commit-1",
+                images=({"photo": inspected.photos[0], "projectedReference": None, "tags": []},),
+            )
+        )
+        self.assertIsInstance(committed, PhotolabImagesImportCommitResultV1)
+        self.assertEqual(committed.imported_entity_count, 1)
+        jobs = self.client.photolab_jobs_list(PhotolabJobsListRequestV1(include_terminal=True))
+        self.assertIsInstance(jobs, PhotolabJobsListResultV1)
+        started = self.client.photolab_images_quality_start(
+            PhotolabImageQualityStartRequestV1(operation_id="quality-1")
+        )
+        self.assertIsInstance(started, PhotolabStartJobResultV1)
+        cancelled = self.client.photolab_jobs_cancel(PhotolabJobIdRequestV1(job_id="quality-1"))
+        self.assertIsInstance(cancelled, PhotolabCancelJobResultV1)
+        self.assertTrue(cancelled.first_request)
+        self.transport.refuse_photolab = True
+        with self.assertRaises(ProtocolError) as refused:
+            self.client.photolab_project_create(
+                PhotolabProjectCreateRequestV1(destination_grant_id="missing", name="Denied")
+            )
+        self.assertEqual(refused.exception.raw_code, "permissionDenied")
+
+    def test_generated_async_photolab_methods_return_the_same_models(self) -> None:
+        async def exercise() -> None:
+            fixture = FixtureTransport()
+            client = AsyncHimmelcadClient(AsyncFixtureTransport(fixture))
+            await client.negotiate(required_capabilities=("document.read", "document.write"))
+            inspected = await client.photolab_images_import_inspect(
+                PhotolabImagesImportInspectRequestV1(source_grant_ids=("images",))
+            )
+            self.assertIsInstance(inspected, PhotolabPhotoImportBatchV1)
+            jobs = await client.photolab_jobs_list(
+                PhotolabJobsListRequestV1(include_terminal=True)
+            )
+            self.assertIsInstance(jobs, PhotolabJobsListResultV1)
+
         asyncio.run(exercise())
 
 

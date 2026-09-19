@@ -339,6 +339,1617 @@ module.exports = Object.freeze([
     "host": "renderer"
   },
   {
+    "id": "photolab.alignment.resolve",
+    "label": "Alignment resolve",
+    "products": [
+      "photolab"
+    ],
+    "kind": "query",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.alignment.resolve"
+  },
+  {
+    "id": "photolab.alignment.settings.update",
+    "label": "Alignment settings update",
+    "products": [
+      "photolab"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.alignment.settings.update"
+  },
+  {
+    "id": "photolab.alignment.start",
+    "label": "Alignment start",
+    "products": [
+      "photolab"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.jobs.startAlignment"
+  },
+  {
+    "id": "photolab.processing_sets.list",
+    "label": "Processing sets list",
+    "products": [
+      "photolab"
+    ],
+    "kind": "query",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.project.processingSet.list"
+  },
+  {
+    "id": "photolab.processing_sets.create",
+    "label": "Processing sets create",
+    "products": [
+      "photolab"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.project.processingSet.create"
+  },
+  {
+    "id": "photolab.alignment.merge.candidates",
+    "label": "Alignment merge candidates",
+    "products": [
+      "photolab"
+    ],
+    "kind": "query",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.project.alignmentMerge.candidates"
+  },
+  {
+    "id": "photolab.alignment.merge.list",
+    "label": "Alignment merge list",
+    "products": [
+      "photolab"
+    ],
+    "kind": "query",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.project.alignmentMerge.list"
+  },
+  {
+    "id": "photolab.alignment.merge.preflight",
+    "label": "Alignment merge preflight",
+    "products": [
+      "photolab"
+    ],
+    "kind": "query",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.alignmentMerge.preflight"
+  },
+  {
+    "id": "photolab.alignment.merge.plan",
+    "label": "Alignment merge plan",
+    "products": [
+      "photolab"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.project.alignmentMerge.create"
+  },
+  {
+    "id": "photolab.alignment.merge.start",
+    "label": "Alignment merge start",
+    "products": [
+      "photolab"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.jobs.startAlignmentMerge"
+  },
+  {
+    "id": "photolab.capture.capabilities",
+    "label": "Capture capabilities",
+    "products": [
+      "photolab"
+    ],
+    "kind": "query",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.capture.capabilities"
+  },
+  {
+    "id": "photolab.capture.scale.evaluate",
+    "label": "Capture scale evaluate",
+    "products": [
+      "photolab"
+    ],
+    "kind": "query",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.capture.scale.evaluate"
+  },
+  {
+    "id": "photolab.capture.image.prepare",
+    "label": "Capture image prepare",
+    "products": [
+      "photolab"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.capture.image.prepare",
+    "grantFields": [
+      {
+        "field": "sourceGrantId",
+        "target": "sourcePath",
+        "access": "read"
+      },
+      {
+        "field": "artifactGrantId",
+        "target": "artifactRoot",
+        "access": "write"
+      }
+    ]
+  },
+  {
+    "id": "photolab.capture.video.prepare",
+    "label": "Capture video prepare",
+    "products": [
+      "photolab"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.capture.video.prepare",
+    "grantFields": [
+      {
+        "field": "sourceGrantId",
+        "target": "sourcePath",
+        "access": "read"
+      },
+      {
+        "field": "artifactGrantId",
+        "target": "artifactRoot",
+        "access": "write"
+      },
+      {
+        "field": "checkpointGrantId",
+        "target": "checkpointPath",
+        "access": "write"
+      }
+    ]
+  },
+  {
+    "id": "photolab.images.himmelcap.inspect",
+    "label": "Images himmelcap inspect",
+    "products": [
+      "photolab"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.himmelcap.inspect",
+    "grantFields": [
+      {
+        "field": "sourceGrantId",
+        "target": "path",
+        "access": "read"
+      }
+    ]
+  },
+  {
+    "id": "photolab.images.import.inspect",
+    "label": "Images import inspect",
+    "products": [
+      "photolab"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.images.inspect",
+    "grantFields": [
+      {
+        "field": "sourceGrantIds",
+        "target": "paths",
+        "access": "read",
+        "multiple": true
+      }
+    ]
+  },
+  {
+    "id": "photolab.crs.discover",
+    "label": "Crs discover",
+    "products": [
+      "photolab"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.crs.discover"
+  },
+  {
+    "id": "photolab.crs.freeze",
+    "label": "Crs freeze",
+    "products": [
+      "photolab"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.crs.freeze"
+  },
+  {
+    "id": "photolab.images.import.commit",
+    "label": "Images import commit",
+    "products": [
+      "photolab"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.images.commit"
+  },
+  {
+    "id": "photolab.images.list",
+    "label": "Images list",
+    "products": [
+      "photolab"
+    ],
+    "kind": "query",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.images.list"
+  },
+  {
+    "id": "photolab.images.quality.list",
+    "label": "Images quality list",
+    "products": [
+      "photolab"
+    ],
+    "kind": "query",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.images.quality.list"
+  },
+  {
+    "id": "photolab.images.quality.start",
+    "label": "Images quality start",
+    "products": [
+      "photolab"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.jobs.startImageQuality"
+  },
+  {
+    "id": "photolab.image_masks.list",
+    "label": "Image masks list",
+    "products": [
+      "photolab"
+    ],
+    "kind": "query",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.project.imageMask.list"
+  },
+  {
+    "id": "photolab.image_masks.edit",
+    "label": "Image masks edit",
+    "products": [
+      "photolab"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.project.imageMask.edit"
+  },
+  {
+    "id": "photolab.capture_groups.list",
+    "label": "Capture groups list",
+    "products": [
+      "photolab"
+    ],
+    "kind": "query",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.project.captureGroup.list"
+  },
+  {
+    "id": "photolab.capture_groups.create",
+    "label": "Capture groups create",
+    "products": [
+      "photolab"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.project.captureGroup.create"
+  },
+  {
+    "id": "photolab.capture_groups.confirm",
+    "label": "Capture groups confirm",
+    "products": [
+      "photolab"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.project.captureGroup.confirm"
+  },
+  {
+    "id": "photolab.capture_groups.draft",
+    "label": "Capture groups draft",
+    "products": [
+      "photolab"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.project.captureGroup.duplicateAsDraft"
+  },
+  {
+    "id": "photolab.capture_groups.merge",
+    "label": "Capture groups merge",
+    "products": [
+      "photolab"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.project.captureGroup.mergeProposals"
+  },
+  {
+    "id": "photolab.calibration_groups.list",
+    "label": "Calibration groups list",
+    "products": [
+      "photolab"
+    ],
+    "kind": "query",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.project.calibrationGroup.list"
+  },
+  {
+    "id": "photolab.calibration_groups.intrinsics.update",
+    "label": "Calibration groups intrinsics update",
+    "products": [
+      "photolab"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.project.calibrationGroup.updateIntrinsics"
+  },
+  {
+    "id": "photolab.calibration_groups.initial_calibration.set",
+    "label": "Calibration groups initial calibration set",
+    "products": [
+      "photolab"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.project.calibrationGroup.setInitialCalibration"
+  },
+  {
+    "id": "photolab.gcp.import.preview",
+    "label": "Gcp import preview",
+    "products": [
+      "photolab"
+    ],
+    "kind": "query",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.gcp.preview",
+    "grantFields": [
+      {
+        "field": "sourceGrantId",
+        "target": "path",
+        "access": "read"
+      }
+    ]
+  },
+  {
+    "id": "photolab.gcp.import.commit",
+    "label": "Gcp import commit",
+    "products": [
+      "photolab"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.gcp.commit",
+    "grantFields": [
+      {
+        "field": "sourceGrantId",
+        "target": "path",
+        "access": "read"
+      }
+    ]
+  },
+  {
+    "id": "photolab.gcp.list",
+    "label": "Gcp list",
+    "products": [
+      "photolab"
+    ],
+    "kind": "query",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.gcp.list"
+  },
+  {
+    "id": "photolab.gcp.observation.upsert",
+    "label": "Gcp observation upsert",
+    "products": [
+      "photolab"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.gcp.observation.upsert"
+  },
+  {
+    "id": "photolab.gcp.observation.upsert_assisted",
+    "label": "Gcp observation upsert assisted",
+    "products": [
+      "photolab"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.gcp.observation.upsertAssisted"
+  },
+  {
+    "id": "photolab.gcp.observation.edit",
+    "label": "Gcp observation edit",
+    "products": [
+      "photolab"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.gcp.observation.edit"
+  },
+  {
+    "id": "photolab.gcp.local_estimate.compute",
+    "label": "Gcp local estimate compute",
+    "products": [
+      "photolab"
+    ],
+    "kind": "query",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.gcp.localEstimate.compute"
+  },
+  {
+    "id": "photolab.gcp.aligned_cameras",
+    "label": "Gcp aligned cameras",
+    "products": [
+      "photolab"
+    ],
+    "kind": "query",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.gcp.alignedCameras"
+  },
+  {
+    "id": "photolab.gcp.calibration_report",
+    "label": "Gcp calibration report",
+    "products": [
+      "photolab"
+    ],
+    "kind": "query",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.gcp.calibrationReport"
+  },
+  {
+    "id": "photolab.gcp.optimization.snapshot",
+    "label": "Gcp optimization snapshot",
+    "products": [
+      "photolab"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.gcp.optimization.snapshot"
+  },
+  {
+    "id": "photolab.gcp.optimization.start",
+    "label": "Gcp optimization start",
+    "products": [
+      "photolab"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.jobs.startGcpOptimization"
+  },
+  {
+    "id": "photolab.gcp.optimization.latest",
+    "label": "Gcp optimization latest",
+    "products": [
+      "photolab"
+    ],
+    "kind": "query",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.gcp.optimization.latest"
+  },
+  {
+    "id": "photolab.gcp.optimization.list",
+    "label": "Gcp optimization list",
+    "products": [
+      "photolab"
+    ],
+    "kind": "query",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.gcp.optimization.list"
+  },
+  {
+    "id": "photolab.products.list",
+    "label": "Products list",
+    "products": [
+      "photolab"
+    ],
+    "kind": "query",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.products.list"
+  },
+  {
+    "id": "photolab.products.resolve_inputs",
+    "label": "Products resolve inputs",
+    "products": [
+      "photolab"
+    ],
+    "kind": "query",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.products.resolveInputs"
+  },
+  {
+    "id": "photolab.products.start",
+    "label": "Products start",
+    "products": [
+      "photolab"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.jobs.startProduct"
+  },
+  {
+    "id": "photolab.products.export",
+    "label": "Products export",
+    "products": [
+      "photolab"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.jobs.startProductExport",
+    "grantFields": [
+      {
+        "field": "destinationGrantId",
+        "target": "destinationPath",
+        "access": "write"
+      }
+    ]
+  },
+  {
+    "id": "photolab.batch.start",
+    "label": "Batch start",
+    "products": [
+      "photolab"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.jobs.startBatch"
+  },
+  {
+    "id": "photolab.jobs.list",
+    "label": "Jobs list",
+    "products": [
+      "photolab"
+    ],
+    "kind": "query",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.jobs.list",
+    "responseWrap": "jobs"
+  },
+  {
+    "id": "photolab.jobs.status",
+    "label": "Jobs status",
+    "products": [
+      "photolab"
+    ],
+    "kind": "query",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.jobs.status"
+  },
+  {
+    "id": "photolab.jobs.cancel",
+    "label": "Jobs cancel",
+    "products": [
+      "photolab"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.jobs.cancel"
+  },
+  {
+    "id": "photolab.jobs.resume",
+    "label": "Jobs resume",
+    "products": [
+      "photolab"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.jobs.resume"
+  },
+  {
+    "id": "photolab.report.survey_data",
+    "label": "Report survey data",
+    "products": [
+      "photolab"
+    ],
+    "kind": "query",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.report.surveyData"
+  },
+  {
+    "id": "photolab.report.export",
+    "label": "Report export",
+    "products": [
+      "photolab"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.report.export",
+    "grantFields": [
+      {
+        "field": "targetGrantId",
+        "target": "destinationPath",
+        "access": "write"
+      }
+    ]
+  },
+  {
+    "id": "photolab.hardware.probe",
+    "label": "Hardware probe",
+    "products": [
+      "photolab"
+    ],
+    "kind": "query",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.hardware.probe"
+  },
+  {
+    "id": "photolab.project.create",
+    "label": "Project create",
+    "products": [
+      "photolab"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "always",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.project.create",
+    "grantFields": [
+      {
+        "field": "destinationGrantId",
+        "target": "path",
+        "access": "write"
+      }
+    ]
+  },
+  {
+    "id": "photolab.project.open",
+    "label": "Project open",
+    "products": [
+      "photolab"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "always",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.project.open",
+    "grantFields": [
+      {
+        "field": "sourceGrantId",
+        "target": "path",
+        "access": "read"
+      },
+      {
+        "field": "cacheGrantId",
+        "target": "workingRoot",
+        "access": "write"
+      }
+    ]
+  },
+  {
+    "id": "photolab.project.reopen_without_recovery",
+    "label": "Project reopen without recovery",
+    "products": [
+      "photolab"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.project.reopen_without_recovery"
+  },
+  {
+    "id": "photolab.project.snapshot",
+    "label": "Project snapshot",
+    "products": [
+      "photolab"
+    ],
+    "kind": "query",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.project.snapshot"
+  },
+  {
+    "id": "photolab.project.diagnostics",
+    "label": "Project diagnostics",
+    "products": [
+      "photolab"
+    ],
+    "kind": "query",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.project.diagnostics"
+  },
+  {
+    "id": "photolab.project.autosave",
+    "label": "Project autosave",
+    "products": [
+      "photolab"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.project.autosave"
+  },
+  {
+    "id": "photolab.project.save",
+    "label": "Project save",
+    "products": [
+      "photolab"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.project.save"
+  },
+  {
+    "id": "photolab.project.save_as",
+    "label": "Project save as",
+    "products": [
+      "photolab"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.project.saveAs",
+    "grantFields": [
+      {
+        "field": "targetGrantId",
+        "target": "path",
+        "access": "write"
+      }
+    ]
+  },
+  {
+    "id": "photolab.project.close",
+    "label": "Project close",
+    "products": [
+      "photolab"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.project.close"
+  },
+  {
+    "id": "photolab.project.recent.list",
+    "label": "Project recent list",
+    "products": [
+      "photolab"
+    ],
+    "kind": "query",
+    "shortcut": null,
+    "enablement": "always",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.project.recent.list"
+  },
+  {
+    "id": "photolab.project.recent.remove",
+    "label": "Project recent remove",
+    "products": [
+      "photolab"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "always",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.project.recent.remove"
+  },
+  {
+    "id": "photolab.project.untitled.cleanup",
+    "label": "Project untitled cleanup",
+    "products": [
+      "photolab"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "always",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.project.untitled.cleanup"
+  },
+  {
+    "id": "photolab.entities.rename",
+    "label": "Entities rename",
+    "products": [
+      "photolab"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.project.entity.rename"
+  },
+  {
+    "id": "photolab.entities.move",
+    "label": "Entities move",
+    "products": [
+      "photolab"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.project.entity.move"
+  },
+  {
+    "id": "photolab.entities.visibility.set",
+    "label": "Entities visibility set",
+    "products": [
+      "photolab"
+    ],
+    "kind": "command",
+    "shortcut": null,
+    "enablement": "hasProject",
+    "surfaces": {
+      "ribbon": false,
+      "contextMenu": false,
+      "quickSurface": false,
+      "console": true,
+      "automation": true
+    },
+    "group": "edit",
+    "ownerSpec": "PhotoLab WP-G2",
+    "host": "sidecar",
+    "rpcMethod": "photolab.project.entity.visibility"
+  },
+  {
     "id": "view.frame",
     "label": "Frame all",
     "products": [

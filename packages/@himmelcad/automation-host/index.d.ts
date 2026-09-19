@@ -15,6 +15,7 @@ export interface AutomationErrorPayload {
 export interface AutomationRpcRouterOptions {
   readonly sidecarCall: (method: string, params: unknown) => Promise<unknown>;
   readonly viewCall?: (method: string, params: unknown) => Promise<unknown>;
+  readonly filesystemGrants?: BrokeredFilesystemGrantStore;
   readonly confirmationCall?: (request: {
     readonly hostSessionId: string;
     readonly commandId: string;
@@ -22,6 +23,21 @@ export interface AutomationRpcRouterOptions {
     readonly losses: readonly unknown[];
     readonly conflicts: readonly unknown[];
   }) => Promise<string>;
+}
+
+export class BrokeredFilesystemGrantStore {
+  issue(input: {
+    readonly connectionId: string;
+    readonly path: string;
+    readonly access: 'read' | 'write';
+  }): Promise<string>;
+  resolve(
+    grantId: string,
+    connectionId: string,
+    requestedAccess: 'read' | 'write',
+  ): Promise<string>;
+  revokeConnection(connectionId: string): void;
+  revokeAll(): void;
 }
 
 export class AutomationRpcRouter {

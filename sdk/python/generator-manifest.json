@@ -11,19 +11,19 @@
     "schemas/automation/fixtures/automation-wire-v1.json": "0861944bfcfd302e1345c5ff3b1c8537de3fdefd9cc23fabca913bb984701f02",
     "schemas/automation/fixtures/view-state-v2.json": "1aa9a7b4f77856007f7c674972cb7a9f1a676fbd81bdff2471884c7b0f2c6b52"
   },
-  "generatorSha256": "12ec9378dc11259b5f62cd64da214f2daaa77278371223f57e1ef0788ba77621",
+  "generatorSha256": "da9969441d390100506c7f80cf6948b82e2051b5dd7539150c23685692a7561b",
   "generatorVersion": "1.0.0",
   "minimumPython": "3.12",
   "outputs": {
     "README.md": "bd9aeb35d1f5b8d2c0e1c76303ac10c0877619e718034ddf3ab57b3ce92cb9dc",
     "pyproject.toml": "75fd998505ffacbf590e30efbca67d7d24dd73a96ecadcd9a05fdfa65aa473bc",
     "src/himmelcad/__init__.py": "968a2d64774ce4c30171897c9f7e1c9d2fe4bc2ef82b6658850ce49dc11361e1",
-    "src/himmelcad/client.py": "1f84d11a939a1054b6d8b82cc52935051e1d3a26180bfe9c0fe107f28004f5f1",
+    "src/himmelcad/client.py": "9f1a01ef3b5c784947537113485ced2260d0afc170635f627da133a39aafd38b",
     "src/himmelcad/errors.py": "36c56157ef4bedb312d2280d5d465cd3f011a2876dbe70d9c862920084ad117a",
     "src/himmelcad/leases.py": "4ba4f4a0371236b1fa9b213ced5c8955fffaf70e8341d94dd247ffd7b9cc6069",
-    "src/himmelcad/models.py": "dff47562d87f197077ea53ee4e82b2d4b529c765e4d05040542abcc5c1eb38ee",
+    "src/himmelcad/models.py": "8c65061295438f5d2b1d90f9be2bb8ac0ab39ef4294837ad601c2b47c92f4f71",
     "src/himmelcad/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
   "schemaId": "hcad.automation-schema@1",
-  "schemaSha256": "e770e37f2fcbf965d3c2ba256a26a9c4bfd31003e42f13484c009558e389b9b7"
+  "schemaSha256": "668f9f87ceeedf4f8476f0f187302233c49fe96f1c031b479120815d32e6290e"
 }

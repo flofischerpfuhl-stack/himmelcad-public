@@ -7,7 +7,16 @@ const { request: httpsRequest } = require('node:https');
 const { lookup: dnsLookup } = require('node:dns/promises');
 const { createServer: createNetServer, isIP } = require('node:net');
 const { createReadStream } = require('node:fs');
-const { access, chmod, mkdtemp, realpath, rm, stat, writeFile } = require('node:fs/promises');
+const {
+  access,
+  chmod,
+  lstat,
+  mkdtemp,
+  realpath,
+  rm,
+  stat,
+  writeFile,
+} = require('node:fs/promises');
 const { tmpdir } = require('node:os');
 const { delimiter, isAbsolute, relative, resolve, sep } = require('node:path');
 const { constants } = require('node:fs');
@@ -170,11 +179,84 @@ const VIEW_METHODS = new Set([
 for (const row of GENERATED_COMMAND_TABLE) {
   if (row.surfaces.automation && row.host === 'renderer') VIEW_METHODS.add(row.id);
 }
+const PHOTOLAB_METHODS = new Map(
+  GENERATED_COMMAND_TABLE.filter(
+    (row) => row.surfaces.automation && row.host === 'sidecar' && row.products.includes('photolab'),
+  ).map((row) => [row.id, row]),
+);
+
+class BrokeredFilesystemGrantStore {
+  #grants = new Map();
+
+  async issue({ connectionId, path, access: requestedAccess }) {
+    if (
+      typeof connectionId !== 'string' ||
+      connectionId.length === 0 ||
+      !isAbsolute(path) ||
+      !['read', 'write'].includes(requestedAccess)
+    ) {
+      throw new TypeError('Invalid brokered filesystem grant request.');
+    }
+    const requestedPath = resolve(path);
+    const metadata = await lstat(requestedPath);
+    if (metadata.isSymbolicLink()) {
+      throw protocolFailure('permissionDenied', 'Filesystem grants cannot target symbolic links.');
+    }
+    const canonicalPath = await realpath(requestedPath);
+    const identity = await stat(canonicalPath);
+    const grantId = `fsg1:${randomBytes(32).toString('hex')}`;
+    this.#grants.set(grantId, {
+      connectionId,
+      path: canonicalPath,
+      access: requestedAccess,
+      dev: identity.dev,
+      ino: identity.ino,
+    });
+    return grantId;
+  }
+
+  async resolve(grantId, connectionId, requestedAccess) {
+    const grant = this.#grants.get(grantId);
+    if (
+      !grant ||
+      grant.connectionId !== connectionId ||
+      (requestedAccess === 'write' && grant.access !== 'write')
+    ) {
+      throw protocolFailure(
+        'permissionDenied',
+        'A matching brokered filesystem grant is required.',
+      );
+    }
+    const canonicalPath = await realpath(grant.path).catch(() => null);
+    const identity = canonicalPath ? await stat(canonicalPath).catch(() => null) : null;
+    if (
+      canonicalPath !== grant.path ||
+      !identity ||
+      identity.dev !== grant.dev ||
+      identity.ino !== grant.ino
+    ) {
+      this.#grants.delete(grantId);
+      throw protocolFailure('permissionDenied', 'The brokered filesystem object changed.');
+    }
+    return grant.path;
+  }
+
+  revokeConnection(connectionId) {
+    for (const [grantId, grant] of this.#grants) {
+      if (grant.connectionId === connectionId) this.#grants.delete(grantId);
+    }
+  }
+
+  revokeAll() {
+    this.#grants.clear();
+  }
+}
 
 class AutomationRpcRouter {
   #sidecarCall;
   #viewCall;
   #confirmationCall;
+  #filesystemGrants;
   #connections = new Map();
 
   constructor(options) {
@@ -184,6 +266,7 @@ class AutomationRpcRouter {
     this.#sidecarCall = options.sidecarCall;
     this.#viewCall = options.viewCall;
     this.#confirmationCall = options.confirmationCall;
+    this.#filesystemGrants = options.filesystemGrants;
   }
 
   registerConfirmationGrant(input) {
@@ -214,6 +297,7 @@ class AutomationRpcRouter {
 
   revokeAll() {
     this.#connections.clear();
+    this.#filesystemGrants?.revokeAll();
   }
 
   openConnection() {
@@ -224,6 +308,7 @@ class AutomationRpcRouter {
 
   closeConnection(connectionId) {
     this.#connections.delete(connectionId);
+    this.#filesystemGrants?.revokeConnection(connectionId);
   }
 
   async handle(message, connectionId = 'direct') {
@@ -241,7 +326,7 @@ class AutomationRpcRouter {
       };
     }
     try {
-      const result = await this.#dispatch(connection, request.method, request.params);
+      const result = await this.#dispatch(connection, connectionId, request.method, request.params);
       if (!isRecord(result))
         throw protocolFailure('internal', 'Host returned a non-object result.');
       return { id: request.id, result };
@@ -250,7 +335,7 @@ class AutomationRpcRouter {
     }
   }
 
-  async #dispatch(connection, method, params) {
+  async #dispatch(connection, connectionId, method, params) {
     if (!ALLOWED_METHODS.has(method)) {
       throw protocolFailure('permissionDenied', `Automation method is not allowed: ${method}`);
     }
@@ -264,6 +349,33 @@ class AutomationRpcRouter {
       }
       const result = await this.#viewCall(method, params);
       return method === 'view.screenshot' ? normalizeScreenshotResult(connection, result) : result;
+    }
+    const photolabMethod = PHOTOLAB_METHODS.get(method);
+    if (photolabMethod) {
+      const publicParams =
+        method === 'photolab.images.import.commit'
+          ? hydratePhotolabImageCommit(connection, params)
+          : params;
+      const brokeredParams = await brokerPhotolabParams(
+        photolabMethod,
+        publicParams,
+        connectionId,
+        this.#filesystemGrants,
+      );
+      const result = await this.#sidecarCall(photolabMethod.rpcMethod ?? method, brokeredParams);
+      if (method === 'photolab.images.import.inspect') {
+        return sanitizePhotolabImageInspection(connection, result);
+      }
+      if (
+        (method === 'photolab.project.create' || method === 'photolab.project.open') &&
+        isRecord(result) &&
+        isRecord(result.session)
+      ) {
+        const { sourcePath: _sourcePath, workingPath: _workingPath, ...session } = result.session;
+        return { ...result, session };
+      }
+      if (isRecord(result)) return result;
+      return { [photolabMethod.responseWrap ?? 'value']: result };
     }
     if (method === 'automation.bulk.read' && localLease(connection, params)) {
       return readLocalLease(connection, params);
@@ -2101,6 +2213,103 @@ async function captureProcess(command, args, timeoutMs, maxOutputBytes) {
   });
 }
 
+async function brokerPhotolabParams(row, params, connectionId, grants) {
+  if (!isRecord(params)) {
+    throw protocolFailure('invalidRequest', 'PhotoLab command parameters must be an object.');
+  }
+  const fields = Array.isArray(row.grantFields) ? row.grantFields : [];
+  if (fields.length === 0) return params;
+  if (!(grants instanceof BrokeredFilesystemGrantStore)) {
+    throw protocolFailure('permissionDenied', 'The filesystem grant broker is unavailable.');
+  }
+  const brokered = { ...params };
+  for (const field of fields) {
+    if (
+      !isRecord(field) ||
+      !validIdentifier(field.field) ||
+      !validIdentifier(field.target) ||
+      !['read', 'write'].includes(field.access)
+    ) {
+      throw protocolFailure('internal', 'Generated filesystem grant metadata is invalid.');
+    }
+    if (Object.hasOwn(params, field.target)) {
+      throw protocolFailure('permissionDenied', 'Raw filesystem paths are not accepted.');
+    }
+    const value = params[field.field];
+    delete brokered[field.field];
+    if (field.multiple === true) {
+      if (!Array.isArray(value) || value.length === 0) {
+        throw protocolFailure('permissionDenied', 'A brokered filesystem grant is required.');
+      }
+      brokered[field.target] = await Promise.all(
+        value.map((grantId) => grants.resolve(grantId, connectionId, field.access)),
+      );
+    } else {
+      if (!validToken(value, 4_096)) {
+        throw protocolFailure('permissionDenied', 'A brokered filesystem grant is required.');
+      }
+      brokered[field.target] = await grants.resolve(value, connectionId, field.access);
+    }
+  }
+  return brokered;
+}
+
+function sanitizePhotolabImageInspection(connection, result) {
+  if (!isRecord(result) || !Array.isArray(result.photos) || !Array.isArray(result.warnings)) {
+    throw protocolFailure(
+      'invalidRequest',
+      'PhotoLab image inspection returned a malformed batch.',
+    );
+  }
+  const grantByPath = new Map();
+  const photos = result.photos.map((photo) => {
+    if (!isRecord(photo) || typeof photo.sourcePath !== 'string' || photo.sourcePath.length === 0) {
+      throw protocolFailure(
+        'invalidRequest',
+        'PhotoLab image inspection returned a raw-path record without identity.',
+      );
+    }
+    const sourceGrantId = `photo1:${randomBytes(32).toString('hex')}`;
+    connection.photolabPaths.set(sourceGrantId, photo.sourcePath);
+    grantByPath.set(photo.sourcePath, sourceGrantId);
+    const { sourcePath: _sourcePath, ...sanitized } = photo;
+    return { ...sanitized, sourceGrantId };
+  });
+  const warnings = result.warnings.map((warning) => {
+    if (!isRecord(warning) || typeof warning.sourcePath !== 'string') return warning;
+    const { sourcePath, ...sanitized } = warning;
+    return {
+      ...sanitized,
+      ...(grantByPath.has(sourcePath) ? { sourceGrantId: grantByPath.get(sourcePath) } : {}),
+    };
+  });
+  return { ...result, photos, warnings };
+}
+
+function hydratePhotolabImageCommit(connection, params) {
+  if (!isRecord(params) || !Array.isArray(params.images)) {
+    throw protocolFailure('invalidRequest', 'PhotoLab image commit parameters are malformed.');
+  }
+  return {
+    ...params,
+    images: params.images.map((item) => {
+      if (!isRecord(item) || !isRecord(item.photo)) {
+        throw protocolFailure('invalidRequest', 'PhotoLab image commit item is malformed.');
+      }
+      if (Object.hasOwn(item.photo, 'sourcePath')) {
+        throw protocolFailure('permissionDenied', 'Raw filesystem paths are not accepted.');
+      }
+      const sourceGrantId = item.photo.sourceGrantId;
+      const sourcePath = connection.photolabPaths.get(sourceGrantId);
+      if (!sourcePath) {
+        throw protocolFailure('permissionDenied', 'The inspected image grant is missing or stale.');
+      }
+      const { sourceGrantId: _sourceGrantId, ...photo } = item.photo;
+      return { ...item, photo: { ...photo, sourcePath } };
+    }),
+  };
+}
+
 function stableHash(value) {
   return createHash('sha256')
     .update(JSON.stringify(sortJson(value)))
@@ -2170,11 +2379,13 @@ function newConnectionState() {
     plans: new Map(),
     grants: new Map(),
     leases: new Map(),
+    photolabPaths: new Map(),
   };
 }
 
 module.exports = {
   AutomationRpcRouter,
+  BrokeredFilesystemGrantStore,
   DesktopAgentHarnessHostTransport,
   ManagedPythonHost,
   normalizeAutomationError,

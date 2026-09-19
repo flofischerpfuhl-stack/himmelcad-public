@@ -9,6 +9,7 @@ const test = require('node:test');
 
 const {
   AutomationRpcRouter,
+  BrokeredFilesystemGrantStore,
   DesktopAgentHarnessHostTransport,
   ManagedPythonHost,
 } = require('../index.cjs');
@@ -19,6 +20,71 @@ const {
   _providerCredentialResponseForTest: providerCredentialResponse,
   registerElectronAutomationHost,
 } = require('../electron.cjs');
+
+test('PhotoLab filesystem commands require connection-bound brokered grants', async (context) => {
+  const scratchRoot = resolve(__dirname, '../../../../.build/codex-scratch/pl-i2/host-tests');
+  await mkdir(scratchRoot, { recursive: true });
+  const directory = await mkdtemp(resolve(scratchRoot, 'grant-'));
+  context.after(async () => rm(directory, { recursive: true, force: true }));
+  const calls = [];
+  const filesystemGrants = new BrokeredFilesystemGrantStore();
+  const router = new AutomationRpcRouter({
+    filesystemGrants,
+    sidecarCall: async (method, params) => {
+      if (method === 'app.negotiate') return negotiationResult(['document.write']);
+      calls.push({ method, params });
+      return { session: {}, manifest: {} };
+    },
+  });
+  const connectionId = router.openConnection();
+  await router.handle(
+    {
+      id: 1,
+      method: 'app.negotiate',
+      params: {
+        clientName: 'photolab-grant-test',
+        supportedVersions: [1],
+        requiredCapabilities: ['document.write'],
+        optionalCapabilities: [],
+      },
+    },
+    connectionId,
+  );
+  const refused = await router.handle(
+    {
+      id: 2,
+      method: 'photolab.project.create',
+      params: { destinationGrantId: 'missing', name: 'Denied' },
+    },
+    connectionId,
+  );
+  assert.equal(refused.error.code, 'permissionDenied');
+  assert.equal(calls.length, 0);
+
+  const destinationGrantId = await filesystemGrants.issue({
+    connectionId,
+    path: directory,
+    access: 'write',
+  });
+  const accepted = await router.handle(
+    {
+      id: 3,
+      method: 'photolab.project.create',
+      params: { destinationGrantId, name: 'Granted' },
+    },
+    connectionId,
+  );
+  assert.deepEqual(accepted.result, { session: {}, manifest: {} });
+  assert.deepEqual(calls, [
+    { method: 'photolab.project.create', params: { name: 'Granted', path: directory } },
+  ]);
+
+  router.closeConnection(connectionId);
+  await assert.rejects(
+    filesystemGrants.resolve(destinationGrantId, connectionId, 'write'),
+    /matching brokered filesystem grant/u,
+  );
+});
 
 test('provider credential IPC accepts only the owning main frame', () => {
   const rendererUrl = 'file:///trusted/index.html';
@@ -345,7 +411,10 @@ test('S-04 automation parity routes every canonical selection row through the re
     const response = await router.handle({ id: index + 1, method, params });
     assert.equal(response.result.payload.method, method);
   }
-  assert.deepEqual(calls.map((call) => call.method), rows);
+  assert.deepEqual(
+    calls.map((call) => call.method),
+    rows,
+  );
 });
 
 test('S-08 view state, history, presentation, quality and bookmarks share the renderer owner', async () => {
@@ -362,17 +431,29 @@ test('S-08 view state, history, presentation, quality and bookmarks share the re
   });
   await negotiate(router);
   const methods = [
-    'view.state.get', 'view.state.set', 'view.mode.set', 'view.quality.get',
-    'view.bookmark.create', 'view.bookmark.list', 'view.bookmark.restore',
-    'view.presentation.set', 'view.point_size.set', 'viewing_box.list',
-    'display.history.get', 'display.history.clear',
-    'camera.history.get', 'camera.history.clear',
+    'view.state.get',
+    'view.state.set',
+    'view.mode.set',
+    'view.quality.get',
+    'view.bookmark.create',
+    'view.bookmark.list',
+    'view.bookmark.restore',
+    'view.presentation.set',
+    'view.point_size.set',
+    'viewing_box.list',
+    'display.history.get',
+    'display.history.clear',
+    'camera.history.get',
+    'camera.history.clear',
   ];
   for (const [index, method] of methods.entries()) {
     const response = await router.handle({ id: index + 1, method, params: {} });
     assert.equal(response.result.method, method);
   }
-  assert.deepEqual(calls.map((call) => call.method), methods);
+  assert.deepEqual(
+    calls.map((call) => call.method),
+    methods,
+  );
 });
 
 test('negotiation and grants are bound to one live RPC connection', async () => {
@@ -977,11 +1058,10 @@ test('X3 generated registry routes three command surfaces through the renderer h
     });
     assert.equal(response.result.payload.ok, true);
   }
-  assert.deepEqual(calls.map((call) => call.method), [
-    'view.frame',
-    'view.preset.top',
-    'select.clear',
-  ]);
+  assert.deepEqual(
+    calls.map((call) => call.method),
+    ['view.frame', 'view.preset.top', 'select.clear'],
+  );
 });
 
 function negotiationResult(capabilities) {

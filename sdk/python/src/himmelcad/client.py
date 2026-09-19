@@ -10,18 +10,10 @@ from typing import Any, Protocol
 
 from .errors import GenerationChangedError, ProtocolError, ValidationError, error_from_payload
 from .leases import AsyncBulkLease, BulkLease
-from .models import (
-    BulkLeaseDescriptor, BulkReadResult, BulkReleaseResult, CanonicalCommandTransaction, CanonicalEntity,
-    CanonicalEntityEdit, CanonicalEntityMutation,
-    CasDescription, CommandCancelResult, CommandStatus, CommandValidationPlan, EntityPage,
-    EntityVersionRef, JournalPage, PropertyId, PropertyQueryResult, ProtocolNegotiationResponse, ScreenshotResultV1,
-    ProductDatasetListRequestV1, ProductDatasetListResultV1,
-    ProductDatasetRegisterRequestV1, ProductDatasetRegisterResultV1,
-    ViewModeTransitionRequest, ViewStateV2, WireModel, to_wire,
-)
+from .models import *
 
 LIMITS = MappingProxyType({'maxPageItems': 1000, 'maxPageBytes': 1048576, 'maxJournalPageItems': 4096, 'maxPropertySelectionItems': 1000, 'maxBulkRangeBytes': 8388608, 'maxInlineBytes': 262144, 'maxShapeRank': 8, 'maxShapeElements': 2000000000})
-METHOD_CAPABILITIES = MappingProxyType({'view.state.get': 'view.read', 'view.state.set': 'view.write', 'view.mode.set': 'view.write', 'view.diagnostics.get': 'view.read', 'view.quality.get': 'view.read', 'view.diagnostics.sample': 'view.read', 'view.frame': 'view.write', 'view.camera.undo': 'view.write', 'view.camera.redo': 'view.write', 'view.preset.perspective': 'view.write', 'view.hud.toggle': 'view.write', 'view.display.undo': 'view.write', 'view.display.redo': 'view.write', 'view.bookmark.create': 'document.write', 'view.bookmark.list': 'document.read', 'view.bookmark.restore': 'document.write', 'view.preset.top': 'view.write', 'view.preset.front': 'view.write', 'view.preset.right': 'view.write', 'view.preset.isometric': 'view.write', 'edit.clipboard.paste_in_place': 'document.write', 'entity.rename': 'document.write', 'photolab.images.remove': 'document.write', 'entity.zoom_to': 'view.write', 'entity.hide': 'view.write', 'entity.show': 'view.write', 'entity.isolate': 'view.write', 'entity.properties': 'document.read', 'entity.export': 'document.read', 'photolab.gcp.images': 'document.read', 'measure.point': 'document.write', 'measure.distance': 'document.write', 'measure.dz': 'document.write', 'measurement.create': 'document.write', 'measurement.list': 'document.read', 'measurement.get': 'document.read', 'measurement.update_anchor': 'document.write', 'measurement.detach_anchor': 'document.write', 'measurement.rebind_anchor': 'document.write', 'measurement.rename': 'document.write', 'measurement.set_layer': 'document.write', 'measurement.set_visibility': 'document.write', 'measurement.remove': 'document.write', 'measurement.delete': 'document.write', 'inspect.point_info': 'document.read', 'viewing_box.place': 'document.write', 'viewing_box.update': 'document.write', 'viewing_box.set_operation': 'document.write', 'viewing_box.lock': 'document.write', 'viewing_box.unlock': 'document.write', 'viewing_box.rename': 'document.write', 'viewing_box.activate': 'view.write', 'viewing_box.deactivate': 'view.write', 'viewing_box.remove': 'document.write', 'viewing_box.list': 'document.read', 'view.box.place': 'document.write', 'view.box.update': 'document.write', 'view.box.set_operation': 'document.write', 'view.box.lock': 'document.write', 'view.box.unlock': 'document.write', 'view.box.rename': 'document.write', 'view.box.activate': 'view.write', 'view.box.deactivate': 'view.write', 'view.box.remove': 'document.write', 'view.box.list': 'document.read', 'view.presentation.set': 'view.write', 'view.point_size.set': 'view.write', 'file.import': 'document.write', 'io.import.product_dataset.list': 'document.read', 'io.import.product_dataset.register': 'document.write', 'pointcloud.display.set': 'document.write', 'pointcloud.ground.extract': 'document.write', 'pointcloud.ground.preview': 'document.read', 'pointcloud.ground.cancel': 'document.write', 'pointcloud.sample': 'document.write', 'pointcloud.rasterize': 'document.write', 'pointcloud.fence.begin': 'view.write', 'pointcloud.fence.commit': 'view.write', 'pointcloud.fence.cancel': 'view.write', 'pointcloud.segment.keep_inside': 'document.write', 'pointcloud.segment.remove_inside': 'document.write', 'project.flush': 'document.write', 'project.new': 'document.write', 'project.open': 'document.write', 'project.recent': 'document.read', 'project.undo': 'document.write', 'project.redo': 'document.write', 'project.save': 'document.write', 'project.save_as': 'document.write', 'project.close': 'document.write', 'snapshot.create': 'document.write', 'snapshot.list': 'document.read', 'snapshot.rename': 'document.write', 'snapshot.restore': 'document.write', 'snapshot.delete': 'document.write', 'derived.recipe.get': 'document.read', 'derived.recipe.list': 'document.read', 'derived.recipe.status': 'document.read', 'derived.recipe.regenerate': 'document.write', 'derived.recipe.regenerate_batch': 'document.write', 'derived.recipe.detach': 'document.write', 'derived.recipe.relink': 'document.write', 'mesh.surface.draft.list': 'document.read', 'mesh.surface.draft.get': 'document.read', 'mesh.surface.draft.create': 'document.write', 'mesh.surface.draft.set': 'document.write', 'mesh.surface.draft.apply_fix': 'document.write', 'mesh.surface.draft.history': 'document.read', 'mesh.surface.draft.undo': 'document.write', 'mesh.surface.draft.redo': 'document.write', 'mesh.surface.draft.suspend': 'document.write', 'mesh.surface.draft.resume': 'document.write', 'mesh.surface.draft.discard': 'document.write', 'mesh.surface.check': 'document.read', 'mesh.surface.create': 'document.write', 'mesh.surface.edit.add_breakline': 'document.write', 'mesh.surface.edit.remove_breakline': 'document.write', 'mesh.surface.edit.add_form_line': 'document.write', 'mesh.surface.edit.remove_form_line': 'document.write', 'mesh.surface.edit.set_source_role': 'document.write', 'mesh.edit.region.select': 'document.read', 'mesh.edit.smooth': 'document.write', 'mesh.edit.downsample': 'document.write', 'mesh.simplify.preview': 'document.read', 'mesh.simplify.check': 'document.read', 'mesh.simplify.bake': 'document.write', 'draw.line': 'document.write', 'draw.polyline': 'document.write', 'draw.boundary': 'document.write', 'draw.vertex.add': 'document.write', 'draw.vertex.constrain': 'document.write', 'draw.vertex.type': 'document.write', 'draw.vertex.undo': 'document.write', 'draw.point.create': 'document.write', 'draw.curve.create': 'document.write', 'draw.support_role.get': 'document.read', 'draw.support_role.set': 'document.write', 'draw.support_role.clear': 'document.write', 'view.support_overlay.get': 'view.read', 'view.support_overlay.set': 'view.write', 'select.get': 'view.read', 'select.list': 'view.read', 'select.set': 'view.write', 'select.add': 'view.write', 'select.remove': 'view.write', 'select.toggle': 'view.write', 'select.clear': 'view.write', 'select.undo': 'view.write', 'select.redo': 'view.write', 'select.candidates': 'view.read', 'selection.granularity.get': 'view.read', 'selection.granularity.set': 'view.write', 'selection.kind_filter.get': 'view.read', 'selection.kind_filter.set': 'view.write', 'interaction.state.explain': 'document.read', 'interaction.state.preview': 'document.read', 'interaction.state.apply': 'document.write', 'view.labels.global.get': 'view.read', 'view.labels.global.set': 'view.write', 'view.labels.entity.get': 'document.read', 'view.labels.entity.set': 'document.write', 'selection.history.get': 'view.read', 'selection.history.undo': 'view.write', 'selection.history.redo': 'view.write', 'selection.history.clear': 'view.write', 'display.history.get': 'view.read', 'display.history.undo': 'view.write', 'display.history.redo': 'view.write', 'display.history.clear': 'view.write', 'camera.history.get': 'view.read', 'camera.history.undo': 'view.write', 'camera.history.redo': 'view.write', 'camera.history.clear': 'view.write', 'jobs.list': 'jobs.read', 'jobs.get': 'jobs.read', 'jobs.cancel': 'jobs.write', 'jobs.respond': 'jobs.write', 'view.screenshot': 'view.screenshot', 'automation.entities.page': 'automation.entities.page', 'automation.cas.describe': 'automation.cas.describe', 'automation.commands.validate': 'automation.commands.validate', 'automation.commands.status': 'automation.commands.status', 'automation.commands.cancel': 'automation.commands.cancel', 'automation.bulk.read': 'automation.bulk.read', 'automation.bulk.release': 'automation.bulk.release'})
+METHOD_CAPABILITIES = MappingProxyType({'view.state.get': 'view.read', 'view.state.set': 'view.write', 'view.mode.set': 'view.write', 'view.diagnostics.get': 'view.read', 'view.quality.get': 'view.read', 'view.diagnostics.sample': 'view.read', 'view.frame': 'view.write', 'view.camera.undo': 'view.write', 'view.camera.redo': 'view.write', 'view.preset.perspective': 'view.write', 'view.hud.toggle': 'view.write', 'view.display.undo': 'view.write', 'view.display.redo': 'view.write', 'view.bookmark.create': 'document.write', 'view.bookmark.list': 'document.read', 'view.bookmark.restore': 'document.write', 'view.preset.top': 'view.write', 'view.preset.front': 'view.write', 'view.preset.right': 'view.write', 'view.preset.isometric': 'view.write', 'edit.clipboard.paste_in_place': 'document.write', 'entity.rename': 'document.write', 'photolab.images.remove': 'document.write', 'entity.zoom_to': 'view.write', 'entity.hide': 'view.write', 'entity.show': 'view.write', 'entity.isolate': 'view.write', 'entity.properties': 'document.read', 'entity.export': 'document.read', 'photolab.gcp.images': 'document.read', 'measure.point': 'document.write', 'measure.distance': 'document.write', 'measure.dz': 'document.write', 'measurement.create': 'document.write', 'measurement.list': 'document.read', 'measurement.get': 'document.read', 'measurement.update_anchor': 'document.write', 'measurement.detach_anchor': 'document.write', 'measurement.rebind_anchor': 'document.write', 'measurement.rename': 'document.write', 'measurement.set_layer': 'document.write', 'measurement.set_visibility': 'document.write', 'measurement.remove': 'document.write', 'measurement.delete': 'document.write', 'inspect.point_info': 'document.read', 'viewing_box.place': 'document.write', 'viewing_box.update': 'document.write', 'viewing_box.set_operation': 'document.write', 'viewing_box.lock': 'document.write', 'viewing_box.unlock': 'document.write', 'viewing_box.rename': 'document.write', 'viewing_box.activate': 'view.write', 'viewing_box.deactivate': 'view.write', 'viewing_box.remove': 'document.write', 'viewing_box.list': 'document.read', 'view.box.place': 'document.write', 'view.box.update': 'document.write', 'view.box.set_operation': 'document.write', 'view.box.lock': 'document.write', 'view.box.unlock': 'document.write', 'view.box.rename': 'document.write', 'view.box.activate': 'view.write', 'view.box.deactivate': 'view.write', 'view.box.remove': 'document.write', 'view.box.list': 'document.read', 'view.presentation.set': 'view.write', 'view.point_size.set': 'view.write', 'file.import': 'document.write', 'io.import.product_dataset.list': 'document.read', 'io.import.product_dataset.register': 'document.write', 'pointcloud.display.set': 'document.write', 'pointcloud.ground.extract': 'document.write', 'pointcloud.ground.preview': 'document.read', 'pointcloud.ground.cancel': 'document.write', 'pointcloud.sample': 'document.write', 'pointcloud.rasterize': 'document.write', 'pointcloud.fence.begin': 'view.write', 'pointcloud.fence.commit': 'view.write', 'pointcloud.fence.cancel': 'view.write', 'pointcloud.segment.keep_inside': 'document.write', 'pointcloud.segment.remove_inside': 'document.write', 'project.flush': 'document.write', 'project.new': 'document.write', 'project.open': 'document.write', 'project.recent': 'document.read', 'project.undo': 'document.write', 'project.redo': 'document.write', 'project.save': 'document.write', 'project.save_as': 'document.write', 'project.close': 'document.write', 'snapshot.create': 'document.write', 'snapshot.list': 'document.read', 'snapshot.rename': 'document.write', 'snapshot.restore': 'document.write', 'snapshot.delete': 'document.write', 'derived.recipe.get': 'document.read', 'derived.recipe.list': 'document.read', 'derived.recipe.status': 'document.read', 'derived.recipe.regenerate': 'document.write', 'derived.recipe.regenerate_batch': 'document.write', 'derived.recipe.detach': 'document.write', 'derived.recipe.relink': 'document.write', 'mesh.surface.draft.list': 'document.read', 'mesh.surface.draft.get': 'document.read', 'mesh.surface.draft.create': 'document.write', 'mesh.surface.draft.set': 'document.write', 'mesh.surface.draft.apply_fix': 'document.write', 'mesh.surface.draft.history': 'document.read', 'mesh.surface.draft.undo': 'document.write', 'mesh.surface.draft.redo': 'document.write', 'mesh.surface.draft.suspend': 'document.write', 'mesh.surface.draft.resume': 'document.write', 'mesh.surface.draft.discard': 'document.write', 'mesh.surface.check': 'document.read', 'mesh.surface.create': 'document.write', 'mesh.surface.edit.add_breakline': 'document.write', 'mesh.surface.edit.remove_breakline': 'document.write', 'mesh.surface.edit.add_form_line': 'document.write', 'mesh.surface.edit.remove_form_line': 'document.write', 'mesh.surface.edit.set_source_role': 'document.write', 'mesh.edit.region.select': 'document.read', 'mesh.edit.smooth': 'document.write', 'mesh.edit.downsample': 'document.write', 'mesh.simplify.preview': 'document.read', 'mesh.simplify.check': 'document.read', 'mesh.simplify.bake': 'document.write', 'draw.line': 'document.write', 'draw.polyline': 'document.write', 'draw.boundary': 'document.write', 'draw.vertex.add': 'document.write', 'draw.vertex.constrain': 'document.write', 'draw.vertex.type': 'document.write', 'draw.vertex.undo': 'document.write', 'draw.point.create': 'document.write', 'draw.curve.create': 'document.write', 'draw.support_role.get': 'document.read', 'draw.support_role.set': 'document.write', 'draw.support_role.clear': 'document.write', 'view.support_overlay.get': 'view.read', 'view.support_overlay.set': 'view.write', 'select.get': 'view.read', 'select.list': 'view.read', 'select.set': 'view.write', 'select.add': 'view.write', 'select.remove': 'view.write', 'select.toggle': 'view.write', 'select.clear': 'view.write', 'select.undo': 'view.write', 'select.redo': 'view.write', 'select.candidates': 'view.read', 'selection.granularity.get': 'view.read', 'selection.granularity.set': 'view.write', 'selection.kind_filter.get': 'view.read', 'selection.kind_filter.set': 'view.write', 'interaction.state.explain': 'document.read', 'interaction.state.preview': 'document.read', 'interaction.state.apply': 'document.write', 'view.labels.global.get': 'view.read', 'view.labels.global.set': 'view.write', 'view.labels.entity.get': 'document.read', 'view.labels.entity.set': 'document.write', 'selection.history.get': 'view.read', 'selection.history.undo': 'view.write', 'selection.history.redo': 'view.write', 'selection.history.clear': 'view.write', 'display.history.get': 'view.read', 'display.history.undo': 'view.write', 'display.history.redo': 'view.write', 'display.history.clear': 'view.write', 'camera.history.get': 'view.read', 'camera.history.undo': 'view.write', 'camera.history.redo': 'view.write', 'camera.history.clear': 'view.write', 'jobs.list': 'jobs.read', 'jobs.get': 'jobs.read', 'jobs.cancel': 'jobs.write', 'jobs.respond': 'jobs.write', 'view.screenshot': 'view.screenshot', 'automation.entities.page': 'automation.entities.page', 'automation.cas.describe': 'automation.cas.describe', 'automation.commands.validate': 'automation.commands.validate', 'automation.commands.status': 'automation.commands.status', 'automation.commands.cancel': 'automation.commands.cancel', 'automation.bulk.read': 'automation.bulk.read', 'automation.bulk.release': 'automation.bulk.release', 'photolab.alignment.resolve': 'document.read', 'photolab.alignment.settings.update': 'document.write', 'photolab.alignment.start': 'document.write', 'photolab.processing_sets.list': 'document.read', 'photolab.processing_sets.create': 'document.write', 'photolab.alignment.merge.candidates': 'document.read', 'photolab.alignment.merge.list': 'document.read', 'photolab.alignment.merge.preflight': 'document.read', 'photolab.alignment.merge.plan': 'document.write', 'photolab.alignment.merge.start': 'document.write', 'photolab.capture.capabilities': 'document.read', 'photolab.capture.scale.evaluate': 'document.read', 'photolab.capture.image.prepare': 'document.write', 'photolab.capture.video.prepare': 'document.write', 'photolab.images.himmelcap.inspect': 'document.read', 'photolab.images.import.inspect': 'document.read', 'photolab.crs.discover': 'document.read', 'photolab.crs.freeze': 'document.read', 'photolab.images.import.commit': 'document.write', 'photolab.images.list': 'document.read', 'photolab.images.quality.list': 'document.read', 'photolab.images.quality.start': 'document.write', 'photolab.image_masks.list': 'document.read', 'photolab.image_masks.edit': 'document.write', 'photolab.capture_groups.list': 'document.read', 'photolab.capture_groups.create': 'document.write', 'photolab.capture_groups.confirm': 'document.write', 'photolab.capture_groups.draft': 'document.write', 'photolab.capture_groups.merge': 'document.write', 'photolab.calibration_groups.list': 'document.read', 'photolab.calibration_groups.intrinsics.update': 'document.write', 'photolab.calibration_groups.initial_calibration.set': 'document.write', 'photolab.gcp.import.preview': 'document.read', 'photolab.gcp.import.commit': 'document.write', 'photolab.gcp.list': 'document.read', 'photolab.gcp.observation.upsert': 'document.write', 'photolab.gcp.observation.upsert_assisted': 'document.write', 'photolab.gcp.observation.edit': 'document.write', 'photolab.gcp.local_estimate.compute': 'document.read', 'photolab.gcp.aligned_cameras': 'document.read', 'photolab.gcp.calibration_report': 'document.read', 'photolab.gcp.optimization.snapshot': 'document.write', 'photolab.gcp.optimization.start': 'document.write', 'photolab.gcp.optimization.latest': 'document.read', 'photolab.gcp.optimization.list': 'document.read', 'photolab.products.list': 'document.read', 'photolab.products.resolve_inputs': 'document.read', 'photolab.products.start': 'document.write', 'photolab.products.export': 'document.write', 'photolab.batch.start': 'document.write', 'photolab.jobs.list': 'document.read', 'photolab.jobs.status': 'document.read', 'photolab.jobs.cancel': 'document.write', 'photolab.jobs.resume': 'document.write', 'photolab.report.survey_data': 'document.read', 'photolab.report.export': 'document.write', 'photolab.hardware.probe': 'document.read', 'photolab.project.create': 'document.write', 'photolab.project.open': 'document.write', 'photolab.project.reopen_without_recovery': 'document.write', 'photolab.project.snapshot': 'document.read', 'photolab.project.diagnostics': 'document.read', 'photolab.project.autosave': 'document.write', 'photolab.project.save': 'document.write', 'photolab.project.save_as': 'document.write', 'photolab.project.close': 'document.write', 'photolab.project.recent.list': 'document.read', 'photolab.project.recent.remove': 'document.write', 'photolab.project.untitled.cleanup': 'document.write', 'photolab.entities.rename': 'document.write', 'photolab.entities.move': 'document.write', 'photolab.entities.visibility.set': 'document.write'})
 APP_METHOD_CAPABILITIES = MappingProxyType({'readDocumentSnapshot': 'document.read', 'readJournal': 'journal.read', 'readPropertySchemas': 'document.read', 'queryProperties': 'document.read', 'compilePropertyEdit': 'document.write', 'executeCanonicalTransaction': 'document.write'})
 
 
@@ -215,6 +207,306 @@ class HimmelcadClient:
             return BulkLease(self, result.lease)
         raise ProtocolError(raw_code="invalidRequest", message="screenshot result lacks data for its encoding")
 
+    def edit_clipboard_paste_in_place(self, request: AdmissionOperationRequest) -> AdmissionOperationResult:
+        return AdmissionOperationResult.from_dict(self._call('edit.clipboard.paste_in_place', _params(request)))
+
+    def entity_export(self, request: AdmissionOperationRequest) -> AdmissionOperationResult:
+        return AdmissionOperationResult.from_dict(self._call('entity.export', _params(request)))
+
+    def entity_hide(self, request: AdmissionOperationRequest) -> AdmissionOperationResult:
+        return AdmissionOperationResult.from_dict(self._call('entity.hide', _params(request)))
+
+    def entity_properties(self, request: AdmissionOperationRequest) -> AdmissionOperationResult:
+        return AdmissionOperationResult.from_dict(self._call('entity.properties', _params(request)))
+
+    def entity_rename(self, request: AdmissionOperationRequest) -> AdmissionOperationResult:
+        return AdmissionOperationResult.from_dict(self._call('entity.rename', _params(request)))
+
+    def entity_show(self, request: AdmissionOperationRequest) -> AdmissionOperationResult:
+        return AdmissionOperationResult.from_dict(self._call('entity.show', _params(request)))
+
+    def entity_zoom_to(self, request: AdmissionOperationRequest) -> AdmissionOperationResult:
+        return AdmissionOperationResult.from_dict(self._call('entity.zoom_to', _params(request)))
+
+    def file_import(self, request: ImportOpenRequest) -> AdmissionOperationResult:
+        return AdmissionOperationResult.from_dict(self._call('file.import', _params(request)))
+
+    def photolab_alignment_merge_candidates(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(self._call('photolab.alignment.merge.candidates', _params(request)))
+
+    def photolab_alignment_merge_list(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(self._call('photolab.alignment.merge.list', _params(request)))
+
+    def photolab_alignment_merge_plan(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(self._call('photolab.alignment.merge.plan', _params(request)))
+
+    def photolab_alignment_merge_preflight(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(self._call('photolab.alignment.merge.preflight', _params(request)))
+
+    def photolab_alignment_merge_start(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(self._call('photolab.alignment.merge.start', _params(request)))
+
+    def photolab_alignment_resolve(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(self._call('photolab.alignment.resolve', _params(request)))
+
+    def photolab_alignment_settings_update(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(self._call('photolab.alignment.settings.update', _params(request)))
+
+    def photolab_alignment_start(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(self._call('photolab.alignment.start', _params(request)))
+
+    def photolab_batch_start(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(self._call('photolab.batch.start', _params(request)))
+
+    def photolab_calibration_groups_initial_calibration_set(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(self._call('photolab.calibration_groups.initial_calibration.set', _params(request)))
+
+    def photolab_calibration_groups_intrinsics_update(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(self._call('photolab.calibration_groups.intrinsics.update', _params(request)))
+
+    def photolab_calibration_groups_list(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(self._call('photolab.calibration_groups.list', _params(request)))
+
+    def photolab_capture_capabilities(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(self._call('photolab.capture.capabilities', _params(request)))
+
+    def photolab_capture_image_prepare(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(self._call('photolab.capture.image.prepare', _params(request)))
+
+    def photolab_capture_scale_evaluate(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(self._call('photolab.capture.scale.evaluate', _params(request)))
+
+    def photolab_capture_video_prepare(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(self._call('photolab.capture.video.prepare', _params(request)))
+
+    def photolab_capture_groups_confirm(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(self._call('photolab.capture_groups.confirm', _params(request)))
+
+    def photolab_capture_groups_create(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(self._call('photolab.capture_groups.create', _params(request)))
+
+    def photolab_capture_groups_draft(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(self._call('photolab.capture_groups.draft', _params(request)))
+
+    def photolab_capture_groups_list(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(self._call('photolab.capture_groups.list', _params(request)))
+
+    def photolab_capture_groups_merge(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(self._call('photolab.capture_groups.merge', _params(request)))
+
+    def photolab_crs_discover(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(self._call('photolab.crs.discover', _params(request)))
+
+    def photolab_crs_freeze(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(self._call('photolab.crs.freeze', _params(request)))
+
+    def photolab_entities_move(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(self._call('photolab.entities.move', _params(request)))
+
+    def photolab_entities_rename(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(self._call('photolab.entities.rename', _params(request)))
+
+    def photolab_entities_visibility_set(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(self._call('photolab.entities.visibility.set', _params(request)))
+
+    def photolab_gcp_aligned_cameras(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(self._call('photolab.gcp.aligned_cameras', _params(request)))
+
+    def photolab_gcp_calibration_report(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(self._call('photolab.gcp.calibration_report', _params(request)))
+
+    def photolab_gcp_import_commit(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(self._call('photolab.gcp.import.commit', _params(request)))
+
+    def photolab_gcp_import_preview(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(self._call('photolab.gcp.import.preview', _params(request)))
+
+    def photolab_gcp_list(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(self._call('photolab.gcp.list', _params(request)))
+
+    def photolab_gcp_local_estimate_compute(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(self._call('photolab.gcp.local_estimate.compute', _params(request)))
+
+    def photolab_gcp_observation_edit(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(self._call('photolab.gcp.observation.edit', _params(request)))
+
+    def photolab_gcp_observation_upsert(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(self._call('photolab.gcp.observation.upsert', _params(request)))
+
+    def photolab_gcp_observation_upsert_assisted(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(self._call('photolab.gcp.observation.upsert_assisted', _params(request)))
+
+    def photolab_gcp_optimization_latest(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(self._call('photolab.gcp.optimization.latest', _params(request)))
+
+    def photolab_gcp_optimization_list(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(self._call('photolab.gcp.optimization.list', _params(request)))
+
+    def photolab_gcp_optimization_snapshot(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(self._call('photolab.gcp.optimization.snapshot', _params(request)))
+
+    def photolab_gcp_optimization_start(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(self._call('photolab.gcp.optimization.start', _params(request)))
+
+    def photolab_hardware_probe(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(self._call('photolab.hardware.probe', _params(request)))
+
+    def photolab_image_masks_edit(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(self._call('photolab.image_masks.edit', _params(request)))
+
+    def photolab_image_masks_list(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(self._call('photolab.image_masks.list', _params(request)))
+
+    def photolab_images_himmelcap_inspect(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(self._call('photolab.images.himmelcap.inspect', _params(request)))
+
+    def photolab_images_import_commit(self, request: PhotolabImagesImportCommitRequestV1) -> PhotolabImagesImportCommitResultV1:
+        return PhotolabImagesImportCommitResultV1.from_dict(self._call('photolab.images.import.commit', _params(request)))
+
+    def photolab_images_import_inspect(self, request: PhotolabImagesImportInspectRequestV1) -> PhotolabPhotoImportBatchV1:
+        return PhotolabPhotoImportBatchV1.from_dict(self._call('photolab.images.import.inspect', _params(request)))
+
+    def photolab_images_list(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(self._call('photolab.images.list', _params(request)))
+
+    def photolab_images_quality_list(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(self._call('photolab.images.quality.list', _params(request)))
+
+    def photolab_images_quality_start(self, request: PhotolabImageQualityStartRequestV1) -> PhotolabStartJobResultV1:
+        return PhotolabStartJobResultV1.from_dict(self._call('photolab.images.quality.start', _params(request)))
+
+    def photolab_jobs_cancel(self, request: PhotolabJobIdRequestV1) -> PhotolabCancelJobResultV1:
+        return PhotolabCancelJobResultV1.from_dict(self._call('photolab.jobs.cancel', _params(request)))
+
+    def photolab_jobs_list(self, request: PhotolabJobsListRequestV1) -> PhotolabJobsListResultV1:
+        return PhotolabJobsListResultV1.from_dict(self._call('photolab.jobs.list', _params(request)))
+
+    def photolab_jobs_resume(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(self._call('photolab.jobs.resume', _params(request)))
+
+    def photolab_jobs_status(self, request: PhotolabJobIdRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(self._call('photolab.jobs.status', _params(request)))
+
+    def photolab_processing_sets_create(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(self._call('photolab.processing_sets.create', _params(request)))
+
+    def photolab_processing_sets_list(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(self._call('photolab.processing_sets.list', _params(request)))
+
+    def photolab_products_export(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(self._call('photolab.products.export', _params(request)))
+
+    def photolab_products_list(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(self._call('photolab.products.list', _params(request)))
+
+    def photolab_products_resolve_inputs(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(self._call('photolab.products.resolve_inputs', _params(request)))
+
+    def photolab_products_start(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(self._call('photolab.products.start', _params(request)))
+
+    def photolab_project_autosave(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(self._call('photolab.project.autosave', _params(request)))
+
+    def photolab_project_close(self, request: EmptyRequest | None = None) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(self._call('photolab.project.close', _params(request)))
+
+    def photolab_project_create(self, request: PhotolabProjectCreateRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(self._call('photolab.project.create', _params(request)))
+
+    def photolab_project_diagnostics(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(self._call('photolab.project.diagnostics', _params(request)))
+
+    def photolab_project_open(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(self._call('photolab.project.open', _params(request)))
+
+    def photolab_project_recent_list(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(self._call('photolab.project.recent.list', _params(request)))
+
+    def photolab_project_recent_remove(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(self._call('photolab.project.recent.remove', _params(request)))
+
+    def photolab_project_reopen_without_recovery(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(self._call('photolab.project.reopen_without_recovery', _params(request)))
+
+    def photolab_project_save(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(self._call('photolab.project.save', _params(request)))
+
+    def photolab_project_save_as(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(self._call('photolab.project.save_as', _params(request)))
+
+    def photolab_project_snapshot(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(self._call('photolab.project.snapshot', _params(request)))
+
+    def photolab_project_untitled_cleanup(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(self._call('photolab.project.untitled.cleanup', _params(request)))
+
+    def photolab_report_export(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(self._call('photolab.report.export', _params(request)))
+
+    def photolab_report_survey_data(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(self._call('photolab.report.survey_data', _params(request)))
+
+    def project_close(self, request: AdmissionOperationRequest) -> AdmissionOperationResult:
+        return AdmissionOperationResult.from_dict(self._call('project.close', _params(request)))
+
+    def project_new(self, request: AdmissionOperationRequest) -> AdmissionOperationResult:
+        return AdmissionOperationResult.from_dict(self._call('project.new', _params(request)))
+
+    def project_open(self, request: AdmissionOperationRequest) -> AdmissionOperationResult:
+        return AdmissionOperationResult.from_dict(self._call('project.open', _params(request)))
+
+    def project_recent(self, request: AdmissionOperationRequest) -> AdmissionOperationResult:
+        return AdmissionOperationResult.from_dict(self._call('project.recent', _params(request)))
+
+    def project_save(self, request: EmptyRequest | None = None) -> AdmissionOperationResult:
+        return AdmissionOperationResult.from_dict(self._call('project.save', _params(request)))
+
+    def project_save_as(self, request: AdmissionOperationRequest) -> AdmissionOperationResult:
+        return AdmissionOperationResult.from_dict(self._call('project.save_as', _params(request)))
+
+    def select_clear(self, request: AdmissionOperationRequest) -> AdmissionOperationResult:
+        return AdmissionOperationResult.from_dict(self._call('select.clear', _params(request)))
+
+    def select_set(self, request: AdmissionOperationRequest) -> AdmissionOperationResult:
+        return AdmissionOperationResult.from_dict(self._call('select.set', _params(request)))
+
+    def view_bookmark_create(self, request: AdmissionOperationRequest) -> AdmissionOperationResult:
+        return AdmissionOperationResult.from_dict(self._call('view.bookmark.create', _params(request)))
+
+    def view_camera_redo(self, request: AdmissionOperationRequest) -> AdmissionOperationResult:
+        return AdmissionOperationResult.from_dict(self._call('view.camera.redo', _params(request)))
+
+    def view_camera_undo(self, request: AdmissionOperationRequest) -> AdmissionOperationResult:
+        return AdmissionOperationResult.from_dict(self._call('view.camera.undo', _params(request)))
+
+    def view_display_redo(self, request: AdmissionOperationRequest) -> AdmissionOperationResult:
+        return AdmissionOperationResult.from_dict(self._call('view.display.redo', _params(request)))
+
+    def view_display_undo(self, request: AdmissionOperationRequest) -> AdmissionOperationResult:
+        return AdmissionOperationResult.from_dict(self._call('view.display.undo', _params(request)))
+
+    def view_frame(self, request: AdmissionOperationRequest) -> AdmissionOperationResult:
+        return AdmissionOperationResult.from_dict(self._call('view.frame', _params(request)))
+
+    def view_hud_toggle(self, request: AdmissionOperationRequest) -> AdmissionOperationResult:
+        return AdmissionOperationResult.from_dict(self._call('view.hud.toggle', _params(request)))
+
+    def view_preset_front(self, request: AdmissionOperationRequest) -> AdmissionOperationResult:
+        return AdmissionOperationResult.from_dict(self._call('view.preset.front', _params(request)))
+
+    def view_preset_isometric(self, request: AdmissionOperationRequest) -> AdmissionOperationResult:
+        return AdmissionOperationResult.from_dict(self._call('view.preset.isometric', _params(request)))
+
+    def view_preset_perspective(self, request: AdmissionOperationRequest) -> AdmissionOperationResult:
+        return AdmissionOperationResult.from_dict(self._call('view.preset.perspective', _params(request)))
+
+    def view_preset_right(self, request: AdmissionOperationRequest) -> AdmissionOperationResult:
+        return AdmissionOperationResult.from_dict(self._call('view.preset.right', _params(request)))
+
+    def view_preset_top(self, request: AdmissionOperationRequest) -> AdmissionOperationResult:
+        return AdmissionOperationResult.from_dict(self._call('view.preset.top', _params(request)))
+
     def _bulk_read(self, descriptor: BulkLeaseDescriptor, offset: int, length: int) -> BulkReadResult:
         return BulkReadResult.from_dict(self._call("automation.bulk.read", {"leaseId": descriptor.lease_id, "accessToken": descriptor.access_token, "offset": offset, "length": length}))
 
@@ -368,6 +660,306 @@ class AsyncHimmelcadClient:
         if result.encoding == "bulkLease" and result.lease is not None:
             return AsyncBulkLease(self, result.lease)
         raise ProtocolError(raw_code="invalidRequest", message="screenshot result lacks data for its encoding")
+
+    async def edit_clipboard_paste_in_place(self, request: AdmissionOperationRequest) -> AdmissionOperationResult:
+        return AdmissionOperationResult.from_dict(await self._call('edit.clipboard.paste_in_place', _params(request)))
+
+    async def entity_export(self, request: AdmissionOperationRequest) -> AdmissionOperationResult:
+        return AdmissionOperationResult.from_dict(await self._call('entity.export', _params(request)))
+
+    async def entity_hide(self, request: AdmissionOperationRequest) -> AdmissionOperationResult:
+        return AdmissionOperationResult.from_dict(await self._call('entity.hide', _params(request)))
+
+    async def entity_properties(self, request: AdmissionOperationRequest) -> AdmissionOperationResult:
+        return AdmissionOperationResult.from_dict(await self._call('entity.properties', _params(request)))
+
+    async def entity_rename(self, request: AdmissionOperationRequest) -> AdmissionOperationResult:
+        return AdmissionOperationResult.from_dict(await self._call('entity.rename', _params(request)))
+
+    async def entity_show(self, request: AdmissionOperationRequest) -> AdmissionOperationResult:
+        return AdmissionOperationResult.from_dict(await self._call('entity.show', _params(request)))
+
+    async def entity_zoom_to(self, request: AdmissionOperationRequest) -> AdmissionOperationResult:
+        return AdmissionOperationResult.from_dict(await self._call('entity.zoom_to', _params(request)))
+
+    async def file_import(self, request: ImportOpenRequest) -> AdmissionOperationResult:
+        return AdmissionOperationResult.from_dict(await self._call('file.import', _params(request)))
+
+    async def photolab_alignment_merge_candidates(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(await self._call('photolab.alignment.merge.candidates', _params(request)))
+
+    async def photolab_alignment_merge_list(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(await self._call('photolab.alignment.merge.list', _params(request)))
+
+    async def photolab_alignment_merge_plan(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(await self._call('photolab.alignment.merge.plan', _params(request)))
+
+    async def photolab_alignment_merge_preflight(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(await self._call('photolab.alignment.merge.preflight', _params(request)))
+
+    async def photolab_alignment_merge_start(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(await self._call('photolab.alignment.merge.start', _params(request)))
+
+    async def photolab_alignment_resolve(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(await self._call('photolab.alignment.resolve', _params(request)))
+
+    async def photolab_alignment_settings_update(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(await self._call('photolab.alignment.settings.update', _params(request)))
+
+    async def photolab_alignment_start(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(await self._call('photolab.alignment.start', _params(request)))
+
+    async def photolab_batch_start(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(await self._call('photolab.batch.start', _params(request)))
+
+    async def photolab_calibration_groups_initial_calibration_set(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(await self._call('photolab.calibration_groups.initial_calibration.set', _params(request)))
+
+    async def photolab_calibration_groups_intrinsics_update(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(await self._call('photolab.calibration_groups.intrinsics.update', _params(request)))
+
+    async def photolab_calibration_groups_list(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(await self._call('photolab.calibration_groups.list', _params(request)))
+
+    async def photolab_capture_capabilities(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(await self._call('photolab.capture.capabilities', _params(request)))
+
+    async def photolab_capture_image_prepare(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(await self._call('photolab.capture.image.prepare', _params(request)))
+
+    async def photolab_capture_scale_evaluate(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(await self._call('photolab.capture.scale.evaluate', _params(request)))
+
+    async def photolab_capture_video_prepare(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(await self._call('photolab.capture.video.prepare', _params(request)))
+
+    async def photolab_capture_groups_confirm(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(await self._call('photolab.capture_groups.confirm', _params(request)))
+
+    async def photolab_capture_groups_create(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(await self._call('photolab.capture_groups.create', _params(request)))
+
+    async def photolab_capture_groups_draft(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(await self._call('photolab.capture_groups.draft', _params(request)))
+
+    async def photolab_capture_groups_list(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(await self._call('photolab.capture_groups.list', _params(request)))
+
+    async def photolab_capture_groups_merge(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(await self._call('photolab.capture_groups.merge', _params(request)))
+
+    async def photolab_crs_discover(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(await self._call('photolab.crs.discover', _params(request)))
+
+    async def photolab_crs_freeze(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(await self._call('photolab.crs.freeze', _params(request)))
+
+    async def photolab_entities_move(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(await self._call('photolab.entities.move', _params(request)))
+
+    async def photolab_entities_rename(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(await self._call('photolab.entities.rename', _params(request)))
+
+    async def photolab_entities_visibility_set(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(await self._call('photolab.entities.visibility.set', _params(request)))
+
+    async def photolab_gcp_aligned_cameras(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(await self._call('photolab.gcp.aligned_cameras', _params(request)))
+
+    async def photolab_gcp_calibration_report(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(await self._call('photolab.gcp.calibration_report', _params(request)))
+
+    async def photolab_gcp_import_commit(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(await self._call('photolab.gcp.import.commit', _params(request)))
+
+    async def photolab_gcp_import_preview(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(await self._call('photolab.gcp.import.preview', _params(request)))
+
+    async def photolab_gcp_list(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(await self._call('photolab.gcp.list', _params(request)))
+
+    async def photolab_gcp_local_estimate_compute(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(await self._call('photolab.gcp.local_estimate.compute', _params(request)))
+
+    async def photolab_gcp_observation_edit(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(await self._call('photolab.gcp.observation.edit', _params(request)))
+
+    async def photolab_gcp_observation_upsert(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(await self._call('photolab.gcp.observation.upsert', _params(request)))
+
+    async def photolab_gcp_observation_upsert_assisted(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(await self._call('photolab.gcp.observation.upsert_assisted', _params(request)))
+
+    async def photolab_gcp_optimization_latest(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(await self._call('photolab.gcp.optimization.latest', _params(request)))
+
+    async def photolab_gcp_optimization_list(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(await self._call('photolab.gcp.optimization.list', _params(request)))
+
+    async def photolab_gcp_optimization_snapshot(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(await self._call('photolab.gcp.optimization.snapshot', _params(request)))
+
+    async def photolab_gcp_optimization_start(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(await self._call('photolab.gcp.optimization.start', _params(request)))
+
+    async def photolab_hardware_probe(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(await self._call('photolab.hardware.probe', _params(request)))
+
+    async def photolab_image_masks_edit(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(await self._call('photolab.image_masks.edit', _params(request)))
+
+    async def photolab_image_masks_list(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(await self._call('photolab.image_masks.list', _params(request)))
+
+    async def photolab_images_himmelcap_inspect(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(await self._call('photolab.images.himmelcap.inspect', _params(request)))
+
+    async def photolab_images_import_commit(self, request: PhotolabImagesImportCommitRequestV1) -> PhotolabImagesImportCommitResultV1:
+        return PhotolabImagesImportCommitResultV1.from_dict(await self._call('photolab.images.import.commit', _params(request)))
+
+    async def photolab_images_import_inspect(self, request: PhotolabImagesImportInspectRequestV1) -> PhotolabPhotoImportBatchV1:
+        return PhotolabPhotoImportBatchV1.from_dict(await self._call('photolab.images.import.inspect', _params(request)))
+
+    async def photolab_images_list(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(await self._call('photolab.images.list', _params(request)))
+
+    async def photolab_images_quality_list(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(await self._call('photolab.images.quality.list', _params(request)))
+
+    async def photolab_images_quality_start(self, request: PhotolabImageQualityStartRequestV1) -> PhotolabStartJobResultV1:
+        return PhotolabStartJobResultV1.from_dict(await self._call('photolab.images.quality.start', _params(request)))
+
+    async def photolab_jobs_cancel(self, request: PhotolabJobIdRequestV1) -> PhotolabCancelJobResultV1:
+        return PhotolabCancelJobResultV1.from_dict(await self._call('photolab.jobs.cancel', _params(request)))
+
+    async def photolab_jobs_list(self, request: PhotolabJobsListRequestV1) -> PhotolabJobsListResultV1:
+        return PhotolabJobsListResultV1.from_dict(await self._call('photolab.jobs.list', _params(request)))
+
+    async def photolab_jobs_resume(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(await self._call('photolab.jobs.resume', _params(request)))
+
+    async def photolab_jobs_status(self, request: PhotolabJobIdRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(await self._call('photolab.jobs.status', _params(request)))
+
+    async def photolab_processing_sets_create(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(await self._call('photolab.processing_sets.create', _params(request)))
+
+    async def photolab_processing_sets_list(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(await self._call('photolab.processing_sets.list', _params(request)))
+
+    async def photolab_products_export(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(await self._call('photolab.products.export', _params(request)))
+
+    async def photolab_products_list(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(await self._call('photolab.products.list', _params(request)))
+
+    async def photolab_products_resolve_inputs(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(await self._call('photolab.products.resolve_inputs', _params(request)))
+
+    async def photolab_products_start(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(await self._call('photolab.products.start', _params(request)))
+
+    async def photolab_project_autosave(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(await self._call('photolab.project.autosave', _params(request)))
+
+    async def photolab_project_close(self, request: EmptyRequest | None = None) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(await self._call('photolab.project.close', _params(request)))
+
+    async def photolab_project_create(self, request: PhotolabProjectCreateRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(await self._call('photolab.project.create', _params(request)))
+
+    async def photolab_project_diagnostics(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(await self._call('photolab.project.diagnostics', _params(request)))
+
+    async def photolab_project_open(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(await self._call('photolab.project.open', _params(request)))
+
+    async def photolab_project_recent_list(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(await self._call('photolab.project.recent.list', _params(request)))
+
+    async def photolab_project_recent_remove(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(await self._call('photolab.project.recent.remove', _params(request)))
+
+    async def photolab_project_reopen_without_recovery(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(await self._call('photolab.project.reopen_without_recovery', _params(request)))
+
+    async def photolab_project_save(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(await self._call('photolab.project.save', _params(request)))
+
+    async def photolab_project_save_as(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(await self._call('photolab.project.save_as', _params(request)))
+
+    async def photolab_project_snapshot(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(await self._call('photolab.project.snapshot', _params(request)))
+
+    async def photolab_project_untitled_cleanup(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(await self._call('photolab.project.untitled.cleanup', _params(request)))
+
+    async def photolab_report_export(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(await self._call('photolab.report.export', _params(request)))
+
+    async def photolab_report_survey_data(self, request: PhotolabCommandRequestV1) -> PhotolabCommandResultV1:
+        return PhotolabCommandResultV1.from_dict(await self._call('photolab.report.survey_data', _params(request)))
+
+    async def project_close(self, request: AdmissionOperationRequest) -> AdmissionOperationResult:
+        return AdmissionOperationResult.from_dict(await self._call('project.close', _params(request)))
+
+    async def project_new(self, request: AdmissionOperationRequest) -> AdmissionOperationResult:
+        return AdmissionOperationResult.from_dict(await self._call('project.new', _params(request)))
+
+    async def project_open(self, request: AdmissionOperationRequest) -> AdmissionOperationResult:
+        return AdmissionOperationResult.from_dict(await self._call('project.open', _params(request)))
+
+    async def project_recent(self, request: AdmissionOperationRequest) -> AdmissionOperationResult:
+        return AdmissionOperationResult.from_dict(await self._call('project.recent', _params(request)))
+
+    async def project_save(self, request: EmptyRequest | None = None) -> AdmissionOperationResult:
+        return AdmissionOperationResult.from_dict(await self._call('project.save', _params(request)))
+
+    async def project_save_as(self, request: AdmissionOperationRequest) -> AdmissionOperationResult:
+        return AdmissionOperationResult.from_dict(await self._call('project.save_as', _params(request)))
+
+    async def select_clear(self, request: AdmissionOperationRequest) -> AdmissionOperationResult:
+        return AdmissionOperationResult.from_dict(await self._call('select.clear', _params(request)))
+
+    async def select_set(self, request: AdmissionOperationRequest) -> AdmissionOperationResult:
+        return AdmissionOperationResult.from_dict(await self._call('select.set', _params(request)))
+
+    async def view_bookmark_create(self, request: AdmissionOperationRequest) -> AdmissionOperationResult:
+        return AdmissionOperationResult.from_dict(await self._call('view.bookmark.create', _params(request)))
+
+    async def view_camera_redo(self, request: AdmissionOperationRequest) -> AdmissionOperationResult:
+        return AdmissionOperationResult.from_dict(await self._call('view.camera.redo', _params(request)))
+
+    async def view_camera_undo(self, request: AdmissionOperationRequest) -> AdmissionOperationResult:
+        return AdmissionOperationResult.from_dict(await self._call('view.camera.undo', _params(request)))
+
+    async def view_display_redo(self, request: AdmissionOperationRequest) -> AdmissionOperationResult:
+        return AdmissionOperationResult.from_dict(await self._call('view.display.redo', _params(request)))
+
+    async def view_display_undo(self, request: AdmissionOperationRequest) -> AdmissionOperationResult:
+        return AdmissionOperationResult.from_dict(await self._call('view.display.undo', _params(request)))
+
+    async def view_frame(self, request: AdmissionOperationRequest) -> AdmissionOperationResult:
+        return AdmissionOperationResult.from_dict(await self._call('view.frame', _params(request)))
+
+    async def view_hud_toggle(self, request: AdmissionOperationRequest) -> AdmissionOperationResult:
+        return AdmissionOperationResult.from_dict(await self._call('view.hud.toggle', _params(request)))
+
+    async def view_preset_front(self, request: AdmissionOperationRequest) -> AdmissionOperationResult:
+        return AdmissionOperationResult.from_dict(await self._call('view.preset.front', _params(request)))
+
+    async def view_preset_isometric(self, request: AdmissionOperationRequest) -> AdmissionOperationResult:
+        return AdmissionOperationResult.from_dict(await self._call('view.preset.isometric', _params(request)))
+
+    async def view_preset_perspective(self, request: AdmissionOperationRequest) -> AdmissionOperationResult:
+        return AdmissionOperationResult.from_dict(await self._call('view.preset.perspective', _params(request)))
+
+    async def view_preset_right(self, request: AdmissionOperationRequest) -> AdmissionOperationResult:
+        return AdmissionOperationResult.from_dict(await self._call('view.preset.right', _params(request)))
+
+    async def view_preset_top(self, request: AdmissionOperationRequest) -> AdmissionOperationResult:
+        return AdmissionOperationResult.from_dict(await self._call('view.preset.top', _params(request)))
 
     async def _bulk_read(self, descriptor: BulkLeaseDescriptor, offset: int, length: int) -> BulkReadResult:
         return BulkReadResult.from_dict(await self._call("automation.bulk.read", {"leaseId": descriptor.lease_id, "accessToken": descriptor.access_token, "offset": offset, "length": length}))

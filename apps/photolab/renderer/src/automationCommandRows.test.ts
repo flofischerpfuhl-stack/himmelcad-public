@@ -81,3 +81,48 @@ test('G-1 maps or explains every ribbon action', () => {
     assert.ok(reason.trim().length > 0, `${actionId} needs a view-local reason`);
   }
 });
+
+test('G-1 gives every automation-exposed PhotoLab row generated sync and async methods', () => {
+  const schema = JSON.parse(
+    readFileSync(
+      new URL(
+        '../../../../schemas/automation/himmelcad-automation-v1.schema.json',
+        import.meta.url,
+      ),
+      'utf8',
+    ),
+  ) as {
+    methods: Record<
+      string,
+      { command?: { products?: string[]; surfaces?: { automation?: boolean } } }
+    >;
+    'x-photolabCommands'?: { id: string }[];
+  };
+  const exposed = new Set<string>(
+    Object.entries(schema.methods)
+      .filter(
+        ([id, method]) =>
+          id.startsWith('photolab.') &&
+          method.command?.products?.includes('photolab') &&
+          method.command?.surfaces?.automation === true,
+      )
+      .map(([id]) => id),
+  );
+  for (const command of schema['x-photolabCommands'] ?? []) exposed.add(command.id);
+  const client = readFileSync(
+    new URL('../../../../sdk/python/src/himmelcad/client.py', import.meta.url),
+    'utf8',
+  );
+  const rowIds = new Set<string>(AUTOMATION_COMMAND_ROW_IDS);
+  for (const id of exposed) {
+    assert.ok(rowIds.has(id), `${id} is exposed but absent from the PhotoLab G-1 row registry`);
+    const method = id.replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+    assert.match(client, new RegExp(`^    def ${method}\\(`, 'm'), `${id} lacks a sync method`);
+    assert.match(
+      client,
+      new RegExp(`^    async def ${method}\\(`, 'm'),
+      `${id} lacks an async method`,
+    );
+  }
+  assert.equal(exposed.size, 72, 'review the WP-G2 row count when exposure changes');
+});

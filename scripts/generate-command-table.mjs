@@ -67,7 +67,44 @@ const builderOnlyRows = new Set([
   'project.undo',
   'project.redo',
 ]);
-const rows = Object.entries(schema.methods)
+const photolabMethods = Object.fromEntries(
+  (schema['x-photolabCommands'] ?? []).map((definition) => {
+    const id = definition.id;
+    return [
+      id,
+      {
+        command: {
+          label:
+            definition.label ??
+            id
+              .replace(/^photolab\./u, '')
+              .replaceAll('_', ' ')
+              .replaceAll('.', ' ')
+              .replace(/^./u, (value) => value.toUpperCase()),
+          products: ['photolab'],
+          kind: definition.kind ?? 'command',
+          shortcut: null,
+          enablement: definition.enablement ?? 'hasProject',
+          surfaces: {
+            ribbon: false,
+            contextMenu: false,
+            quickSurface: false,
+            console: true,
+            automation: true,
+          },
+          group: 'edit',
+          ownerSpec: 'PhotoLab WP-G2',
+          host: 'sidecar',
+          rpcMethod: definition.rpcMethod ?? id,
+          ...(definition.grantFields ? { grantFields: definition.grantFields } : {}),
+          ...(definition.responseWrap ? { responseWrap: definition.responseWrap } : {}),
+        },
+      },
+    ];
+  }),
+);
+const methods = { ...schema.methods, ...photolabMethods };
+const rows = Object.entries(methods)
   .filter(([, method]) => method.command)
   .map(([id, method]) => ({ id, ...method.command }))
   .sort((left, right) => {
@@ -79,7 +116,7 @@ if (rows.length === 0) throw new Error('Automation schema methods contain no com
 const ids = new Set();
 const shortcuts = new Map();
 for (const row of rows) {
-  if (!schema.methods[row.id]) throw new Error(`Command row has no automation method: ${row.id}`);
+  if (!methods[row.id]) throw new Error(`Command row has no automation method: ${row.id}`);
   if (ids.has(row.id)) throw new Error(`Duplicate command id: ${row.id}`);
   ids.add(row.id);
   if (row.shortcut) {
