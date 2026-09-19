@@ -5,6 +5,9 @@ import { copyFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 const root = resolve(import.meta.dirname, '..');
+const cargoTargetRoot = process.env.CARGO_TARGET_DIR
+  ? resolve(root, process.env.CARGO_TARGET_DIR)
+  : join(root, 'target');
 const toolchain =
   process.env.HIMMELCAD_LLVM_MINGW_ROOT ??
   join(root, '.build', 'llvm-mingw', 'llvm-mingw-20260407-ucrt-ubuntu-22.04-x86_64');
@@ -42,7 +45,7 @@ const result = spawnSync(
 );
 if (result.error) throw result.error;
 if (result.status !== 0) process.exit(result.status ?? 1);
-const release = join(root, 'target', 'x86_64-pc-windows-gnullvm', 'release');
+const release = join(cargoTargetRoot, 'x86_64-pc-windows-gnullvm', 'release');
 const unwind = join(toolchain, 'x86_64-w64-mingw32', 'bin', 'libunwind.dll');
 if (!existsSync(unwind)) throw new Error(`LLVM-MinGW libunwind runtime is missing: ${unwind}`);
 mkdirSync(release, { recursive: true });

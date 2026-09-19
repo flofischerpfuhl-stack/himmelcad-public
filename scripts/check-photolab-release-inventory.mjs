@@ -8,6 +8,9 @@ import { basename, dirname, join, relative, resolve } from 'node:path';
 const workspace = resolve(import.meta.dirname, '..');
 const platform = process.argv[2] ?? (process.platform === 'win32' ? 'win32-x64' : 'linux-x64');
 if (!['linux-x64', 'win32-x64'].includes(platform)) fail(`unsupported platform: ${platform}`);
+const cargoTargetRoot = process.env.CARGO_TARGET_DIR
+  ? resolve(workspace, process.env.CARGO_TARGET_DIR)
+  : join(workspace, 'target');
 const pinnedObjdump = join(
   workspace,
   '.build/llvm-mingw/llvm-mingw-20260407-ucrt-ubuntu-22.04-x86_64/bin/llvm-objdump',
@@ -87,21 +90,19 @@ const roots = [
 ];
 const requiredExecutables = [
   join(
-    workspace,
     platform === 'win32-x64'
-      ? 'target/x86_64-pc-windows-gnullvm/release/himmelcad-sidecar.exe'
-      : 'target/release/himmelcad-sidecar',
+      ? join(cargoTargetRoot, 'x86_64-pc-windows-gnullvm/release/himmelcad-sidecar.exe')
+      : join(cargoTargetRoot, 'release/himmelcad-sidecar'),
   ),
   join(
-    workspace,
     platform === 'win32-x64'
-      ? 'target/x86_64-pc-windows-gnullvm/release/himmelcad-portable-mvs.exe'
-      : 'target/release/himmelcad-portable-mvs',
+      ? join(cargoTargetRoot, 'x86_64-pc-windows-gnullvm/release/himmelcad-portable-mvs.exe')
+      : join(cargoTargetRoot, 'release/himmelcad-portable-mvs'),
   ),
 ];
 if (platform === 'win32-x64') {
   requiredExecutables.push(
-    join(workspace, 'target/x86_64-pc-windows-gnullvm/release/libunwind.dll'),
+    join(cargoTargetRoot, 'x86_64-pc-windows-gnullvm/release/libunwind.dll'),
   );
 }
 
@@ -235,7 +236,12 @@ function windowsRuntimeDependencyExists(importer, dependency) {
   if (requiredExecutables.some((path) => path === importer)) {
     searchDirectories.push(dirname(requiredExecutables[0]));
   }
-  return searchDirectories.some((directory) => existsSync(join(directory, dependency)));
+  const dependencyName = dependency.toLowerCase();
+  return searchDirectories.some(
+    (directory) =>
+      existsSync(directory) &&
+      readdirSync(directory).some((entry) => entry.toLowerCase() === dependencyName),
+  );
 }
 
 verifyDedodeModels(inventory);

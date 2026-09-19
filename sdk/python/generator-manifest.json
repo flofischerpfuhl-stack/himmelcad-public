@@ -1,7 +1,7 @@
 {
   "contractInputs": {
     "crates/himmelcad-core/src/app_protocol.rs": "4e9b5febc3b11c8f9bc131c74d8c49c89c8ece0ee9364988120ef67c1d5c0eed",
-    "crates/himmelcad-core/src/canonical_document.rs": "cb80db19b4ff45355c82c5b7bb823df727bd96955a8b8a92720a3421bf316fd7",
+    "crates/himmelcad-core/src/canonical_document.rs": "f7e744f29a457fb2363cc397109bd904a55f472ca2f38b3250d67e40ff0b6491",
     "packages/@himmelcad/app/src/canonicalProtocol.ts": "976a73b1c0a1be7b22e37986800579b21ae5f472e27816b1729b751b4906644a",
     "packages/@himmelcad/app/src/protocol.ts": "fdb7bbc6460ec599472b707c9c14ac31983021ba87888a5dddf6170124241ba7",
     "packages/@himmelcad/app/src/view.ts": "1b0dbb42e73b70c144a54ac67e843f9d3d076414c5ce49dfd6e2d192135e305a",

@@ -43,6 +43,16 @@ assert.match(inventory, /LICENSE-winpthreads\.txt/);
 assert.match(packaged, /runtimePrefix}colmap/);
 assert.match(linuxBuilder, /photolab-runtime\/linux-x64\/workers\/colmap/);
 assert.match(windowsBuilder, /photolab-runtime\/win32-x64\/workers\/colmap/);
+assert.match(linuxBuilder, /target\/photolab\/release\/himmelcad-sidecar/);
+assert.match(linuxBuilder, /target\/photolab\/release\/himmelcad-portable-mvs/);
+assert.match(
+  windowsBuilder,
+  /target\/photolab\/x86_64-pc-windows-gnullvm\/release\/himmelcad-sidecar\.exe/,
+);
+assert.match(
+  windowsBuilder,
+  /target\/photolab\/x86_64-pc-windows-gnullvm\/release\/himmelcad-portable-mvs\.exe/,
+);
 for (const contract of [
   'PROJ_NETWORK',
   'PROJ_DATA',
@@ -69,8 +79,8 @@ try {
     ['.build/photolab-runtime/linux-x64/workers/geo/bin/gdalinfo', 'gdal'],
     ['vendor/brush/linux-x64/brush_app', 'brush'],
     ['vendor/potreeconverter/linux-x64/PotreeConverter', 'potree'],
-    ['target/release/himmelcad-sidecar', 'sidecar'],
-    ['target/release/himmelcad-portable-mvs', 'mvs'],
+    ['target/photolab/release/himmelcad-sidecar', 'sidecar'],
+    ['target/photolab/release/himmelcad-portable-mvs', 'mvs'],
   ].map(([path, value]) => ({ path, value }));
   for (const [path, value] of [
     [join(resources, 'vendor/colmap/linux-x64/bin/colmap'), 'colmap'],

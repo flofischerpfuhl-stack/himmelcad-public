@@ -37,16 +37,6 @@ function stageWindows() {
   const colmapBin = stageColmapRuntime('win32-x64');
   stageDedodeRuntime('win32-x64');
   stagePotreeConverter('win32-x64');
-  stageGeoRuntime('win32-x64', [
-    'gdal_grid.exe',
-    'gdal_rasterize.exe',
-    'gdalwarp.exe',
-    'gdalbuildvrt.exe',
-    'gdal_translate.exe',
-    'gdalinfo.exe',
-    'ogrinfo.exe',
-    'ogr2ogr.exe',
-  ]);
   const llvmRoot =
     process.env.HIMMELCAD_LLVM_MINGW_ROOT ??
     join(
@@ -91,6 +81,16 @@ function stageWindows() {
     join(msvcRuntime, 'LICENSE.rtf'),
     join(dedodePython, 'LICENSE-Microsoft-VC-Runtime.rtf'),
   );
+  stageGeoRuntime('win32-x64', [
+    'gdal_grid.exe',
+    'gdal_rasterize.exe',
+    'gdalwarp.exe',
+    'gdalbuildvrt.exe',
+    'gdal_translate.exe',
+    'gdalinfo.exe',
+    'ogrinfo.exe',
+    'ogr2ogr.exe',
+  ]);
 }
 
 function stagePotreeConverter(target) {
