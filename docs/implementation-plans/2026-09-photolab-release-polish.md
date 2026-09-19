@@ -3178,12 +3178,14 @@ Footer
 
 Executed R1 gate ledger for the release candidate.
 
-Acceptance checklist — every unchecked item is `open — not executed`:
+Acceptance checklist — a checked item has exact matching execution evidence;
+unchecked items may be `PARTIAL`, `NOT EXECUTED`, or `PARKED` in the
+[2026-09-19 acceptance status](../photolab-release-acceptance-status-2026-09-19.md):
 
-- [ ] WP-A1: camera COLMAP round-trip and cancel-without-destination acceptance.
+- [x] WP-A1: camera COLMAP round-trip and cancel-without-destination acceptance. [Evidence](../photolab-release-acceptance-status-2026-09-19.md#wp-a1)
 - [ ] WP-A2: render every report section from the smoke dataset.
 - [ ] WP-A3: dense mesh publish/render/PLY export, child cancellation, lineage, and unchanged DEM mesh.
-- [ ] WP-A4: smoke DTM-vs-DSM, synthetic precision/recall, two-run determinism, and cancellation.
+- [x] WP-A4: smoke DTM-vs-DSM, synthetic precision/recall, two-run determinism, and cancellation. [Evidence](../photolab-release-acceptance-status-2026-09-19.md#wp-a4)
 - [ ] WP-A5: reference-preselection wiring tests and the frozen 135-image Quality Hybrid gate.
 - [ ] WP-A6: GPU parity/fallback/kill-switch acceptance if runtime delivery is unparked.
 - [ ] WP-B1: kill/reopen MVS and alignment interruption classification.
@@ -3191,7 +3193,7 @@ Acceptance checklist — every unchecked item is `open — not executed`:
 - [ ] WP-B3: close during MVS and SIGTERM/COLMAP child reaping.
 - [ ] WP-B4: same-target DEM rejection, archive cancellation on close, target-key units, and side-operation drain coverage.
 - [ ] WP-B5: journal/manifest and dataset-rename crash injections, quarantine, project-runtime suite, and Windows flush.
-- [ ] WP-B6: corrupt-record diagnostics and actionable camera-map failure fixtures.
+- [x] WP-B6: corrupt-record diagnostics and actionable camera-map failure fixtures. [Evidence](../photolab-release-acceptance-status-2026-09-19.md#wp-b6)
 - [ ] WP-C1: complete fresh-profile UI acceptance and selected-preset real-data run.
 - [ ] WP-C2: golden vertical test vector and explicit no-transform labeling.
 - [ ] WP-C3: relaunch with images/GCPs, kill-9 recovery, and guarded stale-Untitled cleanup.
@@ -3202,7 +3204,7 @@ Acceptance checklist — every unchecked item is `open — not executed`:
 - [ ] WP-C7: hands-on Agent open with empty configuration and zero console errors.
 - [ ] WP-C8: 800-image interaction gate and complete residual-to-highlight workflow.
 - [ ] WP-C9: actual pixel comparison and complete hands-on import/jobs/tree/markers/error pass.
-- [ ] WP-C10: execute the named grid parity and existing import suites.
+- [x] WP-C10: execute the named grid parity and existing import suites. [Evidence](../photolab-release-acceptance-status-2026-09-19.md#wp-c10)
 - [ ] WP-D1: merged-run optimization, DEM block/lineage, report, and sidecar resolution tests.
 - [ ] WP-D2: mixed real-data refinement and single-mission golden comparison.
 - [ ] WP-D3: merge RMS/misclosure, disjoint preflight, frozen profile, and real-data evidence.
