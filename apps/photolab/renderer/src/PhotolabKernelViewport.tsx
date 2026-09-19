@@ -639,7 +639,11 @@ export const PhotolabKernelViewport = forwardRef<
     <div ref={hostRef} className={styles.root}>
       <KernelViewport
         wasmLoader={wasmLoader}
-        backend="automatic"
+        backend={
+          import.meta.env.DEV && import.meta.env.VITE_HIMMELCAD_VIEWER_BACKEND === 'webgl2'
+            ? 'webgl2'
+            : 'automatic'
+        }
         presentationMode="windowMask"
         decodeWasmModuleUrl={decodeWasmUrl}
         authoritativeSectionTolerance={0.001}

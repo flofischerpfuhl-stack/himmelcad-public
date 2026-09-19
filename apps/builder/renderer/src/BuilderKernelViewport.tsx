@@ -2489,7 +2489,11 @@ export const BuilderKernelViewport = forwardRef<
     >
       <KernelViewport
         wasmLoader={wasmLoader}
-        backend="automatic"
+        backend={
+          import.meta.env.DEV && import.meta.env.VITE_HIMMELCAD_VIEWER_BACKEND === 'webgl2'
+            ? 'webgl2'
+            : 'automatic'
+        }
         backendFallback={backendFallback}
         presentationMode="windowMask"
         decodeWasmModuleUrl={decodeWasmUrl}

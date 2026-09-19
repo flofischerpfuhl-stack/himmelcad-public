@@ -9,6 +9,20 @@ const remoteDebuggingPort = process.env.HIMMELCAD_REMOTE_DEBUGGING_PORT?.trim() 
 const userDataDirectory = process.env.HIMMELCAD_ELECTRON_USER_DATA_DIR?.trim();
 const electronArguments = [electronCli, `--remote-debugging-port=${remoteDebuggingPort}`];
 if (userDataDirectory) electronArguments.push(`--user-data-dir=${userDataDirectory}`);
+const extraArgumentsJson = process.env.HIMMELCAD_ELECTRON_EXTRA_ARGS_JSON?.trim();
+if (extraArgumentsJson) {
+  const extraArguments = JSON.parse(extraArgumentsJson);
+  if (
+    !Array.isArray(extraArguments) ||
+    extraArguments.some(
+      (argument) =>
+        typeof argument !== 'string' || !argument.startsWith('--') || argument.includes('\0'),
+    )
+  ) {
+    throw new TypeError('HIMMELCAD_ELECTRON_EXTRA_ARGS_JSON must be a JSON array of switches');
+  }
+  electronArguments.push(...extraArguments);
+}
 if (process.platform === 'linux' && process.env.HIMMELCAD_GPU?.trim() === 'nvidia') {
   // Electron 43's default ANGLE/OpenGL path stays on the integrated adapter on
   // PRIME laptops. ANGLE Vulkan enumerates the discrete adapter correctly; the
