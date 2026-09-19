@@ -408,3 +408,10 @@ reach that stage. Never reuse an output directory between independent verdicts.
 11. **Freeze and ledger:** run R23 once, against one commit/build only, and have
     the owner disposition every explicit skip. Only then can WP-H5 and R1 gates
     1–8 be claimed closed.
+
+## Owner decisions 2026-09-19
+
+- **Windows is a supported release platform for PhotoLab** — WP-F4/R10 (native inventory, install/startup, signing/updater decisions) is unparked and part of the release path.
+- WP-A6 (GPU runtimes), WP-E2 (observation QC) and WP-E4 (overlap map) stay parked.
+- The AMD graphics driver on the Windows host may be updated by a remote Codex run (WIN-21), then the Vega 8 rendering acceptance is repeated (WIN-21b).
+
