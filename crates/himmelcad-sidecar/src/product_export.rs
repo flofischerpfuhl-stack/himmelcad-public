@@ -16,6 +16,7 @@ use crate::camera_export::{
 use crate::pointcloud_export::{
     transcode_ply_atomic, PointCloudExportError, PointCloudExportFormat,
 };
+use crate::publish_fs::publish_replace;
 
 const COPY_BUFFER_BYTES: usize = 1024 * 1024;
 
@@ -293,32 +294,6 @@ fn copy_file(
     writer.flush()?;
     writer.get_ref().sync_all()?;
     Ok(completed)
-}
-
-pub(crate) fn publish_replace(
-    temporary: &Path,
-    destination: &Path,
-    operation_id: &str,
-) -> Result<(), ProductExportError> {
-    let backup = destination.with_file_name(format!(
-        ".{}.{}.backup",
-        destination
-            .file_name()
-            .expect("validated destination")
-            .to_string_lossy(),
-        operation_id
-    ));
-    remove_path(&backup)?;
-    if destination.exists() {
-        fs::rename(destination, &backup)?;
-    }
-    if let Err(error) = fs::rename(temporary, destination) {
-        if backup.exists() {
-            let _ = fs::rename(&backup, destination);
-        }
-        return Err(error.into());
-    }
-    remove_path(&backup)
 }
 
 fn map_pointcloud_error(error: PointCloudExportError) -> ProductExportError {

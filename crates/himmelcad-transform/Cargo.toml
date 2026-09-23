@@ -1,0 +1,16 @@
+[package]
+name = "himmelcad-transform"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "HimmelCAD CRS declarations and explicit boundary transformation foundation."
+
+[dependencies]
+himmelcad-model = { path = "../himmelcad-model" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

@@ -5,12 +5,14 @@
     "himmelcad-command": "command",
     "himmelcad-core": "foundation",
     "himmelcad-decode-wasm": "display",
+    "himmelcad-document": "foundation",
     "himmelcad-io": "foundation",
     "himmelcad-model": "foundation",
     "himmelcad-prepared": "foundation",
     "himmelcad-render": "display",
     "himmelcad-sidecar": "command",
     "himmelcad-spatial": "foundation",
+    "himmelcad-transform": "foundation",
     "himmelcad-wasm": "display"
   },
   "typescript": {

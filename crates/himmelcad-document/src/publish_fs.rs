@@ -61,6 +61,30 @@ pub fn replace_file_atomically(temporary: &Path, destination: &Path) -> Result<(
     rename_with_platform_policy(REPLACE_FILE_OPERATION, temporary, destination)
 }
 
+/// Replaces a file or directory through an operation-scoped backup and restores the backup if
+/// publishing the temporary path fails.
+pub fn publish_replace(temporary: &Path, destination: &Path, operation_id: &str) -> io::Result<()> {
+    let backup = destination.with_file_name(format!(
+        ".{}.{}.backup",
+        destination
+            .file_name()
+            .expect("validated destination")
+            .to_string_lossy(),
+        operation_id
+    ));
+    remove_path(&backup)?;
+    if destination.exists() {
+        fs::rename(destination, &backup)?;
+    }
+    if let Err(error) = fs::rename(temporary, destination) {
+        if backup.exists() {
+            let _ = fs::rename(&backup, destination);
+        }
+        return Err(error);
+    }
+    remove_path(&backup)
+}
+
 /// Atomically publishes a closed scratch directory at its final destination.
 pub fn publish_directory(scratch: &Path, destination: &Path) -> Result<(), PublishFsError> {
     rename_with_platform_policy(PUBLISH_DIRECTORY_OPERATION, scratch, destination)
@@ -138,6 +162,15 @@ fn existing_file_matches(path: &Path, bytes: &[u8]) -> Result<bool, PublishFsErr
     let actual = digest.finalize();
     let expected = Sha256::digest(bytes);
     Ok(actual[..] == expected[..])
+}
+
+fn remove_path(path: &Path) -> io::Result<()> {
+    if path.is_dir() {
+        fs::remove_dir_all(path)?;
+    } else if path.exists() {
+        fs::remove_file(path)?;
+    }
+    Ok(())
 }
 
 fn temporary_object_path(destination: &Path) -> PathBuf {
@@ -241,7 +274,7 @@ mod tests {
     fn test_directory(name: &str) -> PathBuf {
         let sequence = TEMPORARY_SEQUENCE.fetch_add(1, Ordering::Relaxed);
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../.build/codex-scratch/win11")
+            .join("../../.build/test-scratch/publish-fs")
             .join(format!("{name}-{}-{sequence}", std::process::id()))
     }
 

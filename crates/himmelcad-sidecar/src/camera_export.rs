@@ -10,11 +10,7 @@ use himmelcad_core::photolab_jobs::CancellationToken;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::{
-    colmap_runtime::ColmapIntrinsicsRefinement,
-    durable_fs,
-    product_export::{publish_replace, ProductExportError},
-};
+use crate::{colmap_runtime::ColmapIntrinsicsRefinement, durable_fs, publish_fs::publish_replace};
 
 const COPY_BUFFER_BYTES: usize = 1024 * 1024;
 
@@ -186,7 +182,7 @@ pub fn export_cameras_atomic(
         }
         check_cancelled(cancellation)?;
         sync_directory_tree(&temporary)?;
-        publish_replace(&temporary, &destination, operation_id).map_err(map_publish_error)?;
+        publish_replace(&temporary, &destination, operation_id)?;
         Ok(CameraExportSummary {
             bytes,
             files: u64::try_from(3 + effective_groups.len()).unwrap_or(u64::MAX),
@@ -364,14 +360,6 @@ fn remove_directory_if_present(path: &Path) -> Result<(), std::io::Error> {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(error),
-    }
-}
-
-fn map_publish_error(error: ProductExportError) -> CameraExportError {
-    match error {
-        ProductExportError::Cancelled => CameraExportError::Cancelled,
-        ProductExportError::Io(error) => CameraExportError::Io(error),
-        ProductExportError::InvalidRequest(message) => CameraExportError::InvalidModel(message),
     }
 }
 

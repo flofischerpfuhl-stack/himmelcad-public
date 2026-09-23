@@ -1102,7 +1102,9 @@ version = "0.0.0"
 dependencies = [
  "glam 0.29.3",
  "hex",
+ "himmelcad-document",
  "himmelcad-model",
+ "himmelcad-transform",
  "parking_lot",
  "serde",
  "serde_json",
@@ -1119,6 +1121,20 @@ dependencies = [
  "serde",
  "serde_json",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "himmelcad-document"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "glam 0.29.3",
+ "hex",
+ "himmelcad-model",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -1213,9 +1229,11 @@ dependencies = [
  "hex",
  "himmelcad-command",
  "himmelcad-core",
+ "himmelcad-document",
  "himmelcad-io",
  "himmelcad-render",
  "himmelcad-spatial",
+ "himmelcad-transform",
  "hmac",
  "image",
  "las",
@@ -1236,6 +1254,16 @@ version = "0.0.0"
 dependencies = [
  "glam 0.29.3",
  "serde",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "himmelcad-transform"
+version = "0.0.0"
+dependencies = [
+ "himmelcad-model",
+ "serde",
+ "serde_json",
  "thiserror 1.0.69",
 ]
 

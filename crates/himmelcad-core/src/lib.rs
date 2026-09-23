@@ -6,13 +6,13 @@
 #![forbid(unsafe_code)]
 
 pub mod app_protocol;
-pub mod canonical_document;
-pub mod canonical_json;
+pub use himmelcad_document::canonical_document;
+pub use himmelcad_document::canonical_json;
 pub use himmelcad_model::canonical_resource_catalog;
 pub use himmelcad_model::canonical_resources;
 pub mod contract;
+pub use himmelcad_document::entity_commands;
 pub use himmelcad_model::entity;
-pub mod entity_commands;
 pub use himmelcad_model::entity_model;
 pub use himmelcad_model::entity_validation;
 pub use himmelcad_model::geometry_representation_registry;
@@ -34,10 +34,10 @@ pub mod photolab_products;
 pub mod photolab_project;
 pub mod photolab_recipe;
 pub mod product_import_package;
-pub mod project;
+pub use himmelcad_document::project;
 pub mod property_schema;
 pub mod registration;
 pub mod release_05_admissions;
-pub mod transform;
-pub mod transform_geometry;
 pub use himmelcad_model::typed_artifact;
+pub use himmelcad_transform::transform;
+pub use himmelcad_transform::transform_geometry;

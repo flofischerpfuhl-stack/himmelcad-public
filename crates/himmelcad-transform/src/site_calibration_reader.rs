@@ -6,9 +6,10 @@
 
 use std::{collections::BTreeMap, fs, path::Path};
 
-use himmelcad_core::{hash::ObjectHash, transform::Similarity3D};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+
+use crate::{hash::ObjectHash, transform::Similarity3D};
 
 /// Path-free, hash-bound calibration inspection.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

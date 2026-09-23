@@ -164,14 +164,7 @@ pub fn transcode_ply_atomic(
             &mut progress,
         )?;
         check_cancelled(cancellation)?;
-        crate::product_export::publish_replace(&temporary, &destination, operation_id).map_err(
-            |error| match error {
-                crate::product_export::ProductExportError::Io(error) => {
-                    PointCloudExportError::Io(error)
-                }
-                other => PointCloudExportError::InvalidPly(other.to_string()),
-            },
-        )?;
+        crate::publish_fs::publish_replace(&temporary, &destination, operation_id)?;
         Ok(PointCloudExportSummary {
             point_count: layout.point_count,
             bytes: destination.metadata()?.len(),

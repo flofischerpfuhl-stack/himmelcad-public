@@ -13,11 +13,11 @@
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::hash::ObjectHash;
-use crate::photolab_crs::{
+use crate::crs::{
     CrsDatabaseVersions, CrsDefinition, CrsWithEpoch, GeographicArea, HeightReference,
     OperationSelectionPolicy,
 };
+use crate::hash::ObjectHash;
 
 /// Contract schema version for persisted transform recipes.
 pub const TRANSFORM_SPEC_SCHEMA_VERSION: u32 = 1;
@@ -124,6 +124,103 @@ pub enum OutOfBoundsPolicy {
     FlagAndPreserve,
     /// Drop the point from the output stream (adapters must handle holes).
     Skip,
+}
+
+/// How the engine should treat circular primitives under a non-similarity map.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum CirclePolicy {
+    /// Densify to polyline with [`GeometryTransformPolicy::densify`], transform vertices.
+    /// Guarantees no false “still a circle” claim under NTv2.
+    #[default]
+    DensifyToPolyline,
+    /// Transform centre; set radius from mean distance of densified rim samples
+    /// (or axis-aligned average scale). Emits a warning that eccentricity is discarded.
+    PreserveAsCircleBestFit,
+    /// Transform centre + three rim points, fit circle; warning with residual RMS.
+    FitCircleFromSamples,
+}
+
+/// How text size / annotation scale is handled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum TextScalePolicy {
+    /// Keep height in **paper/drawing units** unchanged (only move anchor).
+    #[default]
+    KeepDrawingHeight,
+    /// Multiply height by local isotropic scale estimate at the anchor.
+    ScaleByLocalIsotropic,
+    /// Use geometric mean of local axis scales (|sx·sy|)^0.5.
+    ScaleByLocalAreaSqrt,
+    /// Do not transform text; report as unsupported for size.
+    LeaveUnscaledWithWarning,
+}
+
+/// Densification controls for arcs/circles/analytic curves.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DensifyPolicy {
+    /// Maximum chord-to-arc error in metres (source CRS units).
+    pub max_chord_error_meters: f64,
+    /// Maximum segment length in metres.
+    pub max_segment_meters: f64,
+    /// Absolute minimum number of samples on a full circle.
+    pub min_circle_samples: u32,
+    /// Absolute maximum samples (safety cap).
+    pub max_samples: u32,
+}
+
+impl Default for DensifyPolicy {
+    fn default() -> Self {
+        Self {
+            max_chord_error_meters: 0.005,
+            max_segment_meters: 1.0,
+            min_circle_samples: 32,
+            max_samples: 50_000,
+        }
+    }
+}
+
+/// Options that apply to **all** geometry classes for one transform job.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GeometryTransformPolicy {
+    #[serde(default)]
+    pub densify: DensifyPolicy,
+    #[serde(default)]
+    pub circle: CirclePolicy,
+    #[serde(default)]
+    pub text_scale: TextScalePolicy,
+    /// When true, refuse geometry that cannot be represented exactly after the map.
+    #[serde(default)]
+    pub strict_exactness: bool,
+    /// Numerical step (metres) for Jacobian estimation of non-analytic maps.
+    #[serde(default = "default_jacobian_step")]
+    pub jacobian_step_meters: f64,
+    /// Warn when connected elements use mixed strategies (line wall vs arc wall).
+    #[serde(default = "default_true")]
+    pub warn_connectivity_risk: bool,
+}
+
+fn default_jacobian_step() -> f64 {
+    0.05
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl Default for GeometryTransformPolicy {
+    fn default() -> Self {
+        Self {
+            densify: DensifyPolicy::default(),
+            circle: CirclePolicy::default(),
+            text_scale: TextScalePolicy::default(),
+            strict_exactness: false,
+            jacobian_step_meters: default_jacobian_step(),
+            warn_connectivity_risk: true,
+        }
+    }
 }
 
 /// Content-detected shift / geoid / velocity grid formats we accept.
@@ -411,7 +508,7 @@ pub struct TransformSpec {
     pub label: Option<String>,
     /// Geometry-class policies (circle preserve, densify, text scale, …).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub geometry_policy: Option<crate::transform_geometry::GeometryTransformPolicy>,
+    pub geometry_policy: Option<GeometryTransformPolicy>,
 }
 
 /// Immutable audit record after validation + grid inspection.

@@ -56,7 +56,7 @@ mod tests {
 
     fn test_directory(name: &str) -> std::path::PathBuf {
         let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../.build/codex-scratch/win15")
+            .join("../../.build/test-scratch/durable-fs")
             .join(format!(
                 "{name}-{}-{}",
                 std::process::id(),
