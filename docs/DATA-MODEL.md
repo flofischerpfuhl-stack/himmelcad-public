@@ -93,8 +93,8 @@ registration behavior per status follows import-formats IF-D19 (missing
 provenance is surfaced, never silently downgraded). The chain is
 PhotoLab publishes → Builder registers → WeltView reads the registered
 product read-only from the project or its `.hcadx` archive. Shapes, hash
-canonicalization, and states are defined by ADR 0030 (Proposed, owner
-acceptance pending) and import-formats IF-D19/IF-D22.
+canonicalization, and states are defined by ADR 0030 (accepted
+2026-09-23) and import-formats IF-D19/IF-D22.
 
 ## Commands and document authority
 
@@ -143,7 +143,7 @@ independent type definitions.
 
 ## Pending data-model admissions
 
-ADR 0031 (Proposed) proposes the Release 0.5 subset of these admissions (items 1 basic profile, 3 0.5 profile, 5, 6, 7 without offset/parallel, 11, 12) and defers the rest; see `docs/adr/0031-release-0-5-data-model-admissions.md`.
+ADR 0031 (accepted 2026-09-23 as the implemented state) admits the Release 0.5 subset of these admissions (items 1 basic profile, 3 0.5 profile, 5, 6, 7 without offset/parallel, 11, 12) and defers the rest; see `docs/adr/0031-release-0-5-data-model-admissions.md`.
 
 Status: admitted as pending decisions by the Builder completion program
 (registry 2026-09-02). These are not ADRs and do not authorize
@@ -176,7 +176,7 @@ implementation must not invent or persist substitute domain truth.
    (defining points/lines of higher-order entities, draw/select-edit), and
    the offset/parallel recipe schema (a `hcad.derived-recipe@1` profile,
    draw).
-8. (Promoted 2026-09-02 to ADR 0030, Proposed — see "Immutable
+8. (Promoted 2026-09-02 to ADR 0030, accepted 2026-09-23 — see "Immutable
    resources".)
 9. Journal actor metadata and Agent batch/root records — so an agent turn
    groups child commands, preserves per-command author/audit identity,

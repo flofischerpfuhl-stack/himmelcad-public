@@ -349,7 +349,7 @@ gates. Update `CURRENT-DIRECTION.md` accordingly.
 | D6       | owner-stated 2026-09-02; derived directions pending veto                                                                                                        |
 | D7       | owner-stated 2026-09-02; generators pending veto; civil domain un-deferred                                                                                      |
 | D8       | derived 2026-09-02 late; Release 0.5 "Viewer-plus" + 1.0 definition + token discipline (temporary) — pending veto; 0.5 cut superseded by D9 if the owner agrees |
-| ADR 0030 | rev 6 (9d4d398) conformant by mechanical verbatim check; Proposed — owner acceptance pending                                                                    |
+| ADR 0030 | ACCEPTED 2026-09-23 as implemented (ADR 0031 likewise); rev 6 (9d4d398)                                                                                         |
 | D11      | architect assessment 2026-09-02 late — SupraBench/Fernwork re-examined; sequencing proposal — pending veto                                                      |
 | D10      | owner-stated 2026-09-02 late — website + trust-based free tier; built on Grok                                                                                   |
 | D9       | ACCEPTED 2026-09-02 late — Release 0.5 = "DGM aus Scan"; bundle PhotoLab + Builder alpha; source-available roadmap GTM                                          |

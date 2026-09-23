@@ -2,7 +2,8 @@
 
 ## Status
 
-Proposed (architect-reviewed; owner acceptance pending). Drafted 2026-09-02 as
+Accepted by the owner on 2026-09-23 as the implemented contract; later
+changes need a superseding ADR. Previously Proposed. Drafted 2026-09-02 as
 a cite-and-adopt of the Builder program's import-formats contract, section
 "PhotoLab product datasets — 2026-09-02", decision records IF-D19 and IF-D22
 (`docs/builder-program/specs/import-formats/import-formats.md`). Field names,

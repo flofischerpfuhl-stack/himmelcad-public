@@ -2,8 +2,10 @@
 
 ## Status
 
-Proposed (architect-derived, owner acceptance pending; implementation of
-admitted items authorized under MASTER-PLAN §9.7 as vetoable substrate work)
+Accepted by the owner on 2026-09-23 as the implemented state. Changes that
+follow from the joint Builder UI redesign (for example the 2026-09-19 DGM
+corrections: roles only in the surface tool, points optional) come through a
+superseding ADR. Previously Proposed (architect-derived, 2026-09-02).
 
 Date: 2026-09-02.
 

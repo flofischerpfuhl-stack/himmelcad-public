@@ -107,8 +107,8 @@ Interrupted work is recorded as interrupted or recoverable, never completed.
 Cancellation leaves previously committed product state intact.
 
 PhotoLab product publication additionally writes a candidate import package
-(`hcad.product-import-package-manifest@1`, ADR 0030 — Proposed, owner
-acceptance pending) whose manifest and declared artifacts are synchronized
+(`hcad.product-import-package-manifest@1`, ADR 0030, accepted
+2026-09-23) whose manifest and declared artifacts are synchronized
 before a small ready record is written with `package_sha256` last; the
 product publication record mirrors that summary and the two become visible
 atomically. The package binds every object, resource, and artifact hash
