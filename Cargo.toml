@@ -5,6 +5,7 @@ members = [
     "crates/himmelcad-core",
     "crates/himmelcad-decode-wasm",
     "crates/himmelcad-document",
+    "crates/himmelcad-domain-raster",
     "crates/himmelcad-io",
     "crates/himmelcad-model",
     "crates/himmelcad-prepared",

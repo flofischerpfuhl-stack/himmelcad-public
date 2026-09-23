@@ -8,7 +8,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use himmelcad_core::photolab_jobs::CancellationToken;
+use himmelcad_process::jobs::CancellationToken;
 
 use crate::{
     mesh_tiler::PreparedMeshProduct,
@@ -816,7 +816,7 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
-    use himmelcad_core::photolab_jobs::CancellationToken;
+    use himmelcad_process::jobs::CancellationToken;
 
     use super::{
         build_prepared_triangle_mesh_from_colmap_textured_directory,

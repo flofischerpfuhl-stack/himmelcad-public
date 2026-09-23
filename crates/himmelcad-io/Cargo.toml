@@ -8,6 +8,7 @@ description = "Importers/exporters (LAS first). License-checked dependencies onl
 
 [dependencies]
 himmelcad-core = { path = "../himmelcad-core" }
+himmelcad-model = { path = "../himmelcad-model" }
 himmelcad-spatial = { path = "../himmelcad-spatial" }
 himmelcad-prepared = { path = "../himmelcad-prepared" }
 serde.workspace = true

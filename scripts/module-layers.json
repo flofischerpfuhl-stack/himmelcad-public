@@ -6,6 +6,7 @@
     "himmelcad-core": "foundation",
     "himmelcad-decode-wasm": "display",
     "himmelcad-document": "foundation",
+    "himmelcad-domain-raster": "domain",
     "himmelcad-io": "foundation",
     "himmelcad-model": "foundation",
     "himmelcad-prepared": "foundation",

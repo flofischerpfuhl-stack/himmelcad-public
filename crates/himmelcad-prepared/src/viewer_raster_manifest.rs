@@ -6,18 +6,18 @@ use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use himmelcad_core::entity_model::{GeometryResource, RasterCellDiagonal};
-use himmelcad_core::hash::ObjectHash;
-use himmelcad_core::photolab_jobs::CancellationToken;
-use himmelcad_render::{
+use crate::{
     BoundingVolume, ContentKind, ContentReference, PreparedHierarchyManifest, RefinementMode,
     TileDescriptor, TileId, WorldAabb, WorldTransform, WorldVec3,
 };
+use himmelcad_model::entity_model::{GeometryResource, RasterCellDiagonal};
+use himmelcad_model::hash::ObjectHash;
+use himmelcad_process::jobs::CancellationToken;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
-use crate::raster_runtime::{
+use crate::raster::{
     RasterBuildSummary, RasterByteOrder, RasterNoDataValue, RasterValidityResource,
     RasterViewTileFormat,
 };
@@ -73,7 +73,7 @@ pub enum PreparedElevationHierarchyError {
     Json(#[from] serde_json::Error),
     /// The shared render-core rejected the manifest before publication.
     #[error(transparent)]
-    Manifest(#[from] himmelcad_render::PreparedHierarchyError),
+    Manifest(#[from] crate::PreparedHierarchyError),
 }
 
 #[derive(Debug)]
@@ -274,7 +274,7 @@ pub fn publish_prepared_elevation_hierarchy(
 
 fn publish_tile_validity(
     product_root: &Path,
-    level: &crate::raster_runtime::RasterLevelSummary,
+    level: &crate::raster::RasterLevelSummary,
     column: u32,
     row: u32,
     summary: &RasterBuildSummary,
@@ -617,7 +617,7 @@ fn elevation_range(
 }
 
 fn elevation_encoding(
-    level: &crate::raster_runtime::RasterLevelSummary,
+    level: &crate::raster::RasterLevelSummary,
 ) -> Result<serde_json::Value, PreparedElevationHierarchyError> {
     match elevation_byte_order(level)? {
         RasterByteOrder::LittleEndian => Ok(serde_json::json!({ "kind": "float32LittleEndian" })),
@@ -626,7 +626,7 @@ fn elevation_encoding(
 }
 
 fn elevation_byte_order(
-    level: &crate::raster_runtime::RasterLevelSummary,
+    level: &crate::raster::RasterLevelSummary,
 ) -> Result<RasterByteOrder, PreparedElevationHierarchyError> {
     let format = level
         .view_layers
@@ -785,7 +785,7 @@ fn tile_id(level: u16, column: u32, row: u32) -> String {
 
 #[allow(clippy::cast_precision_loss)]
 fn tile_bounds(
-    bounds: crate::raster_runtime::RasterBounds,
+    bounds: crate::raster::RasterBounds,
     resolution: f64,
     column: u32,
     row: u32,
@@ -805,15 +805,15 @@ fn tile_bounds(
 mod tests {
     use std::fs;
 
-    use himmelcad_render::{DatasetId, HierarchySource, PreparedHierarchySource, TileId};
+    use crate::{DatasetId, HierarchySource, PreparedHierarchySource, TileId};
 
     use super::{publish_prepared_elevation_hierarchy, PreparedElevationHierarchyOptions};
-    use crate::raster_runtime::{
+    use crate::raster::{
         GdalAudit, RasterBounds, RasterBuildSummary, RasterByteOrder, RasterCrs, RasterGrid,
         RasterLevelSummary, RasterNoDataValue, RasterViewLayer, RasterViewTileFormat,
     };
-    use himmelcad_core::hash::ObjectHash;
-    use himmelcad_core::photolab_jobs::CancellationToken;
+    use himmelcad_model::hash::ObjectHash;
+    use himmelcad_process::jobs::CancellationToken;
 
     fn fixture_root() -> std::path::PathBuf {
         let root = std::env::temp_dir().join(format!(
@@ -1009,7 +1009,7 @@ mod tests {
             .expect("tile query")
             .expect("root tile");
         assert_eq!(tile.contents.len(), 1);
-        assert_eq!(tile.contents[0].kind, himmelcad_render::ContentKind::Raster);
+        assert_eq!(tile.contents[0].kind, crate::ContentKind::Raster);
         assert_eq!(tile.contents[0].primitive_count, Some(512 * 512));
         let parameters = tile.contents[0]
             .decoder_parameters

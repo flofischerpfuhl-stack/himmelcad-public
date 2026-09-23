@@ -8,6 +8,7 @@ description = "RPC registration, job supervision, and worker admission for Himme
 
 [dependencies]
 himmelcad-core = { path = "../himmelcad-core" }
+himmelcad-domain-raster = { path = "../himmelcad-domain-raster" }
 himmelcad-process = { path = "../himmelcad-process" }
 serde.workspace = true
 serde_json.workspace = true

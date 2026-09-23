@@ -1,26 +1,24 @@
 [package]
-name = "himmelcad-prepared"
+name = "himmelcad-domain-raster"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Renderer-neutral prepared hierarchy, tile, and artifact contracts."
+description = "Raster preparation and runtime domain for HimmelCAD."
 
 [dependencies]
-"brotli-decompressor" = "5.0"
-glam.workspace = true
-hex.workspace = true
+fs2 = "0.4.3"
 himmelcad-document = { path = "../himmelcad-document" }
 himmelcad-model = { path = "../himmelcad-model" }
+himmelcad-prepared = { path = "../himmelcad-prepared" }
 himmelcad-process = { path = "../himmelcad-process" }
+hex.workspace = true
 image = { version = "0.25.8", default-features = false, features = ["jpeg", "png", "tiff"] }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "process", "time"] }
 
 [lints]
 workspace = true
-
-[dev-dependencies]
-gltf.workspace = true

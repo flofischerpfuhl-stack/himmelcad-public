@@ -26,6 +26,7 @@ pub mod landxml;
 mod landxml_dom;
 pub mod las_import;
 pub mod photolab_image_import;
+mod prepared_triangle_mesh_package;
 pub mod product_import_package;
 pub mod slpk_provider;
 
@@ -105,6 +106,7 @@ pub use photolab_image_import::{
     discover_photo_files, import_photo_files, import_photo_files_with_capabilities_and_progress,
     import_photo_files_with_progress, PhotoDiscovery, PhotoImportCandidate,
 };
+pub use prepared_triangle_mesh_package::package_prepared_triangle_mesh;
 pub use product_import_package::{
     PhotoLabProductPackageProvider, ProductImportPackageRefusal, PRODUCT_IMPORT_PACKAGE_FORMAT_ID,
     PRODUCT_IMPORT_PACKAGE_PROVIDER_ID,

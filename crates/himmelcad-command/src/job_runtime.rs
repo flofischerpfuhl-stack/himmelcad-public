@@ -837,6 +837,88 @@ impl CheckpointSink {
     }
 }
 
+impl himmelcad_domain_raster::raster_runtime::RasterCheckpointSink for CheckpointSink {
+    fn accepts_raster_checkpoints(&self) -> bool {
+        matches!(
+            self.job_kind,
+            PhotolabJobKind::BuildDem | PhotolabJobKind::BuildOrthomosaic
+        )
+    }
+
+    fn record_raster_committed<'a>(
+        &'a self,
+        sequence: u64,
+        progress: himmelcad_domain_raster::raster_runtime::RasterProgress,
+        checkpoint_id: String,
+        payload_hash: ObjectHash,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + 'a>> {
+        Box::pin(async move {
+            self.record_committed(
+                sequence,
+                raster_checkpoint_progress(&progress, self.job_kind),
+                checkpoint_id,
+                payload_hash,
+            )
+            .await
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+        })
+    }
+}
+
+fn raster_checkpoint_progress(
+    progress: &himmelcad_domain_raster::raster_runtime::RasterProgress,
+    kind: PhotolabJobKind,
+) -> JobProgress {
+    let (index, stage_kind) = match progress.phase {
+        himmelcad_domain_raster::raster_runtime::RasterPhase::Validating => (
+            0,
+            himmelcad_core::photolab_jobs::PhotolabStageKind::Preparing,
+        ),
+        himmelcad_domain_raster::raster_runtime::RasterPhase::Rasterizing
+        | himmelcad_domain_raster::raster_runtime::RasterPhase::Orthorectifying => (
+            1,
+            himmelcad_core::photolab_jobs::PhotolabStageKind::Rasterization,
+        ),
+        himmelcad_domain_raster::raster_runtime::RasterPhase::Mosaicking => (
+            2,
+            himmelcad_core::photolab_jobs::PhotolabStageKind::Rasterization,
+        ),
+        himmelcad_domain_raster::raster_runtime::RasterPhase::BuildingPyramid => (
+            3,
+            himmelcad_core::photolab_jobs::PhotolabStageKind::Rasterization,
+        ),
+        himmelcad_domain_raster::raster_runtime::RasterPhase::ExportingCog => (
+            4,
+            himmelcad_core::photolab_jobs::PhotolabStageKind::Rasterization,
+        ),
+        himmelcad_domain_raster::raster_runtime::RasterPhase::ValidatingCog => (
+            5,
+            himmelcad_core::photolab_jobs::PhotolabStageKind::Finalizing,
+        ),
+        himmelcad_domain_raster::raster_runtime::RasterPhase::Committing => (
+            6,
+            himmelcad_core::photolab_jobs::PhotolabStageKind::Finalizing,
+        ),
+    };
+    let orthomosaic = kind == PhotolabJobKind::BuildOrthomosaic;
+
+    JobProgress {
+        stage: himmelcad_core::photolab_jobs::PhotolabStage {
+            kind: stage_kind,
+            index: index + u32::from(orthomosaic),
+            stage_count: 7 + u32::from(orthomosaic),
+            label: progress.current_step.clone(),
+        },
+        metrics: himmelcad_core::photolab_jobs::ProgressMetrics {
+            completed_units: progress.completed_steps,
+            total_units: Some(progress.total_steps.max(1)),
+            completed_bytes: 0,
+            total_bytes: None,
+        },
+    }
+}
+
 /// Cheap diagnostic callback scoped to one job.
 #[derive(Debug, Clone)]
 pub struct JobDiagnosticSink {
@@ -945,6 +1027,28 @@ impl JobMemorySink {
                 self.manager
                     .record_matching_threads(&self.job_id, stage.into(), threads),
             )
+    }
+}
+
+impl himmelcad_domain_raster::raster_runtime::RasterMemorySink for JobMemorySink {
+    fn record_stage_peak(
+        &self,
+        stage: &'static str,
+        peak_rss_bytes: u64,
+        workers: u16,
+        parameters: serde_json::Value,
+    ) -> Result<(), String> {
+        self.record_stage_peak_blocking(stage, peak_rss_bytes, workers, parameters)
+            .map_err(|error| error.to_string())
+    }
+
+    fn record_worker_memory_limit_hit(
+        &self,
+        stage: &'static str,
+        limit_bytes: u64,
+    ) -> Result<(), String> {
+        self.record_worker_memory_limit_hit_blocking(stage, limit_bytes)
+            .map_err(|error| error.to_string())
     }
 }
 

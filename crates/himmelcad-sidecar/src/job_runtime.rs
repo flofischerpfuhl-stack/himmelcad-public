@@ -7,6 +7,8 @@ use himmelcad_core::photolab_jobs::{
 };
 use serde::{Deserialize, Serialize};
 
+pub use himmelcad_domain_raster::raster_runtime::RasterPreparationStagePlan;
+
 const GIB: u64 = 1024 * 1024 * 1024;
 const MIB: u64 = 1024 * 1024;
 const DENSE_RASTER_FLATGEOBUF_BYTES_PER_POINT: u64 = 88;
@@ -122,14 +124,6 @@ pub struct AlignmentMatchingReplan {
 pub struct AlignmentMatchingMemoryRefusal {
     pub predicted_bytes: u64,
     pub available_bytes: u64,
-}
-
-/// One sequential DEM preparation unit and the resident cap applied to its worker.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RasterPreparationStagePlan {
-    pub stage: &'static str,
-    pub model_bytes: u64,
-    pub resident_limit_bytes: u64,
 }
 
 /// Immutable dense-point-derived choices frozen before a DEM job becomes visible.

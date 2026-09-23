@@ -6,8 +6,26 @@
 use glam::{DMat3, DMat4, DVec3, DVec4};
 use serde::{Deserialize, Serialize};
 
+#[allow(missing_docs)]
+pub mod dense;
 mod hierarchy;
+#[allow(missing_docs)]
+pub mod mesh_tiler;
+#[allow(missing_docs)]
+pub mod mvs_scene;
 mod potree;
+#[allow(missing_docs)]
+pub mod prepared_triangle_mesh;
+#[allow(missing_docs)]
+pub mod prepared_triangle_mesh_ply;
+#[allow(missing_docs)]
+pub mod raster;
+#[allow(missing_docs)]
+pub mod splat_tiler;
+#[allow(missing_docs)]
+pub mod viewer_raster_manifest;
+#[allow(missing_docs)]
+pub mod viewer_raster_surface_manifest;
 
 pub use hierarchy::{PreparedHierarchyError, PreparedHierarchyManifest, PreparedHierarchySource};
 pub use potree::{

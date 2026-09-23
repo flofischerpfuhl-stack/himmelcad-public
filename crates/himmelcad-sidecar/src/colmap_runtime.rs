@@ -38,7 +38,17 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
-use crate::mesh_tiler::PreparedMeshProduct;
+#[cfg(target_os = "linux")]
+use himmelcad_process::worker::configure_systemd_user_bus_environment;
+pub use himmelcad_process::worker::probe_worker_scope_for_diagnostics;
+#[cfg(all(test, target_os = "linux"))]
+use himmelcad_process::worker::{
+    effective_uid_from_proc_status, find_in_path, run_systemd_user_scope_probe, systemd_user_scope,
+    systemd_user_scope_probe_command, worker_command_for_plan, WORKER_RLIMIT_AS_MULTIPLIER,
+};
+use himmelcad_process::worker::{worker_command, WorkerMemoryLimitMode, WorkerMemoryLimitPlan};
+
+use himmelcad_prepared::mesh_tiler::PreparedMeshProduct;
 
 use crate::image_commit::{CameraImageMetadataRecord, ProjectCameraImageRecord};
 use crate::image_mask_runtime::materialize_colmap_masks;
@@ -57,8 +67,8 @@ use crate::{
         TiledAlikedFeature, TiledAlikedFeatureSet,
     },
     dedode_runtime::{DedodeRunOutcome, DedodeToolIdentity},
-    dense_raster_prep::PreparedPotreeCloud,
 };
+use himmelcad_prepared::dense::PreparedPotreeCloud;
 
 const TOOL_MANIFEST_SCHEMA_VERSION: u32 = 1;
 const OUTPUT_SUMMARY_SCHEMA_VERSION: u32 = 2;
@@ -73,15 +83,6 @@ const GIB: u64 = 1024 * 1024 * 1024;
 const WORKER_MEMORY_HEADROOM_NUMERATOR: u64 = 5;
 const WORKER_MEMORY_HEADROOM_DENOMINATOR: u64 = 4;
 const MINIMUM_WORKER_MEMORY_LIMIT_BYTES: u64 = 2 * GIB;
-// WP-A7e X6 calibration: RLIMIT_AS measures virtual address space while the model predicts RSS.
-// The A7d smoke reached 6.31 GB RSS at a 10.6 GB address-space limit, so the fallback doubles the
-// resident limit to cover thread arenas and mapped weights without pretending the units match.
-const WORKER_RLIMIT_AS_MULTIPLIER: u64 = 2;
-// WP-A7g X6 diagnostic bound: enough context to identify a systemd property or bus failure while
-// keeping the once-per-process line bounded when a launcher emits an unexpectedly large message.
-const SYSTEMD_SCOPE_PROBE_DIAGNOSTIC_MAX_CHARS: usize = 512;
-#[cfg(target_os = "linux")]
-const PRLIMIT_PATH: &str = "/usr/bin/prlimit";
 // X6 tunable: depth 11 retains facade-scale detail without the extreme memory growth of
 // deeper Poisson octrees on typical workstation dense clouds.
 const POISSON_MESHING_DEPTH: u32 = 11;
@@ -97,8 +98,6 @@ const MIN_PINNED_READJUSTMENT_IMAGE_RETENTION: f64 = 1.0;
 const MIN_PINNED_READJUSTMENT_POINT_RETENTION: f64 = 0.9;
 
 static NEXT_SCRATCH_SEQUENCE: AtomicU64 = AtomicU64::new(1);
-#[cfg(target_os = "linux")]
-static SYSTEMD_USER_SCOPE: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
 
 /// Exact capabilities asserted by an audited platform worker manifest.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -3730,249 +3729,6 @@ fn worker_memory_limit_bytes(unit_bytes: u64, workers: u16) -> u64 {
         .checked_div(WORKER_MEMORY_HEADROOM_DENOMINATOR)
         .unwrap_or(u64::MAX)
         .max(MINIMUM_WORKER_MEMORY_LIMIT_BYTES)
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum WorkerMemoryLimitMode {
-    CgroupScope,
-    RlimitAs,
-}
-
-impl WorkerMemoryLimitMode {
-    pub(crate) fn as_str(self) -> &'static str {
-        match self {
-            Self::CgroupScope => "cgroupScope",
-            Self::RlimitAs => "rlimitAs",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct WorkerMemoryLimitPlan {
-    pub(crate) mode: WorkerMemoryLimitMode,
-    pub(crate) enforced_limit_bytes: u64,
-}
-
-pub(crate) fn worker_command(
-    executable: &Path,
-    memory_limit_bytes: Option<u64>,
-) -> (Command, Option<WorkerMemoryLimitPlan>) {
-    #[cfg(target_os = "linux")]
-    if let Some(memory_limit_bytes) = memory_limit_bytes
-        .filter(|_| std::env::var("HIMMELCAD_PHOTOLAB_WORKER_RLIMIT_DISABLE").as_deref() != Ok("1"))
-    {
-        // Operational/test override for hosts where probing a systemd user manager is forbidden;
-        // the hard address-space fallback remains active instead of disabling the worker bound.
-        let force_rlimit =
-            std::env::var("HIMMELCAD_PHOTOLAB_WORKER_FORCE_RLIMIT_AS").as_deref() == Ok("1");
-        if !force_rlimit {
-            if let Some(systemd_run) = systemd_user_scope() {
-                let plan = WorkerMemoryLimitPlan {
-                    mode: WorkerMemoryLimitMode::CgroupScope,
-                    enforced_limit_bytes: memory_limit_bytes,
-                };
-                return (
-                    worker_command_for_plan(systemd_run, executable, plan),
-                    Some(plan),
-                );
-            }
-        }
-        let plan = WorkerMemoryLimitPlan {
-            mode: WorkerMemoryLimitMode::RlimitAs,
-            enforced_limit_bytes: memory_limit_bytes.saturating_mul(WORKER_RLIMIT_AS_MULTIPLIER),
-        };
-        return (
-            worker_command_for_plan(Path::new(PRLIMIT_PATH), executable, plan),
-            Some(plan),
-        );
-    }
-    let _ = memory_limit_bytes;
-    (Command::new(executable), None)
-}
-
-#[cfg(target_os = "linux")]
-pub(crate) fn worker_command_for_plan(
-    launcher: &Path,
-    executable: &Path,
-    plan: WorkerMemoryLimitPlan,
-) -> Command {
-    match plan.mode {
-        WorkerMemoryLimitMode::CgroupScope => {
-            let mut command = Command::new(launcher);
-            command
-                .arg("--user")
-                .arg("--scope")
-                .arg("--quiet")
-                .arg("-p")
-                .arg(format!("MemoryMax={}", plan.enforced_limit_bytes))
-                .arg("-p")
-                .arg("MemorySwapMax=0")
-                .arg("--collect")
-                .arg("--")
-                // A scope can enforce cgroup properties, but it cannot apply execution-context
-                // properties such as LimitCORE. Apply the child-only rlimit immediately before
-                // exec while the resulting process remains inside the transient scope.
-                .arg(PRLIMIT_PATH)
-                .arg("--core=0")
-                .arg("--")
-                .arg(executable);
-            command
-        }
-        WorkerMemoryLimitMode::RlimitAs => {
-            // The crate forbids unsafe code, while std's pre-exec hook is unsafe. `prlimit`
-            // applies the child-only fallback immediately before `exec`; descendants inherit it.
-            let mut command = Command::new(launcher);
-            command
-                .arg(format!("--as={}", plan.enforced_limit_bytes))
-                .arg("--")
-                .arg(executable);
-            command
-        }
-    }
-}
-
-#[cfg(target_os = "linux")]
-fn systemd_user_scope() -> Option<&'static Path> {
-    if std::env::var("HIMMELCAD_PHOTOLAB_WORKER_FORCE_RLIMIT_AS").as_deref() == Ok("1") {
-        return None;
-    }
-    SYSTEMD_USER_SCOPE
-        .get_or_init(|| {
-            let Some(executable) = find_in_path("systemd-run") else {
-                tracing::info!(
-                    available = false,
-                    reason = "systemd-run was not found in PATH or the standard system paths",
-                    "PhotoLab systemd user-scope probe completed"
-                );
-                return None;
-            };
-            let outcome = run_systemd_user_scope_probe(&executable);
-            let available = outcome.as_ref().is_ok_and(|output| output.status.success());
-            match outcome {
-                Ok(output) => tracing::info!(
-                    available,
-                    status = %output.status,
-                    stdout = %systemd_probe_excerpt(&output.stdout),
-                    stderr = %systemd_probe_excerpt(&output.stderr),
-                    "PhotoLab systemd user-scope probe completed"
-                ),
-                Err(ref error) => tracing::info!(
-                    available,
-                    reason = %error,
-                    "PhotoLab systemd user-scope probe completed"
-                ),
-            }
-            available.then_some(executable)
-        })
-        .as_deref()
-}
-
-#[cfg(target_os = "linux")]
-fn systemd_user_scope_probe_command(executable: &Path) -> Command {
-    let mut command = Command::new(executable);
-    command
-        .arg("--user")
-        .arg("--scope")
-        .arg("--quiet")
-        .arg("-p")
-        .arg("MemoryMax=64M")
-        .arg("-p")
-        .arg("MemorySwapMax=0")
-        .arg("--collect")
-        .arg("--")
-        .arg(PRLIMIT_PATH)
-        .arg("--core=0")
-        .arg("--")
-        .arg("/bin/true");
-    configure_systemd_user_bus_environment(&mut command);
-    command
-}
-
-#[cfg(target_os = "linux")]
-fn run_systemd_user_scope_probe(executable: &Path) -> io::Result<std::process::Output> {
-    systemd_user_scope_probe_command(executable)
-        .stdin(Stdio::null())
-        .output()
-}
-
-#[cfg(target_os = "linux")]
-fn systemd_probe_excerpt(bytes: &[u8]) -> String {
-    String::from_utf8_lossy(bytes)
-        .trim()
-        .chars()
-        .take(SYSTEMD_SCOPE_PROBE_DIAGNOSTIC_MAX_CHARS)
-        .collect()
-}
-
-#[cfg(target_os = "linux")]
-pub(crate) fn configure_systemd_user_bus_environment(command: &mut Command) {
-    let runtime_dir = std::env::var_os("XDG_RUNTIME_DIR")
-        .map(PathBuf::from)
-        .or_else(systemd_user_runtime_dir);
-    // The worker command starts from `env_clear()`, so the bus variables must be set
-    // explicitly even when the sidecar itself inherited them (A7g follow-up: the
-    // scope failed with "Failed to connect to bus: No medium found" inside units).
-    if let Some(runtime_dir) = runtime_dir.as_ref() {
-        command.env("XDG_RUNTIME_DIR", runtime_dir);
-    }
-    if let Some(bus) = std::env::var_os("DBUS_SESSION_BUS_ADDRESS") {
-        command.env("DBUS_SESSION_BUS_ADDRESS", bus);
-    } else if let Some(bus) = runtime_dir
-        .as_ref()
-        .map(|runtime_dir| runtime_dir.join("bus"))
-        .filter(|bus| bus.exists())
-    {
-        command.env(
-            "DBUS_SESSION_BUS_ADDRESS",
-            format!("unix:path={}", bus.display()),
-        );
-    }
-}
-
-#[cfg(target_os = "linux")]
-fn systemd_user_runtime_dir() -> Option<PathBuf> {
-    let status = fs::read_to_string("/proc/self/status").ok()?;
-    let uid = effective_uid_from_proc_status(&status)?;
-    let runtime_dir = Path::new("/run/user").join(uid.to_string());
-    runtime_dir.is_dir().then_some(runtime_dir)
-}
-
-#[cfg(target_os = "linux")]
-fn effective_uid_from_proc_status(status: &str) -> Option<u32> {
-    status
-        .lines()
-        .find_map(|line| line.strip_prefix("Uid:"))?
-        .split_whitespace()
-        .nth(1)?
-        .parse()
-        .ok()
-}
-
-/// Runs the process-cached worker-scope probe so an integration harness can capture its one log
-/// line without starting COLMAP.
-#[cfg(target_os = "linux")]
-pub fn probe_worker_scope_for_diagnostics() -> bool {
-    systemd_user_scope().is_some()
-}
-
-#[cfg(not(target_os = "linux"))]
-pub const fn probe_worker_scope_for_diagnostics() -> bool {
-    false
-}
-
-#[cfg(target_os = "linux")]
-fn find_in_path(executable: &str) -> Option<PathBuf> {
-    std::env::var_os("PATH")
-        .into_iter()
-        .flat_map(|path| std::env::split_paths(&path).collect::<Vec<_>>())
-        .map(|directory| directory.join(executable))
-        .find(|candidate| candidate.is_file())
-        .or_else(|| {
-            ["/usr/bin", "/bin"]
-                .into_iter()
-                .map(|directory| Path::new(directory).join(executable))
-                .find(|candidate| candidate.is_file())
-        })
 }
 
 fn outcome_indicates_memory_limit(outcome: &ProcessOutcome) -> bool {
@@ -8628,13 +8384,14 @@ printf 'HIMMELCAD_PROGRESS 2/2\n'
             .await
             .expect("wait for poisson mesh job");
         assert_eq!(terminal.state, PhotolabJobState::Completed);
-        let product = crate::prepared_triangle_mesh_ply::build_prepared_triangle_mesh_from_ply(
-            &candidate.join("mesh.ply"),
-            &rig.project.join("prepared-poisson-product"),
-            crate::prepared_triangle_mesh::PreparedTriangleMeshOptions::default(),
-            &CancellationToken::new(),
-        )
-        .expect("poisson output reaches the PLY tiler");
+        let product =
+            himmelcad_prepared::prepared_triangle_mesh_ply::build_prepared_triangle_mesh_from_ply(
+                &candidate.join("mesh.ply"),
+                &rig.project.join("prepared-poisson-product"),
+                himmelcad_prepared::prepared_triangle_mesh::PreparedTriangleMeshOptions::default(),
+                &CancellationToken::new(),
+            )
+            .expect("poisson output reaches the PLY tiler");
         assert_eq!(product.triangle_count, 1);
     }
 

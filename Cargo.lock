@@ -1098,6 +1098,7 @@ version = "0.0.0"
 dependencies = [
  "fs2",
  "himmelcad-core",
+ "himmelcad-domain-raster",
  "himmelcad-process",
  "serde",
  "serde_json",
@@ -1148,6 +1149,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "himmelcad-domain-raster"
+version = "0.0.0"
+dependencies = [
+ "fs2",
+ "hex",
+ "himmelcad-document",
+ "himmelcad-model",
+ "himmelcad-prepared",
+ "himmelcad-process",
+ "image",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 1.0.69",
+ "tokio",
+]
+
+[[package]]
 name = "himmelcad-io"
 version = "0.0.0"
 dependencies = [
@@ -1159,6 +1178,7 @@ dependencies = [
  "geotiff-writer",
  "hex",
  "himmelcad-core",
+ "himmelcad-model",
  "himmelcad-prepared",
  "himmelcad-spatial",
  "image",
@@ -1193,8 +1213,15 @@ version = "0.0.0"
 dependencies = [
  "brotli-decompressor",
  "glam 0.29.3",
+ "gltf",
+ "hex",
+ "himmelcad-document",
+ "himmelcad-model",
+ "himmelcad-process",
+ "image",
  "serde",
  "serde_json",
+ "sha2",
  "thiserror 1.0.69",
 ]
 
@@ -1205,6 +1232,7 @@ dependencies = [
  "himmelcad-model",
  "serde",
  "thiserror 1.0.69",
+ "tracing",
 ]
 
 [[package]]
@@ -1249,7 +1277,10 @@ dependencies = [
  "himmelcad-command",
  "himmelcad-core",
  "himmelcad-document",
+ "himmelcad-domain-raster",
  "himmelcad-io",
+ "himmelcad-prepared",
+ "himmelcad-process",
  "himmelcad-render",
  "himmelcad-spatial",
  "himmelcad-transform",

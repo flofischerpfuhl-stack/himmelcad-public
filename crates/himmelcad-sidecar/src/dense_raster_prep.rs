@@ -11,16 +11,17 @@ use std::{
 
 use himmelcad_core::hash::ObjectHash;
 use himmelcad_core::photolab_jobs::CancellationToken;
-use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
-#[cfg(target_os = "linux")]
-use crate::colmap_runtime::configure_systemd_user_bus_environment;
-use crate::colmap_runtime::{worker_command, WorkerMemoryLimitMode, WorkerMemoryLimitPlan};
+pub use himmelcad_prepared::dense::{PreparedDenseVector, PreparedPotreeCloud};
+
 use crate::ground_classification::{Point3, PointClass};
 use crate::job_runtime::{JobMemorySink, RasterPreparationStagePlan};
 use crate::process_group;
+#[cfg(target_os = "linux")]
+use himmelcad_process::worker::configure_systemd_user_bus_environment;
+use himmelcad_process::worker::{worker_command, WorkerMemoryLimitMode, WorkerMemoryLimitPlan};
 
 const POLL: Duration = Duration::from_millis(15);
 /// X6 stream chunk: bounds cancellation latency while keeping class I/O allocations small.
@@ -51,28 +52,6 @@ struct PlyVertexLayout {
     nx: Option<usize>,
     ny: Option<usize>,
     nz: Option<usize>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PreparedDenseVector {
-    pub flatgeobuf_path: PathBuf,
-    pub layer: String,
-    pub point_count: u64,
-    pub minimum: [f64; 3],
-    pub maximum: [f64; 3],
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PreparedPotreeCloud {
-    pub relative_metadata_path: PathBuf,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub export_relative_path: Option<PathBuf>,
-    pub point_count: u64,
-    pub render_offset: [f64; 3],
-    pub bounds_min: [f64; 3],
-    pub bounds_max: [f64; 3],
 }
 
 #[derive(Debug, Error)]
@@ -1494,7 +1473,7 @@ fn run_gdal_command_inner(
                 WorkerMemoryLimitMode::RlimitAs => Path::new("/usr/bin/prlimit"),
             };
             (
-                crate::colmap_runtime::worker_command_for_plan(launcher, executable, plan),
+                himmelcad_process::worker::worker_command_for_plan(launcher, executable, plan),
                 Some(plan),
             )
         }
@@ -1792,7 +1771,7 @@ mod tests {
                 mode: WorkerMemoryLimitMode::CgroupScope,
                 enforced_limit_bytes: 12_345_678,
             };
-            let command = crate::colmap_runtime::worker_command_for_plan(
+            let command = himmelcad_process::worker::worker_command_for_plan(
                 Path::new("/fake/systemd-run"),
                 Path::new(executable),
                 plan,
@@ -1827,7 +1806,7 @@ mod tests {
                 mode: WorkerMemoryLimitMode::RlimitAs,
                 enforced_limit_bytes: 24_691_356,
             };
-            let command = crate::colmap_runtime::worker_command_for_plan(
+            let command = himmelcad_process::worker::worker_command_for_plan(
                 Path::new("/usr/bin/prlimit"),
                 Path::new(executable),
                 plan,

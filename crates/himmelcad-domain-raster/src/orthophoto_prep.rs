@@ -10,16 +10,16 @@ use std::{
     time::Duration,
 };
 
-use himmelcad_core::hash::ObjectHash;
-use himmelcad_core::photolab_jobs::CancellationToken;
+use himmelcad_model::hash::ObjectHash;
+use himmelcad_prepared::mvs_scene::{MvsPinholeCamera, MvsSceneImage, MvsSceneManifest};
+use himmelcad_process::jobs::CancellationToken;
 use image::{ImageReader, RgbImage, RgbaImage};
 use thiserror::Error;
 
-use crate::{
-    mvs_runtime::{MvsPinholeCamera, MvsSceneImage, MvsSceneManifest},
-    process_group,
-    raster_runtime::{OrthophotoSource, RasterBounds, RasterBuildSummary, RasterCrs, RasterGrid},
+use crate::raster_runtime::{
+    OrthophotoSource, RasterBounds, RasterBuildSummary, RasterCrs, RasterGrid,
 };
+use himmelcad_process::process_group;
 
 const TILE_SIZE: usize = 512;
 const TILE_SIZE_U32: u32 = 512;
@@ -679,7 +679,7 @@ fn image_mean(image: &RgbImage) -> [f64; 3] {
 
 struct DemSampler {
     root: PathBuf,
-    level: crate::raster_runtime::RasterLevelSummary,
+    level: himmelcad_prepared::raster::RasterLevelSummary,
     tiles: HashMap<(u32, u32), Arc<Vec<f32>>>,
     order: VecDeque<(u32, u32)>,
 }
