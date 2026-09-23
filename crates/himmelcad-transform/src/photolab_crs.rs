@@ -8,7 +8,7 @@ use thiserror::Error;
 
 use crate::hash::ObjectHash;
 
-pub use himmelcad_transform::crs::{
+pub use crate::crs::{
     BallparkConfirmation, CoordinateEpoch, CoordinateOperationKind, CrsDatabaseVersions,
     CrsDefinition, CrsWithEpoch, GeographicArea, GridLicenseMetadata, HeightReference,
     HorizontalCrsSelection, OperationCandidate, OperationSelectionPolicy, RequiredGridAvailability,

@@ -1,4 +1,4 @@
-//! Execution engine for [`himmelcad_core::transform`].
+//! Execution engine for [`crate::transform`].
 //!
 //! Responsibilities:
 //! - inspect grid/geoid files by **content** (not file name)
@@ -16,16 +16,16 @@ use std::{
     process::{Command, Stdio},
 };
 
-use himmelcad_core::{
+use crate::{
+    crs::{CrsDatabaseVersions, CrsDefinition, GeographicArea},
     hash::ObjectHash,
-    photolab_crs::{CrsDatabaseVersions, CrsDefinition, GeographicArea},
-    photolab_jobs::CancellationToken,
     transform::{
         apply_empirical, FrozenTransform, GridAuthorityHint, GridFileFormat, GridFileRef, GridRole,
         InspectedGridFile, OutOfBoundsPolicy, ProjCoordinateOp, ResidualReport, SeparateStageOrder,
         TransformCompositionMode, TransformSpec, TransformSpecError, TransformStage, WorldPoint,
     },
 };
+use himmelcad_process::jobs::CancellationToken;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -110,7 +110,7 @@ pub enum TransformRuntimeError {
     #[error("geoid undulation on projected XY requires a projected CRS (geographicCrs field)")]
     ProjectedGeoidMissingCrs,
     #[error(transparent)]
-    Geometry(#[from] himmelcad_core::transform_geometry::GeometryTransformError),
+    Geometry(#[from] crate::transform_geometry::GeometryTransformError),
 }
 
 impl TransformRuntime {
@@ -719,7 +719,7 @@ impl TransformRuntime {
         }
         // Never allow network grid fetch in product paths.
         command.env("PROJ_NETWORK", "OFF");
-        crate::process_group::configure(&mut command);
+        himmelcad_process::process_group::configure(&mut command);
 
         let mut child = command
             .spawn()
@@ -1274,7 +1274,7 @@ fn parse_cct_row(line: &str) -> Option<[f64; 4]> {
 pub fn control_residual_report(
     runtime: &TransformRuntime,
     frozen: &FrozenTransform,
-    pairs: &[himmelcad_core::transform::ControlPair],
+    pairs: &[crate::transform::ControlPair],
     cancellation: &CancellationToken,
 ) -> Result<ResidualReport, TransformRuntimeError> {
     let sources: Vec<_> = pairs.iter().map(|pair| pair.source).collect();
@@ -1301,7 +1301,7 @@ pub fn control_residual_report(
         sum_v2 += vertical * vertical;
         sum_s2 += spatial * spatial;
         max_s = max_s.max(spatial);
-        points.push(himmelcad_core::transform::PointResidual {
+        points.push(crate::transform::PointResidual {
             id: pair.id.clone(),
             source: pair.source,
             expected_target: pair.target,
@@ -1328,8 +1328,8 @@ pub fn control_residual_report(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use himmelcad_core::photolab_crs::CrsWithEpoch;
-    use himmelcad_core::transform::{
+    use crate::crs::CrsWithEpoch;
+    use crate::transform::{
         identity_spec, EmpiricalOp, HeightOffsetOp, Similarity2D, TRANSFORM_SPEC_SCHEMA_VERSION,
     };
 

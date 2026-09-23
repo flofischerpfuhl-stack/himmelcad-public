@@ -21,7 +21,7 @@ pub mod mesh_surface;
 pub mod photolab;
 pub mod photolab_batch;
 pub mod photolab_capture;
-pub mod photolab_crs;
+pub use himmelcad_transform::photolab_crs;
 pub mod photolab_gcp;
 pub mod photolab_gcp_local_estimate;
 pub mod photolab_gcp_optimization;

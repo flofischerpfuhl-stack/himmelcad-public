@@ -1095,6 +1095,15 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 [[package]]
 name = "himmelcad-command"
 version = "0.0.0"
+dependencies = [
+ "fs2",
+ "himmelcad-core",
+ "himmelcad-process",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
 
 [[package]]
 name = "himmelcad-core"
@@ -1104,6 +1113,7 @@ dependencies = [
  "hex",
  "himmelcad-document",
  "himmelcad-model",
+ "himmelcad-process",
  "himmelcad-transform",
  "parking_lot",
  "serde",
@@ -1189,6 +1199,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "himmelcad-process"
+version = "0.0.0"
+dependencies = [
+ "himmelcad-model",
+ "serde",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "himmelcad-render"
 version = "0.0.0"
 dependencies = [
@@ -1261,10 +1280,14 @@ dependencies = [
 name = "himmelcad-transform"
 version = "0.0.0"
 dependencies = [
+ "hex",
  "himmelcad-model",
+ "himmelcad-process",
  "serde",
  "serde_json",
+ "sha2",
  "thiserror 1.0.69",
+ "tokio",
 ]
 
 [[package]]

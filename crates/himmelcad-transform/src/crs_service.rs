@@ -2,14 +2,13 @@
 
 use std::{collections::HashMap, sync::Arc};
 
-use himmelcad_core::{
-    photolab_crs::{CrsDefinition, FrozenImportTransformation, ImportTransformationDecision},
-    photolab_jobs::CancellationToken,
-};
+use himmelcad_process::jobs::CancellationToken;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
+use crate::crs::CrsDefinition;
 use crate::crs_runtime::{CrsRuntimeError, OperationDiscovery, OperationQuery, ProjRuntime};
+use crate::photolab_crs::{FrozenImportTransformation, ImportTransformationDecision};
 
 /// An operation id makes discovery/freezing independently cancellable over JSON-RPC.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

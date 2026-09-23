@@ -8,6 +8,7 @@ members = [
     "crates/himmelcad-io",
     "crates/himmelcad-model",
     "crates/himmelcad-prepared",
+    "crates/himmelcad-process",
     "crates/himmelcad-render",
     "crates/himmelcad-spatial",
     "crates/himmelcad-sidecar",

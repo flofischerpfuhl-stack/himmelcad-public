@@ -9,6 +9,7 @@
     "himmelcad-io": "foundation",
     "himmelcad-model": "foundation",
     "himmelcad-prepared": "foundation",
+    "himmelcad-process": "foundation",
     "himmelcad-render": "display",
     "himmelcad-sidecar": "command",
     "himmelcad-spatial": "foundation",

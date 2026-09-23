@@ -7,8 +7,7 @@
 //! - text height policies
 //! - inverse-map raster warp (in-memory f64 grids)
 
-use himmelcad_core::{
-    photolab_jobs::CancellationToken,
+use crate::{
     transform::{apply_empirical, EmpiricalOp, FrozenTransform, TransformStage, WorldPoint},
     transform_geometry::{
         classify_geometry, densify_arc, densify_circle, fit_circle_xy, mean_radius_xy,
@@ -18,6 +17,7 @@ use himmelcad_core::{
         TransformedText,
     },
 };
+use himmelcad_process::jobs::CancellationToken;
 
 use crate::transform_runtime::{TransformRuntime, TransformRuntimeError};
 
@@ -38,7 +38,7 @@ impl TransformRuntime {
         kind: GeometryKind,
         policy: &GeometryTransformPolicy,
         geometry_id: Option<&str>,
-    ) -> himmelcad_core::transform_geometry::GeometryClassification {
+    ) -> crate::transform_geometry::GeometryClassification {
         let policy = frozen.spec.geometry_policy.as_ref().unwrap_or(policy);
         classify_geometry(kind, &frozen.spec, policy, geometry_id)
     }
@@ -532,11 +532,11 @@ fn try_map_vector_empirical(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use himmelcad_core::transform::{
+    use crate::transform::{
         identity_spec, EmpiricalOp, Similarity2D, TransformCompositionMode, TransformSpec,
         TransformStage, TRANSFORM_SPEC_SCHEMA_VERSION,
     };
-    use himmelcad_core::transform_geometry::GeometryTransformPolicy;
+    use crate::transform_geometry::GeometryTransformPolicy;
 
     use crate::transform_runtime::TransformRuntimeConfig;
 
@@ -631,8 +631,8 @@ mod tests {
         let mut spec = identity_spec();
         // Force non-similarity by adding empty proj stage marker via HeightPlane only is still global
         // Use Proj stage
-        use himmelcad_core::photolab_crs::{CrsDefinition, CrsWithEpoch};
-        use himmelcad_core::transform::ProjCoordinateOp;
+        use crate::crs::{CrsDefinition, CrsWithEpoch};
+        use crate::transform::ProjCoordinateOp;
         spec.stages = vec![TransformStage::Proj(ProjCoordinateOp {
             source: CrsWithEpoch {
                 crs: CrsDefinition::Epsg(31468),

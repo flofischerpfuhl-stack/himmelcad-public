@@ -1,4 +1,4 @@
-//! Dependency-free registration and dispatch for HimmelCAD RPC hosts.
+//! Registration, dispatch, job supervision, and worker admission for HimmelCAD RPC hosts.
 //!
 //! Wire requests, responses, and application context stay owned by the host.
 
@@ -7,6 +7,10 @@ use std::error::Error;
 use std::fmt;
 use std::future::Future;
 use std::pin::Pin;
+
+pub mod job_runtime;
+pub use himmelcad_process::process_group;
+pub mod worker_toolchain;
 
 /// An owned asynchronous RPC handler result.
 pub type RpcFuture<Response> = Pin<Box<dyn Future<Output = Response> + Send + 'static>>;

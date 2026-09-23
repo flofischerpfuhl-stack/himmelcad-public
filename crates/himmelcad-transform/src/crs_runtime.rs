@@ -6,14 +6,15 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 
-use himmelcad_core::hash::ObjectHash;
-use himmelcad_core::photolab_crs::{
-    CoordinateOperationKind, CrsDatabaseVersions, CrsDefinition, CrsWithEpoch,
-    FrozenImportTransformation, FrozenOperationPipeline, GeographicArea, GridLicenseMetadata,
-    OperationCandidate, OperationSelectionPolicy, RequiredGridAvailability,
+use crate::crs::{
+    CoordinateOperationKind, CrsDatabaseVersions, CrsDefinition, CrsWithEpoch, GeographicArea,
+    GridLicenseMetadata, OperationCandidate, OperationSelectionPolicy, RequiredGridAvailability,
     RequiredTransformationGrid, TransformationGridKind,
 };
-use himmelcad_core::photolab_jobs::CancellationToken;
+use crate::hash::ObjectHash;
+use crate::photolab_crs::{FrozenImportTransformation, FrozenOperationPipeline};
+use himmelcad_process::jobs::CancellationToken;
+use himmelcad_process::process_group::{self, ProcessGroupDropGuard};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -21,8 +22,6 @@ use thiserror::Error;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::process::Command;
 use tokio::sync::OnceCell;
-
-use crate::process_group::{self, ProcessGroupDropGuard};
 
 const DEFAULT_CAPTURE_LIMIT: usize = 32 * 1024 * 1024;
 const MAX_CRS_ARGUMENT_BYTES: usize = 4 * 1024 * 1024;
@@ -1791,7 +1790,7 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
     use std::sync::atomic::{AtomicU64, Ordering};
 
-    use himmelcad_core::photolab_crs::{
+    use crate::photolab_crs::{
         CrsWithEpoch, FrozenCrsEndpoint, FrozenOperationPipeline, HeightReference,
         HorizontalCrsSelection, ImportTransformationDecision, VerticalCrsSelection,
         VerticalOperationMode,
