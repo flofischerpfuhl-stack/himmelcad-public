@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","id":201,"method":"app.negotiate","params":{"clientName":"split-s2","supportedVersions":[1],"requiredCapabilities":[],"optionalCapabilities":[]}}

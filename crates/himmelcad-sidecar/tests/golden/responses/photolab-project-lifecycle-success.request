@@ -1,0 +1,15 @@
+{"jsonrpc":"2.0","id":300,"method":"photolab.project.create","params":{"path":"{{PROJECT_ROOT}}","name":"Split S2 Fixture"}}
+{"jsonrpc":"2.0","id":302,"method":"photolab.project.diagnostics","params":{}}
+{"jsonrpc":"2.0","id":303,"method":"photolab.project.processingSet.list","params":{}}
+{"jsonrpc":"2.0","id":304,"method":"photolab.project.captureGroup.list","params":{}}
+{"jsonrpc":"2.0","id":305,"method":"photolab.project.calibrationGroup.list","params":{}}
+{"jsonrpc":"2.0","id":306,"method":"photolab.project.alignmentMerge.list","params":{}}
+{"jsonrpc":"2.0","id":307,"method":"photolab.project.alignmentMerge.candidates","params":{}}
+{"jsonrpc":"2.0","id":308,"method":"photolab.project.imageMask.list","params":{}}
+{"jsonrpc":"2.0","id":309,"method":"photolab.images.list","params":{}}
+{"jsonrpc":"2.0","id":310,"method":"photolab.images.quality.list","params":{}}
+{"jsonrpc":"2.0","id":311,"method":"photolab.gcp.list","params":{}}
+{"jsonrpc":"2.0","id":312,"method":"photolab.gcp.optimization.list","params":{}}
+{"jsonrpc":"2.0","id":313,"method":"photolab.products.list","params":{}}
+{"jsonrpc":"2.0","id":314,"method":"photolab.jobs.list","params":{}}
+{"jsonrpc":"2.0","id":315,"method":"photolab.project.close","params":{}}

@@ -15,6 +15,7 @@ name = "mesh_terrain"
 harness = false
 
 [dependencies]
+himmelcad-command = { path = "../himmelcad-command" }
 himmelcad-core = { path = "../himmelcad-core" }
 himmelcad-io = { path = "../himmelcad-io" }
 himmelcad-render = { path = "../himmelcad-render" }

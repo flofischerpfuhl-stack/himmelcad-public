@@ -2,6 +2,7 @@
   "version": 1,
   "layers": ["product", "interface", "command", "domain", "foundation", "display", "electron"],
   "rust": {
+    "himmelcad-command": "command",
     "himmelcad-core": "foundation",
     "himmelcad-decode-wasm": "display",
     "himmelcad-io": "foundation",

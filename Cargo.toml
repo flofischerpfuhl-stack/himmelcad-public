@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/himmelcad-command",
     "crates/himmelcad-core",
     "crates/himmelcad-decode-wasm",
     "crates/himmelcad-io",

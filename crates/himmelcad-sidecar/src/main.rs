@@ -16,6 +16,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::{Context, Result};
+use himmelcad_command::{CommandRegistry, RpcModule};
 use himmelcad_core::app_protocol::{
     AppProtocolError, AppProtocolRequest, AppProtocolRequestEnvelope, AppProtocolResponse,
     AppProtocolResponseEnvelope, APP_PROTOCOL_SCHEMA_ID,
@@ -205,6 +206,7 @@ use himmelcad_sidecar::{
     },
 };
 
+mod legacy_routes;
 mod project_runtime;
 
 const PROGRESS_PREFIX: &str = "__HC_PROGRESS__";
@@ -241,6 +243,60 @@ struct RpcError {
     message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     data: Option<serde_json::Value>,
+}
+
+type SidecarCommandRegistry = CommandRegistry<LegacyContext, RpcRequest, RpcResponse>;
+
+#[derive(Clone)]
+struct LegacyContext {
+    projects: Arc<ProjectRuntime>,
+    jobs: Arc<JobManager>,
+    crs: Arc<CrsService>,
+    las_imports: Arc<LasImportOperations>,
+    ground_operations: Arc<GroundOperations>,
+    io_operations: Arc<IoOperations>,
+    registrations: Arc<ImportRegistrationRuntime>,
+    automation: Arc<AutomationRuntime>,
+    canonical_app: Arc<Mutex<CanonicalAppRuntime>>,
+}
+
+struct LegacyRpcModule;
+
+impl RpcModule<LegacyContext, RpcRequest, RpcResponse> for LegacyRpcModule {
+    fn register(
+        &self,
+        registry: &mut SidecarCommandRegistry,
+    ) -> std::result::Result<(), himmelcad_command::DuplicateMethod> {
+        for &method in legacy_routes::METHODS {
+            registry.register(method, |request, context| {
+                Box::pin(handle_with_context(request, context))
+            })?;
+        }
+        Ok(())
+    }
+}
+
+fn build_command_registry() -> Result<SidecarCommandRegistry> {
+    let mut registry = SidecarCommandRegistry::default();
+    LegacyRpcModule.register(&mut registry)?;
+    Ok(registry)
+}
+
+fn print_registered_routes() -> Result<()> {
+    let registry = build_command_registry()?;
+    let inventory = registry
+        .methods()
+        .map(|method| {
+            serde_json::json!({
+                "method": method,
+                "handlerFamily": legacy_routes::handler_family(method),
+                "product": legacy_routes::product(method),
+            })
+        })
+        .collect::<Vec<_>>();
+    serde_json::to_writer(std::io::stdout().lock(), &inventory)?;
+    println!();
+    Ok(())
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -1439,6 +1495,12 @@ const SHUTDOWN_DRAIN_DEADLINE: tokio::time::Duration = tokio::time::Duration::fr
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    if std::env::args_os().len() == 2
+        && std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("--list-routes"))
+    {
+        return print_registered_routes();
+    }
+
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
@@ -1469,6 +1531,18 @@ async fn main() -> Result<()> {
     let registrations = Arc::new(ImportRegistrationRuntime::default());
     let automation = Arc::new(AutomationRuntime::new()?);
     let canonical_app = Arc::new(Mutex::new(CanonicalAppRuntime::default()));
+    let command_registry = Arc::new(build_command_registry()?);
+    let legacy_context = LegacyContext {
+        projects: Arc::clone(&projects),
+        jobs: Arc::clone(&jobs),
+        crs: Arc::clone(&crs),
+        las_imports: Arc::clone(&las_imports),
+        ground_operations: Arc::clone(&ground_operations),
+        io_operations: Arc::clone(&io_operations),
+        registrations: Arc::clone(&registrations),
+        automation: Arc::clone(&automation),
+        canonical_app: Arc::clone(&canonical_app),
+    };
     let (response_tx, mut response_rx) = mpsc::channel::<RpcResponse>(256);
     let writer = tokio::spawn(async move {
         let mut stdout = tokio::io::stdout();
@@ -1500,34 +1574,13 @@ async fn main() -> Result<()> {
         if line.trim().is_empty() {
             continue;
         }
-        let projects = Arc::clone(&projects);
-        let jobs = Arc::clone(&jobs);
-        let crs = Arc::clone(&crs);
-        let las_imports = Arc::clone(&las_imports);
-        let ground_operations = Arc::clone(&ground_operations);
-        let io_operations = Arc::clone(&io_operations);
-        let registrations = Arc::clone(&registrations);
-        let automation = Arc::clone(&automation);
-        let canonical_app = Arc::clone(&canonical_app);
+        let command_registry = Arc::clone(&command_registry);
+        let legacy_context = legacy_context.clone();
         let response_tx = response_tx.clone();
         let parsed = serde_json::from_str::<RpcRequest>(&line);
         tokio::spawn(async move {
             let response = match parsed {
-                Ok(req) => {
-                    handle(
-                        req,
-                        projects,
-                        jobs,
-                        crs,
-                        las_imports,
-                        ground_operations,
-                        io_operations,
-                        registrations,
-                        automation,
-                        canonical_app,
-                    )
-                    .await
-                }
+                Ok(req) => dispatch_request(&command_registry, req, legacy_context).await,
                 Err(err) => RpcResponse {
                     jsonrpc: "2.0",
                     id: serde_json::Value::Null,
@@ -1567,6 +1620,34 @@ async fn main() -> Result<()> {
         .close();
 
     Ok(())
+}
+
+async fn dispatch_request(
+    registry: &SidecarCommandRegistry,
+    req: RpcRequest,
+    context: LegacyContext,
+) -> RpcResponse {
+    let method = req.method.clone();
+    match registry.dispatch(&method, req, context) {
+        Ok(response) => response.await,
+        Err((req, context)) => handle_with_context(req, context).await,
+    }
+}
+
+async fn handle_with_context(req: RpcRequest, context: LegacyContext) -> RpcResponse {
+    handle(
+        req,
+        context.projects,
+        context.jobs,
+        context.crs,
+        context.las_imports,
+        context.ground_operations,
+        context.io_operations,
+        context.registrations,
+        context.automation,
+        context.canonical_app,
+    )
+    .await
 }
 
 fn spawn_stdin_reader() -> mpsc::Receiver<std::io::Result<String>> {

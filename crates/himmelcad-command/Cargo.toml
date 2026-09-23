@@ -1,0 +1,10 @@
+[package]
+name = "himmelcad-command"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Dependency-free RPC command registration for HimmelCAD hosts."
+
+[lints]
+workspace = true
