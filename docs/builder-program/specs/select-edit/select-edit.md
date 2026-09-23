@@ -1,5 +1,19 @@
 # Select & edit — domain specification
 
+> **Owner corrections override this specification (2026-09-19/23).** This
+> agent-derived spec will be replaced by the Builder UI designed together with
+> the owner. Until then, where the text below differs, these rules win:
+> (1) every vertex with a finite Z is an elevation input, whatever the entity
+> or role; `z: null` stays unknown; (2) a surface can be meshed from any
+> selection of finite-Z lines and points — points are optional, a boundary
+> alone is valid; (3) roles are assigned only inside the surface tool, never
+> while drawing, and are never guessed; (4) thinning/sampling is a separate
+> tool, not part of surface creation; (5) a breakline vertex off the point set
+> is not an error; (6) the surface is an ordinary project object and exports
+> through the general export; (7) the project computes in one Cartesian system
+> at scale 1 — no geographic coordinates or grid scale inside the project;
+> transformations happen only at import, registration and export (ADR 0032).
+
 Status: specified by the 2026-09-02 round-3 registry rebuild; SE-D13's executable benchmarks and SE-D18's shared theme tokens remain unimplemented and unverified. Amended for owner statements batch 2.
 
 Its registry rows and consistency report now exist cleanly, but the three continuous benchmark

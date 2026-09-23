@@ -16,7 +16,7 @@ table, and decision records IF-D26–IF-D34.
 ## Standard applied
 
 This re-check applies the same zero-design-freedom standard as
-`docs/adr/0030-conformance-recheck3-2026-09-02.md`. Exact adoption by record id
+`docs/history/adr-0030/0030-conformance-recheck3-2026-09-02.md`. Exact adoption by record id
 is effective only where the ADR has no competing local restatement. A local
 mandatory shape, definition, or row must be verbatim or a strict and complete
 restatement; a scope citation does not cure contradictory or materially

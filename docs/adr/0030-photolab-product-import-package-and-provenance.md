@@ -16,7 +16,7 @@ budgets, repeated-registration and update rules, passive consumers, `.hcadx`
 WeltView parity) continue to govern unchanged by their record ids in the
 import-formats specification; nothing in this ADR restates, abbreviates or
 replaces them. Revision 2 (2026-09-02) applies the architect's conformance
-check `docs/adr/0030-conformance-check-2026-09-02.md`. Revision 4
+check `docs/history/adr-0030/0030-conformance-check-2026-09-02.md`. Revision 4
 (2026-09-02) adopts IF-D26–IF-D34, which close the nine WP-G1a contract
 gaps; where a record says "specified above", the spec's shape tables are
 adopted by citation without paraphrase. Revision 6 (2026-09-02) replaces every IF-D26–IF-D34 paraphrase with the record's Decision text quoted verbatim under the ADR decision it governs; the ADR keeps only its own framing sentences around those quotes.

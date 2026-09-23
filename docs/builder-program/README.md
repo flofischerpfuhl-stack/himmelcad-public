@@ -1,5 +1,12 @@
 # Builder completion program
 
+> **Superseded for execution (2026-09-23).** `docs/CURRENT-DIRECTION.md`
+> (2026-09-23) and ADR 0032 set the sequence: module architecture, then a
+> Builder UI designed together with the owner, then implementation. This file
+> remains a record of earlier decisions and research; its queue, estimates and
+> autonomous-execution model are not active. Owner decisions stay binding
+> through `OWNER-DECISIONS.md`.
+
 Status: active program, started 2026-09-01. Goal: a comprehensive
 implementation plan covering all Builder functions, produced 2026-09-01 to
 2026-09-03, then largely autonomous execution.

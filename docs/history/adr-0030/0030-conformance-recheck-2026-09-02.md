@@ -67,7 +67,7 @@ text makes the five-field record a projection or a second authority.
 non-tunable constraints:
 
 - exact DEM `Grid { raster: GeometryResource, mapping: OrthoGridMapping,
-  sampling: DepthSampling }`;
+sampling: DepthSampling }`;
 - immutable height/validity resource hash, media type, and byte length;
 - finite source pixel-center origin/column/row vectors;
 - explicit `ElevationZ`, interpolation, connectivity, and NoData semantics,
@@ -251,7 +251,7 @@ Read and compared:
 - `docs/AGENT-FEEDBACK.md`
 - commit `b4bde6f` and its parent diff
 - `docs/adr/0030-photolab-product-import-package-and-provenance.md`
-- `docs/adr/0030-conformance-check-2026-09-02.md`
+- `docs/history/adr-0030/0030-conformance-check-2026-09-02.md`
 - `docs/builder-program/specs/import-formats/import-formats.md`, the full
   PhotoLab amendment, disposition table, package/provenance sections, and
   IF-D19–IF-D25

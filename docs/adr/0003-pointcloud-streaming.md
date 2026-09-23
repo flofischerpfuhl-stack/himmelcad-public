@@ -4,6 +4,10 @@
 
 Accepted (Phase 1 hotfixes shipped; Phase 2 implementation in progress).
 
+> **Renderer clause superseded** by ADR 0017 and ADR 0032 (one wgpu render
+> core; the Three.js path is being removed). The rest of this record stands as
+> history.
+
 ## Date
 
 2026-05-08
@@ -47,7 +51,7 @@ Adopt the **Potree 2.0 stack**, vendored into the Himmel:CAD source tree:
 | **LAS / LAZ → tile builder** | **PotreeConverter 2.1** binary in `vendor/potreeconverter/<platform>/` | BSD 2-Clause           |
 | **Renderer streaming + LOD** | **`@pnext/three-loader 1.0.x`** source in `vendor/three-loader/`       | MIT (+ BSD-2 portions) |
 | **Cursor refinement**        | Existing `crates/himmelcad-spatial` (PointOctree, PCA plane fit)       | BSL 1.1 (ours)         |
-| **Tile abstraction**         | Existing `streaming/TiledDataset` interface (Himmel:CAD)                | BSL 1.1 (ours)         |
+| **Tile abstraction**         | Existing `streaming/TiledDataset` interface (Himmel:CAD)               | BSL 1.1 (ours)         |
 
 All three vendored assets are listed in `LICENSES/THIRD_PARTY.md` with the
 upstream commit SHA and their original `LICENSE` files mirrored next to

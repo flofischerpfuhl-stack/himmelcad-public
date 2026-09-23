@@ -6,6 +6,10 @@ Accepted. Runtime bridge revised during implementation: Builder uses a
 separate sidecar process over JSON-RPC rather than an in-process NAPI module.
 The browser/WASM direction remains unchanged.
 
+> **Renderer clause superseded** by ADR 0017 and ADR 0032 (one wgpu render
+> core; the Three.js path is being removed). The rest of this record stands as
+> history.
+
 ## Date
 
 2026-05-02

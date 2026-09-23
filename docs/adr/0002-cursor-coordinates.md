@@ -113,6 +113,9 @@ comfortably under the 2 ms refinement budget.
   the ray with a horizontal Z-plane (Z=0 by default, last stable Z
   if available) so the cursor still has a coordinate over empty
   space and orbit/zoom still have a sensible pivot.
+  _Superseded by ADR 0022:_ empty space produces no exact coordinate;
+  acquisition returns `z: null` unless an explicit reference plane or user
+  value supplies the height.
 - **Mesh, DGM, splat, CAD:** stub providers exist
   (`MeshSnapProvider`, `DgmSnapProvider`, `SplatSnapProvider`,
   `CadSnapProvider`) documenting the contract; their bodies activate
@@ -152,7 +155,8 @@ comfortably under the 2 ms refinement budget.
 - The legacy `PickingPass` + `PointCloudPickMaterial` + `PointOctree`
   files (`packages/@himmelcad/viewer/src/picking/`,
   `packages/@himmelcad/viewer/src/spatial/octree.ts`) are no longer
-  active; they are kept until Phase 2.7 deletes them.
+  active; they are kept until Phase 2.7 deletes them. _(Status 2026-09-23:
+  `spatial/octree.ts` has been deleted.)_
 - The Rust-side `crates/himmelcad-spatial` crate stays — it will host
   the BVH/grid indices for mesh/DGM and the WASM-targeted shared
   query API once those land. It is not on the point-cloud cursor path

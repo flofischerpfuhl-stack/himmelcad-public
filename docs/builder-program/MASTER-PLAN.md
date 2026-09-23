@@ -1,5 +1,12 @@
 # Himmel:CAD Builder completion program — master plan
 
+> **Superseded for execution (2026-09-23).** `docs/CURRENT-DIRECTION.md`
+> (2026-09-23) and ADR 0032 set the sequence: module architecture, then a
+> Builder UI designed together with the owner, then implementation. This file
+> remains a record of earlier decisions and research; its queue, estimates and
+> autonomous-execution model are not active. Owner decisions stay binding
+> through `OWNER-DECISIONS.md`.
+
 > **Revision 2026-09-02 late (owner decision D9 accepted).** Release 0.5 is
 > re-cut as **"DGM aus Scan"** and becomes the active commercial-alpha queue.
 > The PhotoLab + Builder-alpha bundle, source-available roadmap positioning,
@@ -36,11 +43,9 @@ boundary.
 
 This plan sequences work; it does not weaken any owning contract. Authority is:
 
-1. accepted ADRs and the normative documents indexed by `docs/README.md`;
-2. `docs/DECISION-DOCTRINE.md` and `docs/FUNCTION-CONTRACT.md`;
-3. `docs/CURRENT-DIRECTION.md` and owner decisions;
-4. the domain decision record that owns the behavior;
-5. this plan, for order, integration gates, and execution protocol.
+the authority order of `docs/README.md` (license and security; accepted ADRs;
+current normative documents; specifications; plans, reports and history).
+This plan ranks last.
 
 If these disagree, the higher authority wins and the re-walk rule in §9.6 runs
 before implementation continues. A milestone is not complete because its UI is
@@ -1031,7 +1036,7 @@ without losing truth, interaction performance, or authority boundaries.
 
 - **Queue status 2026-09-04 17:40:** S-01, S-02 (+S-02b/c after G17 review), S-03, S-04, S-05 landed (uncommitted, Builder lane); S-04/S-05 landed 13:41/13:38 with app 34/34, viewer 125/125, selection history 1 000 undo 9.5 ms, 10⁵-id toggle 13 ms; S-05 main-process registry with reload rehydration, real-import cancel test, bridge-level three-import fallback (no physical fixtures in checkout). V-01 launched 17:40 alone. Next: S-06 command surfaces (needs UIP-D6 runtime registry — S-04 exposed 'Select under cursor' data for it), S-07/S-08, P-01, D-02 + V-02.
 
-- **gpt-6-astra trial (S-08, 2026-09-05):** 23.9 M total tokens (23.6 M cached input, 58 k output) in ~2.5 h for a *partial* slice (HUD, presets, camera history landed with 43/132/33 tests; ViewState v2 live state, bookmarks, display stream, governor tier, HUD overhead deferred with an unusually precise remaining-work list). Comparable sol-medium slices (S-04/S-05, 2026-09-04): 15–17 M total, 35–57 k output, full scope. Verdict: astra costs ~1.5× the tokens at a much higher unit price and did not finish the scope; its analysis quality is high. Disposition: no astra for implementation slices; one optional trial for a review/design task (where output quality dominates) if the owner wants; default stays sol (medium implement / high design). S-08b completes the scope on sol.
+- **gpt-6-astra trial (S-08, 2026-09-05):** 23.9 M total tokens (23.6 M cached input, 58 k output) in ~2.5 h for a _partial_ slice (HUD, presets, camera history landed with 43/132/33 tests; ViewState v2 live state, bookmarks, display stream, governor tier, HUD overhead deferred with an unusually precise remaining-work list). Comparable sol-medium slices (S-04/S-05, 2026-09-04): 15–17 M total, 35–57 k output, full scope. Verdict: astra costs ~1.5× the tokens at a much higher unit price and did not finish the scope; its analysis quality is high. Disposition: no astra for implementation slices; one optional trial for a review/design task (where output quality dominates) if the owner wants; default stays sol (medium implement / high design). S-08b completes the scope on sol.
 
 - **Baseline status 2026-09-06 01:36:** second quiet-machine run blocked again — Electron exposes CDP but no renderer page attaches within 120 s (same as D-02's finding). Treated as a possible Builder startup regression from the substrate landings, not a load issue: V-01b (harness lane, high) must first prove Builder starts (window screenshot for G17), then fix the attach, then measure. Lanes running since 02:36: V-01b, S-08b→0.5-01, S-10, V-03.
 

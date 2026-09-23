@@ -322,6 +322,9 @@ Grok only.
 
 ### Q1 — Execution priority after planning
 
+**Answered 2026-09-02** (Branch A, see `docs/CURRENT-DIRECTION.md`);
+**superseded for `main` on 2026-09-23** by the architecture-then-UI sequence.
+
 `docs/CURRENT-DIRECTION.md` currently binds: PhotoLab release first; broad
 Builder feature expansion must not displace it. The plan we are writing is
 compatible (planning is not implementation), but the moment it is finished
@@ -350,7 +353,7 @@ gates. Update `CURRENT-DIRECTION.md` accordingly.
 | D11      | architect assessment 2026-09-02 late — SupraBench/Fernwork re-examined; sequencing proposal — pending veto                                                      |
 | D10      | owner-stated 2026-09-02 late — website + trust-based free tier; built on Grok                                                                                   |
 | D9       | ACCEPTED 2026-09-02 late — Release 0.5 = "DGM aus Scan"; bundle PhotoLab + Builder alpha; source-available roadmap GTM                                          |
-| Q1       | pending                                                                                                                                                         |
+| Q1       | answered 2026-09-02; superseded 2026-09-23                                                                                                                      |
 
 ## D8 addendum (2026-09-05)
 

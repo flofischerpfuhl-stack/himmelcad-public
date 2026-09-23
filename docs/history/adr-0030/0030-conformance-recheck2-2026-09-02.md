@@ -15,7 +15,7 @@ those records.
 ## Overall verdict
 
 **Conformant.** Revision 3 resolves both residual items from
-`docs/adr/0030-conformance-recheck-2026-09-02.md`. Edits 1–4 retain their prior
+`docs/history/adr-0030/0030-conformance-recheck-2026-09-02.md`. Edits 1–4 retain their prior
 conformant outcomes. No new design divergence or malformed Markdown was found.
 
 ## Per-item verdicts

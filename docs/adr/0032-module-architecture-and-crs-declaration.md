@@ -13,9 +13,9 @@ formats, and UI, Python and AI share one command contract. The code has not
 followed those decisions into module boundaries:
 
 - `himmelcad-sidecar` is one crate and one binary with ~117,000 lines. Its
-  `main.rs` (~13,600 lines) dispatches all 152 protocol methods, ~100 of them
-  PhotoLab-only. `himmelcad-core` mixes the canonical model with 16
-  `photolab_*` modules.
+  `main.rs` (~13,600 lines) dispatches all ~160 protocol methods through prefix
+  routing and 13 `match` blocks; about half are PhotoLab-only.
+  `himmelcad-core` mixes the canonical model with 16 `photolab_*` modules.
 - Hardware knowledge is spread over five places in three languages
   (`himmelcad-render::hardware_policy`, `sidecar::hardware_runtime`, the job
   memory plan in `core::photolab_jobs`, and Electron GPU switches in both app

@@ -1,5 +1,10 @@
 # Session coordination — Builder program and PhotoLab release work
 
+> **Model changed (2026-09-23).** One architect session works on `main`;
+> PhotoLab R1 work happens on the branch `release/photolab-r1`, and its fixes
+> are ported to `main`. The same-tree two-session ownership below is retired;
+> the staging, verification, memory-cap and Windows-host rules stay valid.
+
 Status: active protocol from 2026-09-02 (owner decision Q1 → Branch A: both
 efforts run in parallel). Two agent sessions work in this repository at the
 same time; this file keeps them from interfering and makes them share one

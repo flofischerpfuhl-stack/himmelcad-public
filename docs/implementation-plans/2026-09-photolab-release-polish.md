@@ -21,7 +21,9 @@ Execution model:
   description; follow `docs/FUNCTION-CONTRACT.md` for user-facing surfaces;
   respect ADR boundaries (no chunk model, no network processing, batch never
   interactive per ADR 0021).
-- Commit per package with a conventional message; do not push.
+- Commit per package with a conventional message and push it (owner
+  instruction 2026-09-05). Since 2026-09-23 PhotoLab release work lands on
+  the branch `release/photolab-r1`.
 - Two-lane coordination (binding since 2026-09-02, owner decision Q1 →
   Branch A): `docs/builder-program/COORDINATION.md`. This lane owns
   PhotoLab paths and the PhotoLab-only sidecar/core modules; shared
@@ -1183,7 +1185,7 @@ renderer wizard test.
 ```text
 Footer
 - A1 outcome: The user either transforms GCP heights through the frozen vertical operation or knowingly preserves values labeled with their source CRS.
-- A2 reference: adopted from `docs/PHOTOLAB-CONCEPT.md` and the image-import CRS freeze contract
+- A2 reference: adopted from `photolab/PHOTOLAB-CONCEPT.md` and the image-import CRS freeze contract
 - A3 siblings: image import CRS discovery/freeze, GCP CSV import, grid coverage errors, and reference-frame status
 - B1 reachability: ribbon — present; context menu — absent; console — absent; automation — P11 rows `photolab.crs.discover`, `photolab.crs.freeze`, and `photolab.gcp.commit` pending; shortcut — absent
 - B2 open/close: the GCP import island closes on explicit Cancel/close or commit; Escape follows the detached-function/modal rung per UIP-D14 without committing entered values
@@ -1326,7 +1328,7 @@ an explicit revision id is honored; renderer test for the disabled logic.
 ```text
 Footer
 - A1 outcome: The user sees why a product cannot start and explicitly chooses the converged GCP revision that the run will freeze.
-- A2 reference: adopted from `docs/PHOTOLAB-CONCEPT.md` frozen-input contract
+- A2 reference: adopted from `photolab/PHOTOLAB-CONCEPT.md` frozen-input contract
 - A3 siblings: alignment selector, merge selector, batch product stages, report lineage, and product Start controls
 - B1 reachability: ribbon — present; context menu — absent; console — absent; automation — P11 rows `photolab.products.resolveInputs` and `photolab.products.start` pending; shortcut — absent
 - B2 open/close: each product ribbon button toggles its function and explicit close follows the function-tab rung per UIP-D14
@@ -2134,7 +2136,7 @@ Footer
 - E2 conflicts/failure/crash: admission, lock-scoped reads, ready-record-last publication, and journal-last registration coordinate all producer/consumer boundaries
 - E3 verification: G1a publication conformance, G1b registration/open flows, and every-row G1c identity/render/pick/snap matrix
 - Decision record: cited unchanged: IF-D19–IF-D25 and ADR 0030
-- ADR 0030 status 2026-09-02 evening: revision 6 (9d4d398) quotes IF-D26–IF-D34 verbatim as blockquotes and was checked CONFORMANT mechanically by the Builder lane (`docs/adr/0030-conformance-recheck5-2026-09-02.md`); no open contract item for WP-G1a-2. Method rule for any future cite-and-adopt ADR from either lane: quote the spec record's Decision text verbatim, never paraphrase, and verify by script diff.
+- ADR 0030 status 2026-09-02 evening: revision 6 (9d4d398) quotes IF-D26–IF-D34 verbatim as blockquotes and was checked CONFORMANT mechanically by the Builder lane (`docs/history/adr-0030/0030-conformance-recheck5-2026-09-02.md`); no open contract item for WP-G1a-2. Method rule for any future cite-and-adopt ADR from either lane: quote the spec record's Decision text verbatim, never paraphrase, and verify by script diff.
 - Evidence: `e5fc50a` partial PhotoLab publication; open — not executed: complete R1 gate 8
 - Status: in flight
 ```

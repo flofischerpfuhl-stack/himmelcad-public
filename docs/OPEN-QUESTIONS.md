@@ -18,12 +18,18 @@ the license text.
 
 ### Q2 — Specifications
 
+Proposed answer: `docs/builder-program/OWNER-DECISIONS.md` D3 (generative
+specifications), pending owner veto.
+
 Do specifications primarily group layer/style/property rules, or may they also
 define geometry-generating Civil behavior? Implementation must keep ordinary
 user attributes separate from geometry-driving parameters until this is
 decided.
 
 ### Q3 — Paper-space model
+
+Proposed answer: `docs/builder-program/OWNER-DECISIONS.md` D4 (plan-composer
+content), pending owner veto.
 
 Should independent paper-space drafting become a canonical entity domain, or
 remain plan-composer/view content connected to canonical model-view

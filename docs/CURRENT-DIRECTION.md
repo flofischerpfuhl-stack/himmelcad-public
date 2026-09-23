@@ -1,6 +1,7 @@
 # Current direction
 
-Status: binding execution direction as of 2026-08-16.
+Status: binding execution direction as of 2026-09-23 (first issued
+2026-08-16).
 
 This file defines current priority and sequencing. It does not override accepted
 ADRs. Completed plans and reports do not regain authority when they contain

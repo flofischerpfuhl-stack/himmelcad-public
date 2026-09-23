@@ -1,5 +1,10 @@
 # Function design contract
 
+> **Builder UI exception (2026-09-23).** Builder screens and their domain rules
+> are designed together with the owner until he accepts them
+> (`docs/CURRENT-DIRECTION.md`). Derivation without the owner applies only
+> behind an accepted screen.
+
 Status: draft for owner review (2026-09-01). Once accepted, this contract is
 normative for every new or reworked user-facing Builder function, and applies
 to sibling apps where their domain allows it.

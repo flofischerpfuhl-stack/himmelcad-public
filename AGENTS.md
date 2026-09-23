@@ -52,19 +52,22 @@ Accepted ADRs override older plans and reports.
 ## Windows host (DESKTOP-BNB2PBA) — available to every agent
 
 A Windows PC on the owner's Tailscale network is the project's Windows
-build/test/measurement lane (owner decision 2026-09-08). Any agent on the Linux
+build/test/measurement lane (owner decision 2026-09-08). Measured inventory:
+Ryzen 3 PRO 3200G, 16 GB RAM, integrated Radeon Vega 8 (viewer class I, no
+CUDA), repository clone at `C:\Users\flori\source\HimmelCAD`, work area on
+`D:\himmelcad-work`. Any agent on the Linux
 laptop — Claude sessions, Codex runs, subagents — may and should use it when a
 task needs one of: Windows-specific verification (packaging, installer, signing
-paths, MSVC builds, path/CRLF/long-path behavior), GPU measurements of viewer
-class W/D on a discrete GPU, compute above ~8 GB RAM or long end-to-end runs
+paths, MSVC builds, path/CRLF/long-path behavior), class-I GPU measurements (W/D needs a separate
+discrete-GPU host), compute above ~8 GB RAM or long end-to-end runs
 (PhotoLab golden datasets), or anything that would contend with the laptop's
 CPU/GPU/disk while other lanes run.
 
 How: write a brief under `.claude/codex/prompts/remote/<name>.md` (same
 discipline as any Codex brief: scope, gates, evidence file) and run
 `.claude/codex/run-remote.sh <name> .claude/codex/prompts/remote/<name>.md`
-(env `MODEL`, `EFFORT`, `RWORKDIR`; default `gpt-5.6-sol` high, working dir
-`C:\Users\flori`; the repo clone lives at `C:\himmelcad` once bootstrapped).
+(env `MODEL`, `EFFORT`, `RWORKDIR`; default `gpt-5.6-sol` high, working dir = the repo clone
+`C:\Users\flori\source\HimmelCAD`).
 This prompts the Codex CLI installed and authenticated on the Windows PC over
 SSH (`ssh win-himmelcad`, key-only). Logs land in
 `.claude/codex/out/remote-<name>.log/.exit`. Rules: agents do not run ad-hoc
