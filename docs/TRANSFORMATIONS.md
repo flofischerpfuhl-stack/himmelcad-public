@@ -11,6 +11,15 @@ invalidate dependent bounds, indexes, tiles, normals, georeferencing, and
 derived products. A display-only matrix must never silently replace a data
 transformation.
 
+## Scale-1 rule
+
+A project computes in one Cartesian system at scale 1. The project CRS
+(horizontal and vertical) declares what the numbers mean and changes no
+computation: no latitude/longitude, grid scale factor or angular distortion
+inside a project. Real transformations run only at import, registration and
+export, and PhotoLab georeferencing is one of them. Data kept in projected grid
+numbers measures grid distances (ADR 0032).
+
 ## Canonical boundary
 
 - `himmelcad-core::transform` owns serializable specifications, validation,

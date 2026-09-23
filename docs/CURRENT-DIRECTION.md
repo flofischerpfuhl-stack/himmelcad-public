@@ -70,3 +70,21 @@ substrate, then domain slices. Non-interference between the two sessions is
 governed by `docs/builder-program/COORDINATION.md`. PhotoLab release gates
 keep priority on shared resources; a failing PhotoLab gate is never starved
 by Builder work.
+
+## Owner decision 2026-09-23 — module architecture first, then the Builder UI
+
+Supersedes the 2026-09-19 course correction for `main`. Sequence:
+
+1. **Module architecture (ADR 0032)** on `main`: dependency-direction check,
+   sidecar split into a kernel plus domain crates, one hardware profile module,
+   removal of the legacy Three.js path. Each step lands green before the next.
+2. **Complete Builder UI redesign**, designed together with the owner and
+   including every planned function (unbuilt entries are visibly marked, never
+   dead). Domain rules are written down with each screen. PhotoLab adopts the
+   new UI later; standalone apps are later compositions of the same modules.
+3. **Implementation behind the finished UI** by agents, with owner input
+   limited to domain acceptance on real data.
+
+PhotoLab R1 continues on the branch `release/photolab-r1` (cut at `02683e0`):
+release fixes and evidence land there and are ported to `main` after the
+split. The owner runs the hands-on PhotoLab evaluation when time allows.

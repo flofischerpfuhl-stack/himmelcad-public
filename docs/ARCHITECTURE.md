@@ -12,20 +12,64 @@ decision rationale and override this overview when details conflict.
 - The same product capabilities available to UI, Python, and AI automation.
 - Product-specific workflows without product-specific sources of truth.
 
-## System layers
+## Module map
+
+Decision: ADR 0032. Dependencies point only downward. Foundation, command
+gate, display and interface modules are shared; domain modules are selected per
+product. A product or standalone app is a composition: domain modules plus a
+layout.
+
+```mermaid
+flowchart TD
+  subgraph P[Products — composition]
+    B[Builder] ~~~ PL[PhotoLab] ~~~ SA[Standalone apps] ~~~ WV[WeltView]
+  end
+  subgraph I[Interface]
+    UI[UI library + theme] ~~~ TL[Tools: select, snap, draw, measure] ~~~ AI[AI assistant] ~~~ UP[Updates] ~~~ LG[Accounts — later]
+  end
+  subgraph G[Command gate — one door for UI, Python, AI, plugins]
+    CMD[Commands + jobs] ~~~ CL[Client + generated command table] ~~~ SC[Scripting SDK + plugins]
+  end
+  subgraph D[Domain modules — selectable]
+    REG[Registration] ~~~ PC[Point cloud] ~~~ SF[Surface / DGM] ~~~ DR[Drafting] ~~~ RS[Raster] ~~~ PG[Photogrammetry]
+  end
+  subgraph F[Foundation]
+    MD[Model: object schema] ~~~ DOC[Document: project, journal, undo] ~~~ TR[Transform: CRS declaration, boundary transforms] ~~~ IO[Import/export providers] ~~~ SP[Spatial index]
+  end
+  subgraph V[Display support]
+    RN[Renderer + streaming] --> HW[Hardware profile]
+  end
+  P --> I --> G --> D --> F
+  I --> V
+  RN --> MD
+  CMD --> HW
+```
+
+| Module               | Owns                                                                                                                                    | Must not                                            | Today in                                                                                                                                    |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| Model                | Object types, properties, states, validation, typed artifacts. Object data only — view appearance and residency live elsewhere.         | Know files, GPU, UI, products.                      | `core::{entity*, property_schema, canonical_resources, typed_artifact, mesh_surface, geometry_representation_registry}`                     |
+| Document             | Project store, commands with expected revisions, journal, undo/redo, archive, durable/atomic files, format migrations.                  | Contain domain algorithms.                          | `core::{canonical_document, entity_commands}`, `sidecar::{canonical_project_store, project_archive, durable_fs, publish_fs}`                |
+| Transform            | Project CRS declaration; transformation library used only by import, registration and export.                                           | Run inside measurement, construction or display.    | `core::{transform, transform_geometry, photolab_crs}`, `sidecar::{crs_*, transform_*, site_calibration_reader}`                             |
+| Import/export        | Format providers: probe, stage, validate, report losses, map to the model.                                                              | Mutate the project or a viewer directly.            | `himmelcad-io`                                                                                                                              |
+| Spatial              | Spatial indexes and queries.                                                                                                            | —                                                   | `himmelcad-spatial`                                                                                                                         |
+| Commands + jobs      | Command registry, protocol dispatch from registrations, long-running jobs (progress, cancel, admission, concurrency), worker processes. | Hold product-specific branches.                     | `core::app_protocol`, `sidecar::{main, job_runtime, process_group, worker_toolchain, automation_runtime, canonical_app_runtime}`            |
+| Domain modules       | One field each (registration, point cloud, surface/DGM, drafting, raster, photogrammetry). Register commands, jobs, panels, tools.      | Depend on another product; bypass the command gate. | spread over `sidecar`, `core::photolab_*`, app `App.tsx` files                                                                              |
+| Hardware profile     | Machine detection, per-device quirk rules, render and compute budgets, GPU backend choice.                                              | Be bypassed by vendor checks elsewhere.             | `render::{hardware_policy, gpu_calibration}`, `sidecar::hardware_runtime`, job memory plan, Electron `rendererFallback.ts` and GPU switches |
+| Renderer + streaming | One wgpu engine: scene, camera, picking, clipping, residency, streaming.                                                                | Depend on domain modules or products.               | `himmelcad-render`, `himmelcad-wasm`, `@himmelcad/viewer`                                                                                   |
+| Client               | Typed protocol clients, generated command table.                                                                                        | Contain interaction logic.                          | `@himmelcad/app` (clients), `@himmelcad/data`                                                                                               |
+| Tools                | Selection, snapping, drawing input, measurement, construction input.                                                                    | Mutate outside commands.                            | `@himmelcad/app` (interaction), viewer picking/snapping, app `App.tsx`                                                                      |
+| UI library + theme   | Shared controls, surfaces, typography, motion, tokens.                                                                                  | Import Electron or domain logic.                    | `@himmelcad/ui`, `@himmelcad/theme`                                                                                                         |
+| Scripting + plugins  | Python SDK over the automation protocol; out-of-process plugins with granted rights; bulk data by leases.                               | Use a private access path.                          | `sdk/`, `packages/@himmelcad/automation-host`                                                                                               |
+| AI assistant         | Chat surface, harness adapters, trust grants. Acts only through scripting.                                                              | Own capabilities beyond the protocol.               | `@himmelcad/agent`, `@himmelcad/console`                                                                                                    |
+| Updates              | Download, verify, install; warnings for incompatible changes. Project compatibility itself is the document's migrations.                | —                                                   | ADR 0029, app `electron`                                                                                                                    |
+
+## Runtime tiers
 
 ```text
-Product hosts
-  Builder / PhotoLab / WeltView / Cap
-        |
-Shared application contracts
-  UI modules / app facade / automation protocol
-        |
-Canonical platform
-  commands / entities / project store / IO / spatial services
-        |
-Representation and rendering platform
-  preparation providers / Rust render core / streaming and residency
+Product hosts            Builder / PhotoLab / WeltView / Cap (Electron + React, browser, Flutter)
+Rust sidecar             kernel (protocol, commands, jobs, document) + selected domain crates
+Compute workers          isolated, inventory-pinned processes (COLMAP, MVS, splat, …)
+Render core              wgpu engine, in the renderer process through WASM
 ```
 
 ### Product hosts
@@ -102,6 +146,9 @@ the global residency coordinator.
 - Canonical world and camera values use `f64`; GPU payloads use local `f32`
   coordinates with explicit `f64` transforms.
 - Z is up. Missing Z is unknown, never zero.
+- Projects compute in one Cartesian system at scale 1 (metres or declared
+  imperial units). The project CRS is a declaration; real CRS transformations
+  happen only at import, registration and export (ADR 0032).
 - Source coordinates are immutable unless an explicit journaled operation
   creates a new revision.
 - No implicit CRS, grid, axis, height, scale, or unit conversion is allowed.
@@ -169,3 +216,4 @@ shared library before a second app copies it.
 - ADR 0022 — shared 3D, 2D, and 2.5D view modes.
 - ADR 0024 — automation and agent trust boundary.
 - ADR 0025 — interactive import registration.
+- ADR 0032 — module architecture and the CRS as a declaration.

@@ -59,6 +59,11 @@ conflict must be removed rather than documented twice.
 
 ## Document classes
 
+Compression rule: documents may be shortened or merged at any time, but
+decisions and their reasons are never lost. A replaced decision stays
+retrievable as an ADR (superseded, not rewritten) or as a dated entry in the
+owning decision log, so a rejected approach is not tried twice.
+
 - **ADR:** an accepted or superseded decision. Do not silently rewrite history;
   add a superseding ADR when the decision changes.
 - **Specification:** current exact behavior or format. It must identify its
