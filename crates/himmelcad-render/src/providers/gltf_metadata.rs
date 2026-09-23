@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use gltf::accessor::{DataType, Dimensions, Iter};
+use himmelcad_prepared::DecodedTriangleFeatureId;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -516,19 +517,6 @@ impl DecodedPrimitivePropertyAttribute {
             "properties": properties,
         }))
     }
-}
-
-/// Exact feature result for one source triangle.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum DecodedTriangleFeatureId {
-    /// All triangle vertices identify the same non-null feature.
-    Feature(u32),
-    /// All triangle vertices carry the declared null feature ID.
-    Null,
-    /// Vertex IDs disagree, so an exact feature cannot be invented.
-    Ambiguous,
-    /// The feature set is texture-backed and must be sampled at the hit UV.
-    Texture,
 }
 
 /// Legacy `_BATCHID` values retained in source-vertex and source-triangle order.

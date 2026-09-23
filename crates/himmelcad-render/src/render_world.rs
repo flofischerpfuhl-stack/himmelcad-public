@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 
-use himmelcad_core::canonical_resources::CanonicalResourceRef;
+use himmelcad_model::canonical_resources::CanonicalResourceRef;
 use serde::{Deserialize, Serialize};
 
 use crate::{

@@ -5,11 +5,11 @@ use std::fmt::{Display, Formatter};
 
 use glam::{DMat4, DVec3};
 
-use himmelcad_core::entity_model::{
+use himmelcad_model::entity_model::{
     CameraModel, DepthSemantics, GeometryObject, RasterImageGeometry, RasterMapping, Transform3d,
     Vector3,
 };
-use himmelcad_core::entity_validation::validate_geometry_object;
+use himmelcad_model::entity_validation::validate_geometry_object;
 
 use crate::WorldVec3;
 
@@ -418,12 +418,12 @@ fn world(value: DVec3) -> WorldVec3 {
 
 #[cfg(test)]
 mod tests {
-    use himmelcad_core::entity_model::{
+    use himmelcad_model::entity_model::{
         CameraModel, DepthField, DepthSampling, DepthSemantics, GeometryResource, OrthoGridMapping,
         PlaneFrame, RasterCellDiagonal, RasterConnectivity, RasterImageGeometry,
         RasterInterpolation, RasterMapping, Transform3d, Vector3,
     };
-    use himmelcad_core::hash::ObjectHash;
+    use himmelcad_model::hash::ObjectHash;
 
     use super::{
         project_raster_sample, raster_analysis_view, RasterAnalysisView, RasterAnalysisViewError,

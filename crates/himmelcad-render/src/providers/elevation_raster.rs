@@ -6,13 +6,13 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use himmelcad_core::canonical_document::EntityVersionRef;
-use himmelcad_core::canonical_resources::CanonicalResourceRef;
-use himmelcad_core::entity_model::{
+use himmelcad_model::canonical_resources::CanonicalResourceRef;
+use himmelcad_model::document_model::EntityVersionRef;
+use himmelcad_model::entity_model::{
     DepthField, DepthSemantics, GeometryObject, OrthoGridMapping, RasterCellDiagonal,
     RasterConfidenceEncoding, RasterConnectivity, RasterImageGeometry, RasterMapping, Vector3,
 };
-use himmelcad_core::entity_validation::validate_geometry_object;
+use himmelcad_model::entity_validation::validate_geometry_object;
 
 /// Current provider-neutral prepared raster tile contract. Older layouts are
 /// rejected rather than guessed because mapping and depth semantics affect
@@ -344,15 +344,15 @@ fn grid_corners(
 }
 
 fn resource_matches(
-    resource: &himmelcad_core::entity_model::GeometryResource,
+    resource: &himmelcad_model::entity_model::GeometryResource,
     bytes: &[u8],
 ) -> bool {
-    resource.object_hash == himmelcad_core::hash::ObjectHash::of_bytes(bytes)
+    resource.object_hash == himmelcad_model::hash::ObjectHash::of_bytes(bytes)
         && resource.byte_length == u64::try_from(bytes.len()).ok()
 }
 
 fn optional_resource_matches(
-    resource: Option<&himmelcad_core::entity_model::GeometryResource>,
+    resource: Option<&himmelcad_model::entity_model::GeometryResource>,
     bytes: Option<&[u8]>,
 ) -> bool {
     match (resource, bytes) {
@@ -1099,15 +1099,15 @@ fn pixel_count(width: u32, height: u32) -> Result<usize, ElevationRasterError> {
 
 #[cfg(test)]
 mod tests {
-    use himmelcad_core::canonical_document::EntityVersionRef;
-    use himmelcad_core::canonical_resources::CanonicalResourceRef;
-    use himmelcad_core::entity::EntityId;
-    use himmelcad_core::entity_model::{
+    use himmelcad_model::canonical_resources::CanonicalResourceRef;
+    use himmelcad_model::document_model::EntityVersionRef;
+    use himmelcad_model::entity::EntityId;
+    use himmelcad_model::entity_model::{
         DepthField, DepthSampling, DepthSemantics, GeometryResource, OrthoGridMapping,
         RasterCellDiagonal, RasterConfidenceBand, RasterConfidenceEncoding, RasterConnectivity,
         RasterImageGeometry, RasterInterpolation, RasterMapping, Vector3,
     };
-    use himmelcad_core::hash::ObjectHash;
+    use himmelcad_model::hash::ObjectHash;
 
     use super::{
         decode_elevation_raster, decode_encoded_elevation_raster, ElevationRasterInput,

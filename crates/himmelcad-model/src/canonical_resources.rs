@@ -9,7 +9,7 @@ use std::collections::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::canonical_document::EntityVersionRef;
+use crate::document_model::EntityVersionRef;
 use crate::entity::EntityId;
 use crate::entity_model::{BimClassification, GeometryObject, GeometryResource, Transform3d};
 use crate::entity_validation::validate_geometry_object;

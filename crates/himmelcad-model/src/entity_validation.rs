@@ -399,7 +399,7 @@ pub fn validate_geometry_object(geometry: &GeometryObject) -> Result<(), EntityV
         GeometryObject::Label { label } => validate_label(label),
         GeometryObject::Dimension { dimension } => validate_dimension(dimension),
         GeometryObject::Measurement { measurement } => {
-            crate::release_05_admissions::validate_measurement(measurement)
+            crate::release_05_admissions::validate_measurement_entity(measurement)
                 .map_err(|_| EntityValidationError::InvalidAnnotation)
         }
         GeometryObject::Extension { type_id, payload } => {

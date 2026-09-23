@@ -14,8 +14,6 @@ mod legacy_batch_hierarchy;
 mod legacy_batch_table;
 mod legacy_tiles_layout;
 mod picking_refinement;
-mod potree;
-mod prepared;
 mod raster_projection;
 mod shared_asset_cache;
 mod tiles3d;
@@ -42,12 +40,19 @@ pub use gltf_metadata::{
     DecodedFeatureIdBinding, DecodedFeatureTextureSample, DecodedLegacyBatchIds,
     DecodedMeshFeatureSet, DecodedPrimitivePropertyAttribute, DecodedPrimitivePropertyTexture,
     DecodedPropertyAttributeProperty, DecodedPropertyTextureProperty, DecodedPropertyTextureSample,
-    DecodedStructuralMetadata, DecodedTextureWrap, DecodedTriangleFeatureId,
+    DecodedStructuralMetadata, DecodedTextureWrap,
 };
 pub use gltf_resolver::{
     inspect_gltf_dependencies, resolve_asset_uri, AssetBundleLimits, AssetResolverError,
     GltfDependency, GltfDependencyInspection, ResolvedAssetBundle, ResolvedAssetEntry,
     ResolvedAssetInput, ResolvedAssetKind,
+};
+pub use himmelcad_prepared::{
+    DecodedPotreePoints, PackedCivilPointAttributes, PotreeAttributeLayout, PotreeAttributeType,
+    PotreeDecodeError, PotreeHierarchySource, PotreePointLayout, PotreePointMetadata,
+};
+pub use himmelcad_prepared::{
+    PreparedHierarchyError, PreparedHierarchyManifest, PreparedHierarchySource,
 };
 pub use legacy_batch_hierarchy::{
     DecodedLegacyBatchTableHierarchy, DecodedLegacyHierarchyInstance, DecodedLegacyHierarchyRow,
@@ -58,11 +63,6 @@ pub use picking_refinement::{
     ElevationRasterPickRefiner, ElevationRasterSample, GaussianSplatPickError,
     GaussianSplatPickRefiner, GaussianSplatPickSource,
 };
-pub use potree::{
-    DecodedPotreePoints, PackedCivilPointAttributes, PotreeAttributeLayout, PotreeAttributeType,
-    PotreeDecodeError, PotreeHierarchySource, PotreePointLayout, PotreePointMetadata,
-};
-pub use prepared::{PreparedHierarchyError, PreparedHierarchyManifest, PreparedHierarchySource};
 pub use raster_projection::{
     project_raster_sample, raster_analysis_view, RasterAnalysisView, RasterAnalysisViewError,
     RasterProjectionError,

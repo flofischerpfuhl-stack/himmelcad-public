@@ -4,9 +4,9 @@ use std::error::Error;
 use std::fmt::{Display, Formatter};
 
 use earcut::Earcut;
-use himmelcad_core::entity::EntityId;
-use himmelcad_core::entity_model::{AreaGeometry, CurveGeometry, CurveLoop, CurveUse};
-use himmelcad_core::hash::ObjectHash;
+use himmelcad_model::entity::EntityId;
+use himmelcad_model::entity_model::{AreaGeometry, CurveGeometry, CurveLoop, CurveUse};
+use himmelcad_model::hash::ObjectHash;
 
 use crate::{
     build_cad_curve_batch_with_width, tessellate_curve, CadCurveError, CurveSemanticSnap,
@@ -347,7 +347,7 @@ fn distance_xy(left: WorldVec3, right: WorldVec3) -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use himmelcad_core::entity_model::{
+    use himmelcad_model::entity_model::{
         AreaGeometry, CurveGeometry, CurveLoop, CurveUse, Position,
     };
 

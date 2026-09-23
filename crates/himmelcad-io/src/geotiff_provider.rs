@@ -1024,7 +1024,7 @@ mod tests {
     use super::*;
     use crate::geotiff_preparation::{F64_TILE_BYTES, HEIGHT_MEDIA_TYPE, HIERARCHY_MEDIA_TYPE};
     use geotiff_writer::{CogBuilder, Compression, GeoTiffBuilder, Resampling};
-    use himmelcad_render::{DatasetId, HierarchySource, PreparedHierarchySource, TileId};
+    use himmelcad_prepared::{DatasetId, HierarchySource, PreparedHierarchySource, TileId};
     use ndarray::{Array2, Array3};
 
     #[derive(Default)]

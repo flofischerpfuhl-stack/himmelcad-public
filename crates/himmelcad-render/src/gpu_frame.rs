@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 
 use bytemuck::{Pod, Zeroable};
 use glam::{DMat3, DMat4, Mat4};
-use himmelcad_core::canonical_resources::{
+use himmelcad_model::canonical_resources::{
     HatchPatternKind, HatchPatternLine, LineTypeElement, LineTypePattern,
 };
 use serde::{Deserialize, Serialize};
@@ -6568,9 +6568,11 @@ mod tests {
         PickToken, RenderStyle, TransparencyStrategy, UnresolvedHeightDisplay, WorldTransform,
         WorldVec3,
     };
-    use himmelcad_core::canonical_resources::{CanonicalResourceRef, LINE_TYPE_RESOURCE_SCHEMA_ID};
-    use himmelcad_core::entity_model::{CurveGeometry, Position};
-    use himmelcad_core::hash::ObjectHash;
+    use himmelcad_model::canonical_resources::{
+        CanonicalResourceRef, LINE_TYPE_RESOURCE_SCHEMA_ID,
+    };
+    use himmelcad_model::entity_model::{CurveGeometry, Position};
+    use himmelcad_model::hash::ObjectHash;
 
     #[test]
     fn potree_srgb_channels_are_decoded_before_linear_compositing() {
@@ -7075,8 +7077,8 @@ mod tests {
             ..RenderStyle::default()
         };
         let hatch_pattern = super::GpuHatchPatternData::from_canonical(
-            &himmelcad_core::canonical_resources::HatchPatternKind::Lines {
-                lines: vec![himmelcad_core::canonical_resources::HatchPatternLine {
+            &himmelcad_model::canonical_resources::HatchPatternKind::Lines {
+                lines: vec![himmelcad_model::canonical_resources::HatchPatternLine {
                     angle: std::f64::consts::FRAC_PI_4,
                     origin: [0.0, 0.0],
                     offset: [0.0, 0.25],
@@ -7135,7 +7137,7 @@ mod tests {
 
     #[test]
     fn canonical_hatch_preserves_multiple_families_dashes_gaps_and_dots() {
-        use himmelcad_core::canonical_resources::{HatchPatternKind, HatchPatternLine};
+        use himmelcad_model::canonical_resources::{HatchPatternKind, HatchPatternLine};
 
         let pattern = super::GpuHatchPatternData::from_canonical(&HatchPatternKind::Lines {
             lines: vec![
@@ -7168,7 +7170,7 @@ mod tests {
 
     #[test]
     fn canonical_hatch_fails_when_spacing_collapses_in_gpu_precision() {
-        use himmelcad_core::canonical_resources::{HatchPatternKind, HatchPatternLine};
+        use himmelcad_model::canonical_resources::{HatchPatternKind, HatchPatternLine};
 
         let result = super::GpuHatchPatternData::from_canonical(&HatchPatternKind::Lines {
             lines: vec![HatchPatternLine {
@@ -7258,7 +7260,7 @@ mod tests {
 
     #[test]
     fn canonical_line_type_keeps_explicit_kinds_dots_and_large_patterns() {
-        use himmelcad_core::canonical_resources::{LineTypeElement, LineTypePattern};
+        use himmelcad_model::canonical_resources::{LineTypeElement, LineTypePattern};
 
         let mut elements = vec![
             LineTypeElement::Gap { length: 1.0 },
@@ -7290,7 +7292,7 @@ mod tests {
 
     #[test]
     fn canonical_line_type_fails_when_f64_boundaries_collapse_in_gpu_precision() {
-        use himmelcad_core::canonical_resources::{LineTypeElement, LineTypePattern};
+        use himmelcad_model::canonical_resources::{LineTypeElement, LineTypePattern};
 
         let pattern = LineTypePattern::Repeating {
             elements: vec![

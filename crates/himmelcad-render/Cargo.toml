@@ -18,7 +18,8 @@ futures-channel = "0.3"
 glam.workspace = true
 gltf.workspace = true
 gltf-v1 = { version = "0.4.0", features = ["KHR_materials_common"] }
-himmelcad-core = { path = "../himmelcad-core" }
+himmelcad-model = { path = "../himmelcad-model" }
+himmelcad-prepared = { path = "../himmelcad-prepared" }
 image = { version = "0.25.8", default-features = false, features = ["jpeg", "png"] }
 indexmap = "2.7"
 meshopt-rs.workspace = true

@@ -3,15 +3,15 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use glam::{DMat3, DMat4, DVec3};
-use himmelcad_core::canonical_resources::CanonicalResourceRef;
-use himmelcad_core::entity::EntityId;
-use himmelcad_core::entity_model::{
+use himmelcad_model::canonical_resources::CanonicalResourceRef;
+use himmelcad_model::entity::EntityId;
+use himmelcad_model::entity_model::{
     AlignmentGeometry, CsgNode, CurveGeometry, ElevationSurfaceGeometry, GeometryObject, Position,
     SlopeRule, SolidGeometry, SolidPrimitive, StationFunction, Transform3d, TriangleMeshGeometry,
     TriangleMeshStorage, Vector3, VerticalAlignmentSegment,
 };
-use himmelcad_core::entity_validation::{validate_geometry_object, EntityValidationError};
-use himmelcad_core::hash::ObjectHash;
+use himmelcad_model::entity_validation::{validate_geometry_object, EntityValidationError};
+use himmelcad_model::hash::ObjectHash;
 use thiserror::Error;
 
 use crate::{
@@ -503,7 +503,7 @@ where
                 options,
             )?];
             if !breaklines.is_empty() {
-                let compound = himmelcad_core::entity_model::CurveGeometry::Composite {
+                let compound = himmelcad_model::entity_model::CurveGeometry::Composite {
                     segments: breaklines.clone(),
                 };
                 let curve =
@@ -682,7 +682,7 @@ where
         )]),
         GeometryObject::Label { label } if label.leader.len() >= 2 => Ok(vec![transformed_curve(
             tessellate_curve(
-                &himmelcad_core::entity_model::CurveGeometry::Polyline {
+                &himmelcad_model::entity_model::CurveGeometry::Polyline {
                     positions: label.leader.clone(),
                     closed: false,
                 },
@@ -1115,7 +1115,7 @@ fn append_cap(
 }
 
 pub(crate) fn extrusion_mesh(
-    profile: &himmelcad_core::entity_model::AreaGeometry,
+    profile: &himmelcad_model::entity_model::AreaGeometry,
     direction: Vector3,
     curve_options: CurveTessellationOptions,
 ) -> Result<TriangleMeshGeometry, EntityCompilationError> {
@@ -1807,14 +1807,14 @@ mod tests {
         FloatingOrigin, GpuSharedRenderer, RenderStyle, UnresolvedHeightDisplay, WorldVec3,
         GPU_POINT_VERTEX_STRIDE_BYTES,
     };
-    use himmelcad_core::entity::EntityId;
-    use himmelcad_core::entity_model::{
+    use himmelcad_model::entity::EntityId;
+    use himmelcad_model::entity_model::{
         AlignmentGeometry, AreaGeometry, CrossfallBand, CurveGeometry, CurveLoop, CurveUse,
         GeometryObject, PlaneDefinition, Position, SlopeRule, StationFunction, StationValue,
         Transform3d, TriangleMeshGeometry, TriangleMeshStorage, Vector3, VerticalAlignmentSegment,
         WidthBand,
     };
-    use himmelcad_core::hash::ObjectHash;
+    use himmelcad_model::hash::ObjectHash;
 
     #[test]
     fn entity_point_cost_uses_the_uploaded_vertex_stride() {

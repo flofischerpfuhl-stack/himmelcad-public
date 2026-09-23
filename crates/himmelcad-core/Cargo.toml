@@ -7,6 +7,7 @@ license.workspace = true
 description = "HimmelCAD authoritative core: entities, commands, project storage, contracts."
 
 [dependencies]
+himmelcad-model = { path = "../himmelcad-model" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
@@ -15,16 +16,10 @@ sha2.workspace = true
 hex.workspace = true
 parking_lot.workspace = true
 spade.workspace = true
-ts-rs = { workspace = true, optional = true, features = ["no-serde-warnings"] }
 
 [features]
 default = []
-ts-bindings = ["dep:ts-rs"]
-
-[[bin]]
-name = "generate_entity_bindings"
-path = "src/bin/generate_entity_bindings.rs"
-required-features = ["ts-bindings"]
+ts-bindings = ["himmelcad-model/ts-bindings"]
 
 [lints]
 workspace = true

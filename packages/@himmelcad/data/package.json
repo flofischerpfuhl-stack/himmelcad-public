@@ -16,8 +16,8 @@
     }
   },
   "scripts": {
-    "bindings:generate": "node ../../../scripts/run-cargo.mjs run -p himmelcad-core --features ts-bindings --bin generate_entity_bindings",
-    "bindings:check": "node ../../../scripts/run-cargo.mjs run -p himmelcad-core --features ts-bindings --bin generate_entity_bindings -- --check",
+    "bindings:generate": "node ../../../scripts/run-cargo.mjs run -p himmelcad-model --features ts-bindings --bin generate_entity_bindings",
+    "bindings:check": "node ../../../scripts/run-cargo.mjs run -p himmelcad-model --features ts-bindings --bin generate_entity_bindings -- --check",
     "typecheck": "tsc -b",
     "test": "node --test test/*.test.mjs"
   },

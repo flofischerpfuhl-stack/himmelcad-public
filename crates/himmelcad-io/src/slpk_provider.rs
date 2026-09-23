@@ -21,7 +21,7 @@ use himmelcad_core::entity_validation::{
 };
 use himmelcad_core::geometry_representation_registry::CanonicalRepresentationAdmission;
 use himmelcad_core::hash::ObjectHash;
-use himmelcad_render::{
+use himmelcad_prepared::{
     BoundingVolume, ContentKind, ContentReference, PreparedHierarchyManifest, RefinementMode,
     TileDescriptor, TileId, WorldTransform, WorldVec3,
 };
@@ -1654,15 +1654,12 @@ mod tests {
 
     use flate2::write::GzEncoder;
     use flate2::Compression;
-    use himmelcad_render::{
-        decode_glb_intrinsic, DatasetId, HierarchySource, PreparedHierarchySource,
-    };
+    use himmelcad_prepared::{DatasetId, HierarchySource, PreparedHierarchySource};
     use image::{DynamicImage, ImageBuffer, ImageFormat, Rgba};
     use zip::write::SimpleFileOptions;
     use zip::{CompressionMethod, ZipWriter};
 
     use super::*;
-    use crate::viewer_contract_test_support::assert_provider_package_reaches_viewer;
 
     #[derive(Default)]
     struct TestContext {
@@ -1710,7 +1707,7 @@ mod tests {
     }
 
     #[test]
-    fn textured_feature_fixture_reaches_prepared_hierarchy_and_common_glb_decoder() {
+    fn textured_feature_fixture_reaches_prepared_hierarchy() {
         let root = temp_root("viewer");
         let source = root.join("textured.slpk");
         write_fixture(&source, false);
@@ -1726,7 +1723,6 @@ mod tests {
                 &mut context,
             )
             .expect("canonical SLPK import");
-        assert_provider_package_reaches_viewer(&package);
         assert!(context
             .progress
             .iter()
@@ -1748,17 +1744,7 @@ mod tests {
             .expect("hierarchy lookup")
             .expect("child tile");
         assert_eq!(child.contents[0].kind, ContentKind::Gltf);
-        let glb = fs::read(dataset_root.join("tiles/1.glb")).expect("prepared GLB");
-        let decoded = decode_glb_intrinsic(&glb, child.content_transform)
-            .expect("common GLB renderer decoder");
-        assert_eq!(decoded.primitives.len(), 1);
-        assert_eq!(decoded.primitives[0].indices.len(), 3);
-        assert_eq!(decoded.primitives[0].features.len(), 1);
-        assert_eq!(
-            decoded.primitives[0].features[0].feature_id_at_triangle(0, [0.2, 0.3, 0.5]),
-            Some(himmelcad_render::DecodedTriangleFeatureId::Feature(0))
-        );
-        assert_eq!(decoded.images.len(), 1);
+        assert!(dataset_root.join("tiles/1.glb").is_file());
 
         // A second run at the same content-addressed root reuses exact GLBs and
         // demonstrates restart/resume safety without mutable public state.

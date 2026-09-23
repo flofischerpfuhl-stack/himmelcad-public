@@ -19,7 +19,7 @@ use himmelcad_core::product_import_package::{
     ProductImportPackageReadyRecordV1, ProductLineageDemConnectivityV1,
     ProductLineageDemSourceNoDataV1, ProvenanceStatus, PRODUCT_IMPORT_PACKAGE_READY_SCHEMA_ID,
 };
-use himmelcad_render::{
+use himmelcad_prepared::{
     ContentKind, DatasetId, PreparedHierarchyManifest, PreparedHierarchySource,
 };
 use serde_json::Value;
@@ -847,7 +847,7 @@ fn validate_orthomosaic_geometry(
 fn validate_orthomosaic_decoder(
     manifest: &ProductImportPackageManifestV1,
     dataset: &himmelcad_core::product_import_package::ProductImportPackageDatasetV1,
-    content: &himmelcad_render::ContentReference,
+    content: &himmelcad_prepared::ContentReference,
 ) -> Result<(), ProviderContractError> {
     let parameters = content
         .decoder_parameters

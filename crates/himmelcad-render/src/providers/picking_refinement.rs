@@ -3,7 +3,7 @@
 use std::sync::Arc;
 use thiserror::Error;
 
-use himmelcad_core::entity_model::RasterCellDiagonal;
+use himmelcad_model::entity_model::RasterCellDiagonal;
 
 use super::{
     DecodedElevationRaster, DecodedGaussianSplats, DecodedPotreePoints, ElevationRasterInput,
@@ -1023,7 +1023,7 @@ fn vector(value: WorldVec3) -> glam::DVec3 {
 
 #[cfg(test)]
 mod tests {
-    use himmelcad_core::entity_model::RasterCellDiagonal;
+    use himmelcad_model::entity_model::RasterCellDiagonal;
 
     use super::{
         potree_point_world_position, refine_potree_point_pick, ElevationRasterPickPrimitiveKind,

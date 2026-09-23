@@ -60,7 +60,7 @@ use himmelcad_core::typed_artifact::{
     ArtifactRecordChunk, InterleavedArtifactField, TypedArtifactDescriptor, TypedArtifactLayout,
     TypedArtifactManifest, TYPED_ARTIFACT_MANIFEST_MEDIA_TYPE, TYPED_ARTIFACT_MANIFEST_NAME,
 };
-use himmelcad_render::{
+use himmelcad_prepared::{
     ContentKind, DatasetId, HierarchySource, PotreeAttributeType, PotreeHierarchySource,
 };
 

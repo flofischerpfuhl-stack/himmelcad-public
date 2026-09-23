@@ -4,7 +4,7 @@ use std::error::Error;
 use std::fmt::{Display, Formatter};
 
 use glam::{DVec2, DVec3, DVec4};
-use himmelcad_core::entity_model::{CurveGeometry, PlaneDefinition, Position, Vector3};
+use himmelcad_model::entity_model::{CurveGeometry, PlaneDefinition, Position, Vector3};
 
 use crate::gpu_frame::GpuLineInstance;
 use crate::{FloatingOrigin, GpuDrawBatch, GpuFrameError, WorldVec3};
@@ -1033,7 +1033,7 @@ mod tests {
         CameraFrame, CameraProjection, PickAddress, PickCandidate, PickRefinementRequest,
         PresentationTransform, SnapKind, WorldCamera, WorldTransform, WorldVec3,
     };
-    use himmelcad_core::entity_model::{CurveGeometry, Position, Vector3};
+    use himmelcad_model::entity_model::{CurveGeometry, Position, Vector3};
 
     fn options() -> CurveTessellationOptions {
         CurveTessellationOptions {

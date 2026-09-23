@@ -5,16 +5,16 @@ use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::sync::Arc;
 
-use himmelcad_core::entity_model::{
+use himmelcad_model::entity_model::{
     CanonicalEntity, ElevationSurfaceGeometry, GeometryObject, Representation, SolidGeometry,
 };
-use himmelcad_core::entity_validation::{validate_resolved_representation, EntityValidationError};
-pub use himmelcad_core::geometry_representation_registry::GeometryRepresentationKey;
-use himmelcad_core::geometry_representation_registry::{
+use himmelcad_model::entity_validation::{validate_resolved_representation, EntityValidationError};
+pub use himmelcad_model::geometry_representation_registry::GeometryRepresentationKey;
+use himmelcad_model::geometry_representation_registry::{
     CanonicalRepresentationAdmission, GeometryRepresentationBindingRef,
     GeometryRepresentationSlotKey,
 };
-use himmelcad_core::hash::ObjectHash;
+use himmelcad_model::hash::ObjectHash;
 use serde::Serialize;
 
 use crate::{
@@ -1170,19 +1170,19 @@ mod tests {
         GeometryRepresentationKey, SectionTopologyPart, SectionTopologyPartitionData,
         SectionTopologySnapshotKey,
     };
-    use himmelcad_core::entity::EntityId;
-    use himmelcad_core::entity_model::{
+    use himmelcad_model::entity::EntityId;
+    use himmelcad_model::entity_model::{
         built_in_type, CanonicalEntity, EntityTypeId, GeometryObject, GeometryResource,
         Representation, RepresentationAuthority, RepresentationRole, SolidGeometry,
         TriangleMeshGeometry, TriangleMeshStorage, Vector3,
     };
-    use himmelcad_core::entity_validation::{
+    use himmelcad_model::entity_validation::{
         canonical_entity_version_hash, geometry_object_content_hash, EntityValidationError,
     };
-    use himmelcad_core::geometry_representation_registry::{
+    use himmelcad_model::geometry_representation_registry::{
         CanonicalRepresentationAdmission, GeometryRepresentationBindingRef,
     };
-    use himmelcad_core::hash::ObjectHash;
+    use himmelcad_model::hash::ObjectHash;
     use std::collections::BTreeMap;
     use std::sync::Arc;
 

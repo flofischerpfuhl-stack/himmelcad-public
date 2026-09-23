@@ -1,0 +1,17 @@
+[package]
+name = "himmelcad-prepared"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Renderer-neutral prepared hierarchy, tile, and artifact contracts."
+
+[dependencies]
+"brotli-decompressor" = "5.0"
+glam.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

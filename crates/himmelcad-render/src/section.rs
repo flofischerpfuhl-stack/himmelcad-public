@@ -6,7 +6,7 @@ use std::fmt::{Display, Formatter};
 
 use earcut::Earcut;
 use glam::{DMat4, DVec2, DVec3};
-use himmelcad_core::entity_model::{
+use himmelcad_model::entity_model::{
     CsgNode, ElevationSurfaceGeometry, GeometryObject, SolidGeometry, Transform3d,
     TriangleMeshGeometry, TriangleMeshStorage,
 };
@@ -1239,14 +1239,14 @@ mod tests {
         SectionTopologyBounds, SectionTopologyPart, AUTHORITATIVE_SECTION_PRODUCT_SCHEMA_VERSION,
     };
     use crate::{WorldTransform, WorldVec3};
-    use himmelcad_core::canonical_resources::{
+    use himmelcad_model::canonical_resources::{
         CanonicalResourceRef, MATERIAL_TABLE_RESOURCE_SCHEMA_ID,
     };
-    use himmelcad_core::entity_model::{
+    use himmelcad_model::entity_model::{
         CsgNode, GeometryObject, SolidGeometry, SolidPrimitive, Transform3d, TriangleMeshGeometry,
         TriangleMeshStorage, Vector3,
     };
-    use himmelcad_core::hash::ObjectHash;
+    use himmelcad_model::hash::ObjectHash;
     use std::collections::BTreeMap;
 
     #[test]

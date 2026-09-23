@@ -672,7 +672,7 @@ impl PotreePointLayout {
     ) -> Result<DecodedPotreePoints, PotreeDecodeError> {
         let point_count =
             usize::try_from(point_count).map_err(|_| PotreeDecodeError::TooManyPoints)?;
-        if point_count > crate::decode_limits::MAX_POINT_COUNT {
+        if point_count > crate::MAX_POINT_COUNT {
             return Err(PotreeDecodeError::TooManyPoints);
         }
         if self.encoding.eq_ignore_ascii_case("BROTLI") {
@@ -827,7 +827,7 @@ impl PotreePointLayout {
             usize::try_from(point_count).map_err(|_| PotreeDecodeError::TooManyPoints)?;
         let point_index =
             usize::try_from(point_index).map_err(|_| PotreeDecodeError::PointIndex)?;
-        if point_count > crate::decode_limits::MAX_POINT_COUNT || point_index >= point_count {
+        if point_count > crate::MAX_POINT_COUNT || point_index >= point_count {
             return Err(PotreeDecodeError::PointIndex);
         }
         let expected_size = point_count

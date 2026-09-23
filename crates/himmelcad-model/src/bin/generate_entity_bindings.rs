@@ -5,22 +5,22 @@ use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use himmelcad_core::canonical_document::{
-    CanonicalCommandTransaction, CanonicalEntityEdit, CanonicalEntityEffect, CanonicalEntityField,
-    CanonicalEntityMutation, CanonicalEntityTombstone, CanonicalJournalEntry,
-    CanonicalJournalEntryKind, EntityVersionRef,
-};
-use himmelcad_core::canonical_resources::{
+use himmelcad_model::canonical_resources::{
     AnnotationStyleResource, BimClassificationComponent, BlockDefinition, CanonicalResourceRef,
     HatchPatternResource, LineTypeResource, MaterialResource, MaterialTableResource,
     NetworkTopology, TextureResource,
 };
-use himmelcad_core::entity_model::{BuiltInEntityType, CanonicalEntity, GeometryObject};
-use himmelcad_core::geometry_representation_registry::{
+use himmelcad_model::document_model::{
+    CanonicalCommandTransaction, CanonicalEntityEdit, CanonicalEntityEffect, CanonicalEntityField,
+    CanonicalEntityMutation, CanonicalEntityTombstone, CanonicalJournalEntry,
+    CanonicalJournalEntryKind, EntityVersionRef,
+};
+use himmelcad_model::entity_model::{BuiltInEntityType, CanonicalEntity, GeometryObject};
+use himmelcad_model::geometry_representation_registry::{
     CanonicalRepresentationAdmission, GeometryRepresentationBindingRef, GeometryRepresentationKey,
     GeometryRepresentationSlotKey, SectionTopologyPartitionManifest,
 };
-use himmelcad_core::release_05_admissions::{
+use himmelcad_model::release_05_admissions::{
     CurveSubentityRefV1, DerivedRecipeV1, LocalHistoryV1, MeasurementV1, MeshSourceRolesV1,
     PointAcquisitionV1, SnapshotMarkerV1, SupportRoleV1, ViewStateV2,
 };
@@ -46,7 +46,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
         .ancestors()
         .nth(2)
-        .ok_or("himmelcad-core must live below the repository root")?;
+        .ok_or("himmelcad-model must live below the repository root")?;
     let generated = repository.join(GENERATED_RELATIVE_PATH);
     let legacy_barrel = repository.join(LEGACY_BARREL_RELATIVE_PATH);
     let staging = repository
@@ -234,7 +234,7 @@ fn check_equal(generated: &Path, staging: &Path) -> Result<(), Box<dyn Error>> {
         .filter(|path| actual.contains_key(*path))
         .collect();
     Err(format!(
-        "canonical entity bindings drifted (missing: {missing:?}, stale: {stale:?}, changed: {changed:?}); run cargo run -p himmelcad-core --features ts-bindings --bin generate_entity_bindings",
+        "canonical entity bindings drifted (missing: {missing:?}, stale: {stale:?}, changed: {changed:?}); run cargo run -p himmelcad-model --features ts-bindings --bin generate_entity_bindings",
     )
     .into())
 }

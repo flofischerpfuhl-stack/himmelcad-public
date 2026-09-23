@@ -2,15 +2,15 @@
 
 use std::sync::Arc;
 
-use himmelcad_core::entity::EntityId;
-use himmelcad_core::entity_model::{
+use himmelcad_model::entity::EntityId;
+use himmelcad_model::entity_model::{
     AlignmentGeometry, StationFunction, TriangleMeshGeometry, TriangleMeshStorage, Vector3,
     VerticalAlignmentSegment,
 };
-use himmelcad_core::entity_validation::{
+use himmelcad_model::entity_validation::{
     geometry_object_content_hash, validate_geometry_object, EntityValidationError,
 };
-use himmelcad_core::hash::ObjectHash;
+use himmelcad_model::hash::ObjectHash;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -693,7 +693,7 @@ fn validate_alignment_input(
     alignment_version: &ObjectHash,
     config: AlignmentPreviewConfig,
 ) -> Result<(), AlignmentPreviewError> {
-    validate_geometry_object(&himmelcad_core::entity_model::GeometryObject::Alignment {
+    validate_geometry_object(&himmelcad_model::entity_model::GeometryObject::Alignment {
         alignment: Box::new(alignment.clone()),
     })?;
     if alignment_geometry_version(alignment)? != *alignment_version {
@@ -720,7 +720,7 @@ fn validate_alignment_input(
 pub fn alignment_geometry_version(
     alignment: &AlignmentGeometry,
 ) -> Result<ObjectHash, AlignmentPreviewError> {
-    geometry_object_content_hash(&himmelcad_core::entity_model::GeometryObject::Alignment {
+    geometry_object_content_hash(&himmelcad_model::entity_model::GeometryObject::Alignment {
         alignment: Box::new(alignment.clone()),
     })
     .map_err(AlignmentPreviewError::Validation)
@@ -782,7 +782,7 @@ fn valid_daylight_sample(sample: AlignmentDaylightSample) -> bool {
 
 fn validate_target_partition(
     partition: &AlignmentTargetSurfacePartition,
-    rule: &himmelcad_core::entity_model::SlopeRule,
+    rule: &himmelcad_model::entity_model::SlopeRule,
     expected_range: AlignmentStationRange,
 ) -> Result<(), AlignmentPreviewError> {
     if partition.station_range != expected_range {
@@ -1230,7 +1230,7 @@ where
         triangle_material_slots: None,
         materials: None,
     };
-    validate_geometry_object(&himmelcad_core::entity_model::GeometryObject::Surface3d {
+    validate_geometry_object(&himmelcad_model::entity_model::GeometryObject::Surface3d {
         mesh: Box::new(mesh.clone()),
     })
     .map_err(|_| AlignmentPreviewError::InvalidGeneratedGeometry)?;
@@ -1419,7 +1419,7 @@ fn revision_identity(
 
 #[cfg(test)]
 mod tests {
-    use himmelcad_core::entity_model::{
+    use himmelcad_model::entity_model::{
         CrossfallBand, CurveGeometry, Position, SlopeRule, StationValue, WidthBand,
     };
 

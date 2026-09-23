@@ -381,7 +381,6 @@ mod tests {
     use acadrust::types::{DxfVersion, Vector3};
 
     use crate::canonical_provider::ProviderOperationContext;
-    use crate::viewer_contract_test_support::assert_provider_package_reaches_viewer;
 
     #[derive(Default)]
     struct TestContext {
@@ -473,7 +472,6 @@ mod tests {
                     panic!("canonical {} DWG import: {error}", version.as_str())
                 });
             assert_eq!(package.provider_id, DWG_PROVIDER_ID);
-            assert_provider_package_reaches_viewer(&package);
             assert!(context.progress.iter().any(|value| value.phase == "decode"));
         }
         fs::remove_dir_all(root).expect("cleanup");

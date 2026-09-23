@@ -1102,13 +1102,13 @@ version = "0.0.0"
 dependencies = [
  "glam 0.29.3",
  "hex",
+ "himmelcad-model",
  "parking_lot",
  "serde",
  "serde_json",
  "sha2",
  "spade",
  "thiserror 1.0.69",
- "ts-rs",
 ]
 
 [[package]]
@@ -1133,7 +1133,7 @@ dependencies = [
  "geotiff-writer",
  "hex",
  "himmelcad-core",
- "himmelcad-render",
+ "himmelcad-prepared",
  "himmelcad-spatial",
  "image",
  "las",
@@ -1147,6 +1147,29 @@ dependencies = [
  "tiff-reader",
  "tracing",
  "zip",
+]
+
+[[package]]
+name = "himmelcad-model"
+version = "0.0.0"
+dependencies = [
+ "hex",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 1.0.69",
+ "ts-rs",
+]
+
+[[package]]
+name = "himmelcad-prepared"
+version = "0.0.0"
+dependencies = [
+ "brotli-decompressor",
+ "glam 0.29.3",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -1165,7 +1188,8 @@ dependencies = [
  "glam 0.29.3",
  "gltf",
  "gltf-v1",
- "himmelcad-core",
+ "himmelcad-model",
+ "himmelcad-prepared",
  "image",
  "indexmap",
  "js-sys",

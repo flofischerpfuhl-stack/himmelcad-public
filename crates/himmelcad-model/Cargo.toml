@@ -1,0 +1,27 @@
+[package]
+name = "himmelcad-model"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "HimmelCAD renderer-neutral object schema and validation contracts."
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+sha2.workspace = true
+hex.workspace = true
+ts-rs = { workspace = true, optional = true, features = ["no-serde-warnings"] }
+
+[features]
+default = []
+ts-bindings = ["dep:ts-rs"]
+
+[[bin]]
+name = "generate_entity_bindings"
+path = "src/bin/generate_entity_bindings.rs"
+required-features = ["ts-bindings"]
+
+[lints]
+workspace = true

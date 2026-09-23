@@ -13,7 +13,7 @@ use himmelcad_core::typed_artifact::{
     ArtifactElementType, ArtifactEndianness, TypedArtifactDescriptor, TypedArtifactLayout,
     TypedArtifactManifest, TYPED_ARTIFACT_MANIFEST_NAME,
 };
-use himmelcad_render::{
+use himmelcad_prepared::{
     BoundingVolume, ContentKind, ContentReference, PreparedHierarchyManifest, RefinementMode,
     TileDescriptor, TileId, WorldAabb, WorldTransform, WorldVec3,
 };
@@ -942,7 +942,7 @@ impl Drop for StagingDirectory {
 mod tests {
     use super::*;
     use himmelcad_core::entity_model::Vector3;
-    use himmelcad_render::{DatasetId, HierarchySource, PreparedHierarchySource};
+    use himmelcad_prepared::{DatasetId, HierarchySource, PreparedHierarchySource};
 
     #[test]
     fn coarser_levels_keep_average_sample_centres_and_exact_children() {
