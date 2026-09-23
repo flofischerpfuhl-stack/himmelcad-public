@@ -1,0 +1,7 @@
+{
+  "layers": {},
+  "edges": [],
+  "undeclared": [
+    "packages/example/src/index.ts imports undeclared workspace package @himmelcad/data"
+  ]
+}

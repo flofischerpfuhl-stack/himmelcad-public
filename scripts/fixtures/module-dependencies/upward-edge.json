@@ -1,0 +1,4 @@
+{
+  "layers": { "foundation": "foundation", "domain": "domain" },
+  "edges": [{ "ecosystem": "rust", "from": "foundation", "to": "domain" }]
+}

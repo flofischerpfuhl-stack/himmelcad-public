@@ -1,0 +1,4 @@
+{
+  "layers": { "registration": "domain", "surface": "domain" },
+  "edges": [{ "ecosystem": "rust", "from": "registration", "to": "surface" }]
+}

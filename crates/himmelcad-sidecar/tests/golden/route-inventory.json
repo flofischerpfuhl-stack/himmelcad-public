@@ -1,0 +1,817 @@
+[
+  {
+    "method": "app.negotiate",
+    "handlerFamily": "canonical-app",
+    "product": "shared"
+  },
+  {
+    "method": "app.protocol",
+    "handlerFamily": "canonical-app",
+    "product": "shared"
+  },
+  {
+    "method": "automation.bulk.read",
+    "handlerFamily": "automation",
+    "product": "shared"
+  },
+  {
+    "method": "automation.bulk.release",
+    "handlerFamily": "automation",
+    "product": "shared"
+  },
+  {
+    "method": "automation.cas.describe",
+    "handlerFamily": "automation",
+    "product": "shared"
+  },
+  {
+    "method": "automation.commands.cancel",
+    "handlerFamily": "automation",
+    "product": "shared"
+  },
+  {
+    "method": "automation.commands.status",
+    "handlerFamily": "automation",
+    "product": "shared"
+  },
+  {
+    "method": "automation.commands.validate",
+    "handlerFamily": "automation",
+    "product": "shared"
+  },
+  {
+    "method": "automation.entities.page",
+    "handlerFamily": "automation",
+    "product": "shared"
+  },
+  {
+    "method": "builder.project.archive.cancel",
+    "handlerFamily": "builder-archive",
+    "product": "builder"
+  },
+  {
+    "method": "builder.project.archive.pack",
+    "handlerFamily": "builder-archive",
+    "product": "builder"
+  },
+  {
+    "method": "builder.project.archive.unpack",
+    "handlerFamily": "builder-archive",
+    "product": "builder"
+  },
+  {
+    "method": "canonical.project.close",
+    "handlerFamily": "canonical-app",
+    "product": "shared"
+  },
+  {
+    "method": "canonical.project.durability",
+    "handlerFamily": "canonical-app",
+    "product": "shared"
+  },
+  {
+    "method": "canonical.project.open",
+    "handlerFamily": "canonical-app",
+    "product": "shared"
+  },
+  {
+    "method": "canonical.residency.bootstrap",
+    "handlerFamily": "canonical-app",
+    "product": "shared"
+  },
+  {
+    "method": "canonical.residency.resource.read",
+    "handlerFamily": "canonical-app",
+    "product": "shared"
+  },
+  {
+    "method": "canonical.viewing_box.delete",
+    "handlerFamily": "canonical-app",
+    "product": "builder"
+  },
+  {
+    "method": "canonical.viewing_box.list",
+    "handlerFamily": "canonical-app",
+    "product": "builder"
+  },
+  {
+    "method": "canonical.viewing_box.put",
+    "handlerFamily": "canonical-app",
+    "product": "builder"
+  },
+  {
+    "method": "draw.curve.list",
+    "handlerFamily": "canonical-app",
+    "product": "builder"
+  },
+  {
+    "method": "draw.curve.put",
+    "handlerFamily": "canonical-app",
+    "product": "builder"
+  },
+  {
+    "method": "draw.curve.redo",
+    "handlerFamily": "canonical-app",
+    "product": "builder"
+  },
+  {
+    "method": "draw.curve.undo",
+    "handlerFamily": "canonical-app",
+    "product": "builder"
+  },
+  {
+    "method": "import.ifc",
+    "handlerFamily": "root",
+    "product": "builder"
+  },
+  {
+    "method": "import.las",
+    "handlerFamily": "root",
+    "product": "builder"
+  },
+  {
+    "method": "import.las.cancel",
+    "handlerFamily": "root",
+    "product": "builder"
+  },
+  {
+    "method": "io.export.execute",
+    "handlerFamily": "io",
+    "product": "shared"
+  },
+  {
+    "method": "io.export.plan",
+    "handlerFamily": "io",
+    "product": "shared"
+  },
+  {
+    "method": "io.formats.page",
+    "handlerFamily": "io",
+    "product": "shared"
+  },
+  {
+    "method": "io.import.execute",
+    "handlerFamily": "io",
+    "product": "shared"
+  },
+  {
+    "method": "io.operation.cancel",
+    "handlerFamily": "io",
+    "product": "shared"
+  },
+  {
+    "method": "io.operation.status",
+    "handlerFamily": "io",
+    "product": "shared"
+  },
+  {
+    "method": "io.probe",
+    "handlerFamily": "io",
+    "product": "shared"
+  },
+  {
+    "method": "measurement.create",
+    "handlerFamily": "canonical-app",
+    "product": "builder"
+  },
+  {
+    "method": "measurement.get",
+    "handlerFamily": "canonical-app",
+    "product": "builder"
+  },
+  {
+    "method": "measurement.list",
+    "handlerFamily": "canonical-app",
+    "product": "builder"
+  },
+  {
+    "method": "measurement.remove",
+    "handlerFamily": "canonical-app",
+    "product": "builder"
+  },
+  {
+    "method": "mesh.edit.cancel",
+    "handlerFamily": "mesh-surface",
+    "product": "builder"
+  },
+  {
+    "method": "mesh.edit.downsample",
+    "handlerFamily": "mesh-surface",
+    "product": "builder"
+  },
+  {
+    "method": "mesh.edit.downsample.preview",
+    "handlerFamily": "mesh-surface",
+    "product": "builder"
+  },
+  {
+    "method": "mesh.edit.region.select",
+    "handlerFamily": "mesh-surface",
+    "product": "builder"
+  },
+  {
+    "method": "mesh.edit.smooth",
+    "handlerFamily": "mesh-surface",
+    "product": "builder"
+  },
+  {
+    "method": "mesh.edit.smooth.preview",
+    "handlerFamily": "mesh-surface",
+    "product": "builder"
+  },
+  {
+    "method": "mesh.surface.cancel",
+    "handlerFamily": "mesh-surface",
+    "product": "builder"
+  },
+  {
+    "method": "mesh.surface.check",
+    "handlerFamily": "mesh-surface",
+    "product": "builder"
+  },
+  {
+    "method": "mesh.surface.create",
+    "handlerFamily": "mesh-surface",
+    "product": "builder"
+  },
+  {
+    "method": "mesh.surface.draft.apply_fix",
+    "handlerFamily": "mesh-surface",
+    "product": "builder"
+  },
+  {
+    "method": "mesh.surface.draft.create",
+    "handlerFamily": "mesh-surface",
+    "product": "builder"
+  },
+  {
+    "method": "photolab.alignment.resolve",
+    "handlerFamily": "root",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.alignmentMerge.preflight",
+    "handlerFamily": "root",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.capture.cancel",
+    "handlerFamily": "photolab-capture",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.capture.capabilities",
+    "handlerFamily": "photolab-capture",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.capture.image.prepare",
+    "handlerFamily": "photolab-capture",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.capture.scale.evaluate",
+    "handlerFamily": "photolab-capture",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.capture.video.prepare",
+    "handlerFamily": "photolab-capture",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.crs.cancel",
+    "handlerFamily": "photolab-crs",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.crs.discover",
+    "handlerFamily": "photolab-crs",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.crs.freeze",
+    "handlerFamily": "photolab-crs",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.gcp.alignedCameras",
+    "handlerFamily": "photolab-gcp",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.gcp.calibrationReport",
+    "handlerFamily": "photolab-gcp",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.gcp.cancel",
+    "handlerFamily": "photolab-gcp",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.gcp.commit",
+    "handlerFamily": "photolab-gcp",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.gcp.list",
+    "handlerFamily": "photolab-gcp",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.gcp.localEstimate.compute",
+    "handlerFamily": "photolab-gcp",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.gcp.localEstimate.read",
+    "handlerFamily": "photolab-gcp",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.gcp.observation.edit",
+    "handlerFamily": "photolab-gcp",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.gcp.observation.upsert",
+    "handlerFamily": "photolab-gcp",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.gcp.observation.upsertAssisted",
+    "handlerFamily": "photolab-gcp",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.gcp.optimization.latest",
+    "handlerFamily": "photolab-gcp",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.gcp.optimization.list",
+    "handlerFamily": "photolab-gcp",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.gcp.optimization.snapshot",
+    "handlerFamily": "photolab-gcp",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.gcp.preview",
+    "handlerFamily": "photolab-gcp",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.hardware.probe",
+    "handlerFamily": "root",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.himmelcap.cancel",
+    "handlerFamily": "photolab-himmelcap",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.himmelcap.inspect",
+    "handlerFamily": "photolab-himmelcap",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.himmelcap.release",
+    "handlerFamily": "photolab-himmelcap",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.images.commit",
+    "handlerFamily": "photolab-images",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.images.commit.cancel",
+    "handlerFamily": "photolab-images",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.images.inspect",
+    "handlerFamily": "photolab-images",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.images.inspect.cancel",
+    "handlerFamily": "photolab-images",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.images.list",
+    "handlerFamily": "photolab-images",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.images.quality.list",
+    "handlerFamily": "photolab-images",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.jobs.cancel",
+    "handlerFamily": "photolab-jobs",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.jobs.list",
+    "handlerFamily": "photolab-jobs",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.jobs.resume",
+    "handlerFamily": "photolab-jobs",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.jobs.startAlignment",
+    "handlerFamily": "photolab-jobs",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.jobs.startAlignmentMerge",
+    "handlerFamily": "photolab-jobs",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.jobs.startBatch",
+    "handlerFamily": "photolab-jobs",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.jobs.startGcpOptimization",
+    "handlerFamily": "photolab-jobs",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.jobs.startImageQuality",
+    "handlerFamily": "photolab-jobs",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.jobs.startProduct",
+    "handlerFamily": "photolab-jobs",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.jobs.startProductExport",
+    "handlerFamily": "photolab-jobs",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.jobs.status",
+    "handlerFamily": "photolab-jobs",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.products.list",
+    "handlerFamily": "photolab-products",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.products.resolveInputs",
+    "handlerFamily": "photolab-products",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.project.alignmentMerge.candidates",
+    "handlerFamily": "photolab-project",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.project.alignmentMerge.create",
+    "handlerFamily": "photolab-project",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.project.alignmentMerge.list",
+    "handlerFamily": "photolab-project",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.project.archive.cancel",
+    "handlerFamily": "photolab-project",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.project.autosave",
+    "handlerFamily": "photolab-project",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.project.calibrationGroup.list",
+    "handlerFamily": "photolab-project",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.project.calibrationGroup.setInitialCalibration",
+    "handlerFamily": "photolab-project",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.project.calibrationGroup.updateIntrinsics",
+    "handlerFamily": "photolab-project",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.project.captureGroup.confirm",
+    "handlerFamily": "photolab-project",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.project.captureGroup.create",
+    "handlerFamily": "photolab-project",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.project.captureGroup.duplicateAsDraft",
+    "handlerFamily": "photolab-project",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.project.captureGroup.list",
+    "handlerFamily": "photolab-project",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.project.captureGroup.mergeProposals",
+    "handlerFamily": "photolab-project",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.project.close",
+    "handlerFamily": "photolab-project",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.project.create",
+    "handlerFamily": "photolab-project",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.project.diagnostics",
+    "handlerFamily": "photolab-project",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.project.entity.move",
+    "handlerFamily": "photolab-project",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.project.entity.rename",
+    "handlerFamily": "photolab-project",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.project.entity.visibility",
+    "handlerFamily": "photolab-project",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.project.imageMask.cancel",
+    "handlerFamily": "photolab-project",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.project.imageMask.edit",
+    "handlerFamily": "photolab-project",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.project.imageMask.list",
+    "handlerFamily": "photolab-project",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.project.images.cancel",
+    "handlerFamily": "photolab-project",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.project.images.commit",
+    "handlerFamily": "photolab-project",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.project.images.remove",
+    "handlerFamily": "photolab-project",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.project.journal.finish",
+    "handlerFamily": "photolab-project",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.project.journal.start",
+    "handlerFamily": "photolab-project",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.project.open",
+    "handlerFamily": "photolab-project",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.project.processingSet.create",
+    "handlerFamily": "photolab-project",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.project.processingSet.list",
+    "handlerFamily": "photolab-project",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.project.save",
+    "handlerFamily": "photolab-project",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.project.saveAs",
+    "handlerFamily": "photolab-project",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.project.snapshot",
+    "handlerFamily": "photolab-project",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.report.surveyData",
+    "handlerFamily": "root",
+    "product": "photolab"
+  },
+  {
+    "method": "photolab.shutdown.drain",
+    "handlerFamily": "root",
+    "product": "photolab"
+  },
+  {
+    "method": "ping",
+    "handlerFamily": "root",
+    "product": "shared"
+  },
+  {
+    "method": "pointcloud.display.set",
+    "handlerFamily": "canonical-app",
+    "product": "builder"
+  },
+  {
+    "method": "pointcloud.ground.cancel",
+    "handlerFamily": "pointcloud-ground",
+    "product": "builder"
+  },
+  {
+    "method": "pointcloud.ground.extract",
+    "handlerFamily": "pointcloud-ground",
+    "product": "builder"
+  },
+  {
+    "method": "pointcloud.ground.preview",
+    "handlerFamily": "pointcloud-ground",
+    "product": "builder"
+  },
+  {
+    "method": "pointcloud.processing.cancel",
+    "handlerFamily": "pointcloud-processing",
+    "product": "builder"
+  },
+  {
+    "method": "pointcloud.rasterize",
+    "handlerFamily": "pointcloud-processing",
+    "product": "builder"
+  },
+  {
+    "method": "pointcloud.sample",
+    "handlerFamily": "pointcloud-processing",
+    "product": "builder"
+  },
+  {
+    "method": "pointcloud.segment.cancel",
+    "handlerFamily": "pointcloud-segment",
+    "product": "builder"
+  },
+  {
+    "method": "pointcloud.segment.keep_inside",
+    "handlerFamily": "pointcloud-segment",
+    "product": "builder"
+  },
+  {
+    "method": "pointcloud.segment.remove_inside",
+    "handlerFamily": "pointcloud-segment",
+    "product": "builder"
+  },
+  {
+    "method": "product.import.provenance",
+    "handlerFamily": "canonical-app",
+    "product": "builder"
+  },
+  {
+    "method": "project.flush",
+    "handlerFamily": "canonical-app",
+    "product": "builder"
+  },
+  {
+    "method": "project.redo",
+    "handlerFamily": "canonical-app",
+    "product": "builder"
+  },
+  {
+    "method": "project.undo",
+    "handlerFamily": "canonical-app",
+    "product": "builder"
+  },
+  {
+    "method": "registration.import.commit",
+    "handlerFamily": "registration",
+    "product": "shared"
+  },
+  {
+    "method": "registration.import.stage",
+    "handlerFamily": "registration",
+    "product": "shared"
+  },
+  {
+    "method": "registration.preview.icp",
+    "handlerFamily": "registration",
+    "product": "shared"
+  },
+  {
+    "method": "registration.preview.pointPairs",
+    "handlerFamily": "registration",
+    "product": "shared"
+  },
+  {
+    "method": "registration.resource.read",
+    "handlerFamily": "registration",
+    "product": "shared"
+  },
+  {
+    "method": "registration.resources.describe",
+    "handlerFamily": "registration",
+    "product": "shared"
+  },
+  {
+    "method": "registration.samples.projectPointCloud",
+    "handlerFamily": "registration",
+    "product": "shared"
+  },
+  {
+    "method": "registration.samples.source",
+    "handlerFamily": "registration",
+    "product": "shared"
+  },
+  {
+    "method": "registration.session.cancel",
+    "handlerFamily": "registration",
+    "product": "shared"
+  },
+  {
+    "method": "registration.session.state",
+    "handlerFamily": "registration",
+    "product": "shared"
+  },
+  {
+    "method": "registration.siteCalibration.inspect",
+    "handlerFamily": "registration",
+    "product": "shared"
+  },
+  {
+    "method": "snapshot.create",
+    "handlerFamily": "canonical-app",
+    "product": "builder"
+  },
+  {
+    "method": "snapshot.list",
+    "handlerFamily": "canonical-app",
+    "product": "builder"
+  },
+  {
+    "method": "snapshot.restore",
+    "handlerFamily": "canonical-app",
+    "product": "builder"
+  },
+  {
+    "method": "view.bookmark.create",
+    "handlerFamily": "canonical-app",
+    "product": "builder"
+  },
+  {
+    "method": "view.bookmark.list",
+    "handlerFamily": "canonical-app",
+    "product": "builder"
+  },
+  {
+    "method": "view.bookmark.restore",
+    "handlerFamily": "canonical-app",
+    "product": "builder"
+  }
+]

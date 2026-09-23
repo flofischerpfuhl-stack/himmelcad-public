@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "layers": ["product", "interface", "command", "domain", "foundation", "display", "electron"],
+  "rust": {
+    "himmelcad-core": "foundation",
+    "himmelcad-decode-wasm": "display",
+    "himmelcad-io": "foundation",
+    "himmelcad-render": "display",
+    "himmelcad-sidecar": "command",
+    "himmelcad-spatial": "foundation",
+    "himmelcad-wasm": "display"
+  },
+  "typescript": {
+    "@himmelcad/agent": { "layer": "interface" },
+    "@himmelcad/app": { "layer": "command" },
+    "@himmelcad/automation-host": {
+      "layer": "command",
+      "subpaths": {
+        "electron": "electron",
+        "provider-credentials": "electron"
+      }
+    },
+    "@himmelcad/builder": { "layer": "product" },
+    "@himmelcad/console": { "layer": "interface" },
+    "@himmelcad/data": { "layer": "foundation" },
+    "@himmelcad/photolab": { "layer": "product" },
+    "@himmelcad/plan": { "layer": "domain" },
+    "@himmelcad/specs": { "layer": "foundation" },
+    "@himmelcad/theme": { "layer": "interface" },
+    "@himmelcad/ui": { "layer": "interface" },
+    "@himmelcad/viewer": {
+      "layer": "display",
+      "subpaths": {
+        "kernel": "display",
+        "kernel/react": "display",
+        "legacy": "display"
+      }
+    },
+    "@himmelcad/weltview": { "layer": "product" }
+  },
+  "exactForbiddenEdges": [
+    { "ecosystem": "rust", "from": "himmelcad-io", "to": "himmelcad-render" },
+    { "ecosystem": "rust", "from": "himmelcad-sidecar", "to": "himmelcad-render" },
+    { "ecosystem": "rust", "from": "himmelcad-render", "to": "himmelcad-core" },
+    { "ecosystem": "rust", "from": "himmelcad-io", "to": "himmelcad-core" },
+    { "ecosystem": "rust", "from": "himmelcad-sidecar", "to": "himmelcad-core" },
+    { "ecosystem": "rust", "from": "himmelcad-wasm", "to": "himmelcad-core" },
+    {
+      "ecosystem": "typescript",
+      "from": "@himmelcad/automation-host:.",
+      "to": "@himmelcad/agent:."
+    },
+    {
+      "ecosystem": "typescript",
+      "from": "@himmelcad/viewer:.",
+      "to": "@himmelcad/viewer:legacy"
+    }
+  ]
+}

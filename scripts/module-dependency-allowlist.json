@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "edges": [
+    {
+      "ecosystem": "rust",
+      "from": "himmelcad-io",
+      "to": "himmelcad-render",
+      "reason": "Import/export currently consumes renderer-owned prepared types.",
+      "removeInStep": 3
+    },
+    {
+      "ecosystem": "rust",
+      "from": "himmelcad-sidecar",
+      "to": "himmelcad-render",
+      "reason": "The monolithic command host still owns prepared-artifact and rendering-adjacent work.",
+      "removeInStep": 3
+    },
+    {
+      "ecosystem": "rust",
+      "from": "himmelcad-render",
+      "to": "himmelcad-core",
+      "reason": "The renderer needs model contracts that have not yet moved out of the core monolith.",
+      "removeInStep": 3
+    },
+    {
+      "ecosystem": "rust",
+      "from": "himmelcad-io",
+      "to": "himmelcad-core",
+      "reason": "Import/export needs model contracts that have not yet moved out of the core monolith.",
+      "removeInStep": 3
+    },
+    {
+      "ecosystem": "rust",
+      "from": "himmelcad-sidecar",
+      "to": "himmelcad-core",
+      "reason": "The sidecar still reaches the mixed core monolith pending the document, command, and domain splits.",
+      "removeInStep": 5
+    },
+    {
+      "ecosystem": "rust",
+      "from": "himmelcad-wasm",
+      "to": "himmelcad-core",
+      "reason": "The WASM display adapter needs model contracts that have not yet moved out of the core monolith.",
+      "removeInStep": 3
+    },
+    {
+      "ecosystem": "typescript",
+      "from": "@himmelcad/automation-host:.",
+      "to": "@himmelcad/agent:.",
+      "reason": "The scripting host still imports agent transport declarations instead of a lower protocol contract.",
+      "removeInStep": 4
+    },
+    {
+      "ecosystem": "typescript",
+      "from": "@himmelcad/viewer:.",
+      "to": "@himmelcad/viewer:legacy",
+      "reason": "The viewer root is a compatibility export of the legacy Three.js barrel.",
+      "removeInStep": 8
+    }
+  ]
+}

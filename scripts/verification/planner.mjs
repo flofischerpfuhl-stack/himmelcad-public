@@ -167,6 +167,7 @@ export function createVerificationPlan({ root, tier, paths, cargoExecutable }) {
   }
 
   if (tier === 'commit') {
+    add(tasks, task('modules.direction', 'pnpm', ['check:modules']));
     const formatPaths = activePaths.filter(isFormatCandidate);
     const lintPaths = activePaths.filter(isLintCandidate);
     if (formatPaths.length)

@@ -1,0 +1,13 @@
+{
+  "layers": { "foundation": "foundation", "display": "display" },
+  "edges": [],
+  "allowlist": [
+    {
+      "ecosystem": "rust",
+      "from": "foundation",
+      "to": "display",
+      "reason": "fixture",
+      "removeInStep": 2
+    }
+  ]
+}
