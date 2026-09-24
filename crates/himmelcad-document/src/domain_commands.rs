@@ -9,8 +9,9 @@ use anyhow::Result;
 use crate::canonical_document::{
     CanonicalCommandTransaction, CanonicalJournalEntry, EntityVersionRef,
 };
+use crate::canonical_import::CanonicalJsonObject;
 use himmelcad_model::entity::EntityId;
-use himmelcad_model::entity_model::{CanonicalEntity, GeometryResource};
+use himmelcad_model::entity_model::{CanonicalEntity, GeometryObject, GeometryResource};
 use himmelcad_model::geometry_representation_registry::CanonicalRepresentationAdmission;
 use himmelcad_model::hash::ObjectHash;
 use himmelcad_model::surface::SurfacePoint;
@@ -145,4 +146,41 @@ pub trait RegistrationDocumentCommands {
         &self,
         object_hash: &ObjectHash,
     ) -> Result<File, Self::Error>;
+}
+
+/// Narrow canonical-document capabilities required by drafting command services.
+pub trait DraftingDocumentCommands {
+    type Error;
+
+    fn drafting_entities(&self) -> std::result::Result<Vec<CanonicalEntity>, Self::Error>;
+    fn drafting_tombstone_exists(
+        &self,
+        entity_id: &EntityId,
+    ) -> std::result::Result<bool, Self::Error>;
+    fn drafting_read_object(
+        &self,
+        object_hash: &ObjectHash,
+    ) -> std::result::Result<Vec<u8>, Self::Error>;
+    fn drafting_put_json_object(
+        &mut self,
+        object: &CanonicalJsonObject,
+    ) -> std::result::Result<(), Self::Error>;
+    fn drafting_put_geometry_object(
+        &mut self,
+        geometry: &GeometryObject,
+    ) -> std::result::Result<ObjectHash, Self::Error>;
+    fn drafting_append_transaction(
+        &mut self,
+        transaction: CanonicalCommandTransaction,
+    ) -> std::result::Result<CanonicalJournalEntry, Self::Error>;
+    fn drafting_undo(
+        &mut self,
+        command_id: String,
+        target_command_id: &str,
+    ) -> std::result::Result<CanonicalJournalEntry, Self::Error>;
+    fn drafting_redo(
+        &mut self,
+        command_id: String,
+        target_command_id: &str,
+    ) -> std::result::Result<CanonicalJournalEntry, Self::Error>;
 }

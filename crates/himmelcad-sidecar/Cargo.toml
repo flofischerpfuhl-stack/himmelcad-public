@@ -19,6 +19,7 @@ himmelcad-command = { path = "../himmelcad-command" }
 himmelcad-core = { path = "../himmelcad-core" }
 himmelcad-document = { path = "../himmelcad-document" }
 himmelcad-domain-photogrammetry = { path = "../himmelcad-domain-photogrammetry" }
+himmelcad-domain-drafting = { path = "../himmelcad-domain-drafting" }
 himmelcad-domain-pointcloud = { path = "../himmelcad-domain-pointcloud" }
 himmelcad-domain-raster = { path = "../himmelcad-domain-raster" }
 himmelcad-domain-registration = { path = "../himmelcad-domain-registration" }

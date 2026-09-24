@@ -8,6 +8,7 @@ description = "RPC registration, job supervision, and worker admission for Himme
 
 [dependencies]
 himmelcad-domain-photogrammetry = { path = "../himmelcad-domain-photogrammetry" }
+himmelcad-document = { path = "../himmelcad-document" }
 himmelcad-model = { path = "../himmelcad-model" }
 himmelcad-domain-raster = { path = "../himmelcad-domain-raster" }
 himmelcad-process = { path = "../himmelcad-process" }
@@ -15,7 +16,15 @@ serde.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "time"] }
 tracing.workspace = true
+thiserror.workspace = true
+sha2.workspace = true
+hex.workspace = true
+getrandom = "0.3.4"
+hmac = "0.12.1"
 fs2 = "0.4.3"
+
+[dev-dependencies]
+himmelcad-core = { path = "../himmelcad-core" }
 
 [lints]
 workspace = true

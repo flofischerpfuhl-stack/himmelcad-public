@@ -6,6 +6,7 @@
     "himmelcad-core": "foundation",
     "himmelcad-decode-wasm": "display",
     "himmelcad-document": "foundation",
+    "himmelcad-domain-drafting": "domain",
     "himmelcad-domain-pointcloud": "domain",
     "himmelcad-domain-photogrammetry": "domain",
     "himmelcad-domain-raster": "domain",

@@ -1,0 +1,18 @@
+[package]
+name = "himmelcad-domain-drafting"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Measurement, drawing, bookmark, and viewing-box command domain for HimmelCAD."
+
+[dependencies]
+himmelcad-core = { path = "../himmelcad-core" }
+himmelcad-document = { path = "../himmelcad-document" }
+himmelcad-model = { path = "../himmelcad-model" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

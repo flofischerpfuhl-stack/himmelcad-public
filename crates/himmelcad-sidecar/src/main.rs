@@ -3861,7 +3861,7 @@ fn handle_automation_rpc(
                     .lock()
                     .map_err(|_| "internal: canonical application runtime poisoned".to_owned())?;
                 automation
-                    .entities_page(params, &app)
+                    .entities_page(params, &*app)
                     .map_err(|error| error.to_string())
             })
             .and_then(|value| serde_json::to_value(value).map_err(|error| error.to_string())),
@@ -3872,7 +3872,7 @@ fn handle_automation_rpc(
                     .lock()
                     .map_err(|_| "internal: canonical application runtime poisoned".to_owned())?;
                 automation
-                    .describe_cas(params, &app)
+                    .describe_cas(params, &*app)
                     .map_err(|error| error.to_string())
             })
             .and_then(|value| serde_json::to_value(value).map_err(|error| error.to_string())),
@@ -3884,7 +3884,7 @@ fn handle_automation_rpc(
                         "internal: canonical application runtime poisoned".to_owned()
                     })?;
                     automation
-                        .validate_command(params, &app)
+                        .validate_command(params, &*app)
                         .map_err(|error| error.to_string())
                 })
                 .and_then(|value| serde_json::to_value(value).map_err(|error| error.to_string()))

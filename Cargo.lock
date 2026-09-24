@@ -1097,12 +1097,19 @@ name = "himmelcad-command"
 version = "0.0.0"
 dependencies = [
  "fs2",
+ "getrandom 0.3.4",
+ "hex",
+ "himmelcad-core",
+ "himmelcad-document",
  "himmelcad-domain-photogrammetry",
  "himmelcad-domain-raster",
  "himmelcad-model",
  "himmelcad-process",
+ "hmac",
  "serde",
  "serde_json",
+ "sha2",
+ "thiserror 1.0.69",
  "tokio",
  "tracing",
 ]
@@ -1140,6 +1147,7 @@ name = "himmelcad-document"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "fs2",
  "glam 0.29.3",
  "hex",
  "himmelcad-model",
@@ -1149,6 +1157,18 @@ dependencies = [
  "sha2",
  "thiserror 1.0.69",
  "zip",
+]
+
+[[package]]
+name = "himmelcad-domain-drafting"
+version = "0.0.0"
+dependencies = [
+ "himmelcad-core",
+ "himmelcad-document",
+ "himmelcad-model",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -1263,6 +1283,7 @@ dependencies = [
  "geotiff-writer",
  "hex",
  "himmelcad-core",
+ "himmelcad-document",
  "himmelcad-model",
  "himmelcad-prepared",
  "himmelcad-spatial",
@@ -1363,6 +1384,7 @@ dependencies = [
  "himmelcad-command",
  "himmelcad-core",
  "himmelcad-document",
+ "himmelcad-domain-drafting",
  "himmelcad-domain-photogrammetry",
  "himmelcad-domain-pointcloud",
  "himmelcad-domain-raster",

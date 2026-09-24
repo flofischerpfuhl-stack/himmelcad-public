@@ -3,7 +3,9 @@
 #![forbid(unsafe_code)]
 
 pub mod canonical_document;
+pub mod canonical_import;
 pub mod canonical_json;
+pub mod canonical_project_store;
 pub mod domain_commands;
 pub mod durable_fs;
 pub mod entity_commands;

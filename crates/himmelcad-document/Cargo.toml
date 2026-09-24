@@ -17,6 +17,7 @@ sha2.workspace = true
 hex.workspace = true
 anyhow.workspace = true
 zip.workspace = true
+fs2 = "0.4.3"
 
 [lints]
 workspace = true
