@@ -187,7 +187,7 @@ describe('verification planner', () => {
     const plan = createVerificationPlan({
       root,
       tier: 'push',
-      paths: ['packages/@himmelcad/viewer/src/index.ts'],
+      paths: ['packages/@himmelcad/viewer/src/kernel/index.ts'],
     });
     assert.equal(plan.risk, 'high');
     assert.ok(ids(plan).includes('viewer.browser-kernel'));

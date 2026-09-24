@@ -101,7 +101,6 @@ vendor/colmap/*/include/
 vendor/colmap/*/lib/
 vendor/colmap/*/share/
 vendor/msvc-runtime/*/*.dll
-vendor/three-loader/node_modules/
 
 # Local PhotoLab reference datasets and user-supplied test archives. Curated
 # manifests, concepts and golden baselines remain committed explicitly.

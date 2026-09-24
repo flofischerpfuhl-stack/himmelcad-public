@@ -553,8 +553,8 @@ void app.whenReady().then(async () => {
   // authority (`hcad-cache:///x` → host="x", path="/", which we cannot
   // recover deterministically).
   //
-  // Range support is mandatory because three-loader fetches sub-ranges of
-  // `octree.bin` per visible node — without it the renderer would have to
+  // Range support is mandatory because the shared kernel fetches sub-ranges
+  // of `octree.bin` per visible node — without it the renderer would have to
   // download hundreds of MB before painting the first frame.
   protocol.handle('hcad-cache', async (request) => {
     let host = '';
@@ -1697,7 +1697,7 @@ async function cancelSidecarJob(job: AppJob): Promise<void> {
 
 /**
  * Parse an HTTP Range header. Only single-byte-range requests are
- * supported (which is all three-loader emits); multi-range requests
+ * supported (the only form the shared kernel emits); multi-range requests
  * return null and are translated to 416 by the caller.
  */
 function parseRange(header: string, total: number): { start: number; end: number } | null {

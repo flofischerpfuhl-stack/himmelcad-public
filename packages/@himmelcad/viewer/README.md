@@ -111,13 +111,12 @@ Entity handles, the scene, session and attached navigation remain stable across
 device recovery. They become invalid after unload or session disposal as
 appropriate.
 
-## React and legacy compatibility
+## React adapter
 
 `KernelViewport` is a thin optional React adapter over `KernelViewerSession`.
 It owns only canvas/RAF/resize and callback wiring. New framework-independent
 hosts should use the session directly.
 
-The previous Three/React package surface is isolated as
-`@himmelcad/viewer/legacy`; the root import remains a deprecated compatibility
-shim until the three product UI lanes finish their adapter migration. It must
-not be used for new viewer work.
+The former Three.js viewer and its compatibility exports have been removed.
+Product hosts use `@himmelcad/viewer/kernel` or
+`@himmelcad/viewer/kernel/react` exclusively.

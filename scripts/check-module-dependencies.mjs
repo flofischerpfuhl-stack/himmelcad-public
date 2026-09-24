@@ -352,8 +352,6 @@ function moduleSubpath(pkg, path) {
     .replaceAll(sep, '/')
     .replace(/\.(?:d\.)?[cm]?[jt]sx?$/u, '');
   if (pkg.name === '@himmelcad/viewer') {
-    if (/^src\/index$/u.test(local)) return '.';
-    if (/^src\/legacy(?:\.js)?$/u.test(local)) return 'legacy';
     if (/^src\/kernel\/KernelViewport$/u.test(local)) return 'kernel/react';
     if (/^src\/kernel(?:\/|$)/u.test(local)) return 'kernel';
   }

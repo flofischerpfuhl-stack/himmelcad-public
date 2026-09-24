@@ -9,7 +9,7 @@ const [main, app, island, islandStyles, viewportStyles, visualAudit] = await Pro
   readSource('apps/photolab/renderer/src/App.tsx'),
   readSource('apps/photolab/renderer/src/FloatingTaskIsland.tsx'),
   readSource('apps/photolab/renderer/src/FloatingTaskIsland.module.css'),
-  readSource('packages/@himmelcad/viewer/src/Viewport.module.css'),
+  readSource('packages/@himmelcad/viewer/src/kernel/KernelViewport.module.css'),
   readSource('scripts/photolab-visual-regression.mjs'),
 ]);
 assert.doesNotMatch(main, /showMessageBox|showErrorBox|new Notification/);

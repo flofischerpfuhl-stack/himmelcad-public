@@ -40,24 +40,13 @@ void test('framework-free kernel entry is an explicit package export', async () 
   assert.equal(new KernelViewerSessionError('disposed', 'disposed').code, 'disposed');
 });
 
-void test('legacy React and Three surface is isolated behind an explicit compatibility entry', async () => {
+void test('only the kernel viewer entries are exported', async () => {
   const manifest = JSON.parse(await readFile(path.join(packageRoot, 'package.json'), 'utf8')) as {
     readonly exports?: Readonly<
       Record<string, { readonly types?: string; readonly default?: string }>
     >;
   };
-  assert.deepEqual(manifest.exports?.['./legacy'], {
-    types: './src/legacy.ts',
-    default: './src/legacy.ts',
-  });
-  assert.equal(
-    (await readFile(path.join(packageRoot, 'src/index.ts'), 'utf8')).trim(),
-    "/** @deprecated Compatibility shim; new hosts import `@himmelcad/viewer/kernel`. */\nexport * from './legacy.js';",
-  );
-  const legacy = await readFile(path.join(packageRoot, 'src/legacy.ts'), 'utf8');
-  assert.match(legacy, /@deprecated Product hosts must migrate/);
-  assert.match(legacy, /\.\/Viewport\.js/);
-  assert.doesNotMatch(legacy, /export \* from ['"]\.\/kernel\/index/);
+  assert.deepEqual(Object.keys(manifest.exports ?? {}).sort(), ['./kernel', './kernel/react']);
 });
 
 void test('browser release runners resolve tools for Linux, Windows and macOS', async () => {

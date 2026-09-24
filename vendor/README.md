@@ -14,11 +14,6 @@ inspiration material that is **not** built into the product.
 ```
 vendor/
 ├── README.md                     ← this file
-├── three-loader/                 ← @pnext/three-loader source snapshot
-│   ├── LICENSE                   ← mirrored upstream license
-│   ├── VENDOR.md                 ← upstream commit, modifications log
-│   ├── package.json
-│   └── src/
 └── potreeconverter/              ← PotreeConverter binaries (gitignored)
     ├── LICENSE
     ├── VENDOR.md
@@ -32,7 +27,7 @@ vendor/
 
 ## How to populate
 
-Source-vendored components (`three-loader/`) are committed to the repo.
+Source-vendored components are committed to the repo.
 
 Binary-vendored components (`potreeconverter/<platform>/`) are
 downloaded by `pnpm install` via `scripts/fetch-vendor.mjs`. SHA-256

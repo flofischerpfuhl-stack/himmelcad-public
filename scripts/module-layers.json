@@ -46,8 +46,7 @@
       "layer": "display",
       "subpaths": {
         "kernel": "display",
-        "kernel/react": "display",
-        "legacy": "display"
+        "kernel/react": "display"
       }
     },
     "@himmelcad/weltview": { "layer": "product" }
@@ -62,11 +61,6 @@
       "ecosystem": "typescript",
       "from": "@himmelcad/automation-host:.",
       "to": "@himmelcad/agent:."
-    },
-    {
-      "ecosystem": "typescript",
-      "from": "@himmelcad/viewer:.",
-      "to": "@himmelcad/viewer:legacy"
     }
   ]
 }

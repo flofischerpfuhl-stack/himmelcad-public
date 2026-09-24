@@ -17,8 +17,7 @@
     "@himmelcad/ui": "workspace:*",
     "@himmelcad/viewer": "workspace:*",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0",
-    "three": "^0.169.0"
+    "react-dom": "^19.0.0"
   },
   "devDependencies": {
     "@types/react": "^19.0.0",

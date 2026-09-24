@@ -29,13 +29,6 @@
       "to": "@himmelcad/agent:.",
       "reason": "The scripting host still imports agent transport declarations instead of a lower protocol contract.",
       "removeInStep": 4
-    },
-    {
-      "ecosystem": "typescript",
-      "from": "@himmelcad/viewer:.",
-      "to": "@himmelcad/viewer:legacy",
-      "reason": "The viewer root is a compatibility export of the legacy Three.js barrel.",
-      "removeInStep": 8
     }
   ]
 }

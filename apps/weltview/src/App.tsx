@@ -1,8 +1,13 @@
 import { useState } from 'react';
 
-import type { SnapResult } from '@himmelcad/data';
 import { AppShell, EntityTree, FunctionPanel, Ribbon, StatusBar, TitleBar } from '@himmelcad/ui';
-import { Viewport } from '@himmelcad/viewer';
+import type { HimmelcadViewerWasmLoader } from '@himmelcad/viewer/kernel';
+import { KernelViewport } from '@himmelcad/viewer/kernel/react';
+
+const viewerWasmUrl = new URL('viewer-wasm/himmelcad_wasm.js', window.location.href).href;
+const decodeWasmUrl = new URL('viewer-decode-wasm/himmelcad_decode_wasm.js', window.location.href)
+  .href;
+const wasmLoader: HimmelcadViewerWasmLoader = async () => import(/* @vite-ignore */ viewerWasmUrl);
 
 const VIEWER_TABS = [
   {
@@ -27,7 +32,7 @@ const VIEWER_TABS = [
 ];
 
 export function App(): JSX.Element {
-  const [snap, setSnap] = useState<SnapResult | null>(null);
+  const [snapKind, setSnapKind] = useState<string | null>(null);
 
   return (
     <AppShell
@@ -36,12 +41,20 @@ export function App(): JSX.Element {
       leftPanel={<EntityTree project={null} selectedIds={new Set()} onSelect={() => undefined} />}
       rightPanel={<FunctionPanel activeFunctionId={null} />}
       bottomPanel={<div style={{ padding: 12, color: 'var(--hc-fg-muted)' }}>Read-only viewer</div>}
-      viewport={<Viewport onCursorSnap={setSnap} />}
+      viewport={
+        <KernelViewport
+          wasmLoader={wasmLoader}
+          decodeWasmModuleUrl={decodeWasmUrl}
+          authoritativeSectionTolerance={0.001}
+          presentationMode="windowMask"
+          onActivePick={(candidate) => setSnapKind(candidate?.snapKind ?? null)}
+        />
+      }
       statusBar={
         <StatusBar
           items={[
             { id: 'mode', content: 'Read-only', align: 'left' },
-            { id: 'snap', content: snap ? `Snap: ${snap.kind}` : 'Snap: —', align: 'right' },
+            { id: 'snap', content: snapKind ? `Snap: ${snapKind}` : 'Snap: —', align: 'right' },
           ]}
         />
       }

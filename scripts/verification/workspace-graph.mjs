@@ -10,8 +10,6 @@ function packageDirectories(root) {
       if (entry.isDirectory()) directories.push(join(parent, entry.name));
     }
   }
-  if (existsSync(join(root, 'vendor/three-loader/package.json')))
-    directories.push('vendor/three-loader');
   return directories;
 }
 

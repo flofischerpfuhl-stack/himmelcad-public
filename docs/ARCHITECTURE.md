@@ -133,10 +133,9 @@ ADR 0017 defines one platform-neutral Rust render core built on `wgpu`.
 - One render world owns camera, depth, picking, clipping, selection, streaming,
   residency, and resource budgets.
 
-New integrations use `@himmelcad/viewer/kernel`. The historical React/Three.js
-surface and `@himmelcad/three-loader` are isolated compatibility paths during
-app migration. They are not the target architecture and must not gain new
-product behavior.
+Integrations use `@himmelcad/viewer/kernel` or its thin React adapter at
+`@himmelcad/viewer/kernel/react`. The historical Three.js viewer and vendored
+loader have been removed.
 
 Formats are providers, not render engines. Potree, 3D Tiles/glTF, prepared
 meshes, rasters, splats, and authored CAD all map into shared capabilities and

@@ -2,10 +2,9 @@
 //!
 //! Strategy: shell out to vendored **`PotreeConverter`** to produce a
 //! Potree 2.0 octree (`metadata.json` + `hierarchy.bin` + `octree.bin`)
-//! inside the project cache directory. The renderer then streams the
-//! octree via the vendored `@himmelcad/three-loader`; no raw point data
-//! ever lives in our process memory and the runtime cost is independent
-//! of total cloud size.
+//! inside the project cache directory. The shared render kernel then streams
+//! the octree; no raw point data ever lives in our process memory and the
+//! runtime cost is independent of total cloud size.
 //!
 //! Per `AGENTS.md` §1.6, `vendor/potreeconverter/<platform>/PotreeConverter`
 //! is **part of `HimmelCAD`**: the binary is fetched on `pnpm install` (see
@@ -73,8 +72,9 @@ use crate::canonical_provider::{
 use crate::ImportError;
 
 /// `PotreeConverter` output encoding. We pin **DEFAULT** (uncompressed
-/// `octree.bin`) because three-loader 1.0.x doesn't ship BROTLI support
-/// yet — see ADR 0003. Switch to `"BROTLI"` once vendor patch lands.
+/// `octree.bin`) for compatibility with the prepared-data contract. BROTLI
+/// support is available in the shared decode worker but is not yet the import
+/// default.
 const ENCODING: &str = "DEFAULT";
 
 /// Sampling method. `"poisson"` produces well-distributed coarse-LOD
