@@ -40,7 +40,7 @@ const electronMain = read('apps/photolab/electron/main.ts');
 const preload = read('apps/photolab/electron/preload.ts');
 const renderer = read('apps/photolab/renderer/src/App.tsx');
 const sidecar = read('crates/himmelcad-sidecar/src/main.rs');
-const importer = read('crates/himmelcad-io/src/hcap_import.rs');
+const importer = read('crates/himmelcad-domain-photogrammetry/src/hcap_import.rs');
 
 for (const method of [
   'photolab.himmelcap.inspect',

@@ -39,7 +39,7 @@ Or enter credentials in **Settings → RTK** (stored in secure storage).
 
 ## PhotoLab
 
-Importer prep: `crates/himmelcad-io/src/hcap_import.rs` (`preview_hcap_path`).
+Importer prep: `crates/himmelcad-domain-photogrammetry/src/hcap_import.rs` (`preview_hcap_path`).
 
 ## Docs
 
