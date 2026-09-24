@@ -1640,7 +1640,12 @@ export class WgpuKernelViewer {
       const parsedCapabilities = parseCapabilities(binding.capabilities_json());
       const capabilities: KernelDeviceCapabilities = {
         ...parsedCapabilities,
-        isFallbackAdapter: browserFallbackAdapter ?? parsedCapabilities.deviceKind === 'cpu',
+        // The WebGPU adapter probe only describes the WebGPU path; a WebGL2
+        // context is judged by its own adapter (SwiftShader reports a CPU device).
+        isFallbackAdapter:
+          parsedCapabilities.backend === 'webGpu'
+            ? (browserFallbackAdapter ?? parsedCapabilities.deviceKind === 'cpu')
+            : parsedCapabilities.deviceKind === 'cpu',
       };
       return new WgpuKernelViewer(canvas, binding, capabilities);
     });
