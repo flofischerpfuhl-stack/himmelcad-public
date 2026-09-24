@@ -54,6 +54,15 @@ function validateConfiguration(layerMap, allowlist) {
     if (keys.has(key)) throw new Error(`duplicate module allowlist entry: ${key}`);
     keys.add(key);
   }
+  const includeKeys = new Set();
+  for (const entry of allowlist.sourceIncludes ?? []) {
+    if (!entry.crate || !entry.file || !entry.target || !entry.reason) {
+      throw new Error(`source include allowlist entries need crate, file, target, and reason: ${JSON.stringify(entry)}`);
+    }
+    const key = `${entry.crate}:${entry.file}->${entry.target}`;
+    if (includeKeys.has(key)) throw new Error(`duplicate source include allowlist entry: ${key}`);
+    includeKeys.add(key);
+  }
 }
 
 function isDisallowedLayerEdge(fromLayer, toLayer) {
@@ -141,6 +150,98 @@ function cargoGraph(layerMap) {
     }
   }
   return { packages, unknown, edges: uniqueEdges(edges) };
+}
+
+function rustSourceFiles(directory) {
+  const result = [];
+  const visit = (current) => {
+    for (const entry of readdirSync(current, { withFileTypes: true })) {
+      if (entry.isDirectory()) {
+        if (!SKIPPED_DIRECTORIES.has(entry.name)) visit(join(current, entry.name));
+      } else if (entry.isFile() && entry.name.endsWith('.rs')) {
+        result.push(join(current, entry.name));
+      }
+    }
+  };
+  visit(directory);
+  return result;
+}
+
+function includeKey(entry) {
+  return `${entry.crate}:${entry.file}->${entry.target}`;
+}
+
+export function evaluateRustSourceRules({ includes = [], macroExports = [], allowlist = [] }) {
+  const allowed = new Set(allowlist.map(includeKey));
+  const seen = new Set();
+  const errors = [];
+  for (const entry of includes) {
+    if (!entry.leavesCrate) continue;
+    const key = includeKey(entry);
+    if (allowed.has(key)) seen.add(key);
+    else errors.push({ kind: 'cross-crate-source-include', message: key });
+  }
+  for (const entry of macroExports) {
+    errors.push({
+      kind: 'domain-macro-export',
+      message: `${entry.crate}:${entry.file}`,
+    });
+  }
+  for (const entry of allowlist) {
+    const key = includeKey(entry);
+    if (!seen.has(key)) errors.push({ kind: 'stale-source-include-allowlist', message: key });
+  }
+  return errors;
+}
+
+function rustSourceRules(packages, layerMap) {
+  const includes = [];
+  const macroExports = [];
+  const directInclude = /\binclude(?:_str|_bytes)?!\s*\(\s*"([^"]+)"\s*\)/gu;
+  const manifestInclude = /\binclude(?:_str|_bytes)?!\s*\(\s*concat!\(\s*env!\(\s*"CARGO_MANIFEST_DIR"\s*\)\s*,\s*"([^"]+)"\s*\)\s*\)/gu;
+  const anyInclude = /\binclude(?:_str|_bytes)?!\s*\(/gu;
+  const macroExport = /#\s*\[\s*macro_export\s*\]/gu;
+  for (const pkg of packages) {
+    const crateDirectory = realpathSync(dirname(pkg.manifest_path));
+    for (const filePath of rustSourceFiles(crateDirectory)) {
+      const source = readFileSync(filePath, 'utf8');
+      const file = relative(crateDirectory, filePath).replaceAll(sep, '/');
+      const matches = [];
+      for (const match of source.matchAll(directInclude)) {
+        matches.push({ index: match.index, target: match[1], base: dirname(filePath) });
+      }
+      for (const match of source.matchAll(manifestInclude)) {
+        matches.push({ index: match.index, target: match[1], base: crateDirectory });
+      }
+      const parsed = new Set(matches.map(({ index }) => index));
+      for (const match of source.matchAll(anyInclude)) {
+        if (!parsed.has(match.index)) {
+          includes.push({
+            crate: pkg.name,
+            file,
+            target: '<non-literal>',
+            leavesCrate: true,
+          });
+        }
+      }
+      for (const match of matches) {
+        const lexicalTarget = resolve(match.base, `.${sep}${match.target}`);
+        const resolvedTarget = existsSync(lexicalTarget) ? realpathSync(lexicalTarget) : lexicalTarget;
+        includes.push({
+          crate: pkg.name,
+          file,
+          target: match.target,
+          leavesCrate:
+            resolvedTarget !== crateDirectory && !resolvedTarget.startsWith(`${crateDirectory}${sep}`),
+        });
+      }
+      if (layerMap.rust[pkg.name] === 'domain' && macroExport.test(source)) {
+        macroExports.push({ crate: pkg.name, file });
+      }
+      macroExport.lastIndex = 0;
+    }
+  }
+  return { includes, macroExports };
 }
 
 function packageDirectories() {
@@ -365,6 +466,7 @@ export function evaluateFixture(fixture) {
       forced: new Set(fixture.forced ?? []),
     }),
     ...evaluateUndeclaredImports(fixture.undeclared ?? []),
+    ...evaluateRustSourceRules(fixture.rustSourceRules ?? {}),
   ];
 }
 
@@ -375,11 +477,16 @@ function main() {
   validateConfiguration(layerMap, allowlist);
 
   const rust = cargoGraph(layerMap);
+  const sourceRules = rustSourceRules(rust.packages, layerMap);
   const typescript = typeScriptGraph(layerMap);
   const errors = [
     ...rust.unknown.map((name) => ({ kind: 'unknown-rust-crate', message: name })),
     ...typescript.unknown.map((name) => ({ kind: 'unknown-typescript-package', message: name })),
     ...evaluateUndeclaredImports(typescript.undeclared),
+    ...evaluateRustSourceRules({
+      ...sourceRules,
+      allowlist: allowlist.sourceIncludes ?? [],
+    }),
   ];
   const rustLayers = new Map(Object.entries(layerMap.rust));
   const forced = new Set((layerMap.exactForbiddenEdges ?? []).map(edgeKey));
@@ -408,7 +515,7 @@ function main() {
   }
   const elapsed = ((performance.now() - started) / 1000).toFixed(2);
   process.stdout.write(
-    `module dependencies: ok (${rust.packages.length} Rust crates, ${rust.edges.length} Rust edges, ${typescript.packages.size} TypeScript packages, ${typescript.edges.length} TypeScript edges, ${allowlist.edges.length} allowlisted exceptions, ${elapsed}s)\n`,
+    `module dependencies: ok (${rust.packages.length} Rust crates, ${rust.edges.length} Rust edges, ${typescript.packages.size} TypeScript packages, ${typescript.edges.length} TypeScript edges, ${allowlist.edges.length} edge exceptions, ${(allowlist.sourceIncludes ?? []).length} source-include exceptions, ${elapsed}s)\n`,
   );
 }
 

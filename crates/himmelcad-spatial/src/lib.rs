@@ -11,6 +11,7 @@
 #![forbid(unsafe_code)]
 
 pub mod aabb;
+pub mod ground_classification;
 pub mod octree_points;
 pub mod query;
 pub mod serialize;

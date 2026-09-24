@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 use std::time::Instant;
 
-use himmelcad_core::mesh_surface::{
+use himmelcad_domain_surface::mesh_surface::{
     check_surface_draft, triangulate_surface, triangulate_surface_with_cancel, SurfaceDraft,
     SurfaceLine, SurfacePoint, SurfaceRules, SurfaceSourceRole,
 };
@@ -37,7 +37,7 @@ fn main() {
     let total_seconds = started.elapsed().as_secs_f64();
     let cancel_ok = matches!(
         cancelled,
-        Err(himmelcad_core::mesh_surface::SurfaceBuildError::Cancelled)
+        Err(himmelcad_domain_surface::mesh_surface::SurfaceBuildError::Cancelled)
     );
     let pass = total_seconds <= 60.0 && cancel_ok && cancel_ms <= 250.0;
 

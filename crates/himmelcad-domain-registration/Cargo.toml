@@ -1,0 +1,24 @@
+[package]
+name = "himmelcad-domain-registration"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Import registration contracts, solvers, and session runtime for HimmelCAD."
+
+[dependencies]
+himmelcad-document = { path = "../himmelcad-document" }
+himmelcad-process = { path = "../himmelcad-process" }
+himmelcad-io = { path = "../himmelcad-io" }
+himmelcad-model = { path = "../himmelcad-model" }
+himmelcad-prepared = { path = "../himmelcad-prepared" }
+himmelcad-transform = { path = "../himmelcad-transform" }
+hex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true

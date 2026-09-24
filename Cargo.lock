@@ -1142,6 +1142,26 @@ dependencies = [
  "glam 0.29.3",
  "hex",
  "himmelcad-model",
+ "himmelcad-process",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "himmelcad-domain-pointcloud"
+version = "0.0.0"
+dependencies = [
+ "hex",
+ "himmelcad-core",
+ "himmelcad-document",
+ "himmelcad-io",
+ "himmelcad-model",
+ "himmelcad-prepared",
+ "himmelcad-process",
+ "himmelcad-spatial",
+ "las",
  "serde",
  "serde_json",
  "sha2",
@@ -1158,12 +1178,48 @@ dependencies = [
  "himmelcad-model",
  "himmelcad-prepared",
  "himmelcad-process",
+ "himmelcad-spatial",
  "image",
  "serde",
  "serde_json",
  "sha2",
  "thiserror 1.0.69",
  "tokio",
+]
+
+[[package]]
+name = "himmelcad-domain-registration"
+version = "0.0.0"
+dependencies = [
+ "hex",
+ "himmelcad-document",
+ "himmelcad-io",
+ "himmelcad-model",
+ "himmelcad-prepared",
+ "himmelcad-process",
+ "himmelcad-transform",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 1.0.69",
+ "tracing",
+]
+
+[[package]]
+name = "himmelcad-domain-surface"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "himmelcad-core",
+ "himmelcad-document",
+ "himmelcad-io",
+ "himmelcad-model",
+ "himmelcad-prepared",
+ "himmelcad-process",
+ "serde",
+ "serde_json",
+ "spade",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -1277,7 +1333,10 @@ dependencies = [
  "himmelcad-command",
  "himmelcad-core",
  "himmelcad-document",
+ "himmelcad-domain-pointcloud",
  "himmelcad-domain-raster",
+ "himmelcad-domain-registration",
+ "himmelcad-domain-surface",
  "himmelcad-io",
  "himmelcad-prepared",
  "himmelcad-process",
@@ -1303,7 +1362,9 @@ name = "himmelcad-spatial"
 version = "0.0.0"
 dependencies = [
  "glam 0.29.3",
+ "himmelcad-process",
  "serde",
+ "sha2",
  "thiserror 1.0.69",
 ]
 

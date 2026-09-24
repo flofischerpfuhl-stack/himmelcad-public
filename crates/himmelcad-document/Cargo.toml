@@ -8,6 +8,7 @@ description = "HimmelCAD canonical document, project, and durable publication fo
 
 [dependencies]
 himmelcad-model = { path = "../himmelcad-model" }
+himmelcad-process = { path = "../himmelcad-process" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

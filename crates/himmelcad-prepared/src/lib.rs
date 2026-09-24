@@ -13,6 +13,8 @@ mod hierarchy;
 pub mod mesh_tiler;
 #[allow(missing_docs)]
 pub mod mvs_scene;
+#[allow(missing_docs)]
+pub mod pointcloud;
 mod potree;
 #[allow(missing_docs)]
 pub mod prepared_triangle_mesh;

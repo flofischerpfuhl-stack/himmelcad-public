@@ -17,11 +17,12 @@ use himmelcad_core::entity_validation::{
 };
 use himmelcad_core::geometry_representation_registry::CanonicalRepresentationAdmission;
 use himmelcad_core::hash::ObjectHash;
-use himmelcad_core::registration::{
-    compose_placement, similarity_transform3d, RegistrationPreview,
-};
+use himmelcad_core::transform::{ResidualReport, Similarity3D};
 use himmelcad_core::typed_artifact::{
     TypedArtifactManifest, TYPED_ARTIFACT_MANIFEST_MEDIA_TYPE, TYPED_ARTIFACT_MANIFEST_NAME,
+};
+use himmelcad_model::registration::{
+    compose_placement, similarity_transform3d, RegistrationPreview,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -619,28 +620,29 @@ pub fn apply_registration_preview(
     package: &mut CanonicalImportPackage,
     recipe_id: &str,
     method_kind: &str,
-    preview: &RegistrationPreview,
+    preview: &impl RegistrationPreviewContract,
 ) -> Result<(), ProviderContractError> {
-    if recipe_id.trim().is_empty() || method_kind.trim().is_empty() || !preview.accepted {
+    if recipe_id.trim().is_empty() || method_kind.trim().is_empty() || !preview.accepted() {
         return Err(ProviderContractError::InvalidPackage);
     }
     package.validate()?;
-    let registration = similarity_transform3d(preview.transform);
+    let registration = similarity_transform3d(preview.transform());
+    let residuals = preview.residuals();
     let audit = serde_json::json!({
         "schemaId": "hcad.import-registration-audit@1",
         "recipeId": recipe_id,
         "method": method_kind,
         "transform": registration,
         "diagnostics": {
-            "iterations": preview.iterations,
-            "matchedSamples": preview.matched_samples,
-            "overlapRatio": preview.overlap_ratio,
-            "converged": preview.converged,
-            "rmsHorizontalMeters": preview.residuals.rms_horizontal_meters,
-            "rmsVerticalMeters": preview.residuals.rms_vertical_meters,
-            "rmsSpatialMeters": preview.residuals.rms_spatial_meters,
-            "maxSpatialMeters": preview.residuals.max_spatial_meters,
-            "warnings": preview.warnings,
+            "iterations": preview.iterations(),
+            "matchedSamples": preview.matched_samples(),
+            "overlapRatio": preview.overlap_ratio(),
+            "converged": preview.converged(),
+            "rmsHorizontalMeters": residuals.rms_horizontal_meters,
+            "rmsVerticalMeters": residuals.rms_vertical_meters,
+            "rmsSpatialMeters": residuals.rms_spatial_meters,
+            "maxSpatialMeters": residuals.max_spatial_meters,
+            "warnings": preview.warnings(),
         }
     });
 
@@ -675,6 +677,45 @@ pub fn apply_registration_preview(
             .map_err(|error| ProviderContractError::Canonical(error.to_string()))?;
     }
     package.validate()
+}
+
+/// Neutral view of a reviewed registration result accepted by canonical IO.
+pub trait RegistrationPreviewContract {
+    fn accepted(&self) -> bool;
+    fn transform(&self) -> Similarity3D;
+    fn residuals(&self) -> &ResidualReport;
+    fn iterations(&self) -> u32;
+    fn matched_samples(&self) -> u32;
+    fn overlap_ratio(&self) -> f64;
+    fn converged(&self) -> bool;
+    fn warnings(&self) -> &[String];
+}
+
+impl RegistrationPreviewContract for RegistrationPreview {
+    fn accepted(&self) -> bool {
+        self.accepted
+    }
+    fn transform(&self) -> Similarity3D {
+        self.transform
+    }
+    fn residuals(&self) -> &ResidualReport {
+        &self.residuals
+    }
+    fn iterations(&self) -> u32 {
+        self.iterations
+    }
+    fn matched_samples(&self) -> u32 {
+        self.matched_samples
+    }
+    fn overlap_ratio(&self) -> f64 {
+        self.overlap_ratio
+    }
+    fn converged(&self) -> bool {
+        self.converged
+    }
+    fn warnings(&self) -> &[String] {
+        &self.warnings
+    }
 }
 
 fn presentation_resources_are_empty(resources: &CanonicalPresentationResourceSet) -> bool {

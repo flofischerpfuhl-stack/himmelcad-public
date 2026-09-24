@@ -11,5 +11,8 @@ pub mod entity_validation;
 pub mod geometry_representation_registry;
 pub mod hash;
 pub mod property_schema;
+pub mod registration;
 pub mod release_05_admissions;
+pub mod surface;
+pub mod transform;
 pub mod typed_artifact;

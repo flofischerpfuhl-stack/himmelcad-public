@@ -1,5 +1,13 @@
 {
   "version": 1,
+  "sourceIncludes": [
+    {
+      "crate": "himmelcad-core",
+      "file": "tests/automation_schema_golden.rs",
+      "target": "/../../schemas/automation/fixtures/automation-wire-v1.json",
+      "reason": "The golden protocol test intentionally binds the workspace-level canonical automation schema fixture."
+    }
+  ],
   "edges": [
     {
       "ecosystem": "rust",

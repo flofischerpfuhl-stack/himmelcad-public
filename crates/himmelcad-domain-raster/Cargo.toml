@@ -12,6 +12,7 @@ himmelcad-document = { path = "../himmelcad-document" }
 himmelcad-model = { path = "../himmelcad-model" }
 himmelcad-prepared = { path = "../himmelcad-prepared" }
 himmelcad-process = { path = "../himmelcad-process" }
+himmelcad-spatial = { path = "../himmelcad-spatial" }
 hex.workspace = true
 image = { version = "0.25.8", default-features = false, features = ["jpeg", "png", "tiff"] }
 serde.workspace = true

@@ -30,9 +30,6 @@ use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 
 use himmelcad_core::hash::ObjectHash;
-use himmelcad_core::mesh_surface::{
-    SurfaceDownsampleParameters, SurfaceFixKind, SurfaceFixRequest, SurfaceSmoothParameters,
-};
 use himmelcad_core::photolab::{
     resolve_alignment_profile, AlignmentQualityProfile, ResolveAlignmentProfileRequest,
     ResolvedAlignmentConfig,
@@ -57,11 +54,14 @@ use himmelcad_core::photolab_jobs::{
     PhotolabJobState, PhotolabStage, PhotolabStageKind, ProgressMetrics,
 };
 use himmelcad_core::photolab_matching::ImageId;
-use himmelcad_core::registration::{
-    IcpMode, IcpOptions, RegistrationPointPair, RegistrationRecipe, RegistrationTargetSample,
-};
 use himmelcad_core::release_05_admissions::SnapshotOriginV1;
 use himmelcad_core::transform::{Similarity3D, WorldPoint};
+use himmelcad_domain_registration::registration::{
+    IcpMode, IcpOptions, RegistrationPointPair, RegistrationRecipe, RegistrationTargetSample,
+};
+use himmelcad_domain_surface::mesh_surface::{
+    SurfaceDownsampleParameters, SurfaceFixKind, SurfaceFixRequest, SurfaceSmoothParameters,
+};
 use himmelcad_io::{
     canonical_builtin_import_registry, hcap_import::import_hcap_path_with_progress,
     import_gcp_csv_file, import_las_file_with_progress_and_cancel,
@@ -2323,7 +2323,7 @@ async fn handle_mesh_surface_rpc(
             };
             let result = tokio::task::spawn_blocking(move || {
                 create_surface_draft(
-                    &runtime
+                    &*runtime
                         .lock()
                         .expect("canonical app runtime mutex poisoned"),
                     params.request,
@@ -2342,7 +2342,7 @@ async fn handle_mesh_surface_rpc(
             let id = req.id;
             rpc_blocking_with_params::<SurfaceDraftParams, _, _>(id, req.params, move |params| {
                 check_persisted_surface(
-                    &runtime
+                    &*runtime
                         .lock()
                         .expect("canonical app runtime mutex poisoned"),
                     &params.draft_id,
@@ -2354,7 +2354,7 @@ async fn handle_mesh_surface_rpc(
             let id = req.id;
             rpc_blocking_with_params::<SurfaceFixParams, _, _>(id, req.params, move |params| {
                 fix_persisted_surface(
-                    &runtime
+                    &*runtime
                         .lock()
                         .expect("canonical app runtime mutex poisoned"),
                     &params.draft_id,
@@ -2379,7 +2379,7 @@ async fn handle_mesh_surface_rpc(
             };
             let result = tokio::task::spawn_blocking(move || {
                 publish_persisted_surface(
-                    &mut runtime
+                    &mut *runtime
                         .lock()
                         .expect("canonical app runtime mutex poisoned"),
                     &params.draft_id,
@@ -2402,7 +2402,7 @@ async fn handle_mesh_surface_rpc(
                 req.params,
                 move |params| {
                     select_surface_edit_region(
-                        &runtime
+                        &*runtime
                             .lock()
                             .expect("canonical app runtime mutex poisoned"),
                         params.request,
@@ -2423,7 +2423,7 @@ async fn handle_mesh_surface_rpc(
             };
             let result = tokio::task::spawn_blocking(move || {
                 preview_surface_smoothing(
-                    &runtime
+                    &*runtime
                         .lock()
                         .expect("canonical app runtime mutex poisoned"),
                     &params.edit_id,
@@ -2450,7 +2450,7 @@ async fn handle_mesh_surface_rpc(
             };
             let result = tokio::task::spawn_blocking(move || {
                 preview_surface_downsample(
-                    &runtime
+                    &*runtime
                         .lock()
                         .expect("canonical app runtime mutex poisoned"),
                     &params.edit_id,
@@ -2476,7 +2476,7 @@ async fn handle_mesh_surface_rpc(
             };
             let result = tokio::task::spawn_blocking(move || {
                 bake_surface_edit(
-                    &mut runtime
+                    &mut *runtime
                         .lock()
                         .expect("canonical app runtime mutex poisoned"),
                     &params,

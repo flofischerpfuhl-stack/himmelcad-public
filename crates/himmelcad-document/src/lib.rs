@@ -4,6 +4,7 @@
 
 pub mod canonical_document;
 pub mod canonical_json;
+pub mod domain_commands;
 pub mod durable_fs;
 pub mod entity_commands;
 pub mod project;

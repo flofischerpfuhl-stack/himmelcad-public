@@ -1,0 +1,14 @@
+{
+  "layers": {},
+  "edges": [],
+  "rustSourceRules": {
+    "includes": [
+      {
+        "crate": "foundation",
+        "file": "src/lib.rs",
+        "target": "../../domain/src/implementation.rs",
+        "leavesCrate": true
+      }
+    ]
+  }
+}

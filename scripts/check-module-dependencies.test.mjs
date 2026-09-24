@@ -13,6 +13,8 @@ for (const [name, expectedKind] of [
   ['domain-to-domain.json', 'domain-to-domain'],
   ['undeclared-import.json', 'undeclared-workspace-import'],
   ['stale-allowlist.json', 'stale-allowlist'],
+  ['cross-crate-include.json', 'cross-crate-source-include'],
+  ['domain-macro-export.json', 'domain-macro-export'],
 ]) {
   test(`${name} fails with ${expectedKind}`, () => {
     const fixture = JSON.parse(readFileSync(join(fixtureRoot, name), 'utf8'));

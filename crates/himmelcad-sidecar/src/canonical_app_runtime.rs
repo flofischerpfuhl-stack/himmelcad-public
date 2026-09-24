@@ -22,10 +22,8 @@ use himmelcad_core::canonical_resource_catalog::CanonicalPresentationResourceSet
 use himmelcad_core::canonical_resources::PointCloudDisplayStyle;
 use himmelcad_core::entity::EntityId;
 use himmelcad_core::entity_model::{
-    built_in_type, CanonicalEntity, CurveGeometry, DepthSampling, DepthSemantics,
-    ElevationSurfaceGeometry, EntityTypeId, GeometryObject, GeometryResource, OrthoGridMapping,
-    Position, RasterConnectivity, RasterImageGeometry, RasterInterpolation, RasterMapping,
-    Representation, RepresentationAuthority, RepresentationRole, StreamedGeometry,
+    built_in_type, CanonicalEntity, CurveGeometry, ElevationSurfaceGeometry, EntityTypeId,
+    GeometryObject, Position, Representation, RepresentationAuthority, RepresentationRole,
     TriangleMeshStorage, Vector3,
 };
 use himmelcad_core::entity_validation::{
@@ -42,26 +40,33 @@ use himmelcad_core::property_schema::{
 };
 use himmelcad_core::release_05_admissions::{
     validate_measurement, validate_point_acquisition, validate_snapshot_marker,
-    validate_support_role, DerivedSourceV1, MeasurementAnchorV1, MeasurementV1,
-    MeshSourceRoleKindV1, MeshSourceRoleV1, MeshSourceRolesV1, PointAcquisitionV1,
+    validate_support_role, MeasurementAnchorV1, MeasurementV1, PointAcquisitionV1,
     SnapshotMarkerKindV1, SnapshotMarkerV1, SnapshotOriginV1, SnapshotRetentionV1,
-    SupportRoleKindV1, SupportRoleV1, MEASUREMENT_SCHEMA_ID, MESH_SOURCE_ROLES_SCHEMA_ID,
-    RELEASE_05_SCHEMA_VERSION, SNAPSHOT_MARKER_SCHEMA_ID, SUPPORT_ROLE_SCHEMA_ID,
+    SupportRoleKindV1, SupportRoleV1, MEASUREMENT_SCHEMA_ID, RELEASE_05_SCHEMA_VERSION,
+    SNAPSHOT_MARKER_SCHEMA_ID, SUPPORT_ROLE_SCHEMA_ID,
 };
 use himmelcad_core::typed_artifact::{TypedArtifactDescriptor, TypedArtifactManifest};
 use himmelcad_io::{
     CanonicalImportPackage, CanonicalJsonObject, CanonicalPreparedDataset, CanonicalStagedImport,
-    PreparedDatasetArtifact, CANONICAL_IO_SCHEMA_VERSION,
+    CANONICAL_IO_SCHEMA_VERSION,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::pointcloud_ground::{PreparedGroundDataset, PreparedGroundResult};
-use crate::pointcloud_sampling::{
-    PreparedHeightGrid, PreparedSampleResult, RasterAggregation, HEIGHT_GRID_FORMAT_ID,
-    RASTERIZE_ALGORITHM_ID, SAMPLE_ALGORITHM_ID,
+use crate::pointcloud_ground::PreparedGroundResult;
+#[cfg(test)]
+use crate::pointcloud_sampling::SAMPLE_ALGORITHM_ID;
+use crate::pointcloud_sampling::{PreparedHeightGrid, PreparedSampleResult, HEIGHT_GRID_FORMAT_ID};
+use crate::pointcloud_segment::PreparedSegmentResult;
+use himmelcad_domain_pointcloud::canonical_command_service::{
+    PointCloudCommandError, PointCloudCommandService, PointCloudQueryService,
 };
-use crate::pointcloud_segment::{PreparedSegmentResult, SEGMENT_ALGORITHM_ID};
+pub use himmelcad_domain_pointcloud::commands::{
+    CanonicalGroundCommit, CanonicalGroundSource, CanonicalGroundSourceCapture,
+    CanonicalPointCloudMetadata, CanonicalRasterizeCommit, CanonicalSampleCommit,
+    CanonicalSegmentCommit, CanonicalSegmentRevision, CanonicalSourceCaptureArtifact,
+    CanonicalSourceCaptureProgress,
+};
 
 use crate::canonical_project_store::{
     CanonicalDurabilityStatus, CanonicalImportCommit, CanonicalImportInventory,
@@ -69,8 +74,11 @@ use crate::canonical_project_store::{
     CanonicalProjectStoreError, CanonicalStoredObject,
 };
 use crate::import_registration_runtime::{
-    sample_potree_open_files, ImportRegistrationRuntimeError, PotreeOpenFiles,
-    RegistrationSourceSamples,
+    ImportRegistrationRuntimeError, RegistrationSourceSamples,
+};
+use himmelcad_document::domain_commands::{
+    DomainPreparedArtifact, DomainPreparedDataset, DomainResidencyEntry,
+    PointCloudDocumentCommands, RegistrationDocumentCommands,
 };
 
 /// Process-internal verified CAS source used by the bounded automation lease
@@ -264,108 +272,6 @@ pub struct CanonicalResidencyEntry {
     pub dataset: Option<CanonicalPreparedDataset>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub point_cloud: Option<CanonicalPointCloudMetadata>,
-}
-
-/// Canonical point-cloud metadata needed by the tree, Properties and renderer.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct CanonicalPointCloudMetadata {
-    pub point_count: u64,
-    pub source_crs: Option<String>,
-    pub source_units: Option<String>,
-    pub placement_offset: [f64; 3],
-    pub display: PointCloudDisplayStyle,
-}
-
-/// Exact source capture prepared before a long-running ground job releases the project lock.
-#[derive(Debug, Clone)]
-pub struct CanonicalGroundSource {
-    pub expected: EntityVersionRef,
-    pub entity: CanonicalEntity,
-    pub representation_slot: String,
-    pub input_root: PathBuf,
-    pub source_components: serde_json::Value,
-    pub source_attributes: serde_json::Value,
-    pub source_relations: serde_json::Value,
-    pub source_style: Option<serde_json::Value>,
-}
-
-/// Truthful byte progress while a prepared point cloud is captured for
-/// bounded sidecar work.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CanonicalSourceCaptureProgress {
-    pub artifact: String,
-    pub completed_bytes: u64,
-    pub total_bytes: u64,
-}
-
-#[derive(Debug, Clone)]
-pub struct CanonicalSourceCaptureArtifact {
-    pub artifact: String,
-    pub source_path: PathBuf,
-    pub destination_path: PathBuf,
-    pub object_hash: ObjectHash,
-    pub byte_length: u64,
-}
-
-#[derive(Debug, Clone)]
-pub struct CanonicalGroundSourceCapture {
-    pub source: CanonicalGroundSource,
-    pub artifacts: Vec<CanonicalSourceCaptureArtifact>,
-    pub total_bytes: u64,
-}
-
-/// One atomic PC-D19 source-edit plus derived-cloud publication.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct CanonicalGroundCommit {
-    pub journal_entry: CanonicalJournalEntry,
-    pub source_entity_id: String,
-    pub source_revision: u64,
-    pub ground_entity_id: String,
-    pub ground_revision: u64,
-    pub source_dataset_id: String,
-    pub ground_dataset_id: String,
-}
-
-/// One atomic PC-D1 edited-revision publication over one or more selected clouds.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct CanonicalSegmentCommit {
-    pub journal_entry: CanonicalJournalEntry,
-    pub revisions: Vec<CanonicalSegmentRevision>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct CanonicalSegmentRevision {
-    pub entity_id: String,
-    pub revision: u64,
-    pub dataset_id: String,
-    pub retained_points: u64,
-    pub removed_points: u64,
-}
-
-/// One immutable PC-D8 sampled-cloud publication.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct CanonicalSampleCommit {
-    pub journal_entry: CanonicalJournalEntry,
-    pub entity_id: String,
-    pub revision: u64,
-    pub dataset_id: String,
-}
-
-/// One immutable PC-D17 grid publication for the later Mesh workflow.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct CanonicalRasterizeCommit {
-    pub journal_entry: CanonicalJournalEntry,
-    pub entity_id: String,
-    pub revision: u64,
-    pub dataset_id: String,
-    pub entity_type: String,
-    pub mesh_source_role: Option<String>,
 }
 
 /// Failure of an explicit project lifecycle or staged import operation.
@@ -1605,142 +1511,34 @@ impl CanonicalAppRuntime {
         expected: EntityVersionRef,
         input_root: PathBuf,
     ) -> Result<CanonicalGroundSource, CanonicalAppRuntimeError> {
-        self.prepare_ground_source_with_progress(expected, input_root, &mut |_| true)
+        PointCloudQueryService::new(self)
+            .prepare_ground_source(expected, input_root)
+            .map_err(map_pointcloud_command_error)
     }
 
-    /// Captures a prepared point-cloud source with truthful byte progress and
-    /// cancellation checks during immutable-object verification.
+    /// Captures a prepared point-cloud source with truthful byte progress and cancellation.
     pub fn prepare_ground_source_with_progress(
         &self,
         expected: EntityVersionRef,
         input_root: PathBuf,
         progress: &mut dyn FnMut(CanonicalSourceCaptureProgress) -> bool,
     ) -> Result<CanonicalGroundSource, CanonicalAppRuntimeError> {
-        let capture = self.plan_ground_source_capture(expected, input_root)?;
-        let mut completed_bytes = 0_u64;
-        for artifact in &capture.artifacts {
-            let artifact_name = artifact.artifact.clone();
-            crate::canonical_project_store::materialize_verified_path_with_progress(
-                &artifact.source_path,
-                &artifact.destination_path,
-                &artifact.object_hash,
-                Some(artifact.byte_length),
-                &mut |bytes| {
-                    completed_bytes = completed_bytes.saturating_add(bytes);
-                    progress(CanonicalSourceCaptureProgress {
-                        artifact: artifact_name.clone(),
-                        completed_bytes,
-                        total_bytes: capture.total_bytes.max(1),
-                    })
-                },
-            )?;
-        }
-        Ok(capture.source)
+        PointCloudQueryService::new(self)
+            .prepare_ground_source_with_progress(expected, input_root, progress)
+            .map_err(map_pointcloud_command_error)
     }
 
-    /// Resolves one immutable capture under the project lock without doing
-    /// the long file verification. The caller can then verify/materialize the
-    /// returned paths while canonical range reads remain responsive.
+    /// Resolves one immutable capture under the project lock without long verification.
     pub fn plan_ground_source_capture(
         &self,
         expected: EntityVersionRef,
         input_root: PathBuf,
     ) -> Result<CanonicalGroundSourceCapture, CanonicalAppRuntimeError> {
-        let bootstrap = self.residency_bootstrap()?;
-        let entry = bootstrap
-            .entries
-            .into_iter()
-            .find(|entry| entry.admission.entity.id == expected.id)
-            .ok_or_else(|| {
-                CanonicalAppRuntimeError::InvalidResidency(
-                    "selected point cloud has no live prepared dataset".to_owned(),
-                )
-            })?;
-        if EntityVersionRef::from_entity(&entry.admission.entity) != expected {
-            return Err(CanonicalAppRuntimeError::InvalidResidency(
-                "selected point-cloud revision changed before ground extraction".to_owned(),
-            ));
-        }
-        let dataset = entry.dataset.ok_or_else(|| {
-            CanonicalAppRuntimeError::InvalidResidency(
-                "selected point cloud is not a prepared dataset".to_owned(),
-            )
-        })?;
-        if dataset.format_id != "potree@2" {
-            return Err(CanonicalAppRuntimeError::InvalidResidency(
-                "ground extraction requires an uncompressed Potree 2 dataset".to_owned(),
-            ));
-        }
-        std::fs::create_dir_all(&input_root).map_err(CanonicalProjectStoreError::from)?;
-        let store = self
-            .store
-            .as_ref()
-            .ok_or(CanonicalAppRuntimeError::ProjectNotOpen)?;
-        let captured_artifacts = dataset
-            .artifacts
-            .iter()
-            .filter_map(|artifact| {
-                let name = artifact.relative_path.file_name()?.to_str()?;
-                matches!(name, "metadata.json" | "hierarchy.bin" | "octree.bin")
-                    .then_some((name.to_owned(), artifact))
-            })
-            .collect::<Vec<_>>();
-        if captured_artifacts.len() != 3 {
-            return Err(CanonicalAppRuntimeError::InvalidResidency(
-                "prepared point cloud is missing metadata.json, hierarchy.bin, or octree.bin"
-                    .to_owned(),
-            ));
-        }
-        let artifacts = captured_artifacts
-            .into_iter()
-            .map(|(name, artifact)| {
-                let byte_length = artifact.resource.byte_length.map_or_else(
-                    || store.object_byte_length(&artifact.resource.object_hash),
-                    Ok,
-                )?;
-                Ok(CanonicalSourceCaptureArtifact {
-                    source_path: store
-                        .object_path_for_materialization(&artifact.resource.object_hash)?,
-                    destination_path: input_root.join(&name),
-                    object_hash: artifact.resource.object_hash.clone(),
-                    byte_length,
-                    artifact: name,
-                })
-            })
-            .collect::<Result<Vec<_>, CanonicalProjectStoreError>>()?;
-        let total_bytes = artifacts.iter().fold(0_u64, |total, artifact| {
-            total.saturating_add(artifact.byte_length)
-        });
-        let entity = entry.admission.entity;
-        Ok(CanonicalGroundSourceCapture {
-            source: CanonicalGroundSource {
-                expected,
-                source_components: serde_json::from_slice(
-                    &store.read_object(&entity.components_ref)?,
-                )?,
-                source_attributes: serde_json::from_slice(
-                    &store.read_object(&entity.attributes_ref)?,
-                )?,
-                source_relations: serde_json::from_slice(
-                    &store.read_object(&entity.relations_ref)?,
-                )?,
-                source_style: entity
-                    .style_ref
-                    .as_ref()
-                    .map(|hash| store.read_object(hash))
-                    .transpose()?
-                    .map(|bytes| serde_json::from_slice(&bytes))
-                    .transpose()?,
-                entity,
-                representation_slot: entry.admission.representation_slot,
-                input_root,
-            },
-            artifacts,
-            total_bytes,
-        })
+        PointCloudQueryService::new(self)
+            .plan_ground_source_capture(expected, input_root)
+            .map_err(map_pointcloud_command_error)
     }
 
-    /// Publishes checked ground outputs and exact source class bytes as one undoable transaction.
     #[allow(clippy::too_many_arguments)]
     pub fn publish_ground_extraction(
         &mut self,
@@ -1755,294 +1553,22 @@ impl CanonicalAppRuntime {
         progress: &mut dyn FnMut(CanonicalImportProgress),
         is_cancelled: &dyn Fn() -> bool,
     ) -> Result<CanonicalGroundCommit, CanonicalAppRuntimeError> {
-        let recipe_parameters = serde_json::json!({
-            "smrf": parameters.clone(),
-            "scope": scope.clone(),
-        });
-        let source_dataset_id = ground_dataset_id("classified", &prepared.source);
-        let ground_dataset_id = ground_dataset_id("ground", &prepared.extracted);
-        let (source_dataset, source_geometry, source_representation) = ground_dataset_contract(
-            &prepared.source,
-            &source_dataset_id,
-            &source.entity.id.0,
-            &source.representation_slot,
-        )?;
-        let (ground_dataset, ground_geometry, ground_representation) = ground_dataset_contract(
-            &prepared.extracted,
-            &ground_dataset_id,
-            &ground_entity_id,
-            "source",
-        )?;
-
-        let source_components = merge_object(
-            source.source_components,
-            "hcad.prepared-dataset@1",
-            serde_json::json!({ "formatId": "potree@2", "datasetId": source_dataset_id }),
-        )?;
-        let source_attributes = merge_object(
-            source.source_attributes,
-            "hcad.point-cloud-ground-classification@1",
-            serde_json::json!({
-                "algorithmId": crate::pointcloud_ground::GROUND_ALGORITHM_ID,
-                "parameters": parameters.clone(),
-                "scope": scope.clone(),
-                "membershipSha256": prepared.summary.membership_sha256,
-                "summary": prepared.summary,
-            }),
-        )?;
-        let source_components_object = canonical_json(
-            "application/vnd.himmelcad.components+json",
-            source_components,
-        )?;
-        let source_attributes_object = canonical_json(
-            "application/vnd.himmelcad.attributes+json",
-            source_attributes,
-        )?;
-        let source_relations_object = canonical_json(
-            "application/vnd.himmelcad.relations+json",
-            source.source_relations,
-        )?;
-
-        let ground_geometry_hash = ground_representation.geometry_ref.clone();
-        let source_fingerprint = ObjectHash::of_bytes(&serde_json::to_vec(&serde_json::json!({
-            "entityId": source.entity.id,
-            "revision": source.entity.revision,
-            "contentHash": source.entity.version_hash,
-            "parameters": recipe_parameters,
-        }))?);
-        let recipe_id = format!(
-            "ground-recipe-{}",
-            &prepared.summary.membership_sha256.0[..24]
-        );
-        let recipe = serde_json::json!({
-            "schemaId": "hcad.derived-recipe@1",
-            "schemaVersion": 1,
-            "recipeId": recipe_id,
-            "recipeKind": crate::pointcloud_ground::GROUND_ALGORITHM_ID,
-            "generation": 1,
-            "state": "linked-current",
-            "outputGroupId": ground_entity_id,
-            "outputs": [{
-                "slotId": "ground",
-                "role": "ground_cloud",
-                "outputId": ground_entity_id,
-                "typeId": built_in_type::POINT_CLOUD,
-                "locator": "source",
-                "currentRevision": 0,
-                "currentContentHash": ground_geometry_hash,
-                "status": "present"
-            }],
-            "sources": [{
-                "entityId": source.entity.id,
-                "revision": source.entity.revision,
-                "contentHash": source.entity.version_hash,
-                "placementRevision": source.entity.revision,
-                "role": "outdoor_ground_source"
-            }],
-            "parameterTypeId": crate::pointcloud_ground::GROUND_ALGORITHM_ID,
-            "parameters": recipe_parameters,
-            "algorithmId": crate::pointcloud_ground::GROUND_ALGORITHM_ID,
-            "algorithmVersion": "1",
-            "dependencyRecipeIds": [],
-            "staleCauses": [],
-            "lastSuccess": {
-                "generation": 1,
-                "sourceFingerprint": source_fingerprint,
-                "outputs": [{
-                    "slotId": "ground",
-                    "outputId": ground_entity_id,
-                    "revision": 0,
-                    "contentHash": ground_geometry_hash
-                }],
-                "completedAt": completed_at
-            },
-            "lastError": null,
-            "detach": null
-        });
-        let mut mesh_source_roles = MeshSourceRolesV1 {
-            schema_id: MESH_SOURCE_ROLES_SCHEMA_ID.to_owned(),
-            schema_version: 1,
-            resource_id: format!("mesh-source-{ground_entity_id}"),
-            content_hash: ObjectHash::of_bytes(b""),
-            roles: vec![MeshSourceRoleV1 {
-                source: DerivedSourceV1 {
-                    entity_id: EntityId(ground_entity_id.clone()),
-                    revision: 0,
-                    content_hash: ground_geometry_hash.clone(),
-                    placement_revision: 0,
-                    role: "ground_cloud".to_owned(),
-                },
-                placement: source
-                    .entity
-                    .placement
-                    .unwrap_or(himmelcad_core::entity_model::Transform3d::IDENTITY),
-                role: MeshSourceRoleKindV1::Points,
-                sampling_tolerance: None,
-                sampling_hash: None,
-                boundary_hash: None,
-                exclusion_hashes: Vec::new(),
-            }],
-        };
-        mesh_source_roles.content_hash =
-            ObjectHash::of_bytes(&serde_json::to_vec(&mesh_source_roles)?);
-        let ground_components_object = canonical_json(
-            "application/vnd.himmelcad.components+json",
-            serde_json::json!({
-                "hcad.prepared-dataset@1": {
-                    "formatId": "potree@2",
-                    "datasetId": ground_dataset_id
-                },
-                "hcad.mesh-source-roles@1": mesh_source_roles
-            }),
-        )?;
-        let ground_attributes_object = canonical_json(
-            "application/vnd.himmelcad.attributes+json",
-            serde_json::json!({
-                "hcad.point-cloud-ground@1": {
-                    "algorithmId": crate::pointcloud_ground::GROUND_ALGORITHM_ID,
-                    "membershipSha256": prepared.summary.membership_sha256,
-                    "summary": prepared.summary
-                },
-                "hcad.derived-recipe@1": recipe
-            }),
-        )?;
-        let ground_relations_object = canonical_json(
-            "application/vnd.himmelcad.relations+json",
-            serde_json::json!([{
-                "kind": "derivedFrom",
-                "entityId": source.entity.id,
-                "revision": source.entity.revision,
-                "role": "outdoor_ground_source"
-            }]),
-        )?;
-        let style_object = source
-            .source_style
-            .map(|value| {
-                canonical_json("application/vnd.himmelcad.point-cloud-display+json", value)
-            })
-            .transpose()?;
-
-        let mut source_after = source.entity.clone();
-        source_after.revision = source_after.revision.saturating_add(1);
-        source_after.representations = vec![source_representation.clone()];
-        source_after.components_ref = source_components_object.object_hash.clone();
-        source_after.attributes_ref = source_attributes_object.object_hash.clone();
-        source_after.version_hash = canonical_entity_version_hash(&source_after)
-            .map_err(|error| CanonicalAppRuntimeError::InvalidResidency(error.to_string()))?;
-        let mut ground_entity = CanonicalEntity {
-            id: EntityId(ground_entity_id.clone()),
-            revision: 0,
-            type_id: EntityTypeId(built_in_type::POINT_CLOUD.to_owned()),
-            name: output_name,
-            owner: source.entity.owner.clone(),
-            layer_ids: source.entity.layer_ids.clone(),
-            placement: source.entity.placement,
-            representations: vec![ground_representation.clone()],
-            components_ref: ground_components_object.object_hash.clone(),
-            attributes_ref: ground_attributes_object.object_hash.clone(),
-            relations_ref: ground_relations_object.object_hash.clone(),
-            style_ref: style_object
-                .as_ref()
-                .map(|object| object.object_hash.clone()),
-            schema_version: 1,
-            version_hash: ObjectHash::of_bytes(b"uninitialized ground cloud"),
-        };
-        ground_entity.version_hash = canonical_entity_version_hash(&ground_entity)
-            .map_err(|error| CanonicalAppRuntimeError::InvalidResidency(error.to_string()))?;
-
-        let mut objects = vec![
-            source_components_object,
-            source_attributes_object,
-            source_relations_object,
-            ground_components_object,
-            ground_attributes_object,
-            ground_relations_object,
-        ];
-        if let Some(style) = style_object {
-            if !objects
-                .iter()
-                .any(|object| object.object_hash == style.object_hash)
-            {
-                objects.push(style);
-            }
-        }
-        let package = CanonicalImportPackage {
-            schema_version: CANONICAL_IO_SCHEMA_VERSION,
-            provider_id: "hcad.pointcloud.ground-progressive@1".to_owned(),
-            provider_version: "1".to_owned(),
-            admissions: vec![
-                CanonicalRepresentationAdmission {
-                    entity: source_after.clone(),
-                    selected: source_representation.clone(),
-                    representation_slot: source.representation_slot,
-                    expected_generation: None,
-                    resolved_geometry: source_geometry,
-                },
-                CanonicalRepresentationAdmission {
-                    entity: ground_entity.clone(),
-                    selected: ground_representation,
-                    representation_slot: "source".to_owned(),
-                    expected_generation: None,
-                    resolved_geometry: ground_geometry,
-                },
-            ],
-            objects,
-            datasets: vec![source_dataset, ground_dataset],
-            resource_sets: Vec::new(),
-            presentation_resources: Default::default(),
-        };
-        let roots = CanonicalImportSourceRoots {
-            datasets: [
-                (source_dataset_id.clone(), prepared.source.root.clone()),
-                (ground_dataset_id.clone(), prepared.extracted.root.clone()),
-            ]
-            .into_iter()
-            .collect(),
-            resource_sets: Default::default(),
-        };
-        let transaction = CanonicalCommandTransaction {
-            command_id,
-            mutations: vec![
-                CanonicalEntityMutation::Update {
-                    expected: source.expected,
-                    edits: vec![
-                        CanonicalEntityEdit::SetRepresentations {
-                            representations: source_after.representations.clone(),
-                        },
-                        CanonicalEntityEdit::SetComponentsRef {
-                            components_ref: source_after.components_ref.clone(),
-                        },
-                        CanonicalEntityEdit::SetAttributesRef {
-                            attributes_ref: source_after.attributes_ref.clone(),
-                        },
-                    ],
-                },
-                CanonicalEntityMutation::Create {
-                    entity: ground_entity.clone(),
-                },
-            ],
-        };
-        let commit = self
-            .store_mut()?
-            .publish_package_transaction_with_progress_and_cancel(
-                &package,
-                &roots,
-                transaction,
+        PointCloudCommandService::new(self)
+            .publish_ground_extraction(
+                source,
+                prepared,
+                command_id,
+                ground_entity_id,
+                output_name,
+                parameters,
+                scope,
+                completed_at,
                 progress,
                 is_cancelled,
-            )?;
-        Ok(CanonicalGroundCommit {
-            journal_entry: commit.journal_entry,
-            source_entity_id: source_after.id.0,
-            source_revision: source_after.revision,
-            ground_entity_id: ground_entity.id.0,
-            ground_revision: ground_entity.revision,
-            source_dataset_id,
-            ground_dataset_id,
-        })
+            )
+            .map_err(map_pointcloud_command_error)
     }
 
-    /// Publishes every fully baked source revision in one journal transaction.
     #[allow(clippy::too_many_arguments)]
     pub fn publish_pointcloud_segmentation(
         &mut self,
@@ -2058,203 +1584,19 @@ impl CanonicalAppRuntime {
         progress: &mut dyn FnMut(CanonicalImportProgress),
         is_cancelled: &dyn Fn() -> bool,
     ) -> Result<CanonicalSegmentCommit, CanonicalAppRuntimeError> {
-        if sources.is_empty() {
-            return Err(CanonicalAppRuntimeError::InvalidResidency(
-                "segmentation requires at least one source".to_owned(),
-            ));
-        }
-        let mut admissions = Vec::with_capacity(sources.len());
-        let mut datasets = Vec::with_capacity(sources.len());
-        let mut objects = Vec::with_capacity(sources.len() * 3);
-        let mut roots = BTreeMap::new();
-        let mut mutations = Vec::with_capacity(sources.len());
-        let mut revisions = Vec::with_capacity(sources.len());
-
-        for (source, prepared, scope) in sources {
-            let dataset_id = segment_dataset_id(&prepared.dataset);
-            let (dataset, geometry, representation) = ground_dataset_contract(
-                &prepared.dataset,
-                &dataset_id,
-                &source.entity.id.0,
-                &source.representation_slot,
-            )?;
-            let next_revision = source.entity.revision.saturating_add(1);
-            let geometry_hash = representation.geometry_ref.clone();
-            let generation = source
-                .source_attributes
-                .get("hcad.point-cloud-edit-chain@1")
-                .and_then(|value| value.get("edits"))
-                .and_then(serde_json::Value::as_array)
-                .map_or(1_u64, |edits| edits.len() as u64 + 1);
-            let source_fingerprint =
-                ObjectHash::of_bytes(&serde_json::to_vec(&serde_json::json!({
-                    "entityId": source.entity.id,
-                    "revision": source.entity.revision,
-                    "contentHash": source.entity.version_hash,
-                    "volume": volume,
-                    "side": side,
-                    "scope": scope,
-                }))?);
-            let recipe_id = format!("segment-recipe-{}", &source_fingerprint.0[..24]);
-            let recipe = serde_json::json!({
-                "schemaId": "hcad.derived-recipe@1",
-                "schemaVersion": 1,
-                "recipeId": recipe_id,
-                "recipeKind": SEGMENT_ALGORITHM_ID,
-                "generation": generation,
-                "state": "linked-current",
-                "outputGroupId": source.entity.id,
-                "outputs": [{
-                    "slotId": source.representation_slot,
-                    "role": "edited_cloud",
-                    "outputId": source.entity.id,
-                    "typeId": built_in_type::POINT_CLOUD,
-                    "locator": source.representation_slot,
-                    "currentRevision": next_revision,
-                    "currentContentHash": geometry_hash,
-                    "status": "present"
-                }],
-                "sources": [{
-                    "entityId": source.entity.id,
-                    "revision": source.entity.revision,
-                    "contentHash": source.entity.version_hash,
-                    "placementRevision": source.entity.revision,
-                    "role": "source_revision"
-                }],
-                "parameterTypeId": SEGMENT_ALGORITHM_ID,
-                "parameters": { "volume": volume, "side": side, "scope": scope },
-                "algorithmId": SEGMENT_ALGORITHM_ID,
-                "algorithmVersion": "1",
-                "dependencyRecipeIds": [],
-                "staleCauses": [],
-                "lastSuccess": {
-                    "generation": generation,
-                    "sourceFingerprint": source_fingerprint,
-                    "outputs": [{
-                        "slotId": source.representation_slot,
-                        "outputId": source.entity.id,
-                        "revision": next_revision,
-                        "contentHash": geometry_hash
-                    }],
-                    "completedAt": completed_at
-                },
-                "lastError": null,
-                "detach": null
-            });
-            let mut edit_chain = source
-                .source_attributes
-                .get("hcad.point-cloud-edit-chain@1")
-                .cloned()
-                .unwrap_or_else(|| serde_json::json!({ "schemaVersion": 1, "edits": [] }));
-            let edits = edit_chain
-                .get_mut("edits")
-                .and_then(serde_json::Value::as_array_mut)
-                .ok_or_else(|| {
-                    CanonicalAppRuntimeError::InvalidResidency(
-                        "point-cloud edit chain is malformed".to_owned(),
-                    )
-                })?;
-            edits.push(recipe.clone());
-            let components = merge_object(
-                source.source_components,
-                "hcad.prepared-dataset@1",
-                serde_json::json!({ "formatId": "potree@2", "datasetId": dataset_id }),
-            )?;
-            let attributes = merge_object(
-                merge_object(
-                    source.source_attributes,
-                    "hcad.point-cloud-edit-chain@1",
-                    edit_chain,
-                )?,
-                "hcad.derived-recipe@1",
-                recipe,
-            )?;
-            let components_object =
-                canonical_json("application/vnd.himmelcad.components+json", components)?;
-            let attributes_object =
-                canonical_json("application/vnd.himmelcad.attributes+json", attributes)?;
-            let relations_object = canonical_json(
-                "application/vnd.himmelcad.relations+json",
-                source.source_relations,
-            )?;
-            let mut entity_after = source.entity.clone();
-            entity_after.revision = next_revision;
-            entity_after.representations = vec![representation.clone()];
-            entity_after.components_ref = components_object.object_hash.clone();
-            entity_after.attributes_ref = attributes_object.object_hash.clone();
-            entity_after.relations_ref = relations_object.object_hash.clone();
-            entity_after.version_hash = canonical_entity_version_hash(&entity_after)
-                .map_err(|error| CanonicalAppRuntimeError::InvalidResidency(error.to_string()))?;
-
-            mutations.push(CanonicalEntityMutation::Update {
-                expected: source.expected,
-                edits: vec![
-                    CanonicalEntityEdit::SetRepresentations {
-                        representations: entity_after.representations.clone(),
-                    },
-                    CanonicalEntityEdit::SetComponentsRef {
-                        components_ref: entity_after.components_ref.clone(),
-                    },
-                    CanonicalEntityEdit::SetAttributesRef {
-                        attributes_ref: entity_after.attributes_ref.clone(),
-                    },
-                    CanonicalEntityEdit::SetRelationsRef {
-                        relations_ref: entity_after.relations_ref.clone(),
-                    },
-                ],
-            });
-            roots.insert(dataset_id.clone(), prepared.dataset.root.clone());
-            datasets.push(dataset);
-            objects.extend([components_object, attributes_object, relations_object]);
-            admissions.push(CanonicalRepresentationAdmission {
-                entity: entity_after.clone(),
-                selected: representation,
-                representation_slot: source.representation_slot,
-                expected_generation: None,
-                resolved_geometry: geometry,
-            });
-            revisions.push(CanonicalSegmentRevision {
-                entity_id: entity_after.id.0,
-                revision: entity_after.revision,
-                dataset_id,
-                retained_points: prepared.summary.retained_points,
-                removed_points: prepared.summary.removed_points,
-            });
-        }
-
-        let package = CanonicalImportPackage {
-            schema_version: CANONICAL_IO_SCHEMA_VERSION,
-            provider_id: SEGMENT_ALGORITHM_ID.to_owned(),
-            provider_version: "1".to_owned(),
-            admissions,
-            objects,
-            datasets,
-            resource_sets: Vec::new(),
-            presentation_resources: Default::default(),
-        };
-        let source_roots = CanonicalImportSourceRoots {
-            datasets: roots,
-            resource_sets: Default::default(),
-        };
-        let commit = self
-            .store_mut()?
-            .publish_package_transaction_with_progress_and_cancel(
-                &package,
-                &source_roots,
-                CanonicalCommandTransaction {
-                    command_id,
-                    mutations,
-                },
+        PointCloudCommandService::new(self)
+            .publish_pointcloud_segmentation(
+                sources,
+                command_id,
+                volume,
+                side,
+                completed_at,
                 progress,
                 is_cancelled,
-            )?;
-        Ok(CanonicalSegmentCommit {
-            journal_entry: commit.journal_entry,
-            revisions,
-        })
+            )
+            .map_err(map_pointcloud_command_error)
     }
 
-    /// Publishes one PC-D8 sampled cloud without changing the captured source revision.
     #[allow(clippy::too_many_arguments)]
     pub fn publish_sampled_cloud(
         &mut self,
@@ -2269,156 +1611,22 @@ impl CanonicalAppRuntime {
         progress: &mut dyn FnMut(CanonicalImportProgress),
         is_cancelled: &dyn Fn() -> bool,
     ) -> Result<CanonicalSampleCommit, CanonicalAppRuntimeError> {
-        self.ensure_pointcloud_source_current(&source.expected)?;
-        let dataset_id = derived_point_dataset_id("sample", SAMPLE_ALGORITHM_ID, &prepared.sampled);
-        let (dataset, geometry, representation) =
-            ground_dataset_contract(&prepared.sampled, &dataset_id, &entity_id, "source")?;
-        let geometry_hash = representation.geometry_ref.clone();
-        let recipe_parameters = serde_json::json!({
-            "sampling": parameters,
-            "scope": scope,
-            "randomSeed": crate::pointcloud_sampling::RANDOM_SEED,
-            "stableTieRule": prepared.summary.stable_tie_rule,
-        });
-        let source_fingerprint = ObjectHash::of_bytes(&serde_json::to_vec(&serde_json::json!({
-            "entityId": source.entity.id,
-            "revision": source.entity.revision,
-            "contentHash": source.entity.version_hash,
-            "parameters": recipe_parameters,
-        }))?);
-        let recipe_id = format!(
-            "sample-recipe-{}",
-            &prepared.summary.selection_sha256.as_str()[..24]
-        );
-        let recipe = derived_recipe_value(
-            &recipe_id,
-            SAMPLE_ALGORITHM_ID,
-            &entity_id,
-            "sampled",
-            "sampled_cloud",
-            built_in_type::POINT_CLOUD,
-            &geometry_hash,
-            &source,
-            "point_cloud_source",
-            recipe_parameters,
-            source_fingerprint,
-            completed_at,
-        );
-        let mut mesh_source_roles = mesh_source_roles(
-            &entity_id,
-            &geometry_hash,
-            "sampled_cloud",
-            source
-                .entity
-                .placement
-                .unwrap_or(himmelcad_core::entity_model::Transform3d::IDENTITY),
-            Some(prepared.summary.selection_sha256.clone()),
-        )?;
-        mesh_source_roles.content_hash =
-            ObjectHash::of_bytes(&serde_json::to_vec(&mesh_source_roles)?);
-        let components = canonical_json(
-            "application/vnd.himmelcad.components+json",
-            serde_json::json!({
-                "hcad.prepared-dataset@1": {
-                    "formatId": "potree@2",
-                    "datasetId": dataset_id,
-                },
-                "hcad.mesh-source-roles@1": mesh_source_roles,
-            }),
-        )?;
-        let attributes = canonical_json(
-            "application/vnd.himmelcad.attributes+json",
-            serde_json::json!({
-                "hcad.pointcloud.sample@1": {
-                    "algorithmId": SAMPLE_ALGORITHM_ID,
-                    "summary": prepared.summary,
-                },
-                "hcad.derived-recipe@1": recipe,
-            }),
-        )?;
-        let relations = canonical_json(
-            "application/vnd.himmelcad.relations+json",
-            serde_json::json!([{
-                "kind": "derivedFrom",
-                "entityId": source.entity.id,
-                "revision": source.entity.revision,
-                "role": "point_cloud_source",
-            }]),
-        )?;
-        let style = source
-            .source_style
-            .map(|value| {
-                canonical_json("application/vnd.himmelcad.point-cloud-display+json", value)
-            })
-            .transpose()?;
-        let mut entity = CanonicalEntity {
-            id: EntityId(entity_id),
-            revision: 0,
-            type_id: EntityTypeId(built_in_type::POINT_CLOUD.to_owned()),
-            name: output_name,
-            owner: source.entity.owner.clone(),
-            layer_ids: source.entity.layer_ids.clone(),
-            placement: source.entity.placement,
-            representations: vec![representation.clone()],
-            components_ref: components.object_hash.clone(),
-            attributes_ref: attributes.object_hash.clone(),
-            relations_ref: relations.object_hash.clone(),
-            style_ref: style.as_ref().map(|value| value.object_hash.clone()),
-            schema_version: 1,
-            version_hash: ObjectHash::of_bytes(b"uninitialized sampled cloud"),
-        };
-        entity.version_hash = canonical_entity_version_hash(&entity)
-            .map_err(|error| CanonicalAppRuntimeError::InvalidResidency(error.to_string()))?;
-        let mut objects = vec![components, attributes, relations];
-        if let Some(style) = style {
-            objects.push(style);
-        }
-        let package = CanonicalImportPackage {
-            schema_version: CANONICAL_IO_SCHEMA_VERSION,
-            provider_id: SAMPLE_ALGORITHM_ID.to_owned(),
-            provider_version: "1".to_owned(),
-            admissions: vec![CanonicalRepresentationAdmission {
-                entity: entity.clone(),
-                selected: representation,
-                representation_slot: "source".to_owned(),
-                expected_generation: None,
-                resolved_geometry: geometry,
-            }],
-            objects,
-            datasets: vec![dataset],
-            resource_sets: Vec::new(),
-            presentation_resources: Default::default(),
-        };
-        let roots = CanonicalImportSourceRoots {
-            datasets: [(dataset_id.clone(), prepared.sampled.root.clone())]
-                .into_iter()
-                .collect(),
-            resource_sets: Default::default(),
-        };
-        let transaction = CanonicalCommandTransaction {
-            command_id,
-            mutations: vec![CanonicalEntityMutation::Create {
-                entity: entity.clone(),
-            }],
-        };
-        let commit = self
-            .store_mut()?
-            .publish_package_transaction_with_progress_and_cancel(
-                &package,
-                &roots,
-                transaction,
+        PointCloudCommandService::new(self)
+            .publish_sampled_cloud(
+                source,
+                prepared,
+                command_id,
+                entity_id,
+                output_name,
+                parameters,
+                scope,
+                completed_at,
                 progress,
                 is_cancelled,
-            )?;
-        Ok(CanonicalSampleCommit {
-            journal_entry: commit.journal_entry,
-            entity_id: entity.id.0,
-            revision: entity.revision,
-            dataset_id,
-        })
+            )
+            .map_err(map_pointcloud_command_error)
     }
 
-    /// Publishes one PC-D17 prepared grid. Count rasters remain RasterImage and are not Mesh height sources.
     #[allow(clippy::too_many_arguments)]
     pub fn publish_height_grid(
         &mut self,
@@ -2433,313 +1641,31 @@ impl CanonicalAppRuntime {
         progress: &mut dyn FnMut(CanonicalImportProgress),
         is_cancelled: &dyn Fn() -> bool,
     ) -> Result<CanonicalRasterizeCommit, CanonicalAppRuntimeError> {
-        self.ensure_pointcloud_source_current(&source.expected)?;
-        let resource = GeometryResource {
-            object_hash: prepared.viewer_manifest.object_hash.clone(),
-            media_type: prepared.viewer_manifest.media_type.clone(),
-            byte_length: Some(prepared.viewer_manifest.byte_length),
-        };
-        let mapping = OrthoGridMapping {
-            origin: Vector3 {
-                x: prepared.summary.origin[0],
-                y: prepared.summary.origin[1],
-                z: 0.0,
-            },
-            column_step: Vector3 {
-                x: prepared.summary.cell_size_m,
-                y: 0.0,
-                z: 0.0,
-            },
-            row_step: Vector3 {
-                x: 0.0,
-                y: prepared.summary.cell_size_m,
-                z: 0.0,
-            },
-        };
-        let (entity_type, geometry) = if prepared.summary.aggregation == RasterAggregation::Count {
-            (
-                built_in_type::RASTER_IMAGE,
-                GeometryObject::RasterImage {
-                    raster: Box::new(RasterImageGeometry {
-                        pixels: resource.clone(),
-                        width: prepared.summary.width,
-                        height: prepared.summary.height,
-                        mapping: RasterMapping::OrthoGrid(mapping),
-                        depth: None,
-                    }),
-                },
-            )
-        } else {
-            (
-                built_in_type::ELEVATION_SURFACE,
-                GeometryObject::ElevationSurface {
-                    surface: Box::new(ElevationSurfaceGeometry::Grid {
-                        raster: resource.clone(),
-                        mapping,
-                        sampling: DepthSampling {
-                            semantics: DepthSemantics::ElevationZ,
-                            interpolation: RasterInterpolation::Nearest,
-                            connectivity: RasterConnectivity::PixelSteps,
-                        },
-                    }),
-                },
-            )
-        };
-        let representation = Representation {
-            role: RepresentationRole::Canonical,
-            geometry_ref: geometry_object_content_hash(&geometry)
-                .map_err(|error| CanonicalAppRuntimeError::InvalidResidency(error.to_string()))?,
-            authority: RepresentationAuthority::Authoritative,
-            dependency_hash: None,
-        };
-        let geometry_hash = representation.geometry_ref.clone();
-        let dataset_id = format!(
-            "height-grid-{}",
-            &prepared.summary.cell_sha256.as_str()[..32]
-        );
-        let dataset = CanonicalPreparedDataset {
-            dataset_id: dataset_id.clone(),
-            format_id: HEIGHT_GRID_FORMAT_ID.to_owned(),
-            entity_id: entity_id.clone(),
-            representation_slot: "source".to_owned(),
-            root_metadata: resource,
-            artifacts: std::iter::once(&prepared.artifact)
-                .chain(std::iter::once(&prepared.viewer_manifest))
-                .chain(prepared.viewer_artifacts.iter())
-                .map(|artifact| PreparedDatasetArtifact {
-                    relative_path: PathBuf::from(&artifact.relative_path),
-                    resource: GeometryResource {
-                        object_hash: artifact.object_hash.clone(),
-                        media_type: artifact.media_type.clone(),
-                        byte_length: Some(artifact.byte_length),
-                    },
-                })
-                .collect(),
-        };
-        let recipe_parameters = serde_json::json!({
-            "rasterize": parameters,
-            "scope": scope,
-            "cellRecord": "valid:u8,value:f64le,count:u64le,variance:f64le",
-        });
-        let source_fingerprint = ObjectHash::of_bytes(&serde_json::to_vec(&serde_json::json!({
-            "entityId": source.entity.id,
-            "revision": source.entity.revision,
-            "contentHash": source.entity.version_hash,
-            "parameters": recipe_parameters,
-        }))?);
-        let recipe_id = format!(
-            "height-grid-recipe-{}",
-            &prepared.summary.cell_sha256.as_str()[..24]
-        );
-        let output_role = if prepared.summary.mesh_eligible {
-            "grid_source"
-        } else {
-            "count_grid"
-        };
-        let recipe = derived_recipe_value(
-            &recipe_id,
-            RASTERIZE_ALGORITHM_ID,
-            &entity_id,
-            "grid",
-            output_role,
-            entity_type,
-            &geometry_hash,
-            &source,
-            "point_cloud_source",
-            recipe_parameters,
-            source_fingerprint,
-            completed_at,
-        );
-        let mesh_roles = if prepared.summary.mesh_eligible {
-            let mut value = mesh_source_roles(
-                &entity_id,
-                &geometry_hash,
-                "grid_source",
-                himmelcad_core::entity_model::Transform3d::IDENTITY,
-                Some(prepared.summary.cell_sha256.clone()),
-            )?;
-            value.content_hash = ObjectHash::of_bytes(&serde_json::to_vec(&value)?);
-            Some(value)
-        } else {
-            None
-        };
-        let mut component_value = serde_json::json!({
-            "hcad.prepared-dataset@1": {
-                "formatId": HEIGHT_GRID_FORMAT_ID,
-                "datasetId": dataset_id,
-            }
-        });
-        if let Some(mesh_roles) = mesh_roles {
-            component_value
-                .as_object_mut()
-                .expect("component object")
-                .insert(
-                    "hcad.mesh-source-roles@1".to_owned(),
-                    serde_json::to_value(mesh_roles)?,
-                );
-        }
-        let components =
-            canonical_json("application/vnd.himmelcad.components+json", component_value)?;
-        let attributes = canonical_json(
-            "application/vnd.himmelcad.attributes+json",
-            serde_json::json!({
-                "hcad.pointcloud.height-grid@1": {
-                    "algorithmId": RASTERIZE_ALGORITHM_ID,
-                    "summary": prepared.summary,
-                    "outputRole": output_role,
-                },
-                "hcad.derived-recipe@1": recipe,
-            }),
-        )?;
-        let relations = canonical_json(
-            "application/vnd.himmelcad.relations+json",
-            serde_json::json!([{
-                "kind": "derivedFrom",
-                "entityId": source.entity.id,
-                "revision": source.entity.revision,
-                "role": "point_cloud_source",
-            }]),
-        )?;
-        let mut entity = CanonicalEntity {
-            id: EntityId(entity_id),
-            revision: 0,
-            type_id: EntityTypeId(entity_type.to_owned()),
-            name: output_name,
-            owner: source.entity.owner.clone(),
-            layer_ids: source.entity.layer_ids.clone(),
-            // Rasterization is in project XY/Z after applying the captured source placement.
-            placement: None,
-            representations: vec![representation.clone()],
-            components_ref: components.object_hash.clone(),
-            attributes_ref: attributes.object_hash.clone(),
-            relations_ref: relations.object_hash.clone(),
-            style_ref: None,
-            schema_version: 1,
-            version_hash: ObjectHash::of_bytes(b"uninitialized height grid"),
-        };
-        entity.version_hash = canonical_entity_version_hash(&entity)
-            .map_err(|error| CanonicalAppRuntimeError::InvalidResidency(error.to_string()))?;
-        let package = CanonicalImportPackage {
-            schema_version: CANONICAL_IO_SCHEMA_VERSION,
-            provider_id: RASTERIZE_ALGORITHM_ID.to_owned(),
-            provider_version: "1".to_owned(),
-            admissions: vec![CanonicalRepresentationAdmission {
-                entity: entity.clone(),
-                selected: representation,
-                representation_slot: "source".to_owned(),
-                expected_generation: None,
-                resolved_geometry: geometry,
-            }],
-            objects: vec![components, attributes, relations],
-            datasets: vec![dataset],
-            resource_sets: Vec::new(),
-            presentation_resources: Default::default(),
-        };
-        let roots = CanonicalImportSourceRoots {
-            datasets: [(dataset_id.clone(), prepared.root.clone())]
-                .into_iter()
-                .collect(),
-            resource_sets: Default::default(),
-        };
-        let transaction = CanonicalCommandTransaction {
-            command_id,
-            mutations: vec![CanonicalEntityMutation::Create {
-                entity: entity.clone(),
-            }],
-        };
-        let commit = self
-            .store_mut()?
-            .publish_package_transaction_with_progress_and_cancel(
-                &package,
-                &roots,
-                transaction,
+        PointCloudCommandService::new(self)
+            .publish_height_grid(
+                source,
+                prepared,
+                command_id,
+                entity_id,
+                output_name,
+                parameters,
+                scope,
+                completed_at,
                 progress,
                 is_cancelled,
-            )?;
-        Ok(CanonicalRasterizeCommit {
-            journal_entry: commit.journal_entry,
-            entity_id: entity.id.0,
-            revision: entity.revision,
-            dataset_id,
-            entity_type: entity_type.to_owned(),
-            mesh_source_role: prepared
-                .summary
-                .mesh_eligible
-                .then(|| "grid_source".to_owned()),
-        })
+            )
+            .map_err(map_pointcloud_command_error)
     }
 
-    fn ensure_pointcloud_source_current(
-        &self,
-        expected: &EntityVersionRef,
-    ) -> Result<(), CanonicalAppRuntimeError> {
-        let current = self
-            .residency_bootstrap()?
-            .entries
-            .into_iter()
-            .find(|entry| entry.admission.entity.id == expected.id)
-            .map(|entry| EntityVersionRef::from_entity(&entry.admission.entity));
-        if current.as_ref() != Some(expected) {
-            return Err(CanonicalAppRuntimeError::InvalidResidency(
-                "source point-cloud revision changed before derived publication".to_owned(),
-            ));
-        }
-        Ok(())
-    }
-
-    /// Persists one canonical display resource and assigns it to exact live clouds.
     pub fn set_point_cloud_display(
         &mut self,
         command_id: String,
         entities: Vec<EntityVersionRef>,
         display: PointCloudDisplayStyle,
     ) -> Result<CanonicalJournalEntry, CanonicalAppRuntimeError> {
-        display
-            .validate()
-            .map_err(|error| CanonicalAppRuntimeError::InvalidResidency(error.to_string()))?;
-        if entities.is_empty() {
-            return Err(CanonicalAppRuntimeError::InvalidResidency(
-                "point-cloud display edit requires at least one entity".to_owned(),
-            ));
-        }
-        let value = serde_json::to_value(&display)?;
-        let bytes = serde_json::to_vec(&value)?;
-        let style_ref = ObjectHash::of_bytes(&bytes);
-        let object = CanonicalJsonObject {
-            object_hash: style_ref.clone(),
-            media_type: "application/vnd.himmelcad.point-cloud-display+json".to_owned(),
-            value,
-        };
-        let store = self.store_mut()?;
-        for expected in &entities {
-            let entity = store.document().entity(&expected.id).ok_or_else(|| {
-                CanonicalAppRuntimeError::InvalidResidency(format!(
-                    "point-cloud entity {:?} is no longer live",
-                    expected.id.0
-                ))
-            })?;
-            if entity.type_id.0 != built_in_type::POINT_CLOUD {
-                return Err(CanonicalAppRuntimeError::InvalidResidency(format!(
-                    "entity {:?} is not a point cloud",
-                    expected.id.0
-                )));
-            }
-        }
-        store.put_json_object(&object)?;
-        store
-            .queue_transaction(CanonicalCommandTransaction {
-                command_id,
-                mutations: entities
-                    .into_iter()
-                    .map(|expected| CanonicalEntityMutation::Update {
-                        expected,
-                        edits: vec![CanonicalEntityEdit::SetStyleRef {
-                            style_ref: Some(style_ref.clone()),
-                        }],
-                    })
-                    .collect(),
-            })
-            .map_err(Into::into)
+        PointCloudCommandService::new(self)
+            .set_point_cloud_display(command_id, entities, display)
+            .map_err(map_pointcloud_command_error)
     }
 
     /// Reconstructs exact admissions for live entities without exposing host
@@ -2878,75 +1804,16 @@ impl CanonicalAppRuntime {
         dataset_id: &str,
         maximum_samples: usize,
     ) -> Result<RegistrationSourceSamples, CanonicalAppRuntimeError> {
-        let bootstrap = self.residency_bootstrap()?;
-        let entry = bootstrap
-            .entries
-            .into_iter()
-            .find(|entry| {
-                entry
-                    .dataset
-                    .as_ref()
-                    .is_some_and(|dataset| dataset.dataset_id == dataset_id)
-            })
-            .ok_or_else(|| {
-                CanonicalAppRuntimeError::RegistrationSamples(format!(
-                    "unknown live dataset {dataset_id:?}"
-                ))
-            })?;
-        let dataset = entry.dataset.ok_or_else(|| {
-            CanonicalAppRuntimeError::RegistrationSamples("dataset is missing".to_owned())
-        })?;
-        if dataset.format_id != "potree@2"
-            || !matches!(
-                entry.admission.resolved_geometry,
-                GeometryObject::PointCloud { .. }
-            )
-        {
-            return Err(CanonicalAppRuntimeError::RegistrationSamples(
-                "dataset is not a Potree point cloud".to_owned(),
-            ));
-        }
-        let metadata_hash = dataset.root_metadata.object_hash.clone();
-        let hierarchy_hash = dataset
-            .artifacts
-            .iter()
-            .find(|artifact| artifact.relative_path.ends_with("hierarchy.bin"))
-            .map(|artifact| artifact.resource.object_hash.clone())
-            .ok_or_else(|| {
-                CanonicalAppRuntimeError::RegistrationSamples(
-                    "Potree hierarchy artifact is missing".to_owned(),
-                )
-            })?;
-        let octree_hash = dataset
-            .artifacts
-            .iter()
-            .find(|artifact| artifact.relative_path.ends_with("octree.bin"))
-            .map(|artifact| artifact.resource.object_hash.clone())
-            .ok_or_else(|| {
-                CanonicalAppRuntimeError::RegistrationSamples(
-                    "Potree octree artifact is missing".to_owned(),
-                )
-            })?;
-        let store = self
-            .store
-            .as_ref()
-            .ok_or(CanonicalAppRuntimeError::ProjectNotOpen)?;
-        let (_, mut metadata_file) = store.verified_object_source(&metadata_hash)?;
-        let (_, mut hierarchy_file) = store.verified_object_source(&hierarchy_hash)?;
-        let (_, mut octree_file) = store.verified_object_source(&octree_hash)?;
-        sample_potree_open_files(
-            "project-point-cloud",
+        himmelcad_domain_registration::canonical_command_service::registration_point_cloud_samples(
+            self,
             dataset_id,
-            [metadata_hash.0, hierarchy_hash.0, octree_hash.0],
-            entry.admission.entity.placement,
             maximum_samples,
-            PotreeOpenFiles {
-                metadata: &mut metadata_file,
-                hierarchy: &mut hierarchy_file,
-                octree: &mut octree_file,
-            },
         )
-        .map_err(registration_sample_error)
+        .map_err(|error| match error {
+            himmelcad_domain_registration::canonical_command_service::RegistrationCommandError::Backend(error) => error,
+            himmelcad_domain_registration::canonical_command_service::RegistrationCommandError::InvalidSamples(message) => CanonicalAppRuntimeError::RegistrationSamples(message),
+            himmelcad_domain_registration::canonical_command_service::RegistrationCommandError::Sampling(error) => registration_sample_error(error),
+        })
     }
 
     /// Reconstructs the exact currently-live canonical package published by
@@ -3501,223 +2368,171 @@ impl CanonicalAppRuntime {
     }
 }
 
+fn domain_residency_entries(
+    runtime: &CanonicalAppRuntime,
+) -> Result<Vec<DomainResidencyEntry>, CanonicalAppRuntimeError> {
+    Ok(runtime
+        .residency_bootstrap()?
+        .entries
+        .into_iter()
+        .map(|entry| DomainResidencyEntry {
+            admission: entry.admission,
+            dataset: entry.dataset.map(|dataset| DomainPreparedDataset {
+                dataset_id: dataset.dataset_id,
+                format_id: dataset.format_id,
+                entity_id: dataset.entity_id,
+                representation_slot: dataset.representation_slot,
+                root_metadata: dataset.root_metadata,
+                artifacts: dataset
+                    .artifacts
+                    .into_iter()
+                    .map(|artifact| DomainPreparedArtifact {
+                        relative_path: artifact.relative_path,
+                        resource: artifact.resource,
+                    })
+                    .collect(),
+            }),
+        })
+        .collect())
+}
+
+impl PointCloudDocumentCommands for CanonicalAppRuntime {
+    type Error = CanonicalAppRuntimeError;
+    type Package = CanonicalImportPackage;
+    type JsonObject = CanonicalJsonObject;
+
+    fn pointcloud_residency_entries(&self) -> Result<Vec<DomainResidencyEntry>, Self::Error> {
+        domain_residency_entries(self)
+    }
+
+    fn pointcloud_object_byte_length(&self, object_hash: &ObjectHash) -> Result<u64, Self::Error> {
+        Ok(self
+            .store
+            .as_ref()
+            .ok_or(CanonicalAppRuntimeError::ProjectNotOpen)?
+            .object_byte_length(object_hash)?)
+    }
+
+    fn pointcloud_object_path(&self, object_hash: &ObjectHash) -> Result<PathBuf, Self::Error> {
+        Ok(self
+            .store
+            .as_ref()
+            .ok_or(CanonicalAppRuntimeError::ProjectNotOpen)?
+            .object_path_for_materialization(object_hash)?)
+    }
+
+    fn pointcloud_read_object(&self, object_hash: &ObjectHash) -> Result<Vec<u8>, Self::Error> {
+        Ok(self
+            .store
+            .as_ref()
+            .ok_or(CanonicalAppRuntimeError::ProjectNotOpen)?
+            .read_object(object_hash)?)
+    }
+
+    fn pointcloud_materialize_verified_path(
+        &self,
+        source: &Path,
+        destination: &Path,
+        object_hash: &ObjectHash,
+        byte_length: u64,
+        progress: &mut dyn FnMut(u64) -> bool,
+    ) -> Result<(), Self::Error> {
+        crate::canonical_project_store::materialize_verified_path_with_progress(
+            source,
+            destination,
+            object_hash,
+            Some(byte_length),
+            progress,
+        )?;
+        Ok(())
+    }
+
+    fn pointcloud_publish_package(
+        &mut self,
+        package: Self::Package,
+        dataset_roots: BTreeMap<String, PathBuf>,
+        transaction: CanonicalCommandTransaction,
+        progress: &mut dyn FnMut(CanonicalImportProgress),
+        is_cancelled: &dyn Fn() -> bool,
+    ) -> Result<CanonicalJournalEntry, Self::Error> {
+        let commit = self
+            .store_mut()?
+            .publish_package_transaction_with_progress_and_cancel(
+                &package,
+                &CanonicalImportSourceRoots {
+                    datasets: dataset_roots,
+                    resource_sets: Default::default(),
+                },
+                transaction,
+                progress,
+                is_cancelled,
+            )?;
+        Ok(commit.journal_entry)
+    }
+
+    fn pointcloud_entity(
+        &self,
+        entity_id: &EntityId,
+    ) -> Result<Option<CanonicalEntity>, Self::Error> {
+        Ok(self
+            .store
+            .as_ref()
+            .ok_or(CanonicalAppRuntimeError::ProjectNotOpen)?
+            .document()
+            .entity(entity_id)
+            .cloned())
+    }
+
+    fn pointcloud_put_json_object(&mut self, object: Self::JsonObject) -> Result<(), Self::Error> {
+        self.store_mut()?.put_json_object(&object)?;
+        Ok(())
+    }
+
+    fn pointcloud_append_transaction(
+        &mut self,
+        transaction: CanonicalCommandTransaction,
+    ) -> Result<CanonicalJournalEntry, Self::Error> {
+        Ok(self.store_mut()?.queue_transaction(transaction)?)
+    }
+}
+
+impl RegistrationDocumentCommands for CanonicalAppRuntime {
+    type Error = CanonicalAppRuntimeError;
+
+    fn registration_residency_entries(&self) -> Result<Vec<DomainResidencyEntry>, Self::Error> {
+        domain_residency_entries(self)
+    }
+
+    fn registration_verified_object_source(
+        &self,
+        object_hash: &ObjectHash,
+    ) -> Result<File, Self::Error> {
+        let (_, source) = self
+            .store
+            .as_ref()
+            .ok_or(CanonicalAppRuntimeError::ProjectNotOpen)?
+            .verified_object_source(object_hash)?;
+        Ok(source)
+    }
+}
+
+fn map_pointcloud_command_error(
+    error: PointCloudCommandError<CanonicalAppRuntimeError>,
+) -> CanonicalAppRuntimeError {
+    match error {
+        PointCloudCommandError::Backend(error) => error,
+        PointCloudCommandError::InvalidResidency(message) => {
+            CanonicalAppRuntimeError::InvalidResidency(message)
+        }
+        PointCloudCommandError::Io(error) => {
+            CanonicalAppRuntimeError::Store(CanonicalProjectStoreError::from(error))
+        }
+        PointCloudCommandError::Json(error) => CanonicalAppRuntimeError::SnapshotJson(error),
+    }
+}
+
 fn registration_sample_error(error: ImportRegistrationRuntimeError) -> CanonicalAppRuntimeError {
     CanonicalAppRuntimeError::RegistrationSamples(error.to_string())
-}
-
-fn canonical_json(
-    media_type: &str,
-    value: serde_json::Value,
-) -> Result<CanonicalJsonObject, CanonicalAppRuntimeError> {
-    CanonicalJsonObject::new(media_type, value)
-        .map_err(|error| CanonicalAppRuntimeError::InvalidResidency(error.to_string()))
-}
-
-fn merge_object(
-    mut value: serde_json::Value,
-    key: &str,
-    extension: serde_json::Value,
-) -> Result<serde_json::Value, CanonicalAppRuntimeError> {
-    value
-        .as_object_mut()
-        .ok_or_else(|| {
-            CanonicalAppRuntimeError::InvalidResidency(
-                "point-cloud canonical component is not an object".to_owned(),
-            )
-        })?
-        .insert(key.to_owned(), extension);
-    Ok(value)
-}
-
-fn ground_dataset_id(prefix: &str, dataset: &PreparedGroundDataset) -> String {
-    let mut digest = sha2::Sha256::new();
-    use sha2::Digest as _;
-    digest.update(crate::pointcloud_ground::GROUND_ALGORITHM_ID.as_bytes());
-    digest.update(prefix.as_bytes());
-    digest.update(dataset.point_count.to_le_bytes());
-    for artifact in &dataset.artifacts {
-        digest.update(artifact.relative_path.as_bytes());
-        digest.update(artifact.object_hash.as_str().as_bytes());
-        digest.update(artifact.byte_length.to_le_bytes());
-    }
-    format!("ground-{prefix}-{}", hex::encode(digest.finalize()))
-}
-
-fn segment_dataset_id(dataset: &PreparedGroundDataset) -> String {
-    let mut digest = sha2::Sha256::new();
-    use sha2::Digest as _;
-    digest.update(SEGMENT_ALGORITHM_ID.as_bytes());
-    digest.update(dataset.point_count.to_le_bytes());
-    for artifact in &dataset.artifacts {
-        digest.update(artifact.relative_path.as_bytes());
-        digest.update(artifact.object_hash.as_str().as_bytes());
-        digest.update(artifact.byte_length.to_le_bytes());
-    }
-    format!("segment-{}", hex::encode(digest.finalize()))
-}
-
-fn derived_point_dataset_id(
-    prefix: &str,
-    algorithm_id: &str,
-    dataset: &PreparedGroundDataset,
-) -> String {
-    let mut digest = sha2::Sha256::new();
-    use sha2::Digest as _;
-    digest.update(algorithm_id.as_bytes());
-    digest.update(prefix.as_bytes());
-    digest.update(dataset.point_count.to_le_bytes());
-    for artifact in &dataset.artifacts {
-        digest.update(artifact.relative_path.as_bytes());
-        digest.update(artifact.object_hash.as_str().as_bytes());
-        digest.update(artifact.byte_length.to_le_bytes());
-    }
-    format!("{prefix}-{}", hex::encode(digest.finalize()))
-}
-
-#[allow(clippy::too_many_arguments)]
-fn derived_recipe_value(
-    recipe_id: &str,
-    algorithm_id: &str,
-    output_group_id: &str,
-    slot_id: &str,
-    output_role: &str,
-    output_type: &str,
-    output_hash: &ObjectHash,
-    source: &CanonicalGroundSource,
-    source_role: &str,
-    parameters: serde_json::Value,
-    source_fingerprint: ObjectHash,
-    completed_at: String,
-) -> serde_json::Value {
-    serde_json::json!({
-        "schemaId": "hcad.derived-recipe@1",
-        "schemaVersion": 1,
-        "recipeId": recipe_id,
-        "recipeKind": algorithm_id,
-        "generation": 1,
-        "state": "linked-current",
-        "outputGroupId": output_group_id,
-        "outputs": [{
-            "slotId": slot_id,
-            "role": output_role,
-            "outputId": output_group_id,
-            "typeId": output_type,
-            "locator": "source",
-            "currentRevision": 0,
-            "currentContentHash": output_hash,
-            "status": "present",
-        }],
-        "sources": [{
-            "entityId": source.entity.id,
-            "revision": source.entity.revision,
-            "contentHash": source.entity.version_hash,
-            "placementRevision": source.entity.revision,
-            "role": source_role,
-        }],
-        "parameterTypeId": algorithm_id,
-        "parameters": parameters,
-        "algorithmId": algorithm_id,
-        "algorithmVersion": "1",
-        "dependencyRecipeIds": [],
-        "staleCauses": [],
-        "lastSuccess": {
-            "generation": 1,
-            "sourceFingerprint": source_fingerprint,
-            "outputs": [{
-                "slotId": slot_id,
-                "outputId": output_group_id,
-                "revision": 0,
-                "contentHash": output_hash,
-            }],
-            "completedAt": completed_at,
-        },
-        "lastError": null,
-        "detach": null,
-    })
-}
-
-fn mesh_source_roles(
-    entity_id: &str,
-    content_hash: &ObjectHash,
-    source_role: &str,
-    placement: himmelcad_core::entity_model::Transform3d,
-    sampling_hash: Option<ObjectHash>,
-) -> Result<MeshSourceRolesV1, CanonicalAppRuntimeError> {
-    Ok(MeshSourceRolesV1 {
-        schema_id: MESH_SOURCE_ROLES_SCHEMA_ID.to_owned(),
-        schema_version: 1,
-        resource_id: format!("mesh-source-{entity_id}"),
-        content_hash: ObjectHash::of_bytes(b""),
-        roles: vec![MeshSourceRoleV1 {
-            source: DerivedSourceV1 {
-                entity_id: EntityId(entity_id.to_owned()),
-                revision: 0,
-                content_hash: content_hash.clone(),
-                placement_revision: 0,
-                role: source_role.to_owned(),
-            },
-            placement,
-            // MT-D26's admitted enum has exactly five roles. A grid carries its exact
-            // source role above and enters the draft through the Points evaluator.
-            role: MeshSourceRoleKindV1::Points,
-            sampling_tolerance: None,
-            sampling_hash,
-            boundary_hash: None,
-            exclusion_hashes: Vec::new(),
-        }],
-    })
-}
-
-fn ground_dataset_contract(
-    prepared: &PreparedGroundDataset,
-    dataset_id: &str,
-    entity_id: &str,
-    representation_slot: &str,
-) -> Result<(CanonicalPreparedDataset, GeometryObject, Representation), CanonicalAppRuntimeError> {
-    let artifacts = prepared
-        .artifacts
-        .iter()
-        .map(|artifact| PreparedDatasetArtifact {
-            relative_path: PathBuf::from(&artifact.relative_path),
-            resource: GeometryResource {
-                object_hash: artifact.object_hash.clone(),
-                media_type: artifact.media_type.clone(),
-                byte_length: Some(artifact.byte_length),
-            },
-        })
-        .collect::<Vec<_>>();
-    let root_metadata = artifacts
-        .iter()
-        .find(|artifact| artifact.relative_path == Path::new("metadata.json"))
-        .map(|artifact| artifact.resource.clone())
-        .ok_or_else(|| {
-            CanonicalAppRuntimeError::InvalidResidency(
-                "prepared ground dataset has no metadata".to_owned(),
-            )
-        })?;
-    let dataset = CanonicalPreparedDataset {
-        dataset_id: dataset_id.to_owned(),
-        format_id: "potree@2".to_owned(),
-        entity_id: entity_id.to_owned(),
-        representation_slot: representation_slot.to_owned(),
-        root_metadata: root_metadata.clone(),
-        artifacts,
-    };
-    let geometry = GeometryObject::PointCloud {
-        dataset: StreamedGeometry {
-            format_id: "potree@2".to_owned(),
-            metadata: root_metadata,
-            element_count: Some(prepared.point_count),
-        },
-    };
-    let representation = Representation {
-        role: RepresentationRole::Canonical,
-        geometry_ref: geometry_object_content_hash(&geometry)
-            .map_err(|error| CanonicalAppRuntimeError::InvalidResidency(error.to_string()))?,
-        authority: RepresentationAuthority::Authoritative,
-        dependency_hash: None,
-    };
-    Ok((dataset, geometry, representation))
 }
 
 fn register_materialized_destination(

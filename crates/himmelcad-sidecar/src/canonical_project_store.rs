@@ -22,6 +22,10 @@ use himmelcad_core::canonical_resource_catalog::CanonicalPresentationResourceSet
 use himmelcad_core::entity_model::{GeometryObject, GeometryResource, Representation};
 use himmelcad_core::entity_validation::geometry_object_content_hash;
 use himmelcad_core::hash::ObjectHash;
+pub use himmelcad_document::domain_commands::{
+    DomainImportProgress as CanonicalImportProgress,
+    DomainImportProgressPhase as CanonicalImportProgressPhase,
+};
 use himmelcad_io::{
     CanonicalImportPackage, CanonicalJsonObject, CanonicalPreparedDataset, CanonicalResourceSet,
     ProviderContractError,
@@ -135,26 +139,6 @@ pub struct CanonicalImportCommit {
     pub journal_entry: CanonicalJournalEntry,
     /// Durable provider/artifact inventory.
     pub inventory: CanonicalImportInventory,
-}
-
-/// Byte-measured phase of durable canonical import publication.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CanonicalImportProgressPhase {
-    /// Provider artifacts are copied and hash-verified into the transaction.
-    Staging,
-    /// Verified transaction objects are atomically published into the project.
-    Publishing,
-}
-
-/// Incremental byte progress for one durable canonical import phase.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CanonicalImportProgress {
-    /// Current publication phase.
-    pub phase: CanonicalImportProgressPhase,
-    /// Bytes processed in this phase.
-    pub completed_bytes: u64,
-    /// Total bytes that will be processed in this phase.
-    pub total_bytes: u64,
 }
 
 /// Hash-framed deterministic journal record.
