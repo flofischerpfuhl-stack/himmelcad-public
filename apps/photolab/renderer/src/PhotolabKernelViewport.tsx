@@ -121,8 +121,12 @@ export const PhotolabKernelViewport = forwardRef<
   {
     readonly onCursorSnap: (snap: SnapResult | null) => void;
     readonly onLog: (level: 'debug' | 'info' | 'warn' | 'error', message: string) => void;
+    readonly onRendererReady?: (facts: {
+      readonly backend: 'webgpu' | 'webgl2' | 'software';
+      readonly adapter: { readonly driver: string; readonly isFallbackAdapter: boolean };
+    }) => void;
   }
->(function PhotolabKernelViewport({ onCursorSnap, onLog }, ref): JSX.Element {
+>(function PhotolabKernelViewport({ onCursorSnap, onLog, onRendererReady }, ref): JSX.Element {
   const kernelRef = useRef<KernelViewportHandle | null>(null);
   const hostRef = useRef<HTMLDivElement | null>(null);
   const readyRef = useRef(createDeferred<KernelViewportHandle>());
@@ -132,11 +136,11 @@ export const PhotolabKernelViewport = forwardRef<
   const gcpAnnotationIdsRef = useRef(new Set<EntityId>());
   const annotationRevisionsRef = useRef(new Map<EntityId, number>());
   const slotGenerationsRef = useRef(new Map<EntityId, number>());
-  const callbacksRef = useRef({ onCursorSnap, onLog });
+  const callbacksRef = useRef({ onCursorSnap, onLog, onRendererReady });
+  callbacksRef.current = { onCursorSnap, onLog, onRendererReady };
   const viewModeRef = useRef<KernelViewMode>('3d');
   const automationClipIdsRef = useRef(new Set<string>());
   const framedInitialAnnotationsRef = useRef(false);
-  callbacksRef.current = { onCursorSnap, onLog };
   const [cursor, setCursor] = useState<SourcePosition3 | null>(null);
 
   const unload = useCallback((entityId: EntityId) => {
@@ -622,6 +626,14 @@ export const PhotolabKernelViewport = forwardRef<
       'info',
       `Shared viewer ready (${handle.hardwarePolicy.deploymentProfile}, ${handle.session.diagnostics().capabilities.backend})`,
     );
+    const diagnostics = handle.session.diagnostics();
+    callbacksRef.current.onRendererReady?.({
+      backend: diagnostics.backend,
+      adapter: {
+        driver: diagnostics.capabilities.driverInfo || diagnostics.capabilities.driver,
+        isFallbackAdapter: diagnostics.capabilities.isFallbackAdapter,
+      },
+    });
   }, []);
 
   const handlePick = useCallback((candidate: KernelPickCandidate | null) => {

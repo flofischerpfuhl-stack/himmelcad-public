@@ -6,166 +6,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     admission_candidate_with_residency, estimate_tile_load, AdmissionPlan, AdmissionPlanner,
-    BackgroundLaneBudgets, EvictionPlan, FrameBudget, FrameLane, HierarchyPageRequest,
-    LaneWorkBudget, LaneWorkUsage, ResidencyError, ResidencyManager, ResidencyStage,
+    BackgroundLaneBudgets, EvictionPlan, FrameBudget, FrameLane, FrontierBudget,
+    HierarchyPageRequest, LaneWorkUsage, ResidencyError, ResidencyManager, ResidencyStage,
     ResidencyTicket, ResourceBudget, ResourceCost, SelectedTile, TileKey, TileLoadEstimate,
     TileResidency, TileSelection,
 };
-
-const MEBIBYTE: u64 = 1_048_576;
-
-/// Hardware class from Viewer Core addendum section 1.1.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum FrontierHardwareClass {
-    /// Integrated/entry hardware floor.
-    I,
-    /// Laptop-workstation floor.
-    W,
-    /// Desktop discrete-GPU floor.
-    D,
-}
-
-/// Tunable hard limits for the visible prepared frontier.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct FrontierBudget {
-    /// Hardware class whose checked-in policy selected these values.
-    pub hardware_class: FrontierHardwareClass,
-    /// Maximum submitted point samples in one frame.
-    pub points: u64,
-    /// Maximum selected GPU buffer bytes in one frame.
-    pub bytes: u64,
-    /// Maximum selected draw calls in one frame.
-    pub draw_calls: u32,
-    /// Hard per-frame remainder caps for lanes 4–6 at rest.
-    #[serde(default = "unlimited_background_lanes")]
-    pub background_lanes: BackgroundLaneBudgets,
-    /// Motion policy: coarse fallback lanes stay live while refinement is paused.
-    #[serde(default = "unlimited_background_lanes")]
-    pub motion_background_lanes: BackgroundLaneBudgets,
-}
-
-impl FrontierBudget {
-    /// Checked-in V-02 class defaults. Values are calibration tunables; the
-    /// class semantics and hard-ceiling behavior are not.
-    #[must_use]
-    pub const fn for_hardware_class(hardware_class: FrontierHardwareClass) -> Self {
-        match hardware_class {
-            FrontierHardwareClass::I => Self {
-                hardware_class,
-                points: 4_000_000,
-                bytes: 96 * MEBIBYTE,
-                draw_calls: 1_000,
-                background_lanes: class_lane_budgets(1),
-                motion_background_lanes: motion_lane_budgets(class_lane_budgets(1)),
-            },
-            FrontierHardwareClass::W => Self {
-                hardware_class,
-                points: 8_000_000,
-                bytes: 192 * MEBIBYTE,
-                draw_calls: 2_000,
-                background_lanes: class_lane_budgets(2),
-                motion_background_lanes: motion_lane_budgets(class_lane_budgets(2)),
-            },
-            FrontierHardwareClass::D => Self {
-                hardware_class,
-                points: 16_000_000,
-                bytes: 384 * MEBIBYTE,
-                draw_calls: 4_000,
-                background_lanes: class_lane_budgets(4),
-                motion_background_lanes: motion_lane_budgets(class_lane_budgets(4)),
-            },
-        }
-    }
-
-    /// Compatibility ceiling used by callers that do not yet distinguish
-    /// visible-frontier limits from residency limits.
-    #[must_use]
-    pub const fn from_resource_budget(budget: ResourceBudget) -> Self {
-        Self {
-            hardware_class: FrontierHardwareClass::W,
-            points: budget.points,
-            bytes: budget
-                .gpu_buffer_bytes
-                .saturating_add(budget.gpu_texture_bytes),
-            draw_calls: budget.draw_calls,
-            background_lanes: BackgroundLaneBudgets::UNLIMITED,
-            motion_background_lanes: BackgroundLaneBudgets::UNLIMITED,
-        }
-    }
-
-    /// Resolves lane upload/decode remainder from the measured frame policy.
-    #[must_use]
-    pub fn with_frame_budget(mut self, frame: FrameBudget) -> Self {
-        let upload = split_u64(frame.upload_bytes);
-        let decode = split_f32(frame.decode_ms);
-        self.background_lanes.lane4.upload_bytes = upload[0];
-        self.background_lanes.lane5.upload_bytes = upload[1];
-        self.background_lanes.lane6.upload_bytes = upload[2];
-        self.background_lanes.lane4.decode_ms = decode[0];
-        self.background_lanes.lane5.decode_ms = decode[1];
-        self.background_lanes.lane6.decode_ms = decode[2];
-        self.motion_background_lanes = motion_lane_budgets(self.background_lanes);
-        self
-    }
-}
-
-const fn class_lane_budgets(multiplier: u64) -> BackgroundLaneBudgets {
-    let multiplier_u32 = multiplier as u32;
-    BackgroundLaneBudgets {
-        lane4: LaneWorkBudget {
-            points: 500_000 * multiplier,
-            bytes: 28 * MEBIBYTE * multiplier,
-            draw_calls: 300 * multiplier_u32,
-            upload_bytes: 4 * MEBIBYTE * multiplier,
-            decode_ms: 0.5 * multiplier as f32,
-        },
-        lane5: LaneWorkBudget {
-            points: 2_000_000 * multiplier,
-            bytes: 34 * MEBIBYTE * multiplier,
-            draw_calls: 350 * multiplier_u32,
-            upload_bytes: 6 * MEBIBYTE * multiplier,
-            decode_ms: 0.6 * multiplier as f32,
-        },
-        lane6: LaneWorkBudget {
-            points: 1_500_000 * multiplier,
-            bytes: 34 * MEBIBYTE * multiplier,
-            draw_calls: 350 * multiplier_u32,
-            upload_bytes: 6 * MEBIBYTE * multiplier,
-            decode_ms: 0.4 * multiplier as f32,
-        },
-    }
-}
-
-const fn motion_lane_budgets(mut lanes: BackgroundLaneBudgets) -> BackgroundLaneBudgets {
-    lanes.lane6 = LaneWorkBudget {
-        points: 0,
-        bytes: 0,
-        draw_calls: 0,
-        upload_bytes: 0,
-        decode_ms: 0.0,
-    };
-    lanes
-}
-
-const fn unlimited_background_lanes() -> BackgroundLaneBudgets {
-    BackgroundLaneBudgets::UNLIMITED
-}
-
-fn split_u64(total: u64) -> [u64; 3] {
-    let lane4 = total.saturating_mul(30) / 100;
-    let lane5 = total.saturating_mul(35) / 100;
-    [
-        lane4,
-        lane5,
-        total.saturating_sub(lane4).saturating_sub(lane5),
-    ]
-}
-
-fn split_f32(total: f32) -> [f32; 3] {
-    let bounded = total.max(0.0);
-    [bounded * 0.3, bounded * 0.35, bounded * 0.35]
-}
 
 /// Exact reason why the visible frontier could not retain more detail.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -940,8 +785,7 @@ impl StreamingCoordinator {
             }
             let index = frame_lane_index(lane);
             let lane_decode = lane_usage[index].decode_ms + decode_ms;
-            let lane_exceeded = lane_budgets
-                .for_lane(lane)
+            let lane_exceeded = crate::scheduler::lane_budget(lane_budgets, lane)
                 .is_some_and(|budget| lane_decode > budget.decode_ms);
             if claimed_ms + decode_ms > decode_budget_ms || lane_exceeded {
                 if deferred.is_none() {
@@ -958,8 +802,7 @@ impl StreamingCoordinator {
         }
         if actions.is_empty() && available_workers > 0 && decode_budget_ms > 0.0 {
             if let Some((key, ticket, decode_ms, lane)) = deferred {
-                if lane_budgets
-                    .for_lane(lane)
+                if crate::scheduler::lane_budget(lane_budgets, lane)
                     .is_some_and(|budget| decode_ms > budget.decode_ms)
                 {
                     return Ok((actions, claimed_ms, lane_usage));
@@ -1366,10 +1209,11 @@ fn selected_tile_priority(left: &SelectedTile, right: &SelectedTile) -> std::cmp
 #[cfg(test)]
 mod tests {
     use super::{
-        coalesce_wanted, FrontierBudget, FrontierHardwareClass, FrontierLimitReason,
-        StreamingAction, StreamingCoordinator, StreamingRuntimeLimits, ADMISSION_LOOKAHEAD_FRAMES,
+        coalesce_wanted, FrontierBudget, FrontierLimitReason, StreamingAction,
+        StreamingCoordinator, StreamingRuntimeLimits, ADMISSION_LOOKAHEAD_FRAMES,
         RETRY_BACKOFF_FRAMES,
     };
+    use crate::FrontierHardwareClass;
 
     #[test]
     fn hard_frontier_budget_drops_additive_detail_but_keeps_resident_coarse_coverage() {

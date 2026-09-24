@@ -1,7 +1,6 @@
 #![forbid(unsafe_code)]
 
 mod dense_raster_prep;
-mod hardware_runtime;
 mod mesh_tiler;
 pub use himmelcad_photolab_sidecar::prepared_triangle_mesh;
 mod product_export;

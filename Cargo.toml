@@ -11,6 +11,7 @@ members = [
     "crates/himmelcad-domain-raster",
     "crates/himmelcad-domain-registration",
     "crates/himmelcad-domain-surface",
+    "crates/himmelcad-hardware-profile",
     "crates/himmelcad-io",
     "crates/himmelcad-model",
     "crates/himmelcad-prepared",

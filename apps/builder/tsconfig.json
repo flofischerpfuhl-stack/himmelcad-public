@@ -14,6 +14,7 @@
     { "path": "../../packages/@himmelcad/agent" },
     { "path": "../../packages/@himmelcad/console" },
     { "path": "../../packages/@himmelcad/data" },
+    { "path": "../../packages/@himmelcad/hardware-profile" },
     { "path": "../../packages/@himmelcad/plan" },
     { "path": "../../packages/@himmelcad/specs" },
     { "path": "../../packages/@himmelcad/theme" },

@@ -27,6 +27,11 @@ import {
   type RegisterJobInput,
 } from '@himmelcad/app';
 import { ProviderCredentialStore } from '@himmelcad/automation-host/provider-credentials';
+import {
+  appendChromiumLaunchSwitches,
+  deriveRenderingStatus,
+  type ViewerRenderingFacts,
+} from '@himmelcad/hardware-profile';
 
 import {
   callSidecar,
@@ -47,7 +52,6 @@ import {
 } from './projectLifecycle';
 import { listProductImportCatalog } from './productImportCatalog';
 import {
-  appendSoftwareRenderingSwitches,
   BuilderRendererFallbackController,
   BuilderRendererFallbackStore,
 } from './rendererFallback';
@@ -102,10 +106,12 @@ const rendererFallbackStore = new BuilderRendererFallbackStore(
 );
 const launchRendererStatus = rendererFallbackStore.load();
 const rendererFallbackController = new BuilderRendererFallbackController(rendererFallbackStore);
-if (process.platform === 'win32' && launchRendererStatus.mode === 'hardware') {
-  app.commandLine.appendSwitch('use-angle', 'd3d11');
-}
-appendSoftwareRenderingSwitches(app.commandLine, launchRendererStatus, process.versions.electron);
+appendChromiumLaunchSwitches(app.commandLine, {
+  os: process.platform === 'win32' ? 'windows' : process.platform === 'darwin' ? 'macos' : 'linux',
+  development: isDev,
+  electronVersion: process.versions.electron,
+  persistedFallback: launchRendererStatus,
+});
 
 let mainWindow: BrowserWindow | null = null;
 let automationHost: ReturnType<typeof registerElectronAutomationHost> | null = null;
@@ -297,12 +303,6 @@ async function prepareDevelopmentRasterTiles(
 // Must be called BEFORE `app.whenReady()` (Chromium reads the switch
 // during browser-process init).
 app.commandLine.appendSwitch('disable-features', 'MiddleClickAutoscroll');
-if (isDev && process.platform === 'linux') {
-  // Chromium keeps Linux WebGPU behind this development opt-in. Packaged
-  // builds retain normal platform policy and the viewer's permanent WebGL2
-  // fallback.
-  app.commandLine.appendSwitch('enable-unsafe-webgpu');
-}
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -889,7 +889,15 @@ void app.whenReady().then(async () => {
 
 function registerIpc(): void {
   ipcMain.on('renderer:status-sync', (event) => {
-    event.returnValue = rendererFallbackStore.status();
+    const fallback = rendererFallbackStore.status();
+    event.returnValue = {
+      fallback,
+      status: deriveRenderingStatus({
+        chromiumFeatureStatus: null,
+        persistedFallback: fallback,
+        viewer: null,
+      }),
+    };
   });
   ipcMain.handle('window:minimize', () => {
     mainWindow?.minimize();
@@ -913,7 +921,20 @@ function registerIpc(): void {
   });
   ipcMain.handle('window:is-maximized', () => mainWindow?.isMaximized() ?? false);
 
-  ipcMain.handle('renderer:status', () => rendererFallbackStore.status());
+  ipcMain.handle('renderer:status', async (_event, viewer: ViewerRenderingFacts | null) => {
+    const chromiumFeatureStatus = app.getGPUFeatureStatus();
+    const status = deriveRenderingStatus({
+      chromiumFeatureStatus,
+      chromiumGpuInfo: await app.getGPUInfo('basic'),
+      persistedFallback: rendererFallbackStore.status(),
+      viewer,
+    });
+    console.info(
+      '[renderer-status]',
+      JSON.stringify({ chromiumFeatureStatus, viewer, status: status.state }),
+    );
+    return status;
+  });
   ipcMain.handle('renderer:software-required', async (_event, reason: unknown) => {
     if (typeof reason !== 'string' || !reason.trim()) {
       throw new Error('renderer fallback reason is required');

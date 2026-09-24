@@ -12,29 +12,26 @@ import {
 } from 'node:fs';
 import { dirname } from 'node:path';
 
-export interface BuilderRendererFallbackDecision {
-  readonly mode: 'software';
-  readonly from: 'webgl2';
-  readonly reason: string;
-  readonly gpu: string;
-  readonly driver: string;
-  readonly decidedAt: string;
-}
+import {
+  RendererFallbackController,
+  appendChromiumLaunchSwitches,
+  type GpuLossAction,
+  type PersistedRendererFallback,
+  type RendererFallbackDecision,
+  type RendererFallbackStore,
+} from '@himmelcad/hardware-profile';
+
+export type BuilderRendererFallbackDecision = RendererFallbackDecision;
 
 interface BuilderRendererSettingsFileV1 {
   readonly schemaVersion: 1;
   readonly rendererFallback: BuilderRendererFallbackDecision | null;
 }
 
-export type BuilderRendererStatus = { readonly mode: 'hardware' } | BuilderRendererFallbackDecision;
+export type BuilderRendererStatus = PersistedRendererFallback;
+export type BuilderGpuLossAction = GpuLossAction;
 
-export type BuilderGpuLossAction =
-  | { readonly kind: 'retryCurrent'; readonly reason: string }
-  | { readonly kind: 'fallbackWebgl2'; readonly reason: string }
-  | { readonly kind: 'relaunchSoftware'; readonly status: BuilderRendererFallbackDecision }
-  | { readonly kind: 'none' };
-
-export class BuilderRendererFallbackStore {
+export class BuilderRendererFallbackStore implements RendererFallbackStore {
   private decision: BuilderRendererFallbackDecision | null = null;
 
   constructor(private readonly path: string) {}
@@ -118,48 +115,19 @@ export class BuilderRendererFallbackStore {
   }
 }
 
-/** Session-scoped ladder and relaunch guard. A persisted software launch never loops. */
-export class BuilderRendererFallbackController {
-  private gpuLosses = 0;
-  private relaunchRequested = false;
-
-  constructor(private readonly store: BuilderRendererFallbackStore) {}
-
-  gpuProcessGone(reason: string, gpu: string, driver: string): BuilderGpuLossAction {
-    if (this.store.status().mode === 'software' || this.relaunchRequested) return { kind: 'none' };
-    this.gpuLosses += 1;
-    if (this.gpuLosses === 1) return { kind: 'retryCurrent', reason };
-    if (this.gpuLosses === 2) return { kind: 'fallbackWebgl2', reason };
-    return this.requestSoftware(reason, gpu, driver);
-  }
-
-  requestSoftware(reason: string, gpu: string, driver: string): BuilderGpuLossAction {
-    if (this.store.status().mode === 'software' || this.relaunchRequested) return { kind: 'none' };
-    const status = this.store.useSoftware({ reason, gpu, driver });
-    this.relaunchRequested = true;
-    return { kind: 'relaunchSoftware', status };
-  }
-
-  tryHardwareAgain(): boolean {
-    if (this.relaunchRequested || this.store.status().mode !== 'software') return false;
-    this.store.clear();
-    this.relaunchRequested = true;
-    return true;
-  }
-}
+export { RendererFallbackController as BuilderRendererFallbackController };
 
 export function appendSoftwareRenderingSwitches(
   commandLine: { appendSwitch(name: string, value?: string): void },
   status: BuilderRendererStatus,
   electronVersion: string,
 ): void {
-  if (status.mode !== 'software') return;
-  commandLine.appendSwitch('use-gl', 'angle');
-  commandLine.appendSwitch('use-angle', 'swiftshader');
-  const major = Number(electronVersion.split('.')[0]);
-  if (!Number.isFinite(major) || major >= 30) {
-    commandLine.appendSwitch('enable-unsafe-swiftshader');
-  }
+  appendChromiumLaunchSwitches(commandLine, {
+    os: 'windows',
+    development: false,
+    electronVersion,
+    persistedFallback: status,
+  });
 }
 
 function parseSettings(value: unknown): BuilderRendererSettingsFileV1 {

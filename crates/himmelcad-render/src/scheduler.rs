@@ -4,7 +4,10 @@ use std::collections::{BTreeMap, VecDeque};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{DatasetId, FrameBudget, ResourceBudget, ResourceCost, TileId};
+use crate::{
+    BackgroundLaneBudgets, DatasetId, FrameBudget, LaneWorkBudget, ResourceBudget, ResourceCost,
+    TileId,
+};
 
 /// Viewer Core frame lane. Ordering is semantic: lower-numbered lanes are
 /// always planned before higher-numbered refinement work.
@@ -36,64 +39,16 @@ impl FrameLane {
     }
 }
 
-/// Hard per-frame ceiling for one background lane.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LaneWorkBudget {
-    /// Point and splat samples admitted by the lane.
-    pub points: u64,
-    /// Selected GPU bytes admitted by the lane.
-    pub bytes: u64,
-    /// Draws admitted by the lane.
-    pub draw_calls: u32,
-    /// Upload bytes admitted by the lane.
-    pub upload_bytes: u64,
-    /// Decode milliseconds admitted by the lane.
-    pub decode_ms: f32,
-}
-
-impl LaneWorkBudget {
-    /// Compatibility value for callers predating protected scheduling.
-    pub const UNLIMITED: Self = Self {
-        points: u64::MAX,
-        bytes: u64::MAX,
-        draw_calls: u32::MAX,
-        upload_bytes: u64::MAX,
-        decode_ms: f32::MAX,
-    };
-}
-
-/// Lane 4–6 ceilings carried by the class frontier policy.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BackgroundLaneBudgets {
-    /// Coarse mesh/raster lane.
-    pub lane4: LaneWorkBudget,
-    /// Coarse cloud/splat lane.
-    pub lane5: LaneWorkBudget,
-    /// Cross-provider refinement lane.
-    pub lane6: LaneWorkBudget,
-}
-
-impl BackgroundLaneBudgets {
-    /// Compatibility value used by the pre-V-03 admission API.
-    pub const UNLIMITED: Self = Self {
-        lane4: LaneWorkBudget::UNLIMITED,
-        lane5: LaneWorkBudget::UNLIMITED,
-        lane6: LaneWorkBudget::UNLIMITED,
-    };
-
-    /// Returns the ceiling for a background lane. Protected lanes have no
-    /// droppable lane ceiling and therefore return `None`.
-    #[must_use]
-    pub const fn for_lane(self, lane: FrameLane) -> Option<LaneWorkBudget> {
-        match lane {
-            FrameLane::Lane4MeshRasterFallback => Some(self.lane4),
-            FrameLane::Lane5CloudSplatFallback => Some(self.lane5),
-            FrameLane::Lane6Refinement => Some(self.lane6),
-            FrameLane::Lane1CameraClip
-            | FrameLane::Lane2Interaction
-            | FrameLane::Lane3Canonical => None,
+pub(crate) const fn lane_budget(
+    budgets: BackgroundLaneBudgets,
+    lane: FrameLane,
+) -> Option<LaneWorkBudget> {
+    match lane {
+        FrameLane::Lane4MeshRasterFallback => Some(budgets.lane4),
+        FrameLane::Lane5CloudSplatFallback => Some(budgets.lane5),
+        FrameLane::Lane6Refinement => Some(budgets.lane6),
+        FrameLane::Lane1CameraClip | FrameLane::Lane2Interaction | FrameLane::Lane3Canonical => {
+            None
         }
     }
 }
@@ -369,7 +324,7 @@ impl AdmissionPlanner {
                     continue;
                 }
                 let next_lane = lane_usage[lane_index].with_candidate(&candidate);
-                if let Some(budget) = lane_budgets.for_lane(lane) {
+                if let Some(budget) = lane_budget(lane_budgets, lane) {
                     if let Some(reason) = lane_rejection_reason(next_lane, budget) {
                         rejected.push(RejectedCandidate {
                             key: candidate.key,
@@ -413,7 +368,7 @@ impl AdmissionPlanner {
                 (!candidate.starts_request || frame_budget.new_requests > 0)
                     && (candidate.decode_ms <= 0.0 || frame_budget.decode_ms > 0.0)
                     && (candidate.upload_bytes == 0 || frame_budget.upload_bytes > 0)
-                    && lane_budgets.for_lane(candidate.lane).is_none_or(|budget| {
+                    && lane_budget(lane_budgets, candidate.lane).is_none_or(|budget| {
                         lane_rejection_reason(
                             lane_usage[lane_index(candidate.lane)].with_candidate(candidate),
                             budget,

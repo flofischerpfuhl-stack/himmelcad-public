@@ -19,6 +19,7 @@ const SKIPPED_DIRECTORIES = new Set([
 ]);
 const DISPLAY_SAFE_RUST_CRATES = new Set([
   'himmelcad-model',
+  'himmelcad-hardware-profile',
   'himmelcad-prepared',
   'himmelcad-spatial',
   'himmelcad-transform',

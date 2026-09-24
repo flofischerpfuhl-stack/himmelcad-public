@@ -39,6 +39,7 @@
     "@himmelcad/automation-host": "workspace:*",
     "@himmelcad/console": "workspace:*",
     "@himmelcad/data": "workspace:*",
+    "@himmelcad/hardware-profile": "workspace:*",
     "@himmelcad/plan": "workspace:*",
     "@himmelcad/specs": "workspace:*",
     "@himmelcad/theme": "workspace:*",

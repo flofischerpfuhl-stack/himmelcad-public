@@ -13,6 +13,8 @@ use std::{
 };
 
 use fs2::FileExt;
+pub use himmelcad_hardware_profile::memory_os_ui_reserve_bytes;
+use himmelcad_hardware_profile::usable_compute_memory_bytes;
 use himmelcad_model::{entity::EntityId, hash::ObjectHash};
 use himmelcad_process::jobs::{
     CancellationToken, CheckpointCommitState, CheckpointId, CHECKPOINT_SCHEMA_VERSION,
@@ -363,14 +365,6 @@ pub struct JobAdmission {
     pub disk_preflight: Option<DiskPreflight>,
     pub memory_preflight: Option<MemoryPreflight>,
     pub toolchain_preflight: Option<WorkerToolchainAdmission>,
-}
-
-/// OS/UI reserve deducted before per-stage budgets are assigned.
-#[must_use]
-pub fn memory_os_ui_reserve_bytes(physical_memory_bytes: u64) -> u64 {
-    // WP-A7 X6 tunable: reserve the larger of 4 GiB or 12.5% so small machines
-    // retain a usable desktop while larger machines scale their system headroom.
-    (4 * GIB).max(physical_memory_bytes / 8)
 }
 
 #[must_use]
@@ -1636,9 +1630,7 @@ impl JobManager {
             .filter(|managed| managed.job.state == PhotolabJobState::Running)
             .map(|managed| managed.memory_reservation_bytes)
             .fold(0_u64, u64::saturating_add);
-        physical_memory_bytes
-            .saturating_sub(memory_os_ui_reserve_bytes(physical_memory_bytes))
-            .saturating_sub(running_holds)
+        usable_compute_memory_bytes(physical_memory_bytes, running_holds)
     }
 
     /// Latest measured ALIKED extraction calibration available in current project history.

@@ -9,6 +9,7 @@
   },
   "references": [
     { "path": "../../packages/@himmelcad/agent" },
-    { "path": "../../packages/@himmelcad/automation-host" }
+    { "path": "../../packages/@himmelcad/automation-host" },
+    { "path": "../../packages/@himmelcad/hardware-profile" }
   ]
 }

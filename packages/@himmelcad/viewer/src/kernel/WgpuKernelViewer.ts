@@ -291,6 +291,8 @@ export interface KernelDeviceCapabilities {
   readonly maxStorageBufferBindingSize: number;
   readonly maxBufferSize: number;
   readonly maxSampleCount: number;
+  /** Browser/adapter fallback verdict used by the shared truthful-status policy. */
+  readonly isFallbackAdapter: boolean;
 }
 
 /** Stable renderer-produced RGBA capture limits for the version-one boundary. */
@@ -1624,15 +1626,22 @@ export class WgpuKernelViewer {
       if (backend !== 'automatic' && module.WasmViewer.create_with_backend === undefined) {
         throw new Error('loaded viewer kernel does not support explicit backend selection');
       }
+      const browserFallbackAdapter = await browserAdapterFallbackStatus();
       const resolvedBackend =
         backend === 'automatic' && module.WasmViewer.create_with_backend !== undefined
-          ? await reliableAutomaticBrowserBackend()
+          ? browserFallbackAdapter === true
+            ? 'webgl2'
+            : 'automatic'
           : backend;
       const binding =
         resolvedBackend === 'automatic'
           ? await module.WasmViewer.create(canvas, width, height)
           : await module.WasmViewer.create_with_backend!(canvas, width, height, resolvedBackend);
-      const capabilities = parseCapabilities(binding.capabilities_json());
+      const parsedCapabilities = parseCapabilities(binding.capabilities_json());
+      const capabilities: KernelDeviceCapabilities = {
+        ...parsedCapabilities,
+        isFallbackAdapter: browserFallbackAdapter ?? parsedCapabilities.deviceKind === 'cpu',
+      };
       return new WgpuKernelViewer(canvas, binding, capabilities);
     });
   }
@@ -1729,9 +1738,7 @@ export class WgpuKernelViewer {
       JSON.stringify({
         from,
         to,
-        ...(cursorAnchor
-          ? { cursorAnchor: cursorAnchor.world, cursorNdc: cursorAnchor.ndc }
-          : {}),
+        ...(cursorAnchor ? { cursorAnchor: cursorAnchor.world, cursorNdc: cursorAnchor.ndc } : {}),
       }),
       progress,
     );
@@ -2805,7 +2812,9 @@ export class WgpuKernelViewer {
       throw new TypeError('kernel streaming frame plan is malformed');
     }
     const visibilityDelta = isRecord(value.visibilityDelta)
-      ? (value.visibilityDelta as unknown as NonNullable<KernelStreamingFramePlan['visibilityDelta']>)
+      ? (value.visibilityDelta as unknown as NonNullable<
+          KernelStreamingFramePlan['visibilityDelta']
+        >)
       : { shownTiles: 0, hiddenTiles: 0, touchedProxies: 0 };
     if (isRecord(value.frontier)) {
       return { ...value, visibilityDelta } as unknown as KernelStreamingFramePlan;
@@ -3659,19 +3668,19 @@ function validResidencyStageCounts(value: unknown): boolean {
   ].every((stage) => Number.isSafeInteger(value[stage]) && Number(value[stage]) >= 0);
 }
 
-async function reliableAutomaticBrowserBackend(): Promise<KernelBackendPreference> {
+async function browserAdapterFallbackStatus(): Promise<boolean | null> {
   const navigatorWithGpu = globalThis.navigator as
     | (Navigator & { readonly gpu?: BrowserGpuProbe })
     | undefined;
   const gpu = navigatorWithGpu?.gpu;
-  if (gpu === undefined) return 'automatic';
+  if (gpu === undefined) return null;
   try {
     const adapter = await gpu.requestAdapter({ powerPreference: 'high-performance' });
-    return adapter?.info?.isFallbackAdapter === true ? 'webgl2' : 'automatic';
+    return adapter?.info?.isFallbackAdapter ?? null;
   } catch {
     // Let the Rust automatic selector retain its permanent WebGL2 fallback when
     // adapter probing itself is unavailable or rejected by the browser.
-    return 'automatic';
+    return null;
   }
 }
 
@@ -3776,7 +3785,7 @@ function globalDevicePixelRatio(): number {
   return typeof globalThis.devicePixelRatio === 'number' ? globalThis.devicePixelRatio : 1;
 }
 
-function parseCapabilities(json: string): KernelDeviceCapabilities {
+function parseCapabilities(json: string): Omit<KernelDeviceCapabilities, 'isFallbackAdapter'> {
   const value: unknown = JSON.parse(json);
   if (!isRecord(value)) throw new TypeError('kernel capability report is not an object');
   const maxTextureDimension2d = finitePositiveInteger(value.maxTextureDimension2d);
@@ -3796,7 +3805,7 @@ function parseCapabilities(json: string): KernelDeviceCapabilities {
   ) {
     throw new TypeError('kernel capability report is malformed');
   }
-  return value as unknown as KernelDeviceCapabilities;
+  return value as unknown as Omit<KernelDeviceCapabilities, 'isFallbackAdapter'>;
 }
 
 function parseRgbaCaptureCapabilities(json: string): KernelRgbaCaptureCapabilities {

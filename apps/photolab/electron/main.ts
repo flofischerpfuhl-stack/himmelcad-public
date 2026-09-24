@@ -33,6 +33,11 @@ import {
   registerElectronAutomationHost,
 } from '@himmelcad/automation-host/electron';
 import { ProviderCredentialStore } from '@himmelcad/automation-host/provider-credentials';
+import {
+  appendChromiumLaunchSwitches,
+  deriveRenderingStatus,
+  type ViewerRenderingFacts,
+} from '@himmelcad/hardware-profile';
 
 import {
   callSidecar,
@@ -68,6 +73,12 @@ const RENDERER_URL =
     ? 'http://localhost:5174/'
     : pathToFileURL(resolve(__dirname, '../renderer/index.html')).href;
 app.setName('HimmelCAD PhotoLab');
+appendChromiumLaunchSwitches(app.commandLine, {
+  os: process.platform === 'win32' ? 'windows' : process.platform === 'darwin' ? 'macos' : 'linux',
+  development: isDev,
+  electronVersion: process.versions.electron,
+  persistedFallback: { mode: 'hardware' },
+});
 let mainWindow: BrowserWindow | null = null;
 let automationHost: ReturnType<typeof registerElectronAutomationHost> | null = null;
 let currentWorkingPath: string | null = null;
@@ -555,6 +566,14 @@ function requireProductExportConfirmation(
 }
 
 function registerIpc(): void {
+  ipcMain.handle('renderer:status', async (_event, viewer: ViewerRenderingFacts | null) =>
+    deriveRenderingStatus({
+      chromiumFeatureStatus: app.getGPUFeatureStatus(),
+      chromiumGpuInfo: await app.getGPUInfo('basic'),
+      persistedFallback: { mode: 'hardware' },
+      viewer,
+    }),
+  );
   ipcMain.handle('window:minimize', () => mainWindow?.minimize());
   ipcMain.handle('window:maximize-toggle', () => {
     if (!mainWindow) return false;

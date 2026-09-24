@@ -6,21 +6,19 @@
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use himmelcad_hardware_profile::{available_compute_backends, derive_compute_budget};
+pub use himmelcad_hardware_profile::{
+    BackendResourcePlan, ComputeBackend as ModelBackend, CpuCapabilities, CudaCapabilities,
+    CudaComputeCapability, HardwareCapabilities, HostOperatingSystem, VulkanCapabilities,
+};
 use himmelcad_model::hash::ObjectHash;
 
 use crate::photolab::AlignmentQualityProfile;
 
+#[cfg(test)]
 const MIB: u64 = 1024 * 1024;
+#[cfg(test)]
 const GIB: u64 = 1024 * MIB;
-
-/// Compute backend encoded by a packaged model artifact.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum ModelBackend {
-    Cpu,
-    Vulkan,
-    Cuda,
-}
 
 /// On-disk representation of an offline model artifact.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -261,65 +259,6 @@ pub struct RequiredOfflineModel {
     pub quality_fingerprint: ObjectHash,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum HostOperatingSystem {
-    Windows,
-    Linux,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CpuCapabilities {
-    pub physical_cores: u16,
-    pub logical_cores: u16,
-    pub supports_avx2: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct VulkanCapabilities {
-    pub api_version: String,
-    pub device_name: String,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CudaComputeCapability {
-    pub major: u8,
-    pub minor: u8,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CudaCapabilities {
-    pub device_name: String,
-    pub compute_capability: CudaComputeCapability,
-}
-
-/// Snapshot taken before a run is queued. Planning performs no hardware probing itself.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct HardwareCapabilities {
-    pub operating_system: HostOperatingSystem,
-    pub ram_bytes: u64,
-    pub dedicated_vram_bytes: Option<u64>,
-    pub cpu: CpuCapabilities,
-    pub vulkan: Option<VulkanCapabilities>,
-    pub cuda: Option<CudaCapabilities>,
-}
-
-/// Hardware-sensitive limits for one backend. They do not alter model or profile quality.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BackendResourcePlan {
-    pub backend: ModelBackend,
-    pub tile_edge_pixels: u32,
-    pub batch_size: u16,
-    pub max_concurrency: u16,
-    pub cpu_threads_per_worker: u16,
-}
-
 /// One locally verified artifact in an ordered, quality-equivalent fallback chain.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -387,7 +326,7 @@ pub fn plan_offline_models(
         return Err(OfflineModelPlanningError::EmptyRequirements);
     }
 
-    let backend_order = available_backends(hardware);
+    let backend_order = available_compute_backends(hardware);
     let mut planned_models = Vec::with_capacity(requirements.len());
     for requirement in requirements {
         if requirement.id.trim().is_empty() || requirement.version.trim().is_empty() {
@@ -411,7 +350,7 @@ pub fn plan_offline_models(
     let resources = backend_order
         .iter()
         .copied()
-        .map(|backend| resource_plan(backend, hardware))
+        .map(|backend| derive_compute_budget(backend, hardware))
         .collect();
 
     Ok(OfflineModelExecutionPlan {
@@ -528,47 +467,6 @@ fn validate_installation(
         sha256: manifest.sha256.clone(),
         byte_size: manifest.byte_size,
     })
-}
-
-fn available_backends(hardware: &HardwareCapabilities) -> Vec<ModelBackend> {
-    let mut backends = Vec::with_capacity(3);
-    if hardware.cuda.is_some() {
-        backends.push(ModelBackend::Cuda);
-    }
-    if hardware.vulkan.is_some() {
-        backends.push(ModelBackend::Vulkan);
-    }
-    backends.push(ModelBackend::Cpu);
-    backends
-}
-
-fn resource_plan(backend: ModelBackend, hardware: &HardwareCapabilities) -> BackendResourcePlan {
-    let usable_bytes = match backend {
-        ModelBackend::Cpu => hardware.ram_bytes,
-        ModelBackend::Vulkan | ModelBackend::Cuda => hardware
-            .dedicated_vram_bytes
-            .unwrap_or(hardware.ram_bytes / 4),
-    };
-    let (tile_edge_pixels, batch_size, memory_concurrency) = if usable_bytes >= 16 * GIB {
-        (4_096, 8, 8)
-    } else if usable_bytes >= 8 * GIB {
-        (3_072, 4, 4)
-    } else if usable_bytes >= 4 * GIB {
-        (2_048, 2, 2)
-    } else {
-        (1_024, 1, 1)
-    };
-    let logical_cores = hardware.cpu.logical_cores.max(1);
-    let max_concurrency = memory_concurrency.min(logical_cores).max(1);
-    let cpu_threads_per_worker = (logical_cores / max_concurrency).max(1);
-
-    BackendResourcePlan {
-        backend,
-        tile_edge_pixels,
-        batch_size,
-        max_concurrency,
-        cpu_threads_per_worker,
-    }
 }
 
 #[cfg(test)]

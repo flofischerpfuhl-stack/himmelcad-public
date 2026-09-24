@@ -2,17 +2,11 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type { AgentHarnessHostTransport } from '@himmelcad/agent/src/transport.js';
 import type { ProviderCredentialRendererTransport } from '@himmelcad/agent/src/providerCredentials.js';
 import type { AppJob, JobEvent, RegisterJobInput } from '@himmelcad/app';
-
-type BuilderRendererStatus =
-  | { readonly mode: 'hardware' }
-  | {
-      readonly mode: 'software';
-      readonly from: 'webgl2';
-      readonly reason: string;
-      readonly gpu: string;
-      readonly driver: string;
-      readonly decidedAt: string;
-    };
+import type {
+  PersistedRendererFallback,
+  RenderingStatus,
+  ViewerRenderingFacts,
+} from '@himmelcad/hardware-profile';
 
 export interface BuilderGpuProcessLoss {
   readonly action: 'retryCurrent' | 'fallbackWebgl2';
@@ -71,8 +65,9 @@ export interface HimmelCADApi {
     onMaximizeChange: (cb: (m: boolean) => void) => () => void;
   };
   readonly renderer: {
-    readonly launchStatus: BuilderRendererStatus;
-    status: () => Promise<BuilderRendererStatus>;
+    readonly launchStatus: RenderingStatus;
+    readonly launchFallback: PersistedRendererFallback;
+    status: (viewer: ViewerRenderingFacts | null) => Promise<RenderingStatus>;
     requestSoftwareFallback: (reason: string) => Promise<boolean>;
     tryHardwareAgain: () => Promise<boolean>;
     onGpuProcessGone: (listener: (loss: BuilderGpuProcessLoss) => void) => () => void;
@@ -233,7 +228,10 @@ export interface ArchiveSummary {
   readonly path: string;
 }
 
-const launchRendererStatus = ipcRenderer.sendSync('renderer:status-sync') as BuilderRendererStatus;
+const launchRenderer = ipcRenderer.sendSync('renderer:status-sync') as {
+  readonly status: RenderingStatus;
+  readonly fallback: PersistedRendererFallback;
+};
 
 const api: HimmelCADApi = {
   version: '0.0.0',
@@ -251,8 +249,9 @@ const api: HimmelCADApi = {
     },
   },
   renderer: {
-    launchStatus: launchRendererStatus,
-    status: () => ipcRenderer.invoke('renderer:status'),
+    launchStatus: launchRenderer.status,
+    launchFallback: launchRenderer.fallback,
+    status: (viewer) => ipcRenderer.invoke('renderer:status', viewer),
     requestSoftwareFallback: (reason) => ipcRenderer.invoke('renderer:software-required', reason),
     tryHardwareAgain: () => ipcRenderer.invoke('renderer:try-hardware-again'),
     onGpuProcessGone: (listener) => {

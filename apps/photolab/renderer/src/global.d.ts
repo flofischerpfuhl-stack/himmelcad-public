@@ -54,6 +54,11 @@ interface PhotolabDesktopApi {
     onMaximizeChange: (cb: (maximized: boolean) => void) => () => void;
     onCloseBlocked: (cb: (report: CloseBlockedReport) => void) => () => void;
   };
+  readonly renderer: {
+    status: (
+      viewer: import('@himmelcad/hardware-profile').ViewerRenderingFacts | null,
+    ) => Promise<import('@himmelcad/hardware-profile').RenderingStatus>;
+  };
   readonly sidecar: {
     status: () => Promise<boolean>;
     call: <T = unknown>(method: string, params?: unknown) => Promise<T>;

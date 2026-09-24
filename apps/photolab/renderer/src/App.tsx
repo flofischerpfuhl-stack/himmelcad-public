@@ -11,6 +11,7 @@ import {
   type ViewStateV1,
 } from '@himmelcad/app';
 import { consoleStore, logEvent } from '@himmelcad/console';
+import type { RenderingStatus } from '@himmelcad/hardware-profile';
 import type {
   AlignmentQualityProfile,
   AlignedGcpCameraRecord,
@@ -259,6 +260,12 @@ export function App(): JSX.Element {
   const [snap, setSnap] = useState<SnapResult | null>(null);
   const [coreReady, setCoreReady] = useState(false);
   const [hardware, setHardware] = useState<HardwareCapabilities | null>(null);
+  const [rendererStatus, setRendererStatus] = useState<RenderingStatus>({
+    state: 'initializing',
+    label: 'Initializing',
+    title: 'Renderer capability verification is in progress.',
+    degraded: false,
+  });
   const [profile, setProfile] = useState<AlignmentQualityProfile>('qualityHybrid');
   const [alignmentOverrides, setAlignmentOverrides] = useState<AlignmentPresetOverrides>(() =>
     defaultOverridesForProfile('qualityHybrid'),
@@ -3989,6 +3996,12 @@ export function App(): JSX.Element {
         align: 'left' as const,
       },
       {
+        id: 'renderer',
+        content: `Renderer: ${rendererStatus.label}`,
+        title: rendererStatus.title,
+        align: 'left' as const,
+      },
+      {
         id: 'view',
         content: `View: ${workspaceLabel(workspaceMode, sceneNavigationMode)}`,
         align: 'left' as const,
@@ -4057,6 +4070,7 @@ export function App(): JSX.Element {
     projectHasArchiveCopy,
     projectFileOperation,
     projectReady,
+    rendererStatus,
     sceneNavigationMode,
     snap,
     themeMode,
@@ -4119,9 +4133,7 @@ export function App(): JSX.Element {
         case 'setAlignmentProfile': {
           const requested = invocation.args[0];
           if (!isProfile(requested)) {
-            throw new Error(
-              'alignment.profile expects qualityHybrid, maximumRobustness, or fast',
-            );
+            throw new Error('alignment.profile expects qualityHybrid, maximumRobustness, or fast');
           }
           setProfile(requested);
           activate('alignment.run');
@@ -4166,7 +4178,9 @@ export function App(): JSX.Element {
       }
 
       if (invocation.entry.host !== 'sidecar') {
-        throw new Error(`Command is not implemented by the PhotoLab renderer: ${invocation.entry.id}`);
+        throw new Error(
+          `Command is not implemented by the PhotoLab renderer: ${invocation.entry.id}`,
+        );
       }
       const api = window.himmelcad;
       if (!api) throw new Error('Desktop bridge is missing. Start PhotoLab through Electron.');
@@ -4175,9 +4189,7 @@ export function App(): JSX.Element {
         invocation.payload,
       );
       const record =
-        typeof result === 'object' && result !== null
-          ? (result as Record<string, unknown>)
-          : null;
+        typeof result === 'object' && result !== null ? (result as Record<string, unknown>) : null;
       if (record?.job && typeof record.job === 'object') {
         const job = record.job as PhotolabJob;
         setJobs((previous) => [...previous.filter((candidate) => candidate.id !== job.id), job]);
@@ -4667,6 +4679,18 @@ export function App(): JSX.Element {
                     ref={viewportRef}
                     onCursorSnap={setSnap}
                     onLog={(level, message) => logEvent(level, 'renderer', message)}
+                    onRendererReady={(facts) => {
+                      const status = window.himmelcad?.renderer.status(facts);
+                      if (!status) return;
+                      void status.then(setRendererStatus).catch(() =>
+                        setRendererStatus({
+                          state: 'unavailable',
+                          label: 'Unavailable',
+                          title: 'Renderer status could not be verified.',
+                          degraded: true,
+                        }),
+                      );
+                    }}
                   />
                   {projectReady && projectImages.length === 0 && !imageImportBusy && (
                     <div className={styles.emptyProjectViewport}>

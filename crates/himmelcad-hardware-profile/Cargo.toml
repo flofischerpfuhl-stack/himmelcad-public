@@ -1,0 +1,14 @@
+[package]
+name = "himmelcad-hardware-profile"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Portable hardware identity, capability, quirk, and budget policy for HimmelCAD."
+
+[dependencies]
+serde.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

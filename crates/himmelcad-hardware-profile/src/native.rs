@@ -4,7 +4,7 @@ use std::process::Command;
 #[cfg(any(target_os = "linux", test))]
 use std::{collections::BTreeSet, fs};
 
-use himmelcad_domain_photogrammetry::photolab_models::{
+use crate::{
     CpuCapabilities, CudaCapabilities, CudaComputeCapability, HardwareCapabilities,
     HostOperatingSystem, VulkanCapabilities,
 };
@@ -15,10 +15,13 @@ const MIB: u64 = 1024 * 1024;
 /// Probe failures never trigger a lower-quality algorithm; the caller may use CPU-safe limits.
 #[derive(Debug, Error)]
 pub enum HardwareProbeError {
+    /// Physical RAM could not be read.
     #[error("host memory could not be determined")]
     MissingMemory,
+    /// No usable logical CPU was reported.
     #[error("host has no available CPU threads")]
     MissingCpu,
+    /// Native command or procfs I/O failed.
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 }

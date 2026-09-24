@@ -1202,6 +1202,7 @@ dependencies = [
  "hex",
  "himmelcad-core",
  "himmelcad-document",
+ "himmelcad-hardware-profile",
  "himmelcad-io",
  "himmelcad-model",
  "himmelcad-prepared",
@@ -1297,6 +1298,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "himmelcad-hardware-profile"
+version = "0.0.0"
+dependencies = [
+ "serde",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "himmelcad-io"
 version = "0.0.0"
 dependencies = [
@@ -1354,6 +1363,7 @@ dependencies = [
  "himmelcad-domain-photogrammetry",
  "himmelcad-domain-pointcloud",
  "himmelcad-domain-raster",
+ "himmelcad-hardware-profile",
  "himmelcad-io",
  "himmelcad-model",
  "himmelcad-prepared",
@@ -1432,6 +1442,7 @@ dependencies = [
  "glam 0.29.3",
  "gltf",
  "gltf-v1",
+ "himmelcad-hardware-profile",
  "himmelcad-model",
  "himmelcad-prepared",
  "image",

@@ -47,6 +47,7 @@ import {
 import { Console, consoleStore, logEvent, runConsoleCommand } from '@himmelcad/console';
 import { ManagedAgentChat, ManagedAutomationApproval } from '@himmelcad/agent';
 import type { EntityId, EntityKind, ProjectSnapshot, SnapResult } from '@himmelcad/data';
+import type { RenderingStatus } from '@himmelcad/hardware-profile';
 import type { MeasurementV1 } from '@himmelcad/data/canonical';
 import {
   AppShell,
@@ -171,17 +172,6 @@ import {
 } from './viewingBoxWorkflow.js';
 
 const DEFAULT_POINT_SIZE = 1;
-
-type BuilderRendererStatus =
-  | { readonly mode: 'hardware' }
-  | {
-      readonly mode: 'software';
-      readonly from: 'webgl2';
-      readonly reason: string;
-      readonly gpu: string;
-      readonly driver: string;
-      readonly decidedAt: string;
-    };
 
 interface SegmentFenceState {
   readonly kind: 'polygon' | 'rectangle';
@@ -341,24 +331,32 @@ export function App(): JSX.Element {
     ReadonlyMap<EntityId, CanonicalPointCloudMetadata>
   >(new Map());
   const [hudVisible, setHudVisible] = useState(false);
-  const [rendererStatus] = useState<BuilderRendererStatus>(
-    window.himmelcad?.renderer.launchStatus ?? { mode: 'hardware' },
+  const [rendererStatus, setRendererStatus] = useState<RenderingStatus>(
+    window.himmelcad?.renderer.launchStatus ?? {
+      state: 'initializing',
+      label: 'Initializing',
+      title: 'Renderer capability verification is in progress.',
+      degraded: false,
+    },
   );
+  const rendererFallback = window.himmelcad?.renderer.launchFallback ?? {
+    mode: 'hardware' as const,
+  };
   const backendFallback = useMemo(
     () => ({
       enabled: true as const,
-      softwareRendering: rendererStatus.mode === 'software',
-      ...(rendererStatus.mode === 'software'
+      softwareRendering: rendererFallback.mode === 'software',
+      ...(rendererFallback.mode === 'software'
         ? {
             startupFallback: {
-              from: rendererStatus.from,
+              from: rendererFallback.from,
               to: 'software' as const,
-              reason: rendererStatus.reason,
+              reason: rendererFallback.reason,
             },
           }
         : {}),
     }),
-    [rendererStatus],
+    [rendererFallback],
   );
   const [viewingBox, setViewingBox] = useState<KernelViewingBoxState | null>(null);
   const viewingBoxRef = useRef<KernelViewingBoxState | null>(null);
@@ -4212,7 +4210,7 @@ export function App(): JSX.Element {
         onExport: openExport,
         onImport: () => activate('file.import'),
         onPhotoLabProductImport: () => setPhotoLabProductImportOpen(true),
-        rendererSoftware: rendererStatus.mode === 'software',
+        rendererSoftware: rendererStatus.state === 'software',
         onTryHardwareRenderingAgain: () => {
           void window.himmelcad?.renderer.tryHardwareAgain().catch((error: unknown) => {
             logEvent('error', 'renderer', `Could not restart hardware rendering: ${String(error)}`);
@@ -4233,7 +4231,7 @@ export function App(): JSX.Element {
       segmentablePointClouds.length,
       recentProjects,
       replaceProject,
-      rendererStatus.mode,
+      rendererStatus.state,
       saveProjectAs,
       selectedGroundCloud,
       snapshots,
@@ -4935,19 +4933,11 @@ export function App(): JSX.Element {
                       selectableKinds: selection.selectableKinds,
                       labels: display.state.labels,
                     }}
-                    renderer={
-                      rendererStatus.mode === 'software'
-                        ? {
-                            label: 'Software rendering',
-                            title: `${rendererStatus.gpu} · driver ${rendererStatus.driver} · ${rendererStatus.reason}`,
-                            degraded: true,
-                          }
-                        : {
-                            label: 'Hardware rendering',
-                            title: 'Hardware-accelerated renderer',
-                            degraded: false,
-                          }
-                    }
+                    renderer={{
+                      label: rendererStatus.label,
+                      title: rendererStatus.title,
+                      degraded: rendererStatus.degraded,
+                    }}
                     onSupportGeometryChange={(value) => displayStore.setSupportOverlay(value)}
                     onExplodePolylinesChange={(value) =>
                       selectionStore.setGranularity(value ? 'segments' : 'whole')
@@ -4968,6 +4958,19 @@ export function App(): JSX.Element {
               <BuilderKernelViewport
                 ref={viewportRef}
                 backendFallback={backendFallback}
+                onRendererReady={(facts) => {
+                  void window.himmelcad?.renderer
+                    .status(facts)
+                    .then(setRendererStatus)
+                    .catch(() =>
+                      setRendererStatus({
+                        state: 'unavailable',
+                        label: 'Unavailable',
+                        title: 'Renderer status could not be verified.',
+                        degraded: true,
+                      }),
+                    );
+                }}
                 pointSize={pointSize}
                 onViewModeSettled={settleNavigationMode}
                 onCursorSnap={(nextSnap) => {

@@ -24,6 +24,7 @@ himmelcad-domain-photogrammetry = { path = "../himmelcad-domain-photogrammetry" 
 himmelcad-domain-pointcloud = { path = "../himmelcad-domain-pointcloud" }
 himmelcad-domain-raster = { path = "../himmelcad-domain-raster" }
 himmelcad-io = { path = "../himmelcad-io" }
+himmelcad-hardware-profile = { path = "../himmelcad-hardware-profile" }
 himmelcad-model = { path = "../himmelcad-model" }
 himmelcad-prepared = { path = "../himmelcad-prepared" }
 himmelcad-prepared-build = { path = "../himmelcad-prepared-build" }

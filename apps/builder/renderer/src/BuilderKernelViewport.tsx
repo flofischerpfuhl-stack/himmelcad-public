@@ -270,6 +270,13 @@ interface BuilderKernelViewportProps {
   readonly onCursorSnap: (snap: SnapResult | null) => void;
   readonly onDropFiles: (paths: readonly string[]) => void | Promise<void>;
   readonly onLog: (level: 'debug' | 'info' | 'warn' | 'error', message: string) => void;
+  readonly onRendererReady?: (facts: {
+    readonly backend: 'webgpu' | 'webgl2' | 'software';
+    readonly adapter: {
+      readonly driver: string;
+      readonly isFallbackAdapter: boolean;
+    };
+  }) => void;
   readonly onViewModeSettled?: (mode: KernelViewMode) => void;
   readonly viewingBox?: KernelViewingBoxState | null;
   readonly viewingBoxEditing?: boolean;
@@ -410,6 +417,7 @@ export const BuilderKernelViewport = forwardRef<
     onCursorSnap,
     onDropFiles,
     onLog,
+    onRendererReady,
     onViewModeSettled,
     viewingBox = null,
     viewingBoxEditing = false,
@@ -559,6 +567,7 @@ export const BuilderKernelViewport = forwardRef<
     onCursorSnap,
     onDropFiles,
     onLog,
+    onRendererReady,
     onViewportPoint,
     onViewportBox,
     onViewingBoxChange,
@@ -611,6 +620,7 @@ export const BuilderKernelViewport = forwardRef<
     onCursorSnap,
     onDropFiles,
     onLog,
+    onRendererReady,
     onViewportPoint,
     onViewportBox,
     onViewingBoxChange,
@@ -1840,6 +1850,14 @@ export const BuilderKernelViewport = forwardRef<
         'info',
         `Shared viewer ready (${handle.hardwarePolicy.deploymentProfile}, ${handle.session.diagnostics().capabilities.backend})`,
       );
+      const diagnostics = handle.session.diagnostics();
+      callbacksRef.current.onRendererReady?.({
+        backend: diagnostics.backend,
+        adapter: {
+          driver: diagnostics.capabilities.driverInfo || diagnostics.capabilities.driver,
+          isFallbackAdapter: diagnostics.capabilities.isFallbackAdapter,
+        },
+      });
     },
     [changeViewMode],
   );

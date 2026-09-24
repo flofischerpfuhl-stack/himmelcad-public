@@ -16,5 +16,6 @@
     "incremental": true,
     "tsBuildInfoFile": "dist/electron/.tsbuildinfo"
   },
-  "include": ["electron"]
+  "include": ["electron"],
+  "references": [{ "path": "../../packages/@himmelcad/hardware-profile" }]
 }

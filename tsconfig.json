@@ -2,6 +2,7 @@
   "files": [],
   "references": [
     { "path": "packages/@himmelcad/data" },
+    { "path": "packages/@himmelcad/hardware-profile" },
     { "path": "packages/@himmelcad/app" },
     { "path": "packages/@himmelcad/theme" },
     { "path": "packages/@himmelcad/ui" },

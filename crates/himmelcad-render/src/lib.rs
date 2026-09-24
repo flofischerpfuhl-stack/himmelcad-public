@@ -25,7 +25,6 @@ mod gpu_frame_timing;
 mod gpu_resource_identity;
 mod gpu_surface;
 mod gpu_texture_cache;
-mod hardware_policy;
 mod mesh_picking;
 mod overlay;
 mod picking;
@@ -95,10 +94,10 @@ pub use gpu_frame::{
     GpuMeshInstanceInput, GpuMeshVertexInput, GpuPickReadback, GpuPickReadbackError,
     GpuPointVertex, GpuPresentationStyle, GpuPrimitive, GpuScreenTextVertex, GpuSharedRenderer,
     GpuSplatVertex, GpuTextureData, GpuTextureMipChainData, GpuTextureResource,
-    GpuTextureTransform, GpuVertex, GPU_POINT_VERTEX_STRIDE_BYTES, MAX_CLIP_PLANES,
-    MAX_CLIP_VOLUMES, MAX_GPU_GRADIENT_COLORS, MAX_GPU_HATCH_TEXELS, MAX_GPU_LINE_TYPE_ELEMENTS,
-    MAX_HIT_NEIGHBORHOOD_RADIUS, SORTED_ALPHA_MESH_INSTANCE_BLOCK_SIZE,
-    SORTED_ALPHA_SPLAT_BLOCK_SIZE, SORTED_ALPHA_UPLOAD_BYTES_PER_FRAME,
+    GpuTextureTransform, GpuVertex, MAX_CLIP_PLANES, MAX_CLIP_VOLUMES, MAX_GPU_GRADIENT_COLORS,
+    MAX_GPU_HATCH_TEXELS, MAX_GPU_LINE_TYPE_ELEMENTS, MAX_HIT_NEIGHBORHOOD_RADIUS,
+    SORTED_ALPHA_MESH_INSTANCE_BLOCK_SIZE, SORTED_ALPHA_SPLAT_BLOCK_SIZE,
+    SORTED_ALPHA_UPLOAD_BYTES_PER_FRAME,
 };
 pub use gpu_frame_timing::{GpuFrameTimestampSample, GpuFrameTimingDiagnostics};
 pub use gpu_resource_identity::{
@@ -116,13 +115,16 @@ pub use gpu_texture_cache::{
     GpuTextureResourceCache, GpuTextureResourceCacheError, GpuTextureResourceCacheStats,
     GpuTextureResourceStage, ImmutableGpuTextureResource,
 };
-pub use hardware_policy::{
-    CalibrationObservation, DeviceCalibration, DeviceCalibrationAccumulator, FrameTelemetrySample,
-    FrameTelemetrySnapshot, FrameTelemetryWindow, FrameTimeDistribution, FrameWorkloadBudget,
-    GovernorPressure, GovernorTunables, HardwareDeploymentProfile, HardwareInventory,
-    HardwarePolicyResolver, InteractionStreamingPolicy, MotionPolicyTunables, QualityAdjustment,
-    ResolvedHardwarePolicy, RuntimeQualityGovernor, RuntimeQualityReason, RuntimeQualityState,
-    RuntimeQualityTier, TimingSample, TransparencyStrategy,
+pub use himmelcad_hardware_profile::{
+    BackendKind, BackgroundLaneBudgets, CalibrationObservation, DeviceCalibration,
+    DeviceCalibrationAccumulator, DeviceCapabilities, DeviceFeature, DeviceKind, FrameBudget,
+    FrameTelemetrySample, FrameTelemetrySnapshot, FrameTelemetryWindow, FrameTimeDistribution,
+    FrameWorkloadBudget, FrontierBudget, FrontierHardwareClass, GovernorPressure, GovernorTunables,
+    HardwareDeploymentProfile, HardwareInventory, HardwarePolicyResolver,
+    InteractionStreamingPolicy, LaneWorkBudget, MotionPolicyTunables, QualityAdjustment,
+    ResolvedHardwarePolicy, ResourceBudget, ResourceCost, RuntimeQualityGovernor,
+    RuntimeQualityReason, RuntimeQualityState, RuntimeQualityTier, TimingSample,
+    TransparencyStrategy, GPU_POINT_VERTEX_STRIDE_BYTES,
 };
 pub use himmelcad_prepared::{
     BoundingVolume, ContentKind, ContentReference, DatasetId, DecodedTriangleFeatureId,
@@ -214,8 +216,8 @@ pub use resource_builder::{
     PreparedGpuTextureResources, PreparedGpuTextureUpload, ResourceBuildError,
 };
 pub use scheduler::{
-    AdmissionCandidate, AdmissionPlan, AdmissionPlanner, BackgroundLaneBudgets, FrameLane,
-    LaneWorkBudget, LaneWorkUsage, RejectedCandidate, RejectionReason, TileKey,
+    AdmissionCandidate, AdmissionPlan, AdmissionPlanner, FrameLane, LaneWorkUsage,
+    RejectedCandidate, RejectionReason, TileKey,
 };
 pub use section::{
     authoritative_section_product_matches, build_section_region_batch,
@@ -234,8 +236,8 @@ pub use section_topology::{
     SectionTopologyStoreError,
 };
 pub use streaming::{
-    FrontierBudget, FrontierHardwareClass, FrontierLimitReason, FrontierStatistics,
-    StreamingAction, StreamingCoordinator, StreamingFramePlan, StreamingRuntimeLimits,
+    FrontierLimitReason, FrontierStatistics, StreamingAction, StreamingCoordinator,
+    StreamingFramePlan, StreamingRuntimeLimits,
 };
 pub use streaming_decode_artifact::{
     decode_artifact, decode_artifact_input_hash, encode_decode_artifact, DecodedStreamingPayload,
@@ -251,226 +253,6 @@ pub use tile_selector::{
     transform_bounding_volume, HierarchyPageRequest, SelectedTile, TileResidency, TileSelection,
     TileSelectionError, TileSelectionView, TileSelector,
 };
-
-/// Render backend selected for the current surface.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum BackendKind {
-    /// Browser or native WebGPU feature level.
-    WebGpu,
-    /// Permanent browser downlevel path through WebGL 2.
-    WebGl2,
-    /// Native Vulkan backend.
-    Vulkan,
-    /// Native Metal backend.
-    Metal,
-    /// Native Direct3D 12 backend.
-    Direct3d12,
-    /// Native OpenGL or OpenGL ES downlevel backend.
-    OpenGl,
-}
-
-/// Broad physical-device class used by policy resolution and diagnostics.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum DeviceKind {
-    /// Discrete GPU with dedicated memory.
-    DiscreteGpu,
-    /// Integrated or unified-memory GPU.
-    IntegratedGpu,
-    /// Virtualized GPU.
-    VirtualGpu,
-    /// CPU or software adapter.
-    Cpu,
-    /// Adapter class was not reported.
-    Other,
-}
-
-/// Optional adapter feature used to select fast or downlevel pipelines.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum DeviceFeature {
-    /// General compute shaders are available.
-    Compute,
-    /// Indirect draw and dispatch are available.
-    IndirectExecution,
-    /// Fragment shaders may write storage resources.
-    FragmentWritableStorage,
-    /// Adapter satisfies the complete WebGPU downlevel contract.
-    WebGpuCompliant,
-    /// Blendable half-float MRT attachments support weighted blended OIT.
-    WeightedBlendedOit,
-    /// GPU timestamp queries are available and reliable.
-    TimestampQueries,
-    /// BC-family block-compressed textures are available.
-    TextureCompressionBc,
-    /// ETC2/EAC block-compressed textures are available.
-    TextureCompressionEtc2,
-    /// ASTC LDR block-compressed textures are available.
-    TextureCompressionAstc,
-    /// ASTC HDR block-compressed textures are available.
-    TextureCompressionAstcHdr,
-}
-
-/// Measured and queried capabilities used to resolve a device policy.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DeviceCapabilities {
-    /// Human-readable adapter name for diagnostics.
-    pub adapter_name: String,
-    /// Physical device class.
-    pub device_kind: DeviceKind,
-    /// Active backend.
-    pub backend: BackendKind,
-    /// Driver name when the platform exposes it.
-    pub driver: String,
-    /// Driver version or implementation detail when exposed.
-    pub driver_info: String,
-    /// Supported optional features.
-    pub features: Vec<DeviceFeature>,
-    /// Maximum two-dimensional texture edge.
-    pub max_texture_dimension_2d: u32,
-    /// Maximum storage-buffer binding size in bytes.
-    pub max_storage_buffer_binding_size: u64,
-    /// Maximum buffer size in bytes.
-    pub max_buffer_size: u64,
-    /// Maximum supported MSAA sample count selected from tested formats.
-    pub max_sample_count: u8,
-}
-
-impl DeviceCapabilities {
-    /// Returns whether an optional feature is available.
-    #[must_use]
-    pub fn supports(&self, feature: DeviceFeature) -> bool {
-        self.features.contains(&feature)
-    }
-}
-
-/// Resource demand used by every provider and backend.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ResourceCost {
-    /// Compressed bytes retained on the CPU.
-    pub cpu_compressed_bytes: u64,
-    /// Decoded bytes retained on the CPU.
-    pub cpu_decoded_bytes: u64,
-    /// GPU buffer bytes.
-    pub gpu_buffer_bytes: u64,
-    /// GPU texture bytes including resident mip levels.
-    pub gpu_texture_bytes: u64,
-    /// Temporary staging bytes required for upload.
-    pub staging_bytes: u64,
-    /// Rendered or resident point count.
-    pub points: u64,
-    /// Rendered or resident triangle count.
-    pub triangles: u64,
-    /// Rendered or resident splat count.
-    pub splats: u64,
-    /// Draw calls added by the content.
-    pub draw_calls: u32,
-}
-
-impl ResourceCost {
-    /// Adds costs without wrapping on overflow.
-    #[must_use]
-    pub fn saturating_add(self, other: Self) -> Self {
-        Self {
-            cpu_compressed_bytes: self
-                .cpu_compressed_bytes
-                .saturating_add(other.cpu_compressed_bytes),
-            cpu_decoded_bytes: self
-                .cpu_decoded_bytes
-                .saturating_add(other.cpu_decoded_bytes),
-            gpu_buffer_bytes: self.gpu_buffer_bytes.saturating_add(other.gpu_buffer_bytes),
-            gpu_texture_bytes: self
-                .gpu_texture_bytes
-                .saturating_add(other.gpu_texture_bytes),
-            staging_bytes: self.staging_bytes.saturating_add(other.staging_bytes),
-            points: self.points.saturating_add(other.points),
-            triangles: self.triangles.saturating_add(other.triangles),
-            splats: self.splats.saturating_add(other.splats),
-            draw_calls: self.draw_calls.saturating_add(other.draw_calls),
-        }
-    }
-
-    /// Subtracts costs without underflowing individual dimensions.
-    #[must_use]
-    pub fn saturating_sub(self, other: Self) -> Self {
-        Self {
-            cpu_compressed_bytes: self
-                .cpu_compressed_bytes
-                .saturating_sub(other.cpu_compressed_bytes),
-            cpu_decoded_bytes: self
-                .cpu_decoded_bytes
-                .saturating_sub(other.cpu_decoded_bytes),
-            gpu_buffer_bytes: self.gpu_buffer_bytes.saturating_sub(other.gpu_buffer_bytes),
-            gpu_texture_bytes: self
-                .gpu_texture_bytes
-                .saturating_sub(other.gpu_texture_bytes),
-            staging_bytes: self.staging_bytes.saturating_sub(other.staging_bytes),
-            points: self.points.saturating_sub(other.points),
-            triangles: self.triangles.saturating_sub(other.triangles),
-            splats: self.splats.saturating_sub(other.splats),
-            draw_calls: self.draw_calls.saturating_sub(other.draw_calls),
-        }
-    }
-}
-
-/// Device-policy limits shared by all visible content kinds.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ResourceBudget {
-    /// Maximum compressed CPU residency.
-    pub cpu_compressed_bytes: u64,
-    /// Maximum decoded CPU residency.
-    pub cpu_decoded_bytes: u64,
-    /// Maximum GPU buffer residency.
-    pub gpu_buffer_bytes: u64,
-    /// Maximum GPU texture residency.
-    pub gpu_texture_bytes: u64,
-    /// Maximum staging bytes in flight.
-    pub staging_bytes: u64,
-    /// Maximum resident or selected points.
-    pub points: u64,
-    /// Maximum resident or selected triangles.
-    pub triangles: u64,
-    /// Maximum resident or selected splats.
-    pub splats: u64,
-    /// Maximum draw calls.
-    pub draw_calls: u32,
-}
-
-impl ResourceBudget {
-    /// Returns whether a combined cost fits every resource dimension.
-    #[must_use]
-    pub fn contains(self, cost: ResourceCost) -> bool {
-        cost.cpu_compressed_bytes <= self.cpu_compressed_bytes
-            && cost.cpu_decoded_bytes <= self.cpu_decoded_bytes
-            && cost.gpu_buffer_bytes <= self.gpu_buffer_bytes
-            && cost.gpu_texture_bytes <= self.gpu_texture_bytes
-            && cost.staging_bytes <= self.staging_bytes
-            && cost.points <= self.points
-            && cost.triangles <= self.triangles
-            && cost.splats <= self.splats
-            && cost.draw_calls <= self.draw_calls
-    }
-}
-
-/// Time-sensitive limits applied in addition to residency budgets.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct FrameBudget {
-    /// Target complete frame time in milliseconds.
-    pub target_frame_ms: f32,
-    /// CPU time granted to hierarchy traversal and scheduling.
-    pub traversal_ms: f32,
-    /// CPU decode time allowed to complete per frame.
-    pub decode_ms: f32,
-    /// Bytes that may be uploaded in one frame without explicit override.
-    pub upload_bytes: u64,
-    /// Maximum new content requests started in one frame.
-    pub new_requests: u16,
-}
 
 /// Address emitted by the shared ID/depth pass.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

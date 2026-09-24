@@ -23,7 +23,7 @@ use crate::{
     ClipOperation, ClipVolume, ColorMode, GpuTextureAddressMode, GpuTextureColorSpace,
     GpuTextureFilterMode, GpuTextureSamplerIdentity, PackedCivilPointAttributes, PickToken,
     RenderStyle, StrokeCap, StrokeColor, StrokeJoin, StrokeMode, StrokeWidth, TransparencyStrategy,
-    WorldTransform, WorldVec3,
+    WorldTransform, WorldVec3, GPU_POINT_VERTEX_STRIDE_BYTES,
 };
 
 /// Maximum convex clip volumes in the portable first-tier uniform block.
@@ -928,12 +928,10 @@ pub struct GpuPointVertex {
     pub civil_1: u32,
 }
 
-/// Exact byte stride of the point vertex uploaded by every shared point path.
-///
-/// Residency and hardware policy must derive their GPU point budgets from this
-/// constant so changing the canonical vertex layout cannot silently leave stale
-/// per-point byte estimates behind.
-pub const GPU_POINT_VERTEX_STRIDE_BYTES: u64 = size_of::<GpuPointVertex>() as u64;
+const _: () = assert!(
+    size_of::<GpuPointVertex>() as u64 == crate::GPU_POINT_VERTEX_STRIDE_BYTES,
+    "hardware-profile point stride must match the renderer vertex layout"
+);
 
 // LAS/Potree RGB is conventionally display-referred sRGB. The shared renderer
 // composites in linear light and performs the output transfer once in the

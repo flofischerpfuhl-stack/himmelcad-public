@@ -24,6 +24,7 @@
     "format:check": "prettier --check .",
     "test": "pnpm -r test",
     "check:modules": "node scripts/check-module-dependencies.mjs",
+    "hardware-quirks:check": "node scripts/generate-hardware-quirks.mjs --check",
     "verify:changed": "node scripts/verify.mjs changed",
     "verify:commit": "node scripts/verify.mjs commit",
     "verify:push": "node scripts/verify.mjs push",

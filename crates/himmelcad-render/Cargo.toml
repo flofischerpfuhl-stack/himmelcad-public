@@ -19,6 +19,7 @@ glam.workspace = true
 gltf.workspace = true
 gltf-v1 = { version = "0.4.0", features = ["KHR_materials_common"] }
 himmelcad-model = { path = "../himmelcad-model" }
+himmelcad-hardware-profile = { path = "../himmelcad-hardware-profile" }
 himmelcad-prepared = { path = "../himmelcad-prepared" }
 image = { version = "0.25.8", default-features = false, features = ["jpeg", "png"] }
 indexmap = "2.7"

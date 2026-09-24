@@ -51,6 +51,9 @@ use himmelcad_domain_photogrammetry::{
     hcap_import::import_hcap_path_with_progress, import_gcp_csv_file,
     import_photo_files_with_progress, preview_gcp_csv_file,
 };
+#[cfg(test)]
+use himmelcad_hardware_profile::adaptive_job_concurrency;
+use himmelcad_hardware_profile::{default_job_concurrency, native::probe_hardware};
 use himmelcad_io::ProviderContractError;
 use himmelcad_model::hash::ObjectHash;
 use himmelcad_model::project_units::PhotolabSpatialReference;
@@ -65,7 +68,6 @@ use crate::dense_raster_prep::{
     prepare_dense_vector_with_classification_bounded, prepare_sparse_potree, read_dense_points,
     DenseRasterPrepError,
 };
-use crate::hardware_runtime::probe_hardware;
 use crate::mesh_tiler::{build_tiled_dem_mesh, MeshTilerError};
 use crate::prepared_triangle_mesh::PreparedTriangleMeshOptions;
 use crate::product_export::{export_product, ProductExportError, ProductExportRequest};
@@ -6260,11 +6262,7 @@ const fn platform_directory() -> &'static str {
 fn default_job_manager_config() -> JobManagerConfig {
     let logical_cpus = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
     let max_concurrency = probe_hardware().map_or(1, |hardware| {
-        usize::from(hardware.cpu.physical_cores)
-            .max(1)
-            .min(logical_cpus.max(1))
-            .div_ceil(2)
-            .clamp(1, 8)
+        default_job_concurrency(logical_cpus, usize::from(hardware.cpu.physical_cores))
     });
     JobManagerConfig {
         max_concurrency,
@@ -6276,22 +6274,6 @@ fn fallback_alignment_usable_memory_bytes() -> u64 {
     const GIB: u64 = 1024 * 1024 * 1024;
     let physical = probe_hardware().map_or(8 * GIB, |hardware| hardware.ram_bytes);
     physical.saturating_sub(memory_os_ui_reserve_bytes(physical))
-}
-
-#[cfg(test)]
-fn adaptive_job_concurrency(logical_cpus: usize, physical_cpus: usize, ram_bytes: u64) -> usize {
-    const GIB: u64 = 1024 * 1024 * 1024;
-    const RESERVED_FOR_OS_AND_UI: u64 = 4 * GIB;
-    const RESERVED_PER_COMPUTE_JOB: u64 = 12 * GIB;
-    let cpu_slots = physical_cpus.max(1).min(logical_cpus.max(1)).div_ceil(2);
-    let memory_slots = ram_bytes
-        .saturating_sub(RESERVED_FOR_OS_AND_UI)
-        .checked_div(RESERVED_PER_COMPUTE_JOB)
-        .unwrap_or(0)
-        .max(1);
-    cpu_slots
-        .min(usize::try_from(memory_slots).unwrap_or(usize::MAX))
-        .clamp(1, 8)
 }
 
 const fn colmap_feature_worker_threads(plan: &AlignmentMemoryPlan) -> u16 {

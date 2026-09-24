@@ -123,7 +123,9 @@ selected_attempt=""
 
 stop_scope() {
   if [[ -n "$scope_unit" ]]; then
+    systemctl --user kill --kill-whom=all --signal=TERM "${scope_unit}.scope" >/dev/null 2>&1 || true
     systemctl --user stop "${scope_unit}.scope" >/dev/null 2>&1 || true
+    systemctl --user kill --kill-whom=all --signal=KILL "${scope_unit}.scope" >/dev/null 2>&1 || true
   fi
   if [[ -n "$scope_pid" ]]; then
     kill -TERM "$scope_pid" >/dev/null 2>&1 || true
@@ -232,7 +234,13 @@ try {
         const hudBackend = document.querySelector('[data-hud-backend]')?.textContent?.trim() ?? null;
         const chipLabel = [...document.querySelectorAll('span')]
           .map((element) => element.textContent?.trim())
-          .find((text) => text === 'Hardware rendering' || text === 'Software rendering') ?? null;
+          .find((text) => [
+            'Initializing',
+            'WebGPU (hardware)',
+            'WebGL2 (hardware)',
+            'Software',
+            'Unavailable',
+          ].includes(text ?? '')) ?? null;
         return {
           url: location.href,
           title: document.title,
@@ -260,10 +268,15 @@ try {
   const hardware = Boolean(nvidia && !software);
   const expectsSoftware = expected === 'software';
   const expectedKernelBackend = expected.startsWith('hardware-webgl2') ? 'webgl2' : null;
+  const expectedHardwareLabel = runtime.rendererBackend === 'webgpu'
+    ? 'WebGPU (hardware)'
+    : runtime.rendererBackend === 'webgl2'
+      ? 'WebGL2 (hardware)'
+      : null;
   const builderUiMatches = app !== 'builder' || (expectsSoftware
-    ? runtime.chipLabel === 'Software rendering' && runtime.hudBackend === 'software'
-    : runtime.chipLabel === 'Hardware rendering' &&
-      ['webgpu', 'webgl2'].includes(runtime.hudBackend));
+    ? runtime.chipLabel === 'Software'
+    : runtime.chipLabel === expectedHardwareLabel &&
+      runtime.hudBackend === runtime.rendererBackend);
   const accepted = expectsSoftware
     ? software && builderUiMatches
     : hardware && builderUiMatches &&
@@ -280,7 +293,7 @@ try {
     runtime,
   };
   await writeFile(outputPath, `${JSON.stringify(proof, null, 2)}\n`);
-  if (accepted && screenshotPath) {
+  if (screenshotPath) {
     const pageSession = await page.context().newCDPSession(page);
     const capture = await pageSession.send('Page.captureScreenshot', {
       format: 'png',
@@ -356,7 +369,8 @@ EOF
     bash -c 'ulimit -c 0; exec env "$@"' bash \
       "DISPLAY=${child_display}" \
       "XAUTHORITY=${auth_file}" \
-      "CARGO_TARGET_DIR=${repo_root}/target/${app}" \
+      "CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-${repo_root}/target/${app}}" \
+      "CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS:-4}" \
       "HIMMELCAD_VITE_HMR=0" \
       "HIMMELCAD_REMOTE_DEBUGGING_PORT=${port}" \
       "HIMMELCAD_ELECTRON_USER_DATA_DIR=${profile_dir}" \

@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type { AgentHarnessHostTransport } from '@himmelcad/agent/src/transport.js';
 import type { ProviderCredentialRendererTransport } from '@himmelcad/agent/src/providerCredentials.js';
+import type { RenderingStatus, ViewerRenderingFacts } from '@himmelcad/hardware-profile';
 
 export interface GcpCsvImportDefaults {
   delimiter: string;
@@ -74,6 +75,9 @@ export interface PhotolabDesktopApi {
     isMaximized: () => Promise<boolean>;
     onMaximizeChange: (cb: (maximized: boolean) => void) => () => void;
     onCloseBlocked: (cb: (report: CloseBlockedReport) => void) => () => void;
+  };
+  readonly renderer: {
+    status: (viewer: ViewerRenderingFacts | null) => Promise<RenderingStatus>;
   };
   readonly sidecar: {
     status: () => Promise<boolean>;
@@ -252,6 +256,9 @@ const api: PhotolabDesktopApi = {
       ipcRenderer.on('window:close-blocked', listener);
       return () => ipcRenderer.off('window:close-blocked', listener);
     },
+  },
+  renderer: {
+    status: (viewer) => ipcRenderer.invoke('renderer:status', viewer),
   },
   sidecar: {
     status: () => ipcRenderer.invoke('sidecar:status'),

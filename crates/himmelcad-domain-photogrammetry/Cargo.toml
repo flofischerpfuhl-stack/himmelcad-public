@@ -11,6 +11,7 @@ anyhow.workspace = true
 fs2 = "0.4.3"
 himmelcad-core = { path = "../himmelcad-core" }
 himmelcad-document = { path = "../himmelcad-document" }
+himmelcad-hardware-profile = { path = "../himmelcad-hardware-profile" }
 himmelcad-io = { path = "../himmelcad-io" }
 himmelcad-model = { path = "../himmelcad-model" }
 himmelcad-prepared = { path = "../himmelcad-prepared" }

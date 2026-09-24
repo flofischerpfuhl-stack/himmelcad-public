@@ -62,6 +62,9 @@ importers:
       '@himmelcad/data':
         specifier: workspace:*
         version: link:../../packages/@himmelcad/data
+      '@himmelcad/hardware-profile':
+        specifier: workspace:*
+        version: link:../../packages/@himmelcad/hardware-profile
       '@himmelcad/plan':
         specifier: workspace:*
         version: link:../../packages/@himmelcad/plan
@@ -141,6 +144,9 @@ importers:
       '@himmelcad/data':
         specifier: workspace:*
         version: link:../../packages/@himmelcad/data
+      '@himmelcad/hardware-profile':
+        specifier: workspace:*
+        version: link:../../packages/@himmelcad/hardware-profile
       '@himmelcad/theme':
         specifier: workspace:*
         version: link:../../packages/@himmelcad/theme
@@ -309,6 +315,12 @@ importers:
         version: 5.9.3
 
   packages/@himmelcad/data:
+    devDependencies:
+      typescript:
+        specifier: ^5.6.2
+        version: 5.9.3
+
+  packages/@himmelcad/hardware-profile:
     devDependencies:
       typescript:
         specifier: ^5.6.2
@@ -1397,6 +1409,7 @@ packages:
   '@xmldom/xmldom@0.8.13':
     resolution: {integrity: sha512-KRYzxepc14G/CEpEGc3Yn+JKaAeT63smlDr+vjB8jRfgTBBI9wRj/nkQEO+ucV8p8I9bfKLWp37uHgFrbntPvw==}
     engines: {node: '>=10.0.0'}
+    deprecated: this version has critical issues, please update to the latest version
 
   abbrev@4.0.0:
     resolution: {integrity: sha512-a1wflyaL0tHtJSmLSOVybYhy22vRih4eduhhrkcjgrWGnRfrZtovJ2FRjxuTtkkj47O/baf0R86QU5OuYpz8fA==}
@@ -1511,6 +1524,7 @@ packages:
 
   axe-core@4.13.0:
     resolution: {integrity: sha512-UzGt8zg7Ny8djbYMhxl2zuEevVa7r2gJjYY5Lwr1xM7+XU2nd6CkIWFTVcCIbAP63vSz71NaVyyuSk9lHKcy0A==}
+    engines: {node: '>=4'}
 
   axios@1.16.0:
     resolution: {integrity: sha512-6hp5CwvTPlN2A31g5dxnwAX0orzM7pmCRDLnZSX772mv8WDqICwFjowHuPs04Mc8deIld1+ejhtaMn5vp6b+1w==}
@@ -2134,6 +2148,7 @@ packages:
   eslint@9.39.4:
     resolution: {integrity: sha512-XoMjdBOwe/esVgEvLmNsD3IRHkm7fbKIUGvrleloJXUZgDHig2IPWNniv+GwjyJXzuNqVjlr5+4yVUZjycJwfQ==}
     engines: {node: ^18.18.0 || ^20.9.0 || >=21.1.0}
+    deprecated: This version is no longer supported. Please see https://eslint.org/version-support for other options.
     hasBin: true
     peerDependencies:
       jiti: '*'
