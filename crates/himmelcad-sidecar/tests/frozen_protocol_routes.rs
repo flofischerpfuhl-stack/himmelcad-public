@@ -137,6 +137,13 @@ fn corpus_sidecar_binary(request: &[u8]) -> PathBuf {
     }
 }
 
+/// The path as it appears inside a JSON string (Windows backslashes escaped).
+fn json_string_content(path: &Path) -> String {
+    let quoted = serde_json::to_string(path.to_str().expect("UTF-8 lifecycle project path"))
+        .expect("encode lifecycle project path");
+    quoted[1..quoted.len() - 1].to_owned()
+}
+
 fn replace_literal(bytes: Vec<u8>, from: &str, to: &str) -> Vec<u8> {
     String::from_utf8(bytes)
         .expect("sidecar response is UTF-8 JSON")
@@ -199,11 +206,8 @@ fn normalize_lifecycle(bytes: Vec<u8>, project_root: &Path) -> Vec<u8> {
     // its scratch path, project/session ids, two timestamps, and the five
     // initial entity hashes derived from those values. All other bytes remain
     // in the digest comparison below.
-    let mut normalized = replace_literal(
-        bytes,
-        project_root.to_str().expect("UTF-8 lifecycle project path"),
-        "<project-root>",
-    );
+    let mut normalized =
+        replace_literal(bytes, &json_string_content(project_root), "<project-root>");
     normalized = replace_literal(normalized, &session_id, "<session-id>");
     for (version_hash, replacement) in version_hashes {
         normalized = replace_literal(normalized, &version_hash, &replacement);
@@ -269,7 +273,7 @@ fn response_corpus_matches_exact_sidecar_bytes() {
         request = replace_literal(
             request,
             "{{PROJECT_ROOT}}",
-            project_root.to_str().expect("UTF-8 lifecycle project path"),
+            &json_string_content(&project_root),
         );
 
         let mut child = Command::new(corpus_sidecar_binary(&request))
