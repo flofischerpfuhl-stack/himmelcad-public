@@ -3,6 +3,7 @@
   "layers": ["product", "interface", "command", "domain", "foundation", "display", "electron"],
   "rust": {
     "himmelcad-command": "command",
+    "himmelcad-builder-sidecar": "product",
     "himmelcad-core": "foundation",
     "himmelcad-decode-wasm": "display",
     "himmelcad-document": "foundation",
@@ -14,6 +15,7 @@
     "himmelcad-domain-surface": "domain",
     "himmelcad-io": "foundation",
     "himmelcad-model": "foundation",
+    "himmelcad-photolab-sidecar": "product",
     "himmelcad-prepared": "foundation",
     "himmelcad-process": "foundation",
     "himmelcad-render": "display",

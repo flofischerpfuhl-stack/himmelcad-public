@@ -17,6 +17,7 @@ assert.ok(
 const capBoundaryRoots = [
   'apps/photolab/electron',
   'apps/photolab/renderer/src',
+  'crates/himmelcad-photolab-sidecar/src',
   'crates/himmelcad-sidecar/src',
   'crates/himmelcad-io/src',
 ];
@@ -39,7 +40,7 @@ for (const relative of capBoundaryRoots) {
 const electronMain = read('apps/photolab/electron/main.ts');
 const preload = read('apps/photolab/electron/preload.ts');
 const renderer = read('apps/photolab/renderer/src/App.tsx');
-const sidecar = read('crates/himmelcad-sidecar/src/main.rs');
+const sidecar = read('crates/himmelcad-photolab-sidecar/src/routes/photolab_himmelcap.rs');
 const importer = read('crates/himmelcad-domain-photogrammetry/src/hcap_import.rs');
 
 for (const method of [

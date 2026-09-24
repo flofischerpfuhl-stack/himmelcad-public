@@ -39,7 +39,7 @@ await run(
   [
     'test',
     '-p',
-    'himmelcad-sidecar',
+    'himmelcad-photolab-sidecar',
     'mesh_tiler::tests::real_brandenburg_dgm_section_is_exact_across_the_source_tile_seam',
     '--',
     '--ignored',

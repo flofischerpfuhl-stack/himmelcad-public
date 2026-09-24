@@ -1,6 +1,21 @@
 use super::io::handle_io_formats_page;
 use super::*;
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct OpenCanonicalProjectParams {
+    project_root: PathBuf,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct AppNegotiationParams {
+    client_name: String,
+    supported_versions: Vec<u32>,
+    required_capabilities: Vec<String>,
+    optional_capabilities: Vec<String>,
+}
+
 pub(super) fn handle_app_negotiation(req: RpcRequest) -> RpcResponse {
     let params = match serde_json::from_value::<AppNegotiationParams>(req.params) {
         Ok(params) => params,
@@ -81,29 +96,15 @@ pub(super) async fn handle_canonical_app_rpc(
     runtime: Arc<Mutex<CanonicalAppRuntime>>,
     automation: Arc<AutomationRuntime>,
 ) -> RpcResponse {
-    let queue_flush = req.method == "snapshot.create"
-        || req.method == "snapshot.restore"
-        || req.method == "project.undo"
-        || req.method == "project.redo"
-        || req.method == "pointcloud.display.set"
-        || req.method == "view.bookmark.create"
-        || req.method == "view.bookmark.restore"
-        || req.method == "canonical.viewing_box.put"
-        || req.method == "canonical.viewing_box.delete"
-        || req.method == "measurement.create"
-        || req.method == "measurement.remove"
-        || req.method == "draw.curve.put"
-        || req.method == "draw.curve.undo"
-        || req.method == "draw.curve.redo"
-        || (req.method == "app.protocol"
-            && serde_json::from_value::<AppProtocolRequestEnvelope>(req.params.clone()).is_ok_and(
-                |envelope| {
-                    matches!(
-                        envelope.request,
-                        AppProtocolRequest::ExecuteCanonicalTransaction(_)
-                    )
-                },
-            ));
+    let queue_flush = req.method == "app.protocol"
+        && serde_json::from_value::<AppProtocolRequestEnvelope>(req.params.clone()).is_ok_and(
+            |envelope| {
+                matches!(
+                    envelope.request,
+                    AppProtocolRequest::ExecuteCanonicalTransaction(_)
+                )
+            },
+        );
     if req.method == "app.negotiate" {
         return handle_app_negotiation(req);
     }
@@ -171,324 +172,10 @@ pub(super) async fn handle_canonical_app_rpc(
                 Err(error) => rpc_err(req.id, -32602, &format!("invalid params: {error}")),
             }
         }
-        "product.import.provenance" => {
-            #[derive(Deserialize)]
-            #[serde(rename_all = "camelCase", deny_unknown_fields)]
-            struct Params {
-                entity_ids: Vec<String>,
-            }
-            match serde_json::from_value::<Params>(req.params) {
-                Ok(params) if (1..=200).contains(&params.entity_ids.len()) => rpc_result(
-                    req.id,
-                    runtime
-                        .photolab_product_provenance(&params.entity_ids)
-                        .map_err(anyhow::Error::from),
-                ),
-                Ok(_) => rpc_err(req.id, -32602, "entityIds must contain 1 through 200 ids"),
-                Err(error) => rpc_err(req.id, -32602, &format!("invalid params: {error}")),
-            }
-        }
-        "project.flush" => {
-            let result = runtime
-                .flush()
-                .and_then(|_| runtime.create_snapshot("Save", SnapshotOriginV1::Ui))
-                .and_then(|_| runtime.flush())
-                .map_err(anyhow::Error::from);
-            rpc_result(req.id, result)
-        }
-        "project.undo" | "project.redo" => {
-            #[derive(Deserialize)]
-            #[serde(rename_all = "camelCase", deny_unknown_fields)]
-            struct Params {
-                command_id: String,
-            }
-            match serde_json::from_value::<Params>(req.params) {
-                Ok(params) => rpc_result(
-                    req.id,
-                    if req.method == "project.undo" {
-                        runtime.undo_document(params.command_id)
-                    } else {
-                        runtime.redo_document(params.command_id)
-                    }
-                    .map_err(anyhow::Error::from),
-                ),
-                Err(error) => rpc_err(req.id, -32602, &format!("invalid params: {error}")),
-            }
-        }
-        "snapshot.create" => {
-            #[derive(Deserialize)]
-            #[serde(rename_all = "camelCase", deny_unknown_fields)]
-            struct Params {
-                name: String,
-            }
-            match serde_json::from_value::<Params>(req.params) {
-                Ok(params) => rpc_result(
-                    req.id,
-                    runtime
-                        .create_snapshot(&params.name, SnapshotOriginV1::Ui)
-                        .map_err(anyhow::Error::from),
-                ),
-                Err(error) => rpc_err(req.id, -32602, &format!("invalid params: {error}")),
-            }
-        }
-        "snapshot.list" => rpc_result(
-            req.id,
-            runtime.list_snapshots().map_err(anyhow::Error::from),
-        ),
-        "snapshot.restore" => {
-            #[derive(Deserialize)]
-            #[serde(rename_all = "camelCase", deny_unknown_fields)]
-            struct Params {
-                entity_id: String,
-            }
-            match serde_json::from_value::<Params>(req.params) {
-                Ok(params) => rpc_result(
-                    req.id,
-                    runtime
-                        .restore_snapshot(&params.entity_id)
-                        .map_err(anyhow::Error::from),
-                ),
-                Err(error) => rpc_err(req.id, -32602, &format!("invalid params: {error}")),
-            }
-        }
-        "view.bookmark.create" => {
-            #[derive(Deserialize)]
-            #[serde(rename_all = "camelCase", deny_unknown_fields)]
-            struct Params {
-                command_id: String,
-                entity_id: String,
-                name: String,
-                state: serde_json::Value,
-            }
-            match serde_json::from_value::<Params>(req.params) {
-                Ok(params) => rpc_result(
-                    req.id,
-                    runtime
-                        .create_view_bookmark(
-                            params.command_id,
-                            params.entity_id,
-                            params.name,
-                            params.state,
-                        )
-                        .map_err(anyhow::Error::from),
-                ),
-                Err(error) => rpc_err(req.id, -32602, &format!("invalid params: {error}")),
-            }
-        }
-        "view.bookmark.list" => rpc_result(
-            req.id,
-            runtime.list_view_bookmarks().map_err(anyhow::Error::from),
-        ),
-        "view.bookmark.restore" => {
-            #[derive(Deserialize)]
-            #[serde(rename_all = "camelCase", deny_unknown_fields)]
-            struct Params {
-                command_id: String,
-                entity_id: String,
-                expected_revision: u64,
-            }
-            match serde_json::from_value::<Params>(req.params) {
-                Ok(params) => rpc_result(
-                    req.id,
-                    runtime
-                        .restore_view_bookmark(
-                            params.command_id,
-                            params.entity_id,
-                            params.expected_revision,
-                        )
-                        .map_err(anyhow::Error::from),
-                ),
-                Err(error) => rpc_err(req.id, -32602, &format!("invalid params: {error}")),
-            }
-        }
-        "canonical.viewing_box.put" => {
-            #[derive(Deserialize)]
-            #[serde(rename_all = "camelCase", deny_unknown_fields)]
-            struct Params {
-                command_id: String,
-                entity_id: String,
-                name: String,
-                expected_revision: Option<u64>,
-                state: serde_json::Value,
-            }
-            match serde_json::from_value::<Params>(req.params) {
-                Ok(params) => rpc_result(
-                    req.id,
-                    runtime
-                        .put_viewing_box(
-                            params.command_id,
-                            params.entity_id,
-                            params.name,
-                            params.expected_revision,
-                            params.state,
-                        )
-                        .map_err(anyhow::Error::from),
-                ),
-                Err(error) => rpc_err(req.id, -32602, &format!("invalid params: {error}")),
-            }
-        }
-        "canonical.viewing_box.list" => rpc_result(
-            req.id,
-            runtime.list_viewing_boxes().map_err(anyhow::Error::from),
-        ),
-        "canonical.viewing_box.delete" => {
-            #[derive(Deserialize)]
-            #[serde(rename_all = "camelCase", deny_unknown_fields)]
-            struct Params {
-                command_id: String,
-                entity_id: String,
-                expected_revision: u64,
-            }
-            match serde_json::from_value::<Params>(req.params) {
-                Ok(params) => rpc_result(
-                    req.id,
-                    runtime
-                        .delete_viewing_box(
-                            params.command_id,
-                            params.entity_id,
-                            params.expected_revision,
-                        )
-                        .map_err(anyhow::Error::from),
-                ),
-                Err(error) => rpc_err(req.id, -32602, &format!("invalid params: {error}")),
-            }
-        }
-        "measurement.create" => {
-            #[derive(Deserialize)]
-            #[serde(rename_all = "camelCase", deny_unknown_fields)]
-            struct Params {
-                command_id: String,
-                entity_id: String,
-                name: String,
-                measurement: himmelcad_core::release_05_admissions::MeasurementV1,
-            }
-            match serde_json::from_value::<Params>(req.params) {
-                Ok(params) => rpc_result(
-                    req.id,
-                    runtime
-                        .create_measurement(
-                            params.command_id,
-                            params.entity_id,
-                            params.name,
-                            params.measurement,
-                        )
-                        .map_err(anyhow::Error::from),
-                ),
-                Err(error) => rpc_err(req.id, -32602, &format!("invalid params: {error}")),
-            }
-        }
-        "measurement.list" => rpc_result(
-            req.id,
-            runtime.list_measurements().map_err(anyhow::Error::from),
-        ),
-        "measurement.get" => {
-            #[derive(Deserialize)]
-            #[serde(rename_all = "camelCase", deny_unknown_fields)]
-            struct Params {
-                entity_id: String,
-            }
-            match serde_json::from_value::<Params>(req.params) {
-                Ok(params) => rpc_result(
-                    req.id,
-                    runtime
-                        .get_measurement(&params.entity_id)
-                        .map_err(anyhow::Error::from),
-                ),
-                Err(error) => rpc_err(req.id, -32602, &format!("invalid params: {error}")),
-            }
-        }
-        "measurement.remove" => {
-            #[derive(Deserialize)]
-            #[serde(rename_all = "camelCase", deny_unknown_fields)]
-            struct Params {
-                command_id: String,
-                entity_id: String,
-                expected_revision: u64,
-            }
-            match serde_json::from_value::<Params>(req.params) {
-                Ok(params) => rpc_result(
-                    req.id,
-                    runtime
-                        .delete_measurement(
-                            params.command_id,
-                            params.entity_id,
-                            params.expected_revision,
-                        )
-                        .map_err(anyhow::Error::from),
-                ),
-                Err(error) => rpc_err(req.id, -32602, &format!("invalid params: {error}")),
-            }
-        }
-        "draw.curve.put" => {
-            #[derive(Deserialize)]
-            #[serde(rename_all = "camelCase", deny_unknown_fields)]
-            struct Params {
-                command_id: String,
-                input: himmelcad_sidecar::canonical_app_runtime::DrawCurveInput,
-            }
-            match serde_json::from_value::<Params>(req.params) {
-                Ok(params) => rpc_result(
-                    req.id,
-                    runtime
-                        .put_draw_curve(params.command_id, params.input)
-                        .map_err(anyhow::Error::from),
-                ),
-                Err(error) => rpc_err(req.id, -32602, &format!("invalid params: {error}")),
-            }
-        }
-        "draw.curve.list" => rpc_result(
-            req.id,
-            runtime.list_draw_curves().map_err(anyhow::Error::from),
-        ),
-        "draw.curve.undo" => {
-            #[derive(Deserialize)]
-            #[serde(rename_all = "camelCase", deny_unknown_fields)]
-            struct Params {
-                command_id: String,
-                target_command_id: String,
-            }
-            match serde_json::from_value::<Params>(req.params) {
-                Ok(params) => rpc_result(
-                    req.id,
-                    runtime
-                        .undo_draw_curve(params.command_id, params.target_command_id)
-                        .map_err(anyhow::Error::from),
-                ),
-                Err(error) => rpc_err(req.id, -32602, &format!("invalid params: {error}")),
-            }
-        }
-        "draw.curve.redo" => {
-            #[derive(Deserialize)]
-            #[serde(rename_all = "camelCase", deny_unknown_fields)]
-            struct Params {
-                command_id: String,
-                target_command_id: String,
-            }
-            match serde_json::from_value::<Params>(req.params) {
-                Ok(params) => rpc_result(
-                    req.id,
-                    runtime
-                        .redo_draw_curve(params.command_id, params.target_command_id)
-                        .map_err(anyhow::Error::from),
-                ),
-                Err(error) => rpc_err(req.id, -32602, &format!("invalid params: {error}")),
-            }
-        }
         "canonical.residency.bootstrap" => rpc_result(
             req.id,
             runtime.residency_bootstrap().map_err(anyhow::Error::from),
         ),
-        "pointcloud.display.set" => {
-            match serde_json::from_value::<SetPointCloudDisplayParams>(req.params) {
-                Ok(params) => rpc_result(
-                    req.id,
-                    runtime
-                        .set_point_cloud_display(params.command_id, params.entities, params.display)
-                        .map_err(anyhow::Error::from),
-                ),
-                Err(error) => rpc_err(req.id, -32602, &format!("invalid params: {error}")),
-            }
-        }
         "app.protocol" => match serde_json::from_value::<AppProtocolRequestEnvelope>(req.params) {
             Ok(envelope) => {
                 if let AppProtocolRequest::ExecuteCanonicalTransaction(transaction) =
@@ -550,6 +237,48 @@ pub(super) async fn handle_canonical_app_rpc(
     response
 }
 
+fn schedule_canonical_group_flush(runtime: Arc<Mutex<CanonicalAppRuntime>>) {
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(
+            std::env::var("HCAD_JOURNAL_FLUSH_INTERVAL_MS")
+                .ok()
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or(50),
+        ))
+        .await;
+        let result = runtime
+            .lock()
+            .expect("canonical app runtime mutex poisoned")
+            .flush();
+        if let Err(error) = result {
+            tracing::error!(%error, "Builder canonical journal group flush failed");
+        }
+    });
+}
+
+fn encode_rpc_base64(bytes: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut output = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let a = chunk[0];
+        let b = chunk.get(1).copied().unwrap_or(0);
+        let c = chunk.get(2).copied().unwrap_or(0);
+        output.push(char::from(TABLE[usize::from(a >> 2)]));
+        output.push(char::from(TABLE[usize::from(((a & 0x03) << 4) | (b >> 4))]));
+        output.push(if chunk.len() > 1 {
+            char::from(TABLE[usize::from(((b & 0x0f) << 2) | (c >> 6))])
+        } else {
+            '='
+        });
+        output.push(if chunk.len() > 2 {
+            char::from(TABLE[usize::from(c & 0x3f)])
+        } else {
+            '='
+        });
+    }
+    output
+}
+
 pub(super) const SHARED_METHODS: &[&str] = &[
     "app.negotiate",
     "app.protocol",
@@ -560,30 +289,57 @@ pub(super) const SHARED_METHODS: &[&str] = &[
     "canonical.residency.resource.read",
 ];
 
-pub(super) const BUILDER_METHODS: &[&str] = &[
-    "canonical.viewing_box.delete",
-    "canonical.viewing_box.list",
-    "canonical.viewing_box.put",
-    "draw.curve.list",
-    "draw.curve.put",
-    "draw.curve.redo",
-    "draw.curve.undo",
-    "measurement.create",
-    "measurement.get",
-    "measurement.list",
-    "measurement.remove",
-    "pointcloud.display.set",
-    "product.import.provenance",
-    "project.flush",
-    "project.redo",
-    "project.undo",
-    "snapshot.create",
-    "snapshot.list",
-    "snapshot.restore",
-    "view.bookmark.create",
-    "view.bookmark.list",
-    "view.bookmark.restore",
-];
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rpc_request(method: &str, params: serde_json::Value) -> RpcRequest {
+        RpcRequest {
+            jsonrpc: "2.0".to_owned(),
+            id: serde_json::json!(1),
+            method: method.to_owned(),
+            params,
+        }
+    }
+
+    #[test]
+    fn app_negotiation_advertises_only_implemented_capabilities() {
+        let response = handle_app_negotiation(rpc_request(
+            "app.negotiate",
+            serde_json::json!({
+                "clientName": "builder-test",
+                "supportedVersions": [1],
+                "requiredCapabilities": ["document.read", "document.write"],
+                "optionalCapabilities": ["view.read"]
+            }),
+        ));
+        assert!(response.error.is_none());
+        let result = response.result.expect("negotiation result");
+        assert_eq!(result["selectedVersion"], 1);
+        assert_eq!(
+            result["capabilities"],
+            serde_json::json!([
+                "document.read",
+                "document.write",
+                "journal.read",
+                "io.formats.read",
+                "io.probe",
+                "io.import.execute",
+                "io.export",
+                "io.operation",
+                "registration.import",
+                "residency.read",
+                "automation.entities.page",
+                "automation.cas.describe",
+                "automation.commands.validate",
+                "automation.commands.status",
+                "automation.commands.cancel",
+                "automation.bulk.read",
+                "automation.bulk.release"
+            ])
+        );
+    }
+}
 
 #[derive(Clone)]
 struct CanonicalAppContext {
@@ -602,13 +358,6 @@ impl CanonicalAppModule {
         automation: Arc<AutomationRuntime>,
     ) -> Self {
         Self::new(canonical_app, automation, SHARED_METHODS)
-    }
-
-    pub(super) fn builder(
-        canonical_app: Arc<Mutex<CanonicalAppRuntime>>,
-        automation: Arc<AutomationRuntime>,
-    ) -> Self {
-        Self::new(canonical_app, automation, BUILDER_METHODS)
     }
 
     fn new(

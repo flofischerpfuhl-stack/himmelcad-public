@@ -6,29 +6,16 @@ rust-version.workspace = true
 license.workspace = true
 description = "Long-running HimmelCAD sidecar process. Speaks JSON-RPC 2.0 over stdio."
 
-[[bin]]
-name = "himmelcad-sidecar"
-path = "src/main.rs"
-
-[[bench]]
-name = "mesh_terrain"
-harness = false
-
 [dependencies]
 himmelcad-command = { path = "../himmelcad-command" }
 himmelcad-core = { path = "../himmelcad-core" }
 himmelcad-document = { path = "../himmelcad-document" }
-himmelcad-domain-photogrammetry = { path = "../himmelcad-domain-photogrammetry" }
-himmelcad-domain-drafting = { path = "../himmelcad-domain-drafting" }
 himmelcad-domain-pointcloud = { path = "../himmelcad-domain-pointcloud" }
-himmelcad-domain-raster = { path = "../himmelcad-domain-raster" }
 himmelcad-domain-registration = { path = "../himmelcad-domain-registration" }
-himmelcad-domain-surface = { path = "../himmelcad-domain-surface" }
 himmelcad-io = { path = "../himmelcad-io" }
 himmelcad-model = { path = "../himmelcad-model" }
 himmelcad-prepared = { path = "../himmelcad-prepared" }
 himmelcad-process = { path = "../himmelcad-process" }
-himmelcad-render = { path = "../himmelcad-render" }
 himmelcad-spatial = { path = "../himmelcad-spatial" }
 himmelcad-transform = { path = "../himmelcad-transform" }
 serde.workspace = true
@@ -46,10 +33,10 @@ zip.workspace = true
 fs2 = "0.4.3"
 image = { version = "0.25.8", default-features = false, features = ["jpeg", "png", "tiff"] }
 las.workspace = true
-rusqlite = { version = "0.37.0", features = ["bundled"] }
 
 [dev-dependencies]
 gltf.workspace = true
+himmelcad-domain-drafting = { path = "../himmelcad-domain-drafting" }
 
 [lints]
 workspace = true

@@ -9,7 +9,7 @@ import { resolveDevelopmentSidecarPath } from './sidecarPath';
 test('selects the Windows .exe development sidecar', () => {
   const repositoryRoot = mkdtempSync(join(tmpdir(), 'himmelcad-sidecar-path-'));
   try {
-    const executable = resolve(repositoryRoot, 'target', 'debug', 'himmelcad-sidecar.exe');
+    const executable = resolve(repositoryRoot, 'target', 'debug', 'himmelcad-photolab-sidecar.exe');
     mkdirSync(resolve(repositoryRoot, 'target', 'debug'), { recursive: true });
     writeFileSync(executable, 'fixture');
 
@@ -17,7 +17,10 @@ test('selects the Windows .exe development sidecar', () => {
 
     assert.equal(selected, executable);
     assert.equal(existsSync(selected), true);
-    assert.equal(existsSync(resolve(repositoryRoot, 'target', 'debug', 'himmelcad-sidecar')), false);
+    assert.equal(
+      existsSync(resolve(repositoryRoot, 'target', 'debug', 'himmelcad-photolab-sidecar')),
+      false,
+    );
   } finally {
     rmSync(repositoryRoot, { force: true, recursive: true });
   }
@@ -27,8 +30,8 @@ test('accepts the explicit development sidecar override', () => {
   const repositoryRoot = resolve('repository');
   assert.equal(
     resolveDevelopmentSidecarPath(repositoryRoot, 'win32', {
-      HIMMELCAD_SIDECAR_BIN: 'target/win/release/himmelcad-sidecar.exe',
+      HIMMELCAD_SIDECAR_BIN: 'target/win/release/himmelcad-photolab-sidecar.exe',
     }),
-    resolve(repositoryRoot, 'target', 'win', 'release', 'himmelcad-sidecar.exe'),
+    resolve(repositoryRoot, 'target', 'win', 'release', 'himmelcad-photolab-sidecar.exe'),
   );
 });

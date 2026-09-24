@@ -15,14 +15,14 @@ use std::{
     thread,
 };
 
+use himmelcad_domain_photogrammetry::mvs_runtime::{
+    MvsCheckpoint, MvsComputeDevice, MvsDenseFusionEvidence, MvsDepthImageRecord, MvsDepthTileKey,
+    MvsDepthTileRecord, MvsOutputIndex, MvsSettings, MvsWorkerRequest, MVS_DENSE_FUSION_ALGORITHM,
+};
 use himmelcad_model::hash::ObjectHash;
 use himmelcad_prepared::mvs_scene::{MvsPinholeCamera, MvsSceneImage, MvsSceneManifest};
 #[cfg(test)]
 use himmelcad_process::jobs::CancellationToken;
-use himmelcad_sidecar::mvs_runtime::{
-    MvsCheckpoint, MvsComputeDevice, MvsDenseFusionEvidence, MvsDepthImageRecord, MvsDepthTileKey,
-    MvsDepthTileRecord, MvsOutputIndex, MvsSettings, MvsWorkerRequest, MVS_DENSE_FUSION_ALGORITHM,
-};
 use image::{imageops::FilterType, GrayImage, Luma, RgbImage};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -1901,7 +1901,7 @@ fn fuse_dense_cloud(
     checkpoint_keys: &BTreeSet<MvsDepthTileKey>,
     completed_tiles: u64,
     cancellation: &AtomicBool,
-) -> Result<himmelcad_sidecar::mvs_runtime::MvsDenseCloudRecord, WorkerError> {
+) -> Result<himmelcad_domain_photogrammetry::mvs_runtime::MvsDenseCloudRecord, WorkerError> {
     let footprints = fusion::FootprintStatistics::from_values(
         scene
             .images
@@ -2058,7 +2058,7 @@ fn fuse_dense_cloud(
     }
     fs::rename(temporary, &dense_path)?;
     fs::remove_file(payload_path)?;
-    let record = himmelcad_sidecar::mvs_runtime::MvsDenseCloudRecord {
+    let record = himmelcad_domain_photogrammetry::mvs_runtime::MvsDenseCloudRecord {
         relative_path: PathBuf::from("dense.ply"),
         sha256: hash_file(&dense_path)?,
         vertex_count,
@@ -2316,7 +2316,7 @@ enum WorkerError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use himmelcad_sidecar::mvs_runtime::{validate_output_directory, MvsRunRequest};
+    use himmelcad_domain_photogrammetry::mvs_runtime::{validate_output_directory, MvsRunRequest};
     use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
     static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(1);

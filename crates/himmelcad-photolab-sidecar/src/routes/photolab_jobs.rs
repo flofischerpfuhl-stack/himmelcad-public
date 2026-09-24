@@ -76,14 +76,14 @@ pub(super) async fn handle_job_rpc(
                         let batch_target = EntityId(frozen_plan.project_id.clone());
                         let lineage_target = params.processing_set_id.clone();
                         let mut publication_targets = vec![
-                            himmelcad_sidecar::job_runtime::PublicationTarget::alignment(
+                            himmelcad_domain_photogrammetry::job_runtime::PublicationTarget::alignment(
                                 batch_target.clone(),
                                 lineage_target.clone(),
                             ),
                         ];
-                        let mut required_bytes = himmelcad_sidecar::job_runtime::estimate_job_bytes(
+                        let mut required_bytes = himmelcad_domain_photogrammetry::job_runtime::estimate_job_bytes(
                             PhotolabJobKind::AlignPhotos,
-                            himmelcad_sidecar::job_runtime::DiskEstimateScale::Images(
+                            himmelcad_domain_photogrammetry::job_runtime::DiskEstimateScale::Images(
                                 u64::try_from(batch_image_count).unwrap_or(u64::MAX),
                             ),
                         );
@@ -96,43 +96,48 @@ pub(super) async fn handle_job_rpc(
                                 continue;
                             };
                             let (product_kind, job_kind, scale) = match configuration {
-                                ProductRunConfiguration::Depth { .. } => (himmelcad_domain_photogrammetry::photolab_products::ProductKind::DepthMaps, PhotolabJobKind::BuildDepthMaps, himmelcad_sidecar::job_runtime::DiskEstimateScale::Images(u64::try_from(batch_image_count).unwrap_or(u64::MAX))),
-                                ProductRunConfiguration::Dense { .. } => (himmelcad_domain_photogrammetry::photolab_products::ProductKind::DensePointCloud, PhotolabJobKind::BuildDensePointCloud, himmelcad_sidecar::job_runtime::DiskEstimateScale::Images(u64::try_from(batch_image_count).unwrap_or(u64::MAX))),
-                                ProductRunConfiguration::Dem { .. } => (himmelcad_domain_photogrammetry::photolab_products::ProductKind::Dem, PhotolabJobKind::BuildDem, himmelcad_sidecar::job_runtime::DiskEstimateScale::RasterPixels(0)),
-                                ProductRunConfiguration::Ortho { .. } => (himmelcad_domain_photogrammetry::photolab_products::ProductKind::Orthomosaic, PhotolabJobKind::BuildOrthomosaic, himmelcad_sidecar::job_runtime::DiskEstimateScale::RasterPixels(0)),
-                                ProductRunConfiguration::Mesh { .. } => (himmelcad_domain_photogrammetry::photolab_products::ProductKind::TexturedMesh, PhotolabJobKind::BuildMesh, himmelcad_sidecar::job_runtime::DiskEstimateScale::Fixed),
-                                ProductRunConfiguration::Splat { .. } => (himmelcad_domain_photogrammetry::photolab_products::ProductKind::GaussianSplat, PhotolabJobKind::BuildGaussianSplat, himmelcad_sidecar::job_runtime::DiskEstimateScale::Fixed),
+                                ProductRunConfiguration::Depth { .. } => (himmelcad_domain_photogrammetry::photolab_products::ProductKind::DepthMaps, PhotolabJobKind::BuildDepthMaps, himmelcad_domain_photogrammetry::job_runtime::DiskEstimateScale::Images(u64::try_from(batch_image_count).unwrap_or(u64::MAX))),
+                                ProductRunConfiguration::Dense { .. } => (himmelcad_domain_photogrammetry::photolab_products::ProductKind::DensePointCloud, PhotolabJobKind::BuildDensePointCloud, himmelcad_domain_photogrammetry::job_runtime::DiskEstimateScale::Images(u64::try_from(batch_image_count).unwrap_or(u64::MAX))),
+                                ProductRunConfiguration::Dem { .. } => (himmelcad_domain_photogrammetry::photolab_products::ProductKind::Dem, PhotolabJobKind::BuildDem, himmelcad_domain_photogrammetry::job_runtime::DiskEstimateScale::RasterPixels(0)),
+                                ProductRunConfiguration::Ortho { .. } => (himmelcad_domain_photogrammetry::photolab_products::ProductKind::Orthomosaic, PhotolabJobKind::BuildOrthomosaic, himmelcad_domain_photogrammetry::job_runtime::DiskEstimateScale::RasterPixels(0)),
+                                ProductRunConfiguration::Mesh { .. } => (himmelcad_domain_photogrammetry::photolab_products::ProductKind::TexturedMesh, PhotolabJobKind::BuildMesh, himmelcad_domain_photogrammetry::job_runtime::DiskEstimateScale::Fixed),
+                                ProductRunConfiguration::Splat { .. } => (himmelcad_domain_photogrammetry::photolab_products::ProductKind::GaussianSplat, PhotolabJobKind::BuildGaussianSplat, himmelcad_domain_photogrammetry::job_runtime::DiskEstimateScale::Fixed),
                             };
                             let product_lineage_target = match gcp_optimization_entity_id {
                                 ProductGcpSelection::Explicit(entity_id) => Some(entity_id.clone()),
                                 ProductGcpSelection::Latest | ProductGcpSelection::None => None,
                             };
                             publication_targets.push(
-                                himmelcad_sidecar::job_runtime::PublicationTarget::product(
+                                himmelcad_domain_photogrammetry::job_runtime::PublicationTarget::product(
                                     product_kind,
                                     batch_target.clone(),
                                     product_lineage_target,
                                 ),
                             );
                             required_bytes = required_bytes.saturating_add(
-                                himmelcad_sidecar::job_runtime::estimate_job_bytes(job_kind, scale),
+                                himmelcad_domain_photogrammetry::job_runtime::estimate_job_bytes(
+                                    job_kind, scale,
+                                ),
                             );
                         }
-                        let admission = himmelcad_sidecar::job_runtime::JobAdmission {
-                            publication_targets,
-                            disk_preflight: Some(himmelcad_sidecar::job_runtime::DiskPreflight {
-                                required_bytes,
-                                path: admission_context.working_path,
-                            }),
-                            memory_preflight: None,
-                            toolchain_preflight: Some(
-                                worker_toolchain_preflight(
-                                    PhotolabJobKind::Batch,
-                                    &batch_worker_requirements(&params.steps),
-                                )
-                                .into_admission(),
-                            ),
-                        };
+                        let admission =
+                            himmelcad_domain_photogrammetry::job_runtime::JobAdmission {
+                                publication_targets,
+                                disk_preflight: Some(
+                                    himmelcad_domain_photogrammetry::job_runtime::DiskPreflight {
+                                        required_bytes,
+                                        path: admission_context.working_path,
+                                    },
+                                ),
+                                memory_preflight: None,
+                                toolchain_preflight: Some(
+                                    worker_toolchain_preflight(
+                                        PhotolabJobKind::Batch,
+                                        &batch_worker_requirements(&params.steps),
+                                    )
+                                    .into_admission(),
+                                ),
+                            };
                         let publisher = Arc::clone(&projects);
                         let result = jobs
                             .start_with_frozen_request_and_admission(
@@ -166,9 +171,9 @@ pub(super) async fn handle_job_rpc(
                         frozen_calibration_partition,
                         lineage,
                     )) => {
-                        let admission = himmelcad_sidecar::job_runtime::JobAdmission {
+                        let admission = himmelcad_domain_photogrammetry::job_runtime::JobAdmission {
                             publication_targets: vec![
-                                himmelcad_sidecar::job_runtime::PublicationTarget::optimization(
+                                himmelcad_domain_photogrammetry::job_runtime::PublicationTarget::optimization(
                                     lineage.source_alignment_entity_id.clone(),
                                     lineage.processing_set_id.clone(),
                                 ),
@@ -195,11 +200,11 @@ pub(super) async fn handle_job_rpc(
                                 .map_err(|error| {
                                     if matches!(
                                         error,
-                                        himmelcad_sidecar::mvs_scene::MvsSceneError::Cancelled
+                                        himmelcad_domain_photogrammetry::mvs_scene::MvsSceneError::Cancelled
                                     ) {
-                                        himmelcad_sidecar::job_runtime::JobWorkerError::Cancelled
+                                        himmelcad_domain_photogrammetry::job_runtime::JobWorkerError::Cancelled
                                     } else {
-                                        himmelcad_sidecar::job_runtime::JobWorkerError::Failed {
+                                        himmelcad_domain_photogrammetry::job_runtime::JobWorkerError::Failed {
                                             code: "gcpCameraPreparation".into(),
                                             message: error.to_string(),
                                         }
@@ -213,7 +218,7 @@ pub(super) async fn handle_job_rpc(
                                     &frozen_calibration_partition,
                                 )
                                 .map_err(|error| {
-                                    himmelcad_sidecar::job_runtime::JobWorkerError::Failed {
+                                    himmelcad_domain_photogrammetry::job_runtime::JobWorkerError::Failed {
                                         code: "gcpCameraPreparation".into(),
                                         message: error.to_string(),
                                     }
@@ -226,11 +231,11 @@ pub(super) async fn handle_job_rpc(
                                 .map_err(|error| {
                                     if matches!(
                                         error,
-                                        himmelcad_sidecar::mvs_scene::MvsSceneError::Cancelled
+                                        himmelcad_domain_photogrammetry::mvs_scene::MvsSceneError::Cancelled
                                     ) {
-                                        himmelcad_sidecar::job_runtime::JobWorkerError::Cancelled
+                                        himmelcad_domain_photogrammetry::job_runtime::JobWorkerError::Cancelled
                                     } else {
-                                        himmelcad_sidecar::job_runtime::JobWorkerError::Failed {
+                                        himmelcad_domain_photogrammetry::job_runtime::JobWorkerError::Failed {
                                             code: "gcpTiePointPreparation".into(),
                                             message: error.to_string(),
                                         }
@@ -261,7 +266,7 @@ pub(super) async fn handle_job_rpc(
                                 .map_err(map_gcp_optimization_error)?;
                                 if let Some(message) = progress_error {
                                     return Err(
-                                        himmelcad_sidecar::job_runtime::JobWorkerError::Failed {
+                                        himmelcad_domain_photogrammetry::job_runtime::JobWorkerError::Failed {
                                             code: "progressSink".into(),
                                             message,
                                         },
@@ -271,7 +276,7 @@ pub(super) async fn handle_job_rpc(
                                 publisher
                                     .publish_gcp_optimization(outcome, &lineage)
                                     .map_err(|error| {
-                                        himmelcad_sidecar::job_runtime::JobWorkerError::Failed {
+                                        himmelcad_domain_photogrammetry::job_runtime::JobWorkerError::Failed {
                                             code: "projectPublish".into(),
                                             message: error.to_string(),
                                         }
@@ -353,17 +358,17 @@ pub(super) async fn handle_job_rpc(
                                 Ok(context) => context,
                                 Err(error) => return rpc_err(req.id, -32000, &error.to_string()),
                             };
-                            let admission = himmelcad_sidecar::job_runtime::JobAdmission {
+                            let admission = himmelcad_domain_photogrammetry::job_runtime::JobAdmission {
                                 publication_targets: vec![
-                                    himmelcad_sidecar::job_runtime::PublicationTarget::alignment(
+                                    himmelcad_domain_photogrammetry::job_runtime::PublicationTarget::alignment(
                                         EntityId(admission_context.manifest.project_id),
                                         processing_set_id.clone(),
                                     ),
                                 ],
                                 disk_preflight: Some(
-                                    himmelcad_sidecar::job_runtime::DiskPreflight::for_job(
+                                    himmelcad_domain_photogrammetry::job_runtime::DiskPreflight::for_job(
                                         PhotolabJobKind::AlignPhotos,
-                                        himmelcad_sidecar::job_runtime::DiskEstimateScale::Images(
+                                        himmelcad_domain_photogrammetry::job_runtime::DiskEstimateScale::Images(
                                             u64::try_from(request.camera_images.len())
                                                 .unwrap_or(u64::MAX),
                                         ),
@@ -396,7 +401,7 @@ pub(super) async fn handle_job_rpc(
                                             context.with_progress_window(0, combined_stage_count);
                                         let dedode_outcome = dedode_runtime
                                             .run(&dedode_request, &dedode_context)
-                                            .map_err(himmelcad_sidecar::job_runtime::JobWorkerError::from)?;
+                                            .map_err(himmelcad_domain_photogrammetry::job_runtime::JobWorkerError::from)?;
                                         context.check_cancelled()?;
                                         let colmap_context = context.with_progress_window(
                                             colmap_stage_base,
@@ -416,7 +421,7 @@ pub(super) async fn handle_job_rpc(
                                         runtime.run(&request, &colmap_context)
                                     }
                                 }
-                                .map_err(himmelcad_sidecar::job_runtime::JobWorkerError::from)?;
+                                .map_err(himmelcad_domain_photogrammetry::job_runtime::JobWorkerError::from)?;
                                 prepare_alignment_sparse_potree(&mut outcome, &context)?;
                                 prepare_alignment_mesh(&mut outcome, &context)?;
                                 context.check_cancelled()?;
@@ -478,17 +483,17 @@ pub(super) async fn handle_job_rpc(
                                     dedode: dedode.is_some(),
                                 }]
                             };
-                            let admission = himmelcad_sidecar::job_runtime::JobAdmission {
+                            let admission = himmelcad_domain_photogrammetry::job_runtime::JobAdmission {
                                 publication_targets: vec![
-                                    himmelcad_sidecar::job_runtime::PublicationTarget::alignment(
+                                    himmelcad_domain_photogrammetry::job_runtime::PublicationTarget::alignment(
                                         merge_entity_id.clone(),
                                         None,
                                     ),
                                 ],
                                 disk_preflight: Some(
-                                    himmelcad_sidecar::job_runtime::DiskPreflight::for_job(
+                                    himmelcad_domain_photogrammetry::job_runtime::DiskPreflight::for_job(
                                         PhotolabJobKind::MergeAlignments,
-                                        himmelcad_sidecar::job_runtime::DiskEstimateScale::Images(
+                                        himmelcad_domain_photogrammetry::job_runtime::DiskEstimateScale::Images(
                                             u64::try_from(request.camera_images.len())
                                                 .unwrap_or(u64::MAX),
                                         ),
@@ -541,7 +546,7 @@ pub(super) async fn handle_job_rpc(
                                         outcome
                                     } else {
                                         build_shared_control_merge(&checkpoint_project_root, &checkpoint_operation_id, &shared_inputs, &context.cancellation).map_err(|error| {
-                                            if matches!(error, himmelcad_sidecar::alignment_merge_runtime::AlignmentMergeRuntimeError::Cancelled) { JobWorkerError::Cancelled } else { worker_error("sharedControlMerge", &error.to_string()) }
+                                            if matches!(error, himmelcad_domain_photogrammetry::alignment_merge_runtime::AlignmentMergeRuntimeError::Cancelled) { JobWorkerError::Cancelled } else { worker_error("sharedControlMerge", &error.to_string()) }
                                         })?
                                     };
                                     let scratch_relative_path = outcome.scratch_path.strip_prefix(&checkpoint_project_root).map_err(|_| worker_error("alignmentMergeCheckpoint", "shared-control merge scratch escaped the project"))?.to_path_buf();
@@ -721,18 +726,18 @@ pub(super) async fn handle_job_rpc(
                                 Ok(context) => context.working_path,
                                 Err(error) => return rpc_err(req.id, -32000, &error.to_string()),
                             };
-                            let admission = himmelcad_sidecar::job_runtime::JobAdmission {
+                            let admission = himmelcad_domain_photogrammetry::job_runtime::JobAdmission {
                                 publication_targets: vec![
-                                    himmelcad_sidecar::job_runtime::PublicationTarget::product(
+                                    himmelcad_domain_photogrammetry::job_runtime::PublicationTarget::product(
                                         himmelcad_domain_photogrammetry::photolab_products::ProductKind::GaussianSplat,
                                         lineage.source_alignment_entity_id.clone(),
                                         lineage.gcp_optimization_entity_id.clone(),
                                     ),
                                 ],
                                 disk_preflight: Some(
-                                    himmelcad_sidecar::job_runtime::DiskPreflight::for_job(
+                                    himmelcad_domain_photogrammetry::job_runtime::DiskPreflight::for_job(
                                         PhotolabJobKind::BuildGaussianSplat,
-                                        himmelcad_sidecar::job_runtime::DiskEstimateScale::Fixed,
+                                        himmelcad_domain_photogrammetry::job_runtime::DiskEstimateScale::Fixed,
                                         project_root,
                                     ),
                                 ),
@@ -756,7 +761,7 @@ pub(super) async fn handle_job_rpc(
                                     admission,
                                     move |context| {
                                         let mut outcome = runtime.run(&request, &context).map_err(
-                                            himmelcad_sidecar::job_runtime::JobWorkerError::from,
+                                            himmelcad_domain_photogrammetry::job_runtime::JobWorkerError::from,
                                         )?;
                                         let project_transform =
                                             pinned_product_gcp_optimization(&publisher, &lineage)
@@ -775,7 +780,7 @@ pub(super) async fn handle_job_rpc(
                                         context.check_cancelled()?;
                                         publisher.publish_brush_outcome(outcome, &lineage).map_err(
                                         |error| {
-                                            himmelcad_sidecar::job_runtime::JobWorkerError::Failed {
+                                            himmelcad_domain_photogrammetry::job_runtime::JobWorkerError::Failed {
                                                 code: "projectPublish".into(),
                                                 message: error.to_string(),
                                             }
@@ -819,18 +824,18 @@ pub(super) async fn handle_job_rpc(
                                 ),
                                 _ => unreachable!("MVS product preparation returned another kind"),
                             };
-                            let admission = himmelcad_sidecar::job_runtime::JobAdmission {
+                            let admission = himmelcad_domain_photogrammetry::job_runtime::JobAdmission {
                                 publication_targets: vec![
-                                    himmelcad_sidecar::job_runtime::PublicationTarget::product(
+                                    himmelcad_domain_photogrammetry::job_runtime::PublicationTarget::product(
                                         product_kind,
                                         prepared.lineage.source_alignment_entity_id.clone(),
                                         prepared.lineage.gcp_optimization_entity_id.clone(),
                                     ),
                                 ],
                                 disk_preflight: Some(
-                                    himmelcad_sidecar::job_runtime::DiskPreflight::for_job(
+                                    himmelcad_domain_photogrammetry::job_runtime::DiskPreflight::for_job(
                                         job_kind,
-                                        himmelcad_sidecar::job_runtime::DiskEstimateScale::Images(
+                                        himmelcad_domain_photogrammetry::job_runtime::DiskEstimateScale::Images(
                                             u64::try_from(prepared.camera_entity_ids.len())
                                                 .unwrap_or(u64::MAX),
                                         ),
@@ -887,7 +892,7 @@ pub(super) async fn handle_job_rpc(
                                         };
                                         let mut outcome =
                                         prepared.runtime.run(&request, &context).map_err(
-                                            himmelcad_sidecar::job_runtime::JobWorkerError::from,
+                                            himmelcad_domain_photogrammetry::job_runtime::JobWorkerError::from,
                                         )?;
                                         if let Some(dense) =
                                             outcome.output.dense_point_cloud.as_ref()
@@ -997,7 +1002,7 @@ pub(super) async fn handle_job_rpc(
                                 )
                             };
                             let Some(raster_pixels) =
-                                himmelcad_sidecar::job_runtime::raster_pixel_count(
+                                himmelcad_domain_photogrammetry::job_runtime::raster_pixel_count(
                                     bounds.0, bounds.1, gsd,
                                 )
                             else {
@@ -1008,12 +1013,12 @@ pub(super) async fn handle_job_rpc(
                                 );
                             };
                             let disk_scale =
-                                himmelcad_sidecar::job_runtime::DiskEstimateScale::DenseRaster {
+                                himmelcad_domain_photogrammetry::job_runtime::DiskEstimateScale::DenseRaster {
                                     point_count: dense_point_count,
                                     raster_pixels,
                                 };
                             let disk_estimate =
-                                himmelcad_sidecar::job_runtime::disk_estimate_components(
+                                himmelcad_domain_photogrammetry::job_runtime::disk_estimate_components(
                                     prepared.job.kind,
                                     disk_scale,
                                 );
@@ -1043,16 +1048,16 @@ pub(super) async fn handle_job_rpc(
                                 .project_root
                                 .join(".photolab/raster-inputs")
                                 .join(&prepared.operation_id);
-                            let admission = himmelcad_sidecar::job_runtime::JobAdmission {
+                            let admission = himmelcad_domain_photogrammetry::job_runtime::JobAdmission {
                                 publication_targets: vec![
-                                    himmelcad_sidecar::job_runtime::PublicationTarget::product(
+                                    himmelcad_domain_photogrammetry::job_runtime::PublicationTarget::product(
                                         product_kind,
                                         prepared.lineage.source_alignment_entity_id.clone(),
                                         prepared.lineage.gcp_optimization_entity_id.clone(),
                                     ),
                                 ],
                                 disk_preflight: Some(
-                                    himmelcad_sidecar::job_runtime::DiskPreflight::for_job(
+                                    himmelcad_domain_photogrammetry::job_runtime::DiskPreflight::for_job(
                                         prepared.job.kind,
                                         disk_scale,
                                         disk_path,
@@ -1111,18 +1116,18 @@ pub(super) async fn handle_job_rpc(
                                 Ok(request) => request,
                                 Err(error) => return rpc_err(req.id, -32000, &error.to_string()),
                             };
-                            let admission = himmelcad_sidecar::job_runtime::JobAdmission {
+                            let admission = himmelcad_domain_photogrammetry::job_runtime::JobAdmission {
                                 publication_targets: vec![
-                                    himmelcad_sidecar::job_runtime::PublicationTarget::product(
+                                    himmelcad_domain_photogrammetry::job_runtime::PublicationTarget::product(
                                         himmelcad_domain_photogrammetry::photolab_products::ProductKind::TexturedMesh,
                                         prepared.lineage.source_alignment_entity_id.clone(),
                                         prepared.lineage.gcp_optimization_entity_id.clone(),
                                     ),
                                 ],
                                 disk_preflight: Some(
-                                    himmelcad_sidecar::job_runtime::DiskPreflight::for_job(
+                                    himmelcad_domain_photogrammetry::job_runtime::DiskPreflight::for_job(
                                         PhotolabJobKind::BuildMesh,
-                                        himmelcad_sidecar::job_runtime::DiskEstimateScale::Fixed,
+                                        himmelcad_domain_photogrammetry::job_runtime::DiskEstimateScale::Fixed,
                                         prepared.project_root.clone(),
                                     ),
                                 ),

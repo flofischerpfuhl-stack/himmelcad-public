@@ -253,7 +253,7 @@ if (realData) {
   await run(cargo, [
     'run',
     '-p',
-    'himmelcad-sidecar',
+    'himmelcad-photolab-sidecar',
     '--example',
     'prepared_textured_mesh_fixture',
     '--',

@@ -1,4 +1,182 @@
 use super::*;
+use crate::canonical_project_store::{CanonicalImportProgress, CanonicalImportProgressPhase};
+use io::{product_rpc_err, public_import_commit, validate_io_identity};
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RegistrationStageParams {
+    session_id: String,
+    command_id: String,
+    source_path: String,
+    selection: ImportProviderSelection,
+    options: serde_json::Value,
+    recipe: RegistrationRecipe,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RegistrationSessionParams {
+    session_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RegistrationResourceReadParams {
+    session_id: String,
+    capability: String,
+    resource_id: String,
+    offset: u64,
+    byte_length: u64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RegistrationSourceSamplesParams {
+    session_id: String,
+    maximum_samples: usize,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RegistrationProjectPointCloudSamplesParams {
+    dataset_id: String,
+    maximum_samples: usize,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SiteCalibrationInspectParams {
+    path: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RegistrationPointPairsParams {
+    session_id: String,
+    pairs: Vec<RegistrationPointPair>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RegistrationIcpParams {
+    session_id: String,
+    source: Vec<WorldPoint>,
+    target: Vec<RegistrationTargetSample>,
+    initial: Similarity3D,
+    mode: IcpMode,
+    options: IcpOptions,
+}
+
+struct RegistrationProviderContext {
+    progress_key: String,
+    last_fraction: f64,
+    cancellation: CancellationToken,
+}
+
+impl RegistrationProviderContext {
+    fn new(progress_key: String, cancellation: CancellationToken) -> Self {
+        Self {
+            progress_key,
+            last_fraction: 0.0,
+            cancellation,
+        }
+    }
+}
+
+impl ProviderOperationContext for RegistrationProviderContext {
+    fn is_cancelled(&self) -> bool {
+        self.cancellation.is_cancel_requested()
+    }
+
+    #[allow(clippy::cast_precision_loss)]
+    fn report_progress(&mut self, progress: ProviderProgress) {
+        let local_fraction = progress
+            .total
+            .filter(|total| *total > 0)
+            .map_or(self.last_fraction, |total| {
+                progress.completed as f64 / total as f64
+            })
+            .clamp(0.0, 1.0);
+        self.last_fraction = self.last_fraction.max(local_fraction);
+        emit_progress(
+            Some(&self.progress_key),
+            0.02 + self.last_fraction * 0.68,
+            &format!("Preparing hierarchy · {}", progress.message),
+        );
+        tracing::info!(
+            phase = %progress.phase,
+            completed = progress.completed,
+            total = ?progress.total,
+            message = %progress.message,
+            "canonical import progress"
+        );
+    }
+}
+
+fn create_registration_scratch(session_id: &str) -> anyhow::Result<PathBuf> {
+    validate_io_identity(session_id, "sessionId")?;
+    let digest = hex::encode(Sha256::digest(session_id.as_bytes()));
+    let parent = std::env::temp_dir().join("himmelcad-registration-sessions");
+    std::fs::create_dir_all(&parent)?;
+    let root = parent.join(format!("{}-{digest}", std::process::id()));
+    std::fs::create_dir(&root).with_context(|| {
+        format!(
+            "registration scratch already exists or cannot be created: {}",
+            root.display()
+        )
+    })?;
+    Ok(root)
+}
+
+async fn rpc_blocking_product_with_params<P, T, F>(
+    id: serde_json::Value,
+    params: serde_json::Value,
+    operation: F,
+) -> RpcResponse
+where
+    P: serde::de::DeserializeOwned + Send + 'static,
+    T: Serialize + Send + 'static,
+    F: FnOnce(P) -> anyhow::Result<T> + Send + 'static,
+{
+    match serde_json::from_value::<P>(params) {
+        Ok(params) => {
+            let result = tokio::task::spawn_blocking(move || operation(params))
+                .await
+                .map_err(anyhow::Error::from)
+                .and_then(std::convert::identity);
+            match result {
+                Ok(value) => rpc_result(id, Ok(value)),
+                Err(error) => product_rpc_err(id, &error),
+            }
+        }
+        Err(error) => rpc_err(id, -32602, &format!("invalid params: {error}")),
+    }
+}
+
+#[allow(clippy::cast_precision_loss)]
+fn emit_canonical_import_progress(progress_key: &str, progress: CanonicalImportProgress) {
+    let local_fraction = if progress.total_bytes == 0 {
+        1.0
+    } else {
+        progress.completed_bytes as f64 / progress.total_bytes as f64
+    }
+    .clamp(0.0, 1.0);
+    let (overall_fraction, phase) = match progress.phase {
+        CanonicalImportProgressPhase::Staging => {
+            (0.70 + local_fraction * 0.24, "Registering dataset")
+        }
+        CanonicalImportProgressPhase::Publishing => {
+            (0.94 + local_fraction * 0.05, "Registering journal head")
+        }
+    };
+    let completed_gib = progress.completed_bytes as f64 / 1_073_741_824.0;
+    let total_gib = progress.total_bytes as f64 / 1_073_741_824.0;
+    emit_progress(
+        Some(progress_key),
+        overall_fraction,
+        &format!("{phase} · {completed_gib:.2}/{total_gib:.2} GiB"),
+    );
+}
 
 pub(super) async fn handle_registration_rpc(
     req: RpcRequest,

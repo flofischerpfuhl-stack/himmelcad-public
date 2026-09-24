@@ -52,7 +52,10 @@ for (const product of products) {
     assert.match(config, new RegExp(`channel: ${product.channel}`));
     assert.match(config, /releaseType: release/);
     if (product.path === 'builder' && platform === 'win') {
-      assert.match(config, /target\/x86_64-pc-windows-gnullvm\/release\/himmelcad-sidecar\.exe/);
+      assert.match(
+        config,
+        /target\/x86_64-pc-windows-gnullvm\/release\/himmelcad-builder-sidecar\.exe/,
+      );
     }
   }
 }

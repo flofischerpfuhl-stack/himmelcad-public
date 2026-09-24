@@ -6,9 +6,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use himmelcad_domain_photogrammetry::photolab_jobs::{PhotolabJobKind, PhotolabWorkerTool};
+use crate::photolab_jobs::{PhotolabJobKind, PhotolabWorkerTool};
 
-use crate::job_runtime::{JobAdmissionRefusal, WorkerToolchainAdmission};
+use crate::job_supervisor::{JobAdmissionRefusal, WorkerToolchainAdmission};
 
 pub const WORKER_TOOLCHAIN_MISSING_CODE: &str = "workerToolchainMissing";
 
@@ -413,7 +413,7 @@ mod tests {
         },
     };
 
-    use himmelcad_domain_photogrammetry::photolab_jobs::{
+    use crate::photolab_jobs::{
         JobProgress, NewPhotolabJob, PhotolabJobId, PhotolabJobState, PhotolabStage,
         PhotolabStageKind,
     };

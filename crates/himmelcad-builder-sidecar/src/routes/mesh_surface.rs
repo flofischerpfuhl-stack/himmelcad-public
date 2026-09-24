@@ -1,4 +1,5 @@
 use super::*;
+use crate::mesh_surface_runtime::SurfaceRuntimeAdapter;
 
 pub(super) async fn handle_mesh_surface_rpc(
     req: RpcRequest,
@@ -29,10 +30,12 @@ pub(super) async fn handle_mesh_surface_rpc(
                 Err(error) => return rpc_err(id, -32602, &error.to_string()),
             };
             let result = tokio::task::spawn_blocking(move || {
+                let mut runtime = runtime
+                    .lock()
+                    .expect("canonical app runtime mutex poisoned");
+                let adapter = SurfaceRuntimeAdapter::new(&mut runtime);
                 create_surface_draft(
-                    &*runtime
-                        .lock()
-                        .expect("canonical app runtime mutex poisoned"),
+                    &adapter,
                     params.request,
                     &active.cancellation,
                     |fraction, phase| {
@@ -48,22 +51,23 @@ pub(super) async fn handle_mesh_surface_rpc(
         "mesh.surface.check" => {
             let id = req.id;
             rpc_blocking_with_params::<SurfaceDraftParams, _, _>(id, req.params, move |params| {
-                check_persisted_surface(
-                    &*runtime
-                        .lock()
-                        .expect("canonical app runtime mutex poisoned"),
-                    &params.draft_id,
-                )
+                let mut runtime = runtime
+                    .lock()
+                    .expect("canonical app runtime mutex poisoned");
+                let adapter = SurfaceRuntimeAdapter::new(&mut runtime);
+                check_persisted_surface(&adapter, &params.draft_id)
             })
             .await
         }
         "mesh.surface.draft.apply_fix" => {
             let id = req.id;
             rpc_blocking_with_params::<SurfaceFixParams, _, _>(id, req.params, move |params| {
+                let mut runtime = runtime
+                    .lock()
+                    .expect("canonical app runtime mutex poisoned");
+                let adapter = SurfaceRuntimeAdapter::new(&mut runtime);
                 fix_persisted_surface(
-                    &*runtime
-                        .lock()
-                        .expect("canonical app runtime mutex poisoned"),
+                    &adapter,
                     &params.draft_id,
                     &SurfaceFixRequest {
                         error_id: params.error_id,
@@ -85,10 +89,12 @@ pub(super) async fn handle_mesh_surface_rpc(
                 Err(error) => return rpc_err(id, -32602, &error.to_string()),
             };
             let result = tokio::task::spawn_blocking(move || {
+                let mut runtime = runtime
+                    .lock()
+                    .expect("canonical app runtime mutex poisoned");
+                let mut adapter = SurfaceRuntimeAdapter::new(&mut runtime);
                 publish_persisted_surface(
-                    &mut *runtime
-                        .lock()
-                        .expect("canonical app runtime mutex poisoned"),
+                    &mut adapter,
                     &params.draft_id,
                     params.output_entity_id,
                     params.command_id,
@@ -108,12 +114,11 @@ pub(super) async fn handle_mesh_surface_rpc(
                 id,
                 req.params,
                 move |params| {
-                    select_surface_edit_region(
-                        &*runtime
-                            .lock()
-                            .expect("canonical app runtime mutex poisoned"),
-                        params.request,
-                    )
+                    let mut runtime = runtime
+                        .lock()
+                        .expect("canonical app runtime mutex poisoned");
+                    let adapter = SurfaceRuntimeAdapter::new(&mut runtime);
+                    select_surface_edit_region(&adapter, params.request)
                 },
             )
             .await
@@ -129,10 +134,12 @@ pub(super) async fn handle_mesh_surface_rpc(
                 Err(error) => return rpc_err(id, -32602, &error.to_string()),
             };
             let result = tokio::task::spawn_blocking(move || {
+                let mut runtime = runtime
+                    .lock()
+                    .expect("canonical app runtime mutex poisoned");
+                let adapter = SurfaceRuntimeAdapter::new(&mut runtime);
                 preview_surface_smoothing(
-                    &*runtime
-                        .lock()
-                        .expect("canonical app runtime mutex poisoned"),
+                    &adapter,
                     &params.edit_id,
                     &params.parameters,
                     &active.cancellation,
@@ -156,10 +163,12 @@ pub(super) async fn handle_mesh_surface_rpc(
                 Err(error) => return rpc_err(id, -32602, &error.to_string()),
             };
             let result = tokio::task::spawn_blocking(move || {
+                let mut runtime = runtime
+                    .lock()
+                    .expect("canonical app runtime mutex poisoned");
+                let adapter = SurfaceRuntimeAdapter::new(&mut runtime);
                 preview_surface_downsample(
-                    &*runtime
-                        .lock()
-                        .expect("canonical app runtime mutex poisoned"),
+                    &adapter,
                     &params.edit_id,
                     &params.parameters,
                     &active.cancellation,
@@ -182,10 +191,12 @@ pub(super) async fn handle_mesh_surface_rpc(
                 Err(error) => return rpc_err(id, -32602, &error.to_string()),
             };
             let result = tokio::task::spawn_blocking(move || {
+                let mut runtime = runtime
+                    .lock()
+                    .expect("canonical app runtime mutex poisoned");
+                let mut adapter = SurfaceRuntimeAdapter::new(&mut runtime);
                 bake_surface_edit(
-                    &mut *runtime
-                        .lock()
-                        .expect("canonical app runtime mutex poisoned"),
+                    &mut adapter,
                     &params,
                     &current_rfc3339(),
                     &active.cancellation,

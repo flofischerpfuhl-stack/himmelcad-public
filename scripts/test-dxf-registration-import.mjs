@@ -10,7 +10,8 @@ const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const sourceArgument = process.argv.slice(2).find((argument) => argument !== '--') ?? '';
 const sourcePath = resolve(sourceArgument);
 const sidecarPath = resolve(
-  process.env.HIMMELCAD_SIDECAR_BINARY ?? join(repositoryRoot, 'target/debug/himmelcad-sidecar'),
+  process.env.HIMMELCAD_SIDECAR_BINARY ??
+    join(repositoryRoot, 'target/debug/himmelcad-builder-sidecar'),
 );
 assert.ok(
   (await stat(sourcePath).catch(() => null))?.isFile(),

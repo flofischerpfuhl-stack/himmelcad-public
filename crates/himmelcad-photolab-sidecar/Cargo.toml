@@ -1,0 +1,51 @@
+[package]
+name = "himmelcad-photolab-sidecar"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "PhotoLab product composition for the HimmelCAD sidecar host."
+
+[[bin]]
+name = "himmelcad-photolab-sidecar"
+path = "src/main.rs"
+
+[[bin]]
+name = "himmelcad-portable-mvs"
+path = "src/bin/himmelcad-portable-mvs.rs"
+
+[dependencies]
+anyhow.workspace = true
+fs2 = "0.4.3"
+himmelcad-command = { path = "../himmelcad-command" }
+himmelcad-core = { path = "../himmelcad-core" }
+himmelcad-document = { path = "../himmelcad-document" }
+himmelcad-domain-photogrammetry = { path = "../himmelcad-domain-photogrammetry" }
+himmelcad-domain-pointcloud = { path = "../himmelcad-domain-pointcloud" }
+himmelcad-domain-raster = { path = "../himmelcad-domain-raster" }
+himmelcad-io = { path = "../himmelcad-io" }
+himmelcad-model = { path = "../himmelcad-model" }
+himmelcad-prepared = { path = "../himmelcad-prepared" }
+himmelcad-process = { path = "../himmelcad-process" }
+himmelcad-sidecar = { path = "../himmelcad-sidecar" }
+himmelcad-transform = { path = "../himmelcad-transform" }
+hex.workspace = true
+image = { version = "0.25.8", default-features = false, features = ["jpeg", "png", "tiff"] }
+las.workspace = true
+rusqlite = { version = "0.37.0", features = ["bundled"] }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "process", "time"] }
+tracing.workspace = true
+zip.workspace = true
+
+[dev-dependencies]
+gltf.workspace = true
+himmelcad-render = { path = "../himmelcad-render" }
+himmelcad-spatial = { path = "../himmelcad-spatial" }
+tracing-subscriber.workspace = true
+
+[lints]
+workspace = true

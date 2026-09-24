@@ -1034,7 +1034,7 @@ mod tests {
     /// Run with explicit executable paths:
     ///
     /// `HCAD_M5_TEST_FFMPEG=/path/ffmpeg HCAD_M5_TEST_FFPROBE=/path/ffprobe \
-    /// cargo test -p himmelcad-sidecar capture_runtime::tests::real_ffmpeg_video_gate -- --ignored`
+    /// cargo test -p himmelcad-domain-photogrammetry capture_runtime::tests::real_ffmpeg_video_gate -- --ignored`
     #[test]
     #[ignore = "requires explicit external FFmpeg and FFprobe executables"]
     fn real_ffmpeg_video_gate() {

@@ -168,10 +168,12 @@ rust:build-sidecar:
   extends: .rust
   stage: build
   script:
-    - cargo build --bin himmelcad-sidecar
+    - cargo build -p himmelcad-builder-sidecar -p himmelcad-photolab-sidecar --bins
   artifacts:
     paths:
-      - target/debug/himmelcad-sidecar
+      - target/debug/himmelcad-builder-sidecar
+      - target/debug/himmelcad-photolab-sidecar
+      - target/debug/himmelcad-portable-mvs
     expire_in: 1 day
 
 rust:build-wasm:

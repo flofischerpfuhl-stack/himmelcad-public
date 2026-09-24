@@ -11,7 +11,7 @@ const result = spawnSync(
   [
     'test',
     '-p',
-    'himmelcad-sidecar',
+    'himmelcad-photolab-sidecar',
     'prepared_triangle_mesh::tests::large_synthetic_mesh_is_partitioned_without_materializing_the_source',
     '--lib',
     '--',

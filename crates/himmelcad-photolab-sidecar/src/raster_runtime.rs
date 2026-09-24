@@ -167,7 +167,7 @@ esac
     #[cfg(target_os = "linux")]
     #[tokio::test]
     async fn fake_dem_runtime_scopes_and_samples_every_gdal_child() {
-        use crate::job_runtime::{
+        use himmelcad_domain_photogrammetry::job_runtime::{
             JobAdmission, JobManager, JobManagerConfig, JobWorkerError, MemoryPreflight,
         };
 
@@ -211,7 +211,11 @@ esac
         .expect("fake runtime");
         let destination = output_root.join("published");
         let command = elevation_command(&points, &destination);
-        let plan = crate::job_runtime::plan_raster_preparation_memory(1, 1, 4 * 1024 * 1024 * 1024);
+        let plan = himmelcad_domain_photogrammetry::job_runtime::plan_raster_preparation_memory(
+            1,
+            1,
+            4 * 1024 * 1024 * 1024,
+        );
         let ogr_plan = plan.ogr2ogr;
         let gdal_plan = plan.gdal_grid;
         let memory = plan.memory.clone();

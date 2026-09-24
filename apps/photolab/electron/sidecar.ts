@@ -45,7 +45,7 @@ function sidecarPath(): string {
   }
   const repositoryRoot = resolve(__dirname, '..', '..', '..', '..');
   // Development only: HIMMELCAD_SIDECAR_BIN may explicitly select another
-  // binary (for example target/win/release/himmelcad-sidecar.exe).
+  // binary (for example target/win/release/himmelcad-photolab-sidecar.exe).
   return resolveDevelopmentSidecarPath(repositoryRoot, process.platform, process.env);
 }
 

@@ -5,6 +5,11 @@ import { copyFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 const root = resolve(import.meta.dirname, '..');
+const product = process.argv[2] ?? 'photolab';
+if (!['builder', 'photolab'].includes(product)) {
+  throw new Error(`unsupported sidecar product: ${product}`);
+}
+const sidecarPackage = `himmelcad-${product}-sidecar`;
 const cargoTargetRoot = process.env.CARGO_TARGET_DIR
   ? resolve(root, process.env.CARGO_TARGET_DIR)
   : join(root, 'target');
@@ -26,9 +31,10 @@ const result = spawnSync(
     '--release',
     '--target',
     'x86_64-pc-windows-gnullvm',
-    '--bins',
+    product === 'photolab' ? '--bins' : '--bin',
+    ...(product === 'builder' ? ['himmelcad-builder-sidecar'] : []),
     '--package',
-    'himmelcad-sidecar',
+    sidecarPackage,
   ],
   {
     cwd: root,

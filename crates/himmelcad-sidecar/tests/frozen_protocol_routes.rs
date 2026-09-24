@@ -16,35 +16,64 @@ fn golden_inventory() -> serde_json::Value {
         .expect("parse route inventory golden")
 }
 
-#[test]
-fn registered_route_inventory_matches_golden() {
-    let output = Command::new(env!("CARGO_BIN_EXE_himmelcad-sidecar"))
+fn product_inventory(product: &str) -> serde_json::Value {
+    serde_json::Value::Array(
+        golden_inventory()
+            .as_array()
+            .expect("route inventory array")
+            .iter()
+            .filter(|route| route["product"] == "shared" || route["product"] == product)
+            .cloned()
+            .collect(),
+    )
+}
+
+fn product_binary(name: &str) -> PathBuf {
+    let executable = if cfg!(windows) {
+        format!("{name}.exe")
+    } else {
+        name.to_owned()
+    };
+    std::env::current_exe()
+        .expect("resolve test executable")
+        .parent()
+        .and_then(Path::parent)
+        .expect("resolve Cargo target profile directory")
+        .join(executable)
+}
+
+fn registered_inventory(binary: &Path) -> serde_json::Value {
+    let output = Command::new(binary)
         .arg("--list-routes")
         .output()
-        .expect("ask the sidecar registry for its route inventory");
+        .unwrap_or_else(|error| {
+            panic!("ask {} for its route inventory: {error}", binary.display())
+        });
     assert!(
         output.status.success(),
-        "route inventory command failed: {}",
+        "route inventory command failed for {}: {}",
+        binary.display(),
         String::from_utf8_lossy(&output.stderr)
     );
-    let actual: serde_json::Value =
-        serde_json::from_slice(&output.stdout).expect("parse registered route inventory");
+    serde_json::from_slice(&output.stdout).expect("parse registered route inventory")
+}
+
+#[test]
+fn registered_route_inventory_matches_golden() {
     assert_eq!(
-        actual,
-        golden_inventory(),
-        "registered routes changed; inspect registration and deliberately update the golden"
+        registered_inventory(&product_binary("himmelcad-builder-sidecar")),
+        product_inventory("builder"),
+        "Builder routes changed; inspect registration and deliberately update the golden"
+    );
+    assert_eq!(
+        registered_inventory(&product_binary("himmelcad-photolab-sidecar")),
+        product_inventory("photolab"),
+        "PhotoLab routes changed; inspect registration and deliberately update the golden"
     );
 }
 
 #[test]
 fn registered_route_products_match_golden() {
-    let output = Command::new(env!("CARGO_BIN_EXE_himmelcad-sidecar"))
-        .arg("--list-routes")
-        .output()
-        .expect("ask the sidecar registry for its route inventory");
-    assert!(output.status.success(), "route inventory command failed");
-    let actual: serde_json::Value =
-        serde_json::from_slice(&output.stdout).expect("parse registered route inventory");
     let products = |inventory: &serde_json::Value| {
         inventory
             .as_array()
@@ -58,7 +87,15 @@ fn registered_route_products_match_golden() {
             })
             .collect::<Vec<_>>()
     };
-    assert_eq!(products(&actual), products(&golden_inventory()));
+    for (binary, product) in [
+        ("himmelcad-builder-sidecar", "builder"),
+        ("himmelcad-photolab-sidecar", "photolab"),
+    ] {
+        assert_eq!(
+            products(&registered_inventory(&product_binary(binary))),
+            products(&product_inventory(product)),
+        );
+    }
 }
 
 fn corpus_scratch_root() -> PathBuf {
@@ -67,10 +104,37 @@ fn corpus_scratch_root() -> PathBuf {
         .join(".build/split-s2")
 }
 
-fn corpus_sidecar_binary() -> PathBuf {
-    std::env::var_os("HIMMELCAD_SIDECAR_FIXTURE_BIN")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(env!("CARGO_BIN_EXE_himmelcad-sidecar")))
+fn corpus_sidecar_binary(request: &[u8]) -> PathBuf {
+    if let Some(binary) = std::env::var_os("HIMMELCAD_SIDECAR_FIXTURE_BIN") {
+        return PathBuf::from(binary);
+    }
+    let inventory = golden_inventory();
+    let products = request
+        .split(|byte| *byte == b'\n')
+        .filter(|line| !line.is_empty())
+        .map(|line| {
+            serde_json::from_slice::<serde_json::Value>(line).expect("parse fixture request")
+        })
+        .map(|request| {
+            let method = request["method"].as_str().expect("fixture request method");
+            inventory
+                .as_array()
+                .expect("route inventory array")
+                .iter()
+                .find(|route| route["method"] == method)
+                .map_or("shared", |route| {
+                    route["product"].as_str().expect("route product")
+                })
+                .to_owned()
+        })
+        .filter(|product| product != "shared")
+        .collect::<std::collections::BTreeSet<_>>();
+    assert!(products.len() <= 1, "fixture mixes product-only route sets");
+    if products.contains("photolab") {
+        product_binary("himmelcad-photolab-sidecar")
+    } else {
+        product_binary("himmelcad-builder-sidecar")
+    }
 }
 
 fn replace_literal(bytes: Vec<u8>, from: &str, to: &str) -> Vec<u8> {
@@ -208,7 +272,7 @@ fn response_corpus_matches_exact_sidecar_bytes() {
             project_root.to_str().expect("UTF-8 lifecycle project path"),
         );
 
-        let mut child = Command::new(corpus_sidecar_binary())
+        let mut child = Command::new(corpus_sidecar_binary(&request))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())

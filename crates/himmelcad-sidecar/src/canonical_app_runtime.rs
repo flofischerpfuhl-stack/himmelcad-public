@@ -20,12 +20,12 @@ use himmelcad_core::property_schema::{
     PropertySchemaError,
 };
 use himmelcad_core::release_05_admissions::{
-    validate_snapshot_marker, MeasurementV1, SnapshotMarkerKindV1, SnapshotMarkerV1,
-    SnapshotOriginV1, SnapshotRetentionV1, RELEASE_05_SCHEMA_VERSION, SNAPSHOT_MARKER_SCHEMA_ID,
+    validate_snapshot_marker, SnapshotMarkerKindV1, SnapshotMarkerV1, SnapshotOriginV1,
+    SnapshotRetentionV1, RELEASE_05_SCHEMA_VERSION, SNAPSHOT_MARKER_SCHEMA_ID,
 };
 #[cfg(test)]
 use himmelcad_core::release_05_admissions::{
-    MeasurementAnchorV1, PointAcquisitionV1, MEASUREMENT_SCHEMA_ID,
+    MeasurementAnchorV1, MeasurementV1, PointAcquisitionV1, MEASUREMENT_SCHEMA_ID,
 };
 use himmelcad_document::canonical_document::{
     CanonicalCommandTransaction, CanonicalDocumentError, CanonicalEntityEdit,
@@ -108,13 +108,14 @@ pub struct CanonicalSnapshotRestoreCommit {
 const DEFAULT_SESSION_START_SNAPSHOT_RETENTION: usize = 5;
 const SESSION_START_SNAPSHOT_RETENTION_ENV: &str = "HCAD_SESSION_START_SNAPSHOT_RETENTION";
 
-pub use himmelcad_domain_drafting::{
+#[cfg(test)]
+use himmelcad_domain_drafting::{
     CanonicalDrawCurveCommit, CanonicalDrawCurveSummary, CanonicalMeasurementCommit,
     CanonicalMeasurementDelete, CanonicalMeasurementSummary, CanonicalViewBookmarkCommit,
-    CanonicalViewBookmarkRecord, CanonicalViewBookmarkSummary, CanonicalViewingBoxCommit,
-    CanonicalViewingBoxDelete, CanonicalViewingBoxSummary, DrawCurveInput, DrawCurveRole,
-    DrawCurveTool,
+    CanonicalViewBookmarkSummary, CanonicalViewingBoxCommit, CanonicalViewingBoxDelete,
+    CanonicalViewingBoxSummary, DrawCurveInput, DrawCurveRole, DrawCurveTool,
 };
+#[cfg(test)]
 use himmelcad_domain_drafting::{DraftingCommandError, DraftingCommandService};
 
 /// Versioned, path-free description of every live representation that can be
@@ -346,6 +347,7 @@ impl CanonicalAppRuntime {
         })
     }
 
+    #[cfg(test)]
     pub fn create_view_bookmark(
         &mut self,
         command_id: String,
@@ -358,12 +360,14 @@ impl CanonicalAppRuntime {
         ))
     }
 
+    #[cfg(test)]
     pub fn list_view_bookmarks(
         &self,
     ) -> Result<Vec<CanonicalViewBookmarkSummary>, CanonicalAppRuntimeError> {
         drafting_result(DraftingCommandService::list_view_bookmarks(self))
     }
 
+    #[cfg(test)]
     pub fn restore_view_bookmark(
         &mut self,
         command_id: String,
@@ -378,6 +382,7 @@ impl CanonicalAppRuntime {
         ))
     }
 
+    #[cfg(test)]
     pub fn put_viewing_box(
         &mut self,
         command_id: String,
@@ -396,12 +401,14 @@ impl CanonicalAppRuntime {
         ))
     }
 
+    #[cfg(test)]
     pub fn list_viewing_boxes(
         &self,
     ) -> Result<Vec<CanonicalViewingBoxSummary>, CanonicalAppRuntimeError> {
         drafting_result(DraftingCommandService::list_viewing_boxes(self))
     }
 
+    #[cfg(test)]
     pub fn delete_viewing_box(
         &mut self,
         command_id: String,
@@ -419,6 +426,7 @@ impl CanonicalAppRuntime {
     /// Creates one admitted Release 0.5 measurement in one journal transaction.
     /// Attached anchors are revalidated against the current canonical source
     /// revision immediately before the immutable geometry is stored.
+    #[cfg(test)]
     pub fn create_measurement(
         &mut self,
         command_id: String,
@@ -435,12 +443,14 @@ impl CanonicalAppRuntime {
         ))
     }
 
+    #[cfg(test)]
     pub fn list_measurements(
         &self,
     ) -> Result<Vec<CanonicalMeasurementSummary>, CanonicalAppRuntimeError> {
         drafting_result(DraftingCommandService::list_measurements(self))
     }
 
+    #[cfg(test)]
     pub fn get_measurement(
         &self,
         entity_id: &str,
@@ -448,6 +458,7 @@ impl CanonicalAppRuntime {
         drafting_result(DraftingCommandService::get_measurement(self, entity_id))
     }
 
+    #[cfg(test)]
     pub fn delete_measurement(
         &mut self,
         command_id: String,
@@ -465,6 +476,7 @@ impl CanonicalAppRuntime {
     /// Creates or extends one authored linework entity. Every accepted vertex
     /// is one forward journal transaction; immutable geometry and provenance
     /// are published before the document root becomes visible.
+    #[cfg(test)]
     pub fn put_draw_curve(
         &mut self,
         command_id: String,
@@ -475,12 +487,14 @@ impl CanonicalAppRuntime {
         ))
     }
 
+    #[cfg(test)]
     pub fn list_draw_curves(
         &self,
     ) -> Result<Vec<CanonicalDrawCurveSummary>, CanonicalAppRuntimeError> {
         drafting_result(DraftingCommandService::list_draw_curves(self))
     }
 
+    #[cfg(test)]
     pub fn undo_draw_curve(
         &mut self,
         command_id: String,
@@ -493,6 +507,7 @@ impl CanonicalAppRuntime {
         ))
     }
 
+    #[cfg(test)]
     pub fn redo_draw_curve(
         &mut self,
         command_id: String,
@@ -1746,6 +1761,7 @@ impl DraftingDocumentCommands for CanonicalAppRuntime {
     }
 }
 
+#[cfg(test)]
 fn drafting_result<T>(
     result: Result<T, DraftingCommandError<CanonicalAppRuntimeError>>,
 ) -> Result<T, CanonicalAppRuntimeError> {

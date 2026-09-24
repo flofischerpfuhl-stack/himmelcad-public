@@ -11,7 +11,7 @@ const CONSTRAINTS: usize = 500;
 
 fn main() {
     if !std::env::args().any(|arg| arg == "G-MT-3") {
-        eprintln!("usage: cargo bench -p himmelcad-sidecar --bench mesh_terrain -- G-MT-3");
+        eprintln!("usage: cargo bench -p himmelcad-builder-sidecar --bench mesh_terrain -- G-MT-3");
         std::process::exit(2);
     }
 

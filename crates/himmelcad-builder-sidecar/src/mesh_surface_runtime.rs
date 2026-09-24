@@ -19,14 +19,24 @@ use himmelcad_model::entity::EntityId;
 use himmelcad_model::hash::ObjectHash;
 use himmelcad_process::jobs::CancellationToken;
 
-use crate::canonical_app_runtime::CanonicalAppRuntime;
+use crate::drafting_runtime::BuilderDraftingCommands;
+use himmelcad_sidecar::canonical_app_runtime::CanonicalAppRuntime;
 
-impl SurfaceDocumentCommands for CanonicalAppRuntime {
+pub(crate) struct SurfaceRuntimeAdapter<'a>(&'a mut CanonicalAppRuntime);
+
+impl<'a> SurfaceRuntimeAdapter<'a> {
+    pub(crate) fn new(runtime: &'a mut CanonicalAppRuntime) -> Self {
+        Self(runtime)
+    }
+}
+
+impl SurfaceDocumentCommands for SurfaceRuntimeAdapter<'_> {
     type Snapshot = DomainDocumentSnapshot;
     type StagedImport = CanonicalStagedImport;
 
     fn surface_snapshot(&self) -> Result<Self::Snapshot> {
         let entries = self
+            .0
             .residency_bootstrap()?
             .entries
             .into_iter()
@@ -36,6 +46,7 @@ impl SurfaceDocumentCommands for CanonicalAppRuntime {
             })
             .collect();
         let draw_curves = self
+            .0
             .list_draw_curves()?
             .into_iter()
             .map(|curve| DomainDrawCurveSnapshot {
@@ -54,7 +65,7 @@ impl SurfaceDocumentCommands for CanonicalAppRuntime {
     }
 
     fn surface_project_root(&self) -> Result<std::path::PathBuf> {
-        Ok(self.project_root()?)
+        Ok(self.0.project_root()?)
     }
 
     fn surface_sample_point_cloud(
@@ -62,7 +73,9 @@ impl SurfaceDocumentCommands for CanonicalAppRuntime {
         request: SurfacePointCloudSampleRequest,
         cancellation: &CancellationToken,
     ) -> Result<Vec<SurfacePoint>> {
-        let captured = self.prepare_ground_source(request.source, request.input_root)?;
+        let captured = self
+            .0
+            .prepare_ground_source(request.source, request.input_root)?;
         let mut scope = GroundScope::default();
         scope.placement = request.placement;
         if !request.visible_classes.is_empty() {
@@ -81,14 +94,14 @@ impl SurfaceDocumentCommands for CanonicalAppRuntime {
     }
 
     fn surface_height_grid_bytes(&self, entity_id: &EntityId) -> Result<Vec<u8>> {
-        let mut source = self.height_grid_artifact_source(entity_id)?.source;
+        let mut source = self.0.height_grid_artifact_source(entity_id)?.source;
         let mut bytes = Vec::new();
         source.read_to_end(&mut bytes)?;
         Ok(bytes)
     }
 
     fn surface_object_bytes(&self, object_hash: &ObjectHash) -> Result<Vec<u8>> {
-        let mut source = self.automation_object_source(object_hash)?.source;
+        let mut source = self.0.automation_object_source(object_hash)?.source;
         let mut bytes = Vec::new();
         source.read_to_end(&mut bytes)?;
         Ok(bytes)
@@ -100,7 +113,7 @@ impl SurfaceDocumentCommands for CanonicalAppRuntime {
         command_id: &str,
         is_cancelled: &dyn Fn() -> bool,
     ) -> Result<SurfaceDocumentCommit> {
-        let commit = self.publish_staged_import_with_progress_and_cancel(
+        let commit = self.0.publish_staged_import_with_progress_and_cancel(
             staged,
             command_id,
             &mut |_| {},

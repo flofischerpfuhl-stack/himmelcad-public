@@ -339,7 +339,7 @@ class RpcClient {
         ...process.env,
         HIMMELCAD_WORKSPACE_ROOT: workspace,
         HIMMELCAD_COMPUTE_LEASE_PATH: join(this.outputRoot, 'compute.lock'),
-        RUST_LOG: 'himmelcad_sidecar=warn',
+        RUST_LOG: 'himmelcad_photolab_sidecar=warn',
       },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
@@ -402,7 +402,7 @@ function parseArguments(values) {
   const options = {
     project: '.build/photolab-e2e/smoke-8-final/photolab-e2e.hcad',
     output: '.build/image-quality-e2e',
-    sidecar: 'target/debug/himmelcad-sidecar',
+    sidecar: 'target/debug/himmelcad-photolab-sidecar',
   };
   for (let index = 0; index < values.length; index += 1) {
     const value = values[index];

@@ -89,7 +89,7 @@ mod tests {
     #[tokio::test]
     #[cfg(target_os = "linux")]
     async fn fake_dem_job_records_bounded_ogr2ogr_and_gdal_grid_stages() {
-        use crate::job_runtime::{
+        use himmelcad_domain_photogrammetry::job_runtime::{
             plan_raster_preparation_memory, JobAdmission, JobManager, JobManagerConfig,
             MemoryPreflight,
         };
@@ -155,7 +155,7 @@ mod tests {
                             }),
                         )
                         .map_err(|error| {
-                            crate::job_runtime::JobWorkerError::Failed {
+                            himmelcad_domain_photogrammetry::job_runtime::JobWorkerError::Failed {
                                 code: "fakeDem".into(),
                                 message: error.to_string(),
                             }
@@ -191,7 +191,7 @@ mod tests {
     #[tokio::test]
     #[cfg(target_os = "linux")]
     async fn fake_dem_memory_kill_records_typed_failure_and_degradation() {
-        use crate::job_runtime::{
+        use himmelcad_domain_photogrammetry::job_runtime::{
             plan_raster_preparation_memory, JobAdmission, JobManager, JobManagerConfig,
             JobWorkerError, MemoryPreflight,
         };

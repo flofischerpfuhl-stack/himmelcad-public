@@ -52,7 +52,7 @@ export function classifyPath(path) {
     return { risk: 'high', groups: ['workspace'] };
   }
   if (
-    /^(crates\/(?:himmelcad-core|himmelcad-render|himmelcad-io|himmelcad-sidecar|himmelcad-wasm|himmelcad-decode)\/)/.test(
+    /^(crates\/(?:himmelcad-core|himmelcad-render|himmelcad-io|himmelcad-sidecar|himmelcad-builder-sidecar|himmelcad-photolab-sidecar|himmelcad-wasm|himmelcad-decode)\/)/.test(
       path,
     )
   ) {

@@ -1,0 +1,37 @@
+[package]
+name = "himmelcad-builder-sidecar"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Builder product composition for the HimmelCAD sidecar host."
+
+[[bench]]
+name = "mesh_terrain"
+harness = false
+
+[[bin]]
+name = "himmelcad-builder-sidecar"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+himmelcad-command = { path = "../himmelcad-command" }
+himmelcad-core = { path = "../himmelcad-core" }
+himmelcad-document = { path = "../himmelcad-document" }
+himmelcad-domain-drafting = { path = "../himmelcad-domain-drafting" }
+himmelcad-domain-pointcloud = { path = "../himmelcad-domain-pointcloud" }
+himmelcad-domain-surface = { path = "../himmelcad-domain-surface" }
+himmelcad-io = { path = "../himmelcad-io" }
+himmelcad-model = { path = "../himmelcad-model" }
+himmelcad-process = { path = "../himmelcad-process" }
+himmelcad-sidecar = { path = "../himmelcad-sidecar" }
+hex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tracing.workspace = true
+
+[lints]
+workspace = true

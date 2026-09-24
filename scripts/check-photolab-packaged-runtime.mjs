@@ -81,7 +81,12 @@ function mapInventoryPath(path) {
     );
   }
   if (path.startsWith('vendor/')) return join(resources, path);
-  if (path.startsWith('target/')) return join(resources, basename(path));
+  if (path.startsWith('target/')) {
+    const name = basename(path);
+    if (name === 'himmelcad-photolab-sidecar') return join(resources, 'himmelcad-sidecar');
+    if (name === 'himmelcad-photolab-sidecar.exe') return join(resources, 'himmelcad-sidecar.exe');
+    return join(resources, name);
+  }
   fail(`release inventory path has no package mapping: ${path}`);
 }
 

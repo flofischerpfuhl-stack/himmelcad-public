@@ -1,22 +1,25 @@
 //! HimmelCAD sidecar process entry.
 
 #![forbid(unsafe_code)]
-#![cfg_attr(test, recursion_limit = "256")]
 
 use std::collections::BTreeMap;
+use std::future::Future;
 use std::io::{BufRead, BufReader};
+use std::pin::Pin;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use himmelcad_domain_photogrammetry::project_runtime;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 
-mod routes;
+use crate::canonical_app_runtime::CanonicalAppRuntime;
+use crate::routes::{
+    rpc_err, RouteDefinition, RpcError, RpcRequest, RpcResponse, SidecarCommandRegistry,
+};
 
 const PROGRESS_PREFIX: &str = "__HC_PROGRESS__";
 
-pub(crate) fn emit_progress(progress_key: Option<&str>, fraction: f64, message: &str) {
+pub fn emit_progress(progress_key: Option<&str>, fraction: f64, message: &str) {
     let Some(progress_key) = progress_key else {
         return;
     };
@@ -44,7 +47,7 @@ static PROGRESS_CLOCK: OnceLock<Instant> = OnceLock::new();
 static PROGRESS_COALESCER: OnceLock<Mutex<ProgressEventCoalescer>> = OnceLock::new();
 
 #[derive(Default)]
-pub(crate) struct ProgressEventCoalescer {
+pub struct ProgressEventCoalescer {
     jobs: BTreeMap<String, ProgressEmission>,
 }
 
@@ -55,7 +58,7 @@ struct ProgressEmission {
 }
 
 impl ProgressEventCoalescer {
-    pub(crate) fn should_emit_at(
+    pub fn should_emit_at(
         &mut self,
         progress_key: &str,
         phase: &str,
@@ -119,12 +122,51 @@ fn progress_phase_signature(message: &str) -> String {
         .join(" ")
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+pub type DrainFuture<'a> = Pin<Box<dyn Future<Output = bool> + Send + 'a>>;
+
+pub trait ProductLifecycle: Send + Sync {
+    fn startup(&self) {}
+
+    fn drain(&self) -> DrainFuture<'_> {
+        Box::pin(async { true })
+    }
+
+    fn close(&self) {}
+}
+
+pub struct HostComposition {
+    pub registry: SidecarCommandRegistry,
+    pub routes: Vec<RouteDefinition>,
+    pub canonical_app: Arc<Mutex<CanonicalAppRuntime>>,
+    pub lifecycle: Arc<dyn ProductLifecycle>,
+}
+
+pub async fn run(mut composition: HostComposition) -> anyhow::Result<()> {
     if std::env::args_os().len() == 2
         && std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("--list-routes"))
     {
-        return routes::print_registered_routes();
+        composition.routes.sort_by_key(|route| route.method);
+        anyhow::ensure!(
+            composition
+                .registry
+                .methods()
+                .eq(composition.routes.iter().map(|route| route.method)),
+            "registered route metadata differs from the exact command registry"
+        );
+        let inventory = composition
+            .routes
+            .into_iter()
+            .map(|route| {
+                serde_json::json!({
+                    "method": route.method,
+                    "handlerFamily": route.family,
+                    "product": route.product,
+                })
+            })
+            .collect::<Vec<_>>();
+        serde_json::to_writer(std::io::stdout().lock(), &inventory)?;
+        println!();
+        return Ok(());
     }
 
     tracing_subscriber::fmt()
@@ -140,17 +182,13 @@ async fn main() -> anyhow::Result<()> {
         version = env!("CARGO_PKG_VERSION"),
         "himmelcad-sidecar starting"
     );
-    if std::env::var("HIMMELCAD_PHOTOLAB_PROBE_WORKER_SCOPE").as_deref() == Ok("1") {
-        let _ = himmelcad_process::worker::probe_worker_scope_for_diagnostics();
-    }
+    composition.lifecycle.startup();
 
     let mut stdin_lines = spawn_stdin_reader();
-    let (services, command_registry) = build_command_registry(routes::ProductSelection::ALL)?;
-    let projects = Arc::clone(&services.projects);
-    let jobs = Arc::clone(&services.jobs);
-    let canonical_app = Arc::clone(&services.canonical_app);
-    let command_registry = Arc::new(command_registry);
-    let (response_tx, mut response_rx) = mpsc::channel::<routes::RpcResponse>(256);
+    let canonical_app = Arc::clone(&composition.canonical_app);
+    let command_registry = Arc::new(composition.registry);
+    let lifecycle = Arc::clone(&composition.lifecycle);
+    let (response_tx, mut response_rx) = mpsc::channel::<RpcResponse>(256);
     let writer = tokio::spawn(async move {
         let mut stdout = tokio::io::stdout();
         while let Some(response) = response_rx.recv().await {
@@ -183,15 +221,15 @@ async fn main() -> anyhow::Result<()> {
         }
         let command_registry = Arc::clone(&command_registry);
         let response_tx = response_tx.clone();
-        let parsed = serde_json::from_str::<routes::RpcRequest>(&line);
+        let parsed = serde_json::from_str::<RpcRequest>(&line);
         tokio::spawn(async move {
             let response = match parsed {
                 Ok(request) => dispatch_request(&command_registry, request).await,
-                Err(error) => routes::RpcResponse {
+                Err(error) => RpcResponse {
                     jsonrpc: "2.0",
                     id: serde_json::Value::Null,
                     result: None,
-                    error: Some(routes::RpcError {
+                    error: Some(RpcError {
                         code: -32700,
                         message: format!("parse error: {error}"),
                         data: None,
@@ -204,22 +242,15 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
-    let (job_drain, side_drain) = routes::drain_project_work(&jobs, &projects).await;
-    if !job_drain.completed() || !side_drain.completed() {
-        tracing::error!(
-            timed_out_jobs = ?job_drain.timed_out,
-            timed_out_side_operations = ?side_drain.timed_out,
-            "sidecar drain timed out; leaving the project manifest unclean and terminating worker groups"
-        );
-        himmelcad_sidecar::process_group::terminate_all_registered();
+    if !lifecycle.drain().await {
+        tracing::error!("sidecar drain timed out; terminating worker groups");
+        crate::process_group::terminate_all_registered();
         std::process::exit(1);
     }
     drop(response_tx);
     writer.await??;
 
-    if let Err(error) = projects.close_after_drain(&job_drain, &side_drain) {
-        tracing::error!(%error, "failed to close project cleanly during sidecar shutdown");
-    }
+    lifecycle.close();
     canonical_app
         .lock()
         .expect("canonical app runtime mutex poisoned")
@@ -228,25 +259,14 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn build_command_registry(
-    selection: routes::ProductSelection,
-) -> anyhow::Result<(routes::RouteServices, routes::SidecarCommandRegistry)> {
-    let services = routes::RouteServices::new()?;
-    let registry = routes::build_command_registry(selection, &services)?;
-    Ok((services, registry))
-}
-
-async fn dispatch_request(
-    registry: &routes::SidecarCommandRegistry,
-    request: routes::RpcRequest,
-) -> routes::RpcResponse {
+async fn dispatch_request(registry: &SidecarCommandRegistry, request: RpcRequest) -> RpcResponse {
     if request.jsonrpc != "2.0" {
-        return routes::rpc_err(request.id, -32600, "invalid jsonrpc version");
+        return rpc_err(request.id, -32600, "invalid jsonrpc version");
     }
     let method = request.method.clone();
     match registry.dispatch(&method, request, ()) {
         Ok(response) => response.await,
-        Err((request, ())) => routes::rpc_err(
+        Err((request, ())) => rpc_err(
             request.id,
             -32601,
             &format!("method not found: {}", request.method),
@@ -297,5 +317,41 @@ async fn shutdown_signal() {
     #[cfg(not(any(unix, windows)))]
     {
         let _ = tokio::signal::ctrl_c().await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn job_progress_is_coalesced_to_ten_hz_and_phase_changes_are_immediate() {
+        let mut coalescer = ProgressEventCoalescer::default();
+        let emitted = (0_u64..200)
+            .filter(|index| {
+                coalescer.should_emit_at(
+                    "segment-road",
+                    "Scanning points",
+                    *index as f64 / 1_000.0,
+                    Duration::from_millis(index * 5),
+                )
+            })
+            .count();
+        assert_eq!(
+            emitted, 10,
+            "steady per-batch updates must publish at most 10 Hz"
+        );
+        assert!(coalescer.should_emit_at(
+            "segment-road",
+            "Baking hierarchy",
+            0.2,
+            Duration::from_millis(997),
+        ));
+        assert!(!coalescer.should_emit_at(
+            "segment-road",
+            "Baking hierarchy",
+            0.21,
+            Duration::from_millis(999),
+        ));
     }
 }

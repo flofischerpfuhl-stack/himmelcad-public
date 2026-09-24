@@ -7,10 +7,8 @@ license.workspace = true
 description = "RPC registration, job supervision, and worker admission for HimmelCAD hosts."
 
 [dependencies]
-himmelcad-domain-photogrammetry = { path = "../himmelcad-domain-photogrammetry" }
 himmelcad-document = { path = "../himmelcad-document" }
 himmelcad-model = { path = "../himmelcad-model" }
-himmelcad-domain-raster = { path = "../himmelcad-domain-raster" }
 himmelcad-process = { path = "../himmelcad-process" }
 serde.workspace = true
 serde_json.workspace = true

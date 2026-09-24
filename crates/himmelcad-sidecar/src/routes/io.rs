@@ -1,4 +1,351 @@
 use super::*;
+use himmelcad_io::ProviderContractError;
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PageParams {
+    #[serde(default)]
+    cursor: Option<String>,
+    limit: usize,
+}
+
+const IO_RPC_SCHEMA_VERSION: u32 = 1;
+const IO_PROBE_PREFIX_BYTES: u64 = 64 * 1024;
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct IoProbeParams {
+    source_path: String,
+    #[serde(default)]
+    media_type: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct IoImportExecuteParams {
+    operation_id: String,
+    command_id: String,
+    source_path: String,
+    selection: ImportProviderSelection,
+    options: serde_json::Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct IoExportRequestParams {
+    command_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    scope: Option<IoExportScope>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    entity_ids: Option<Vec<String>>,
+    provider_id: String,
+    provider_version: String,
+    target_path: String,
+    format_id: String,
+    options: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum IoExportScope {
+    Selection,
+    Visible,
+    Project,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct IoExportPlanEnvelope {
+    schema_version: u32,
+    #[serde(flatten)]
+    request: IoExportRequestParams,
+    #[serde(default)]
+    entity_versions: BTreeMap<String, String>,
+    plan: CanonicalExportPlan,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct IoExportExecuteParams {
+    operation_id: String,
+    accepted_plan: IoExportPlanEnvelope,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct IoOperationParams {
+    operation_id: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct IoOperationStatus {
+    schema_version: u32,
+    operation_id: String,
+    state: IoOperationState,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    progress: Option<ProviderProgress>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    message: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+enum IoOperationState {
+    Running,
+    Completed,
+    Cancelled,
+    Failed,
+}
+
+struct IoOperationRecord {
+    cancellation: Arc<AtomicBool>,
+    status: IoOperationStatus,
+}
+
+#[derive(Default)]
+pub struct IoOperations {
+    records: Mutex<BTreeMap<String, IoOperationRecord>>,
+}
+
+impl IoOperations {
+    pub fn begin(self: &Arc<Self>, operation_id: String) -> anyhow::Result<IoProviderContext> {
+        validate_io_identity(&operation_id, "operationId")?;
+        let cancellation = Arc::new(AtomicBool::new(false));
+        let mut records = self.records.lock().expect("I/O operation mutex poisoned");
+        if records.contains_key(&operation_id) {
+            anyhow::bail!("I/O operation identity was already used: {operation_id}");
+        }
+        records.insert(
+            operation_id.clone(),
+            IoOperationRecord {
+                cancellation: cancellation.clone(),
+                status: IoOperationStatus {
+                    schema_version: IO_RPC_SCHEMA_VERSION,
+                    operation_id: operation_id.clone(),
+                    state: IoOperationState::Running,
+                    progress: None,
+                    message: None,
+                },
+            },
+        );
+        Ok(IoProviderContext {
+            operation_id,
+            cancellation,
+            operations: Arc::clone(self),
+        })
+    }
+
+    fn status(&self, operation_id: &str) -> Option<IoOperationStatus> {
+        self.records
+            .lock()
+            .expect("I/O operation mutex poisoned")
+            .get(operation_id)
+            .map(|record| record.status.clone())
+    }
+
+    pub fn cancel(&self, operation_id: &str) -> bool {
+        let records = self.records.lock().expect("I/O operation mutex poisoned");
+        let Some(record) = records.get(operation_id) else {
+            return false;
+        };
+        if record.status.state != IoOperationState::Running {
+            return false;
+        }
+        record.cancellation.store(true, Ordering::Release);
+        true
+    }
+
+    fn progress(&self, operation_id: &str, progress: ProviderProgress) {
+        if let Some(record) = self
+            .records
+            .lock()
+            .expect("I/O operation mutex poisoned")
+            .get_mut(operation_id)
+        {
+            record.status.progress = Some(progress);
+        }
+    }
+
+    pub fn finish(&self, operation_id: &str, result: &anyhow::Result<serde_json::Value>) {
+        if let Some(record) = self
+            .records
+            .lock()
+            .expect("I/O operation mutex poisoned")
+            .get_mut(operation_id)
+        {
+            let cancelled = record.cancellation.load(Ordering::Acquire);
+            record.status.state = if result.is_ok() {
+                IoOperationState::Completed
+            } else if cancelled {
+                IoOperationState::Cancelled
+            } else {
+                IoOperationState::Failed
+            };
+            record.status.message = result.as_ref().err().map(ToString::to_string);
+        }
+    }
+}
+
+pub struct IoProviderContext {
+    operation_id: String,
+    pub cancellation: Arc<AtomicBool>,
+    operations: Arc<IoOperations>,
+}
+
+impl ProviderOperationContext for IoProviderContext {
+    fn is_cancelled(&self) -> bool {
+        self.cancellation.load(Ordering::Acquire)
+    }
+
+    fn report_progress(&mut self, progress: ProviderProgress) {
+        self.operations.progress(&self.operation_id, progress);
+    }
+}
+
+fn run_tracked_io<F>(
+    operations: Arc<IoOperations>,
+    operation_id: String,
+    operation: F,
+) -> anyhow::Result<serde_json::Value>
+where
+    F: FnOnce(&mut IoProviderContext) -> anyhow::Result<serde_json::Value>,
+{
+    let mut context = operations.begin(operation_id.clone())?;
+    let result = operation(&mut context);
+    operations.finish(&operation_id, &result);
+    result
+}
+
+pub(crate) fn validate_io_identity(value: &str, field: &str) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        !value.is_empty()
+            && value.len() <= 160
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.')),
+        "{field} is not a bounded portable identity"
+    );
+    Ok(())
+}
+
+fn export_entity_versions(
+    package: &himmelcad_io::CanonicalImportPackage,
+) -> BTreeMap<String, String> {
+    package
+        .admissions
+        .iter()
+        .map(|admission| {
+            (
+                admission.entity.id.0.clone(),
+                admission.entity.version_hash.0.clone(),
+            )
+        })
+        .collect()
+}
+
+fn io_probe_registry_root() -> PathBuf {
+    std::env::temp_dir().join("himmelcad-io-registry")
+}
+
+fn io_probe_prefix(source: &Path) -> anyhow::Result<Vec<u8>> {
+    let probe_path = if source.is_dir() {
+        source.join("ready.json")
+    } else {
+        source.to_path_buf()
+    };
+    anyhow::ensure!(probe_path.is_file(), "I/O probe source has no ready.json");
+    let mut prefix = Vec::new();
+    std::fs::File::open(probe_path)?
+        .take(IO_PROBE_PREFIX_BYTES)
+        .read_to_end(&mut prefix)?;
+    Ok(prefix)
+}
+
+fn require_provider_version(
+    registry: &himmelcad_io::FormatProviderRegistry,
+    provider_id: &str,
+    provider_version: &str,
+) -> anyhow::Result<()> {
+    let descriptor = registry
+        .descriptors()
+        .into_iter()
+        .find(|descriptor| descriptor.provider_id == provider_id)
+        .ok_or_else(|| anyhow::anyhow!("I/O provider is unavailable: {provider_id}"))?;
+    anyhow::ensure!(
+        descriptor.provider_version == provider_version,
+        "I/O provider version changed: selected {provider_version}, available {}",
+        descriptor.provider_version
+    );
+    Ok(())
+}
+
+struct IoScratch {
+    root: PathBuf,
+}
+
+impl IoScratch {
+    fn create(operation_id: &str) -> anyhow::Result<Self> {
+        validate_io_identity(operation_id, "operationId")?;
+        let digest = hex::encode(Sha256::digest(operation_id.as_bytes()));
+        let parent = std::env::temp_dir().join("himmelcad-io-operations");
+        std::fs::create_dir_all(&parent)?;
+        let root = parent.join(format!("{}-{digest}", std::process::id()));
+        std::fs::create_dir(&root).with_context(|| {
+            format!(
+                "I/O scratch root already exists or cannot be created: {}",
+                root.display()
+            )
+        })?;
+        Ok(Self { root })
+    }
+}
+
+impl Drop for IoScratch {
+    fn drop(&mut self) {
+        if let Err(error) = std::fs::remove_dir_all(&self.root) {
+            tracing::warn!(path = %self.root.display(), %error, "failed to remove I/O scratch root");
+        }
+    }
+}
+
+pub(crate) fn public_import_commit<T: Serialize>(commit: T) -> anyhow::Result<serde_json::Value> {
+    let mut value = serde_json::to_value(commit)?;
+    if let Some(references) = value
+        .pointer_mut("/inventory/externalObjects")
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        for reference in references {
+            if let Some(reference) = reference.as_object_mut() {
+                reference.remove("sourcePath");
+            }
+        }
+    }
+    Ok(value)
+}
+
+pub(crate) fn product_rpc_err(id: serde_json::Value, error: &anyhow::Error) -> RpcResponse {
+    if let Some(ProviderContractError::ProductImportRefused {
+        reason_code,
+        message,
+    }) = error
+        .chain()
+        .find_map(|cause| cause.downcast_ref::<ProviderContractError>())
+    {
+        return rpc_err_with_data(
+            id,
+            -32028,
+            message,
+            serde_json::json!({
+                "code": reason_code,
+                "reasonCode": reason_code,
+                "message": message,
+                "retryable": false,
+            }),
+        );
+    }
+    rpc_err(id, -32000, &error.to_string())
+}
 
 pub(super) fn handle_io_formats_page(req: RpcRequest) -> RpcResponse {
     let params = match serde_json::from_value::<PageParams>(req.params) {
@@ -290,5 +637,103 @@ impl RpcModule<(), RpcRequest, RpcResponse> for IoModule {
             })?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use super::*;
+
+    fn rpc_request(method: &str, params: serde_json::Value) -> RpcRequest {
+        RpcRequest {
+            jsonrpc: "2.0".to_owned(),
+            id: serde_json::json!(1),
+            method: method.to_owned(),
+            params,
+        }
+    }
+
+    #[test]
+    fn io_provider_discovery_is_stable_and_paginated() {
+        let first = handle_io_formats_page(rpc_request(
+            "io.formats.page",
+            serde_json::json!({ "limit": 2 }),
+        ));
+        assert!(first.error.is_none());
+        let result = first.result.expect("format result");
+        assert_eq!(result["items"].as_array().map(Vec::len), Some(2));
+        assert!(result["nextCursor"].is_string());
+    }
+
+    #[tokio::test]
+    async fn io_probe_is_bounded_and_returns_a_version_frozen_selection() {
+        let source = std::env::temp_dir().join(format!(
+            "himmelcad-io-probe-{}-{}.dxf",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        std::fs::write(&source, b"0\nSECTION\n2\nHEADER\n0\nENDSEC\n0\nEOF\n")
+            .expect("probe source");
+        let response = handle_io_rpc(
+            rpc_request(
+                "io.probe",
+                serde_json::json!({ "sourcePath": source, "mediaType": "image/vnd.dxf" }),
+            ),
+            Arc::new(IoOperations::default()),
+            Arc::new(Mutex::new(CanonicalAppRuntime::default())),
+        )
+        .await;
+        std::fs::remove_file(&source).expect("cleanup");
+        assert!(response.error.is_none(), "{:?}", response.error);
+        let selection = response.result.expect("probe selection");
+        assert_eq!(selection["providerId"], "hcad.io.dxf-rs@1");
+        assert_eq!(selection["formatId"], "dxf@r12-r2018-ascii");
+        assert!(selection["providerVersion"].is_string());
+    }
+
+    #[test]
+    fn generic_io_operation_cancel_is_visible_to_every_provider() {
+        let operations = Arc::new(IoOperations::default());
+        let context = operations
+            .begin("generic-import-1".to_owned())
+            .expect("begin operation");
+        assert!(!context.is_cancelled());
+        assert!(operations.cancel("generic-import-1"));
+        assert!(context.is_cancelled());
+        let result = Err(anyhow::anyhow!("cancelled"));
+        operations.finish("generic-import-1", &result);
+        assert_eq!(
+            operations.status("generic-import-1").expect("status").state,
+            IoOperationState::Cancelled
+        );
+        assert!(operations.begin("generic-import-1".to_owned()).is_err());
+    }
+
+    #[test]
+    fn exporter_capabilities_and_version_drift_fail_closed() {
+        let registry =
+            canonical_builtin_import_registry(io_probe_registry_root()).expect("built-in registry");
+        for provider_id in ["hcad.io.las-potree@1", "hcad.io.e57-potree@1"] {
+            let descriptor = registry
+                .descriptors()
+                .into_iter()
+                .find(|descriptor| descriptor.provider_id == provider_id)
+                .expect("import descriptor");
+            assert!(descriptor
+                .capabilities
+                .contains(&himmelcad_io::FormatCapability::Import));
+            assert!(!descriptor
+                .capabilities
+                .contains(&himmelcad_io::FormatCapability::Export));
+            assert!(registry.exporter(provider_id).is_err());
+        }
+        assert!(
+            require_provider_version(&registry, "hcad.io.dxf-rs@1", "changed-version").is_err()
+        );
     }
 }

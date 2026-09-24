@@ -1,9 +1,9 @@
 use std::{env, fs, path::PathBuf};
 
-use himmelcad_process::jobs::CancellationToken;
-use himmelcad_sidecar::prepared_triangle_mesh::{
+use himmelcad_photolab_sidecar::prepared_triangle_mesh::{
     build_prepared_textured_triangle_mesh, PreparedTriangleMeshOptions, TriangleRecord,
 };
+use himmelcad_process::jobs::CancellationToken;
 use image::{ImageFormat, Rgba, RgbaImage};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

@@ -21,7 +21,7 @@ extraResources:
     to: LICENSE.txt
   - from: ../../LICENSES/THIRD_PARTY.md
     to: THIRD_PARTY_NOTICES.md
-  - from: ../../target/release/himmelcad-sidecar
+  - from: ../../target/release/himmelcad-builder-sidecar
     to: himmelcad-sidecar
   - from: ../../.build/automation-runtime/linux-x64
     to: automation-runtime/linux-x64

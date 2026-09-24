@@ -75,6 +75,7 @@ pub mod photolab_recipe;
 pub mod product_export;
 pub mod project_archive;
 pub mod project_runtime;
+pub mod worker_toolchain;
 
 pub use gcp_import::{
     import_gcp_csv_file, import_gcp_csv_file_with_cancel, preview_gcp_csv_file, GcpCsvImportResult,

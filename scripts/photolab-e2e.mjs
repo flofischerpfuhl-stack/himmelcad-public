@@ -1264,7 +1264,7 @@ function parseArguments(args) {
     cancelAfterUnits: positiveInteger(get('--cancel-after-units', '1'), '--cancel-after-units'),
     maxCancelAcknowledgementMs,
     maxCancelTerminalMs,
-    sidecar: get('--sidecar', 'target/debug/himmelcad-sidecar'),
+    sidecar: get('--sidecar', 'target/debug/himmelcad-photolab-sidecar'),
     reuse,
     smoke: args.includes('--smoke'),
     agisoftGcp: goldenAgisoft || args.includes('--agisoft-gcp'),
@@ -1386,7 +1386,7 @@ class RpcClient {
               ),
             }
           : {}),
-        RUST_LOG: 'himmelcad_sidecar=info,parse_gps=warn,nom_exif=warn',
+        RUST_LOG: 'himmelcad_photolab_sidecar=info,parse_gps=warn,nom_exif=warn',
       },
       stdio: ['pipe', 'pipe', 'pipe'],
     });

@@ -14,7 +14,7 @@ const repositoryRoot = resolve(__dirname, '../..');
 const scratchRoot = resolve(repositoryRoot, '.build/codex-scratch/pl-i2');
 const sidecarPath = resolve(
   process.env.HIMMELCAD_PHOTOLAB_SIDECAR ??
-    resolve(repositoryRoot, 'target/photolab/release/himmelcad-sidecar'),
+    resolve(repositoryRoot, 'target/photolab/release/himmelcad-photolab-sidecar'),
 );
 const sidecar = spawn(sidecarPath, [], {
   cwd: repositoryRoot,

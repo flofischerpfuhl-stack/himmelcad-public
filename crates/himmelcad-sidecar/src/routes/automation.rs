@@ -87,6 +87,53 @@ pub(super) fn handle_automation_rpc(
     }
 }
 
+fn rpc_automation_err(id: serde_json::Value, message: &str) -> RpcResponse {
+    let stable_code = message
+        .split_once(':')
+        .map_or("internal", |(code, _)| code.trim());
+    let known = [
+        "protocolMismatch",
+        "missingCapability",
+        "invalidRequest",
+        "invalidCursor",
+        "generationChanged",
+        "pageLimitExceeded",
+        "byteLimitExceeded",
+        "conflict",
+        "lossAcceptanceRequired",
+        "confirmationRequired",
+        "operationNotFound",
+        "cancelled",
+        "leaseExpired",
+        "leaseRevoked",
+        "leaseRangeInvalid",
+        "leaseBudgetExhausted",
+        "hashMismatch",
+        "permissionDenied",
+        "internal",
+    ];
+    let stable_code = if known.contains(&stable_code) {
+        stable_code
+    } else {
+        "internal"
+    };
+    RpcResponse {
+        jsonrpc: "2.0",
+        id,
+        result: None,
+        error: Some(RpcError {
+            code: -32040,
+            message: message.to_owned(),
+            data: Some(serde_json::json!({
+                "code": stable_code,
+                "message": message,
+                "retryable": matches!(stable_code, "generationChanged" | "cancelled"),
+                "details": {},
+            })),
+        }),
+    }
+}
+
 pub(super) const METHODS: &[&str] = &[
     "automation.bulk.read",
     "automation.bulk.release",

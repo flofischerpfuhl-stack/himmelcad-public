@@ -18,6 +18,8 @@ members = [
     "crates/himmelcad-render",
     "crates/himmelcad-spatial",
     "crates/himmelcad-sidecar",
+    "crates/himmelcad-builder-sidecar",
+    "crates/himmelcad-photolab-sidecar",
     "crates/himmelcad-transform",
     "crates/himmelcad-wasm",
 ]

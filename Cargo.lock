@@ -1093,6 +1093,29 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
+name = "himmelcad-builder-sidecar"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "hex",
+ "himmelcad-command",
+ "himmelcad-core",
+ "himmelcad-document",
+ "himmelcad-domain-drafting",
+ "himmelcad-domain-pointcloud",
+ "himmelcad-domain-surface",
+ "himmelcad-io",
+ "himmelcad-model",
+ "himmelcad-process",
+ "himmelcad-sidecar",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "himmelcad-command"
 version = "0.0.0"
 dependencies = [
@@ -1101,8 +1124,6 @@ dependencies = [
  "hex",
  "himmelcad-core",
  "himmelcad-document",
- "himmelcad-domain-photogrammetry",
- "himmelcad-domain-raster",
  "himmelcad-model",
  "himmelcad-process",
  "hmac",
@@ -1314,6 +1335,41 @@ dependencies = [
 ]
 
 [[package]]
+name = "himmelcad-photolab-sidecar"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "fs2",
+ "gltf",
+ "hex",
+ "himmelcad-command",
+ "himmelcad-core",
+ "himmelcad-document",
+ "himmelcad-domain-photogrammetry",
+ "himmelcad-domain-pointcloud",
+ "himmelcad-domain-raster",
+ "himmelcad-io",
+ "himmelcad-model",
+ "himmelcad-prepared",
+ "himmelcad-process",
+ "himmelcad-render",
+ "himmelcad-sidecar",
+ "himmelcad-spatial",
+ "himmelcad-transform",
+ "image",
+ "las",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "zip",
+]
+
+[[package]]
 name = "himmelcad-prepared"
 version = "0.0.0"
 dependencies = [
@@ -1385,22 +1441,17 @@ dependencies = [
  "himmelcad-core",
  "himmelcad-document",
  "himmelcad-domain-drafting",
- "himmelcad-domain-photogrammetry",
  "himmelcad-domain-pointcloud",
- "himmelcad-domain-raster",
  "himmelcad-domain-registration",
- "himmelcad-domain-surface",
  "himmelcad-io",
  "himmelcad-model",
  "himmelcad-prepared",
  "himmelcad-process",
- "himmelcad-render",
  "himmelcad-spatial",
  "himmelcad-transform",
  "hmac",
  "image",
  "las",
- "rusqlite",
  "serde",
  "serde_json",
  "sha2",

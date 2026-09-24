@@ -8,7 +8,7 @@ const roots = [
   join(workspace, 'apps/photolab/renderer'),
   join(workspace, 'apps/photolab/electron'),
   join(workspace, 'packages/@himmelcad/ui/src/EntityTree.tsx'),
-  join(workspace, 'crates/himmelcad-sidecar/src/main.rs'),
+  join(workspace, 'crates/himmelcad-photolab-sidecar/src'),
   join(workspace, 'crates/himmelcad-domain-photogrammetry/src/dedode_runtime.rs'),
 ];
 const extensions = new Set(['.ts', '.tsx', '.html', '.rs']);

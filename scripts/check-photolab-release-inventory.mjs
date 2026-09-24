@@ -91,8 +91,8 @@ const roots = [
 const requiredExecutables = [
   join(
     platform === 'win32-x64'
-      ? join(cargoTargetRoot, 'x86_64-pc-windows-gnullvm/release/himmelcad-sidecar.exe')
-      : join(cargoTargetRoot, 'release/himmelcad-sidecar'),
+      ? join(cargoTargetRoot, 'x86_64-pc-windows-gnullvm/release/himmelcad-photolab-sidecar.exe')
+      : join(cargoTargetRoot, 'release/himmelcad-photolab-sidecar'),
   ),
   join(
     platform === 'win32-x64'

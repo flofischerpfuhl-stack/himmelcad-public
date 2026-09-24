@@ -25,6 +25,7 @@ export function resolveDevelopmentSidecarPath(
     configuredTargetRoot.startsWith(`${defaultTargetRoot}${sep}`)
       ? configuredTargetRoot
       : defaultTargetRoot;
-  const executable = platform === 'win32' ? 'himmelcad-sidecar.exe' : 'himmelcad-sidecar';
+  const executable =
+    platform === 'win32' ? 'himmelcad-photolab-sidecar.exe' : 'himmelcad-photolab-sidecar';
   return resolve(targetRoot, 'debug', executable);
 }

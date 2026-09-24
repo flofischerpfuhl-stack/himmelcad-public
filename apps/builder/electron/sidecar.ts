@@ -68,10 +68,10 @@ function sidecarPath(): string {
   }
   candidates.push(resolve(targetRoot, 'builder'), targetRoot);
   for (const cargoTarget of candidates) {
-    const binary = resolve(cargoTarget, 'debug', 'himmelcad-sidecar');
+    const binary = resolve(cargoTarget, 'debug', 'himmelcad-builder-sidecar');
     if (existsSync(binary)) return binary;
   }
-  return resolve(targetRoot, 'builder', 'debug', 'himmelcad-sidecar');
+  return resolve(targetRoot, 'builder', 'debug', 'himmelcad-builder-sidecar');
 }
 
 export function startSidecar(): Promise<void> {

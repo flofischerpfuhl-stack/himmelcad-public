@@ -23,7 +23,7 @@ extraResources:
     to: THIRD_PARTY_NOTICES.md
   - from: ../../.build/release-inventory/photolab-linux-x64.json
     to: RELEASE_INVENTORY.json
-  - from: ../../target/photolab/release/himmelcad-sidecar
+  - from: ../../target/photolab/release/himmelcad-photolab-sidecar
     to: himmelcad-sidecar
   - from: ../../.build/automation-runtime/linux-x64
     to: automation-runtime/linux-x64

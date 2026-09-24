@@ -11,13 +11,6 @@
   "edges": [
     {
       "ecosystem": "rust",
-      "from": "himmelcad-sidecar",
-      "to": "himmelcad-render",
-      "reason": "The monolithic command host still owns prepared-artifact and rendering-adjacent work.",
-      "removeInStep": 3
-    },
-    {
-      "ecosystem": "rust",
       "from": "himmelcad-io",
       "to": "himmelcad-core",
       "reason": "Import/export needs model contracts that have not yet moved out of the core monolith.",
