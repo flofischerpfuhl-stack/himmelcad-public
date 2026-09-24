@@ -6,7 +6,7 @@ use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::{
+use himmelcad_prepared::{
     BoundingVolume, ContentKind, ContentReference, PreparedHierarchyManifest, RefinementMode,
     TileDescriptor, TileId, WorldAabb, WorldTransform, WorldVec3,
 };
@@ -14,11 +14,11 @@ use himmelcad_process::jobs::CancellationToken;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
-use crate::raster::{
+use himmelcad_document::durable_fs;
+use himmelcad_prepared::raster::{
     OrthomosaicElevationSupport, RasterBounds, RasterBuildSummary, RasterByteOrder,
     RasterLevelSummary, RasterNoDataValue, RasterViewTileFormat,
 };
-use himmelcad_document::durable_fs;
 
 const TILE_SIZE: u32 = 512;
 const MAX_SUPPORT_CELLS: u32 = 512;
@@ -41,7 +41,7 @@ pub enum PreparedRasterSurfaceHierarchyError {
     Json(#[from] serde_json::Error),
     /// The shared render core rejected the hierarchy before publication.
     #[error(transparent)]
-    Manifest(#[from] crate::PreparedHierarchyError),
+    Manifest(#[from] himmelcad_prepared::PreparedHierarchyError),
 }
 
 #[derive(Debug)]
@@ -700,15 +700,15 @@ fn invalid(message: &str) -> PreparedRasterSurfaceHierarchyError {
 mod tests {
     use std::fs;
 
-    use crate::{DatasetId, HierarchySource, PreparedHierarchySource, TileId};
     use himmelcad_model::canonical_resources::CanonicalResourceRef;
     use himmelcad_model::document_model::EntityVersionRef;
     use himmelcad_model::entity::EntityId;
     use himmelcad_model::hash::ObjectHash;
+    use himmelcad_prepared::{DatasetId, HierarchySource, PreparedHierarchySource, TileId};
     use himmelcad_process::jobs::CancellationToken;
 
     use super::publish_prepared_raster_surface_hierarchy;
-    use crate::raster::{
+    use himmelcad_prepared::raster::{
         GdalAudit, OrthomosaicElevationSupport, RasterBounds, RasterBuildSummary, RasterByteOrder,
         RasterCrs, RasterGrid, RasterLevelSummary, RasterNoDataValue, RasterViewLayer,
         RasterViewTileFormat,

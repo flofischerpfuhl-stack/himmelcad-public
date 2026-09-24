@@ -1177,6 +1177,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "thiserror 1.0.69",
+ "tracing",
  "zip",
 ]
 
@@ -1204,6 +1205,7 @@ dependencies = [
  "himmelcad-io",
  "himmelcad-model",
  "himmelcad-prepared",
+ "himmelcad-prepared-build",
  "himmelcad-process",
  "himmelcad-spatial",
  "himmelcad-transform",
@@ -1247,6 +1249,7 @@ dependencies = [
  "himmelcad-document",
  "himmelcad-model",
  "himmelcad-prepared",
+ "himmelcad-prepared-build",
  "himmelcad-process",
  "himmelcad-spatial",
  "image",
@@ -1285,6 +1288,7 @@ dependencies = [
  "himmelcad-io",
  "himmelcad-model",
  "himmelcad-prepared",
+ "himmelcad-prepared-build",
  "himmelcad-process",
  "serde",
  "serde_json",
@@ -1307,6 +1311,7 @@ dependencies = [
  "himmelcad-document",
  "himmelcad-model",
  "himmelcad-prepared",
+ "himmelcad-prepared-build",
  "himmelcad-spatial",
  "image",
  "las",
@@ -1326,6 +1331,7 @@ dependencies = [
 name = "himmelcad-model"
 version = "0.0.0"
 dependencies = [
+ "glam 0.29.3",
  "hex",
  "serde",
  "serde_json",
@@ -1351,6 +1357,7 @@ dependencies = [
  "himmelcad-io",
  "himmelcad-model",
  "himmelcad-prepared",
+ "himmelcad-prepared-build",
  "himmelcad-process",
  "himmelcad-render",
  "himmelcad-sidecar",
@@ -1375,10 +1382,21 @@ version = "0.0.0"
 dependencies = [
  "brotli-decompressor",
  "glam 0.29.3",
+ "himmelcad-model",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "himmelcad-prepared-build"
+version = "0.0.0"
+dependencies = [
  "gltf",
  "hex",
  "himmelcad-document",
  "himmelcad-model",
+ "himmelcad-prepared",
  "himmelcad-process",
  "image",
  "serde",
@@ -1446,6 +1464,7 @@ dependencies = [
  "himmelcad-io",
  "himmelcad-model",
  "himmelcad-prepared",
+ "himmelcad-prepared-build",
  "himmelcad-process",
  "himmelcad-spatial",
  "himmelcad-transform",
@@ -1493,7 +1512,8 @@ version = "0.0.0"
 dependencies = [
  "futures-channel",
  "glam 0.29.3",
- "himmelcad-core",
+ "himmelcad-model",
+ "himmelcad-prepared",
  "himmelcad-render",
  "js-sys",
  "serde",

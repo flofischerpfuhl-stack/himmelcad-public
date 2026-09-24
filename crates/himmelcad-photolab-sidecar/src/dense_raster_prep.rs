@@ -306,20 +306,6 @@ mod tests {
         assert!(parse_colmap_sparse_point("1 nan 2 3 4 5 6 0.1").is_err());
     }
 
-    #[cfg(windows)]
-    #[test]
-    fn gdal_arguments_strip_windows_verbatim_prefixes() {
-        assert_eq!(
-            external_tool_argument(r"\\?\C:\project\dense.csv"),
-            r"C:\project\dense.csv"
-        );
-        assert_eq!(
-            external_tool_argument(r"\\?\UNC\server\share\dense.csv"),
-            r"\\server\share\dense.csv"
-        );
-        assert_eq!(external_tool_argument("EPSG:31468"), "EPSG:31468");
-    }
-
     #[test]
     #[cfg(target_os = "linux")]
     fn gdal_failure_carries_command_code_and_stderr_verbatim() {

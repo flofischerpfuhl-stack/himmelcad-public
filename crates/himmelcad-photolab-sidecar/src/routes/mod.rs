@@ -146,7 +146,7 @@ use himmelcad_domain_photogrammetry::worker_toolchain::{
 use himmelcad_domain_raster::orthophoto_prep::{
     prepare_camera_orthophotos, CameraBlendMode, OrthophotoPreparation, OrthophotoPreparationError,
 };
-use himmelcad_prepared::prepared_triangle_mesh_ply::{
+use himmelcad_prepared_build::prepared_triangle_mesh_ply::{
     build_prepared_triangle_mesh_from_colmap_textured_directory,
     build_prepared_triangle_mesh_from_ply,
 };
@@ -5235,7 +5235,7 @@ fn run_mesh_job(
                     })
                     .map_err(JobWorkerError::from)?;
                 let report =
-                    himmelcad_prepared::prepared_triangle_mesh_ply::build_prepared_triangle_mesh_from_generated_ply(
+                    himmelcad_prepared_build::prepared_triangle_mesh_ply::build_prepared_triangle_mesh_from_generated_ply(
                         &mesh_ply,
                         &staging,
                         PreparedTriangleMeshOptions::default(),

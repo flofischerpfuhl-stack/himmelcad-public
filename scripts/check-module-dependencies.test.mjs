@@ -17,6 +17,7 @@ for (const [name, expectedKind] of [
   ['domain-macro-export.json', 'domain-macro-export'],
   ['crate-self-alias.json', 'crate-self-alias'],
   ['workspace-crate-rename.json', 'workspace-crate-rename'],
+  ['display-transitive-forbidden.json', 'display-normal-dependency-closure'],
 ]) {
   test(`${name} fails with ${expectedKind}`, () => {
     const fixture = JSON.parse(readFileSync(join(fixtureRoot, name), 'utf8'));

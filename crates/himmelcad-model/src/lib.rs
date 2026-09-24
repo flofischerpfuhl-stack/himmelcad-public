@@ -2,10 +2,12 @@
 
 #![forbid(unsafe_code)]
 
+pub mod canonical_document;
 pub mod canonical_resource_catalog;
 pub mod canonical_resources;
 pub mod document_model;
 pub mod entity;
+pub mod entity_commands;
 pub mod entity_model;
 pub mod entity_validation;
 pub mod geometry_representation_registry;

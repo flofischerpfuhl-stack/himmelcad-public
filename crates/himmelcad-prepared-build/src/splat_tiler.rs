@@ -7,11 +7,11 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::{
+use himmelcad_model::{entity_model::GeometryResource, hash::ObjectHash};
+use himmelcad_prepared::{
     BoundingVolume, ContentKind, ContentReference, PreparedHierarchyManifest, RefinementMode,
     TileDescriptor, TileId, WorldAabb, WorldTransform, WorldVec3,
 };
-use himmelcad_model::{entity_model::GeometryResource, hash::ObjectHash};
 use himmelcad_process::jobs::CancellationToken;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;

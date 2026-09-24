@@ -1,0 +1,15 @@
+{
+  "layers": {
+    "viewer": "display",
+    "prepared": "foundation",
+    "document": "foundation"
+  },
+  "edges": [
+    { "ecosystem": "rust", "from": "viewer", "to": "prepared" },
+    { "ecosystem": "rust", "from": "prepared", "to": "document" }
+  ],
+  "allowlist": [],
+  "displayClosure": {
+    "allowed": ["prepared"]
+  }
+}

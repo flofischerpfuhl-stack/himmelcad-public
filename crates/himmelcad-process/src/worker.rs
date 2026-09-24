@@ -1,14 +1,13 @@
 //! Cross-domain worker launch commands and operating-system memory limits.
 
-use std::fs;
-use std::io;
-use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::sync::OnceLock;
+#[cfg(target_os = "linux")]
+use std::{fs, io, path::PathBuf, process::Stdio, sync::OnceLock};
+use std::{path::Path, process::Command};
 
 // RLIMIT_AS measures virtual address space while the calibrated models predict RSS. The
 // fallback doubles the resident limit to cover thread arenas and mapped weights.
 pub const WORKER_RLIMIT_AS_MULTIPLIER: u64 = 2;
+#[cfg(target_os = "linux")]
 const SYSTEMD_SCOPE_PROBE_DIAGNOSTIC_MAX_CHARS: usize = 512;
 #[cfg(target_os = "linux")]
 const PRLIMIT_PATH: &str = "/usr/bin/prlimit";

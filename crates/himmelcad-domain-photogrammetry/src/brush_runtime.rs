@@ -25,7 +25,7 @@ use thiserror::Error;
 
 use crate::job_runtime::{JobWorkerContext, JobWorkerError, JobWorkerResult};
 use crate::photolab_jobs::{JobProgress, PhotolabJobKind, PhotolabStage, PhotolabStageKind};
-use himmelcad_prepared::splat_tiler::PreparedSplatProduct;
+use himmelcad_prepared_build::splat_tiler::PreparedSplatProduct;
 
 const BRUSH_VERSION: &str = "0.3.0";
 const VENDOR_MANIFEST_MAX_BYTES: u64 = 128 * 1024;

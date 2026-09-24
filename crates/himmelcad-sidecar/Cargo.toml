@@ -15,6 +15,7 @@ himmelcad-domain-registration = { path = "../himmelcad-domain-registration" }
 himmelcad-io = { path = "../himmelcad-io" }
 himmelcad-model = { path = "../himmelcad-model" }
 himmelcad-prepared = { path = "../himmelcad-prepared" }
+himmelcad-prepared-build = { path = "../himmelcad-prepared-build" }
 himmelcad-process = { path = "../himmelcad-process" }
 himmelcad-spatial = { path = "../himmelcad-spatial" }
 himmelcad-transform = { path = "../himmelcad-transform" }

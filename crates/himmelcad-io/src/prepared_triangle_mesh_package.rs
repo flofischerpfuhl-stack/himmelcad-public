@@ -6,8 +6,8 @@ use himmelcad_model::entity_model::GeometryResource;
 use himmelcad_model::geometry_representation_registry::SectionTopologyPartitionManifest;
 use himmelcad_model::hash::ObjectHash;
 use himmelcad_model::typed_artifact::{TypedArtifactManifest, TYPED_ARTIFACT_MANIFEST_NAME};
-use himmelcad_prepared::mesh_tiler::PreparedMeshProduct;
-use himmelcad_prepared::prepared_triangle_mesh::PreparedTriangleMeshError;
+use himmelcad_prepared_build::mesh_tiler::PreparedMeshProduct;
+use himmelcad_prepared_build::prepared_triangle_mesh::PreparedTriangleMeshError;
 
 use crate::{CanonicalPreparedDataset, PreparedDatasetArtifact};
 

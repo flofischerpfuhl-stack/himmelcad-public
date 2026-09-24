@@ -17,6 +17,7 @@
     "himmelcad-model": "foundation",
     "himmelcad-photolab-sidecar": "product",
     "himmelcad-prepared": "foundation",
+    "himmelcad-prepared-build": "foundation",
     "himmelcad-process": "foundation",
     "himmelcad-render": "display",
     "himmelcad-sidecar": "command",

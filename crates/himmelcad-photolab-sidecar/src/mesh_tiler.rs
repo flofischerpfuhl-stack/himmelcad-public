@@ -1,6 +1,6 @@
 //! Compatibility exports and upper-layer reader tests for prepared DEM meshes.
 
-pub use himmelcad_prepared::mesh_tiler::*;
+pub use himmelcad_prepared_build::mesh_tiler::*;
 
 #[cfg(test)]
 mod render_contract_tests {

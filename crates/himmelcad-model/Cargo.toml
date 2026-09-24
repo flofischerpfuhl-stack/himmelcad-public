@@ -7,6 +7,7 @@ license.workspace = true
 description = "HimmelCAD renderer-neutral object schema and validation contracts."
 
 [dependencies]
+glam.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

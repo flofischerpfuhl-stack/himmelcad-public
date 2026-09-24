@@ -45,11 +45,11 @@ use himmelcad_document::domain_commands::{
     SurfaceDocumentCommands, SurfacePointCloudSampleRequest,
 };
 use himmelcad_io::package_prepared_triangle_mesh;
-use himmelcad_prepared::mesh_tiler::{PreparedMeshProduct, PreparedSectionTopologyPart};
 use himmelcad_prepared::pointcloud::{
     HEIGHT_GRID_HEADER_BYTES, HEIGHT_GRID_MAGIC, HEIGHT_GRID_RECORD_BYTES,
 };
-use himmelcad_prepared::prepared_triangle_mesh::{
+use himmelcad_prepared_build::mesh_tiler::{PreparedMeshProduct, PreparedSectionTopologyPart};
+use himmelcad_prepared_build::prepared_triangle_mesh::{
     build_prepared_triangle_mesh, PreparedTriangleMeshOptions, TriangleRecord,
 };
 

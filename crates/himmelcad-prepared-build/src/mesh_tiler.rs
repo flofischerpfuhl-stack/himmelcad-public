@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
-use crate::raster::{RasterBuildSummary, RasterLevelSummary};
+use himmelcad_prepared::raster::{RasterBuildSummary, RasterLevelSummary};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1339,7 +1339,7 @@ mod tests {
     use super::*;
 
     fn raster_summary(columns: u32, rows: u32, gsd: f64) -> RasterBuildSummary {
-        let bounds = crate::raster::RasterBounds {
+        let bounds = himmelcad_prepared::raster::RasterBounds {
             minimum_east: 0.0,
             minimum_north: 0.0,
             maximum_east: f64::from(columns) * 512.0 * gsd,
@@ -1360,20 +1360,20 @@ mod tests {
                 metric_tile_url_template: String::new(),
                 view_layers: vec![],
             }],
-            crs: crate::raster::RasterCrs {
+            crs: himmelcad_prepared::raster::RasterCrs {
                 horizontal: "x".into(),
                 vertical: None,
                 gdal_srs: "x".into(),
                 canonical_wkt_sha256: himmelcad_model::hash::ObjectHash::of_bytes(b"x"),
             },
-            grid: crate::raster::RasterGrid {
+            grid: himmelcad_prepared::raster::RasterGrid {
                 bounds,
                 width_pixels: columns * 512,
                 height_pixels: rows * 512,
                 gsd,
-                no_data: crate::raster::RasterNoDataValue::Numeric(-1.0),
+                no_data: himmelcad_prepared::raster::RasterNoDataValue::Numeric(-1.0),
             },
-            audit: crate::raster::GdalAudit {
+            audit: himmelcad_prepared::raster::GdalAudit {
                 version: "x".into(),
                 executable_sha256: Default::default(),
                 raster_drivers: vec![],
@@ -1458,7 +1458,7 @@ mod tests {
                 columns: 1,
                 rows: 1,
                 tile_count: 1,
-                bounds: crate::raster::RasterBounds {
+                bounds: himmelcad_prepared::raster::RasterBounds {
                     minimum_east: 0.0,
                     minimum_north: 0.0,
                     maximum_east: 512.0,
@@ -1469,14 +1469,14 @@ mod tests {
                 metric_tile_url_template: "".into(),
                 view_layers: vec![],
             }],
-            crs: crate::raster::RasterCrs {
+            crs: himmelcad_prepared::raster::RasterCrs {
                 horizontal: "x".into(),
                 vertical: None,
                 gdal_srs: "x".into(),
                 canonical_wkt_sha256: himmelcad_model::hash::ObjectHash::of_bytes(b"x"),
             },
-            grid: crate::raster::RasterGrid {
-                bounds: crate::raster::RasterBounds {
+            grid: himmelcad_prepared::raster::RasterGrid {
+                bounds: himmelcad_prepared::raster::RasterBounds {
                     minimum_east: 0.0,
                     minimum_north: 0.0,
                     maximum_east: 512.0,
@@ -1485,9 +1485,9 @@ mod tests {
                 width_pixels: 512,
                 height_pixels: 512,
                 gsd: 1.0,
-                no_data: crate::raster::RasterNoDataValue::Numeric(-1.0),
+                no_data: himmelcad_prepared::raster::RasterNoDataValue::Numeric(-1.0),
             },
-            audit: crate::raster::GdalAudit {
+            audit: himmelcad_prepared::raster::GdalAudit {
                 version: "x".into(),
                 executable_sha256: Default::default(),
                 raster_drivers: vec![],

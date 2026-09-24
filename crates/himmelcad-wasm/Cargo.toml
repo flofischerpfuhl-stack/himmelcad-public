@@ -11,7 +11,8 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 glam.workspace = true
-himmelcad-core = { path = "../himmelcad-core" }
+himmelcad-model = { path = "../himmelcad-model" }
+himmelcad-prepared = { path = "../himmelcad-prepared" }
 himmelcad-render = { path = "../himmelcad-render" }
 serde.workspace = true
 serde_json.workspace = true

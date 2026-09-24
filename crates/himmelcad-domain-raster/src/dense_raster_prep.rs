@@ -1749,3 +1749,23 @@ fn external_tool_argument(value: &str) -> String {
 fn external_tool_argument(value: &str) -> String {
     value.to_owned()
 }
+
+#[cfg(test)]
+mod tests {
+    #[cfg(windows)]
+    use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn gdal_arguments_strip_windows_verbatim_prefixes() {
+        assert_eq!(
+            external_tool_argument(r"\\?\C:\project\dense.csv"),
+            r"C:\project\dense.csv"
+        );
+        assert_eq!(
+            external_tool_argument(r"\\?\UNC\server\share\dense.csv"),
+            r"\\server\share\dense.csv"
+        );
+        assert_eq!(external_tool_argument("EPSG:31468"), "EPSG:31468");
+    }
+}

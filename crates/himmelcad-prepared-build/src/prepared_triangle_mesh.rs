@@ -1756,10 +1756,10 @@ mod tests {
         build_prepared_triangle_mesh, geometry_resource_from_bytes, PreparedTriangleMeshOptions,
         TriangleRecord, KERNEL_INLINE_TILE_LIMIT,
     };
-    use crate::{DatasetId, PreparedHierarchySource, TileId};
     use himmelcad_model::geometry_representation_registry::{
         SectionPositionComponentType, SectionTopologyPartitionManifest,
     };
+    use himmelcad_prepared::{DatasetId, PreparedHierarchySource, TileId};
     use himmelcad_process::jobs::CancellationToken;
 
     struct TestDirectory(PathBuf);

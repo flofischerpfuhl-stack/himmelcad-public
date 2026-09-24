@@ -5,7 +5,7 @@ use std::path::Path;
 use himmelcad_domain_photogrammetry::photolab_gcp_optimization::GcpSimilarityTransform;
 use himmelcad_process::jobs::CancellationToken;
 
-pub use himmelcad_prepared::splat_tiler::{PreparedSplatProduct, SplatTilerError};
+pub use himmelcad_prepared_build::splat_tiler::{PreparedSplatProduct, SplatTilerError};
 
 pub fn tile_brush_ply(
     source: &Path,
@@ -13,11 +13,11 @@ pub fn tile_brush_ply(
     project_transform: Option<GcpSimilarityTransform>,
     cancellation: &CancellationToken,
 ) -> Result<PreparedSplatProduct, SplatTilerError> {
-    himmelcad_prepared::splat_tiler::tile_brush_ply(
+    himmelcad_prepared_build::splat_tiler::tile_brush_ply(
         source,
         output_root,
         project_transform.map(|transform| {
-            himmelcad_prepared::splat_tiler::PreparedSimilarityTransform {
+            himmelcad_prepared_build::splat_tiler::PreparedSimilarityTransform {
                 scale: transform.scale,
                 rotation: transform.rotation,
                 translation_meters: transform.translation_meters,

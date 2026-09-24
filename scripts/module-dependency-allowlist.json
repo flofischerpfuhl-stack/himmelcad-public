@@ -17,13 +17,6 @@
       "removeInStep": 3
     },
     {
-      "ecosystem": "rust",
-      "from": "himmelcad-wasm",
-      "to": "himmelcad-core",
-      "reason": "The WASM display adapter needs model contracts that have not yet moved out of the core monolith.",
-      "removeInStep": 3
-    },
-    {
       "ecosystem": "typescript",
       "from": "@himmelcad/automation-host:.",
       "to": "@himmelcad/agent:.",

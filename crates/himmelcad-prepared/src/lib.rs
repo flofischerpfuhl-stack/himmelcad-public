@@ -10,24 +10,12 @@ use serde::{Deserialize, Serialize};
 pub mod dense;
 mod hierarchy;
 #[allow(missing_docs)]
-pub mod mesh_tiler;
-#[allow(missing_docs)]
 pub mod mvs_scene;
 #[allow(missing_docs)]
 pub mod pointcloud;
 mod potree;
 #[allow(missing_docs)]
-pub mod prepared_triangle_mesh;
-#[allow(missing_docs)]
-pub mod prepared_triangle_mesh_ply;
-#[allow(missing_docs)]
 pub mod raster;
-#[allow(missing_docs)]
-pub mod splat_tiler;
-#[allow(missing_docs)]
-pub mod viewer_raster_manifest;
-#[allow(missing_docs)]
-pub mod viewer_raster_surface_manifest;
 
 pub use hierarchy::{PreparedHierarchyError, PreparedHierarchyManifest, PreparedHierarchySource};
 pub use potree::{

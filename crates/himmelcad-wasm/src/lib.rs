@@ -30,16 +30,16 @@ use std::sync::Arc;
 use glam::{DMat4, DVec3};
 
 #[cfg(target_arch = "wasm32")]
-use himmelcad_core::canonical_document::{
+use himmelcad_model::canonical_document::{
     CanonicalCommandTransaction, CanonicalDocument, CanonicalEntityEffect, CanonicalJournalEntry,
     EntityVersionRef,
 };
 #[cfg(target_arch = "wasm32")]
-use himmelcad_core::canonical_resource_catalog::{
+use himmelcad_model::canonical_resource_catalog::{
     CanonicalPresentationResourceCatalog, CanonicalPresentationResourceSet,
 };
 #[cfg(target_arch = "wasm32")]
-use himmelcad_core::canonical_resources::{
+use himmelcad_model::canonical_resources::{
     validate_block_definition_set, validate_hatch_pattern_resource, validate_line_type_resource,
     BlockDefinition, BlockMember, BlockMemberAttributes, BlockMemberSource, BlockMemberStyle,
     CanonicalResourceRef, HatchPatternResource, LineTypeElement, LineTypePattern, LineTypeResource,
@@ -48,13 +48,13 @@ use himmelcad_core::canonical_resources::{
     LINE_TYPE_RESOURCE_SCHEMA_ID,
 };
 #[cfg(target_arch = "wasm32")]
-use himmelcad_core::entity_commands::{
+use himmelcad_model::entity_commands::{
     apply_transform_entity, restore_entity_placement, AppliedEntityPlacementCommand,
     EntityCommandJournal, EntityCommandJournalEntry, EntityCommandJournalKind,
     TransformEntityCommand,
 };
 #[cfg(target_arch = "wasm32")]
-use himmelcad_core::entity_model::{
+use himmelcad_model::entity_model::{
     AnnotationAnchor, CameraModel, CanonicalEntity, CurveGeometry, CurveUse, DepthSemantics,
     DimensionGeometry, DimensionKind, ElevationSurfaceGeometry, GeometryObject, GeometryResource,
     PanoramaGeometry, Position, RasterCellDiagonal, RasterConfidenceEncoding, RasterConnectivity,
@@ -62,15 +62,15 @@ use himmelcad_core::entity_model::{
     TextSpace, Transform3d, TriangleMeshGeometry, TriangleMeshStorage, Vector3,
 };
 #[cfg(target_arch = "wasm32")]
-use himmelcad_core::entity_validation::{geometry_object_content_hash, validate_geometry_object};
+use himmelcad_model::entity_validation::{geometry_object_content_hash, validate_geometry_object};
 #[cfg(target_arch = "wasm32")]
-use himmelcad_core::geometry_representation_registry::{
+use himmelcad_model::geometry_representation_registry::{
     CanonicalRepresentationAdmission, GeometryRepresentationBindingRef,
     GeometryRepresentationSlotKey, SectionIndexComponentType, SectionPositionComponentType,
     SectionTopologyPartitionManifest,
 };
 #[cfg(target_arch = "wasm32")]
-use himmelcad_core::{entity::EntityId, hash::ObjectHash};
+use himmelcad_model::{entity::EntityId, hash::ObjectHash};
 #[cfg(target_arch = "wasm32")]
 use himmelcad_render::{
     authoritative_section_product_matches, build_cad_curve_batch, build_elevation_raster_batch,
@@ -1873,7 +1873,7 @@ impl WasmViewer {
     /// Computes the authoritative canonical-entity envelope hash in Rust.
     pub fn canonical_entity_version_hash_json(&self, entity_json: &str) -> Result<String, JsValue> {
         let entity: CanonicalEntity = serde_json::from_str(entity_json).map_err(js_error)?;
-        himmelcad_core::entity_validation::canonical_entity_version_hash(&entity)
+        himmelcad_model::entity_validation::canonical_entity_version_hash(&entity)
             .map(|hash| hash.0)
             .map_err(js_error)
     }
@@ -9110,7 +9110,7 @@ fn apply_canonical_mesh_material(
 fn compile_label_entity(
     host: &GpuSurfaceHost<'_>,
     request: &WasmEntityRenderRequest,
-    label: &himmelcad_core::entity_model::LabelGeometry,
+    label: &himmelcad_model::entity_model::LabelGeometry,
     pick_slots: &[u32],
     floating_origin: FloatingOrigin,
     glyph_atlases: &BTreeMap<String, WasmGlyphAtlasResource>,
@@ -9125,7 +9125,7 @@ fn compile_label_entity(
     )?];
     if label.leader.len() >= 2 {
         let geometry = GeometryObject::Curve {
-            curve: Box::new(himmelcad_core::entity_model::CurveGeometry::Polyline {
+            curve: Box::new(himmelcad_model::entity_model::CurveGeometry::Polyline {
                 positions: label.leader.clone(),
                 closed: false,
             }),
@@ -9151,7 +9151,7 @@ fn solid_requires_evaluated_mesh(solid: &SolidGeometry) -> bool {
         solid,
         SolidGeometry::ClosedMesh { .. }
             | SolidGeometry::Csg {
-                root: himmelcad_core::entity_model::CsgNode::Primitive { .. }
+                root: himmelcad_model::entity_model::CsgNode::Primitive { .. }
             }
             | SolidGeometry::Extrusion { .. }
     )
@@ -9214,7 +9214,7 @@ fn compile_block_entity(
     world: &mut RenderWorld,
     batches: &mut BTreeMap<RenderProxyId, Vec<GpuDrawBatch>>,
     request: &WasmEntityRenderRequest,
-    instance: &himmelcad_core::entity_model::BlockInstanceGeometry,
+    instance: &himmelcad_model::entity_model::BlockInstanceGeometry,
     origin: WorldVec3,
     glyph_atlases: &BTreeMap<String, WasmGlyphAtlasResource>,
     annotation_styles: &BTreeMap<String, WasmAnnotationStyle>,
@@ -9306,7 +9306,7 @@ fn compile_block_entity(
 
 #[cfg(target_arch = "wasm32")]
 fn resolve_block_definition<'a>(
-    instance: &himmelcad_core::entity_model::BlockInstanceGeometry,
+    instance: &himmelcad_model::entity_model::BlockInstanceGeometry,
     definitions: &'a BTreeMap<String, BlockDefinition>,
 ) -> Result<&'a BlockDefinition, String> {
     let key = block_definition_key(&instance.definition_id, &instance.definition_hash.0);
@@ -9356,7 +9356,7 @@ fn canonical_entity_version_ref_key(reference: &EntityVersionRef) -> Result<Stri
 #[cfg(target_arch = "wasm32")]
 fn block_member_request(
     request: &WasmEntityRenderRequest,
-    instance: &himmelcad_core::entity_model::BlockInstanceGeometry,
+    instance: &himmelcad_model::entity_model::BlockInstanceGeometry,
     member: &BlockMember,
     block_member_entity_versions: &BTreeMap<String, (EntityVersionRef, WasmEntityRenderRequest)>,
     block_member_styles: &BTreeMap<String, (CanonicalResourceRef, RenderStyle)>,
@@ -9490,7 +9490,7 @@ fn apply_block_member_attributes(
 
 #[cfg(target_arch = "wasm32")]
 fn validate_block_instance_attribute_refs(
-    instance: &himmelcad_core::entity_model::BlockInstanceGeometry,
+    instance: &himmelcad_model::entity_model::BlockInstanceGeometry,
     registered: &BTreeSet<String>,
 ) -> Result<(), String> {
     let Some(overrides) = &instance.overrides else {
@@ -9544,7 +9544,7 @@ fn compile_dimension_entity(
         },
         height: style.text_height,
         font: GeometryResource {
-            object_hash: himmelcad_core::hash::ObjectHash(style.glyph_atlas_hash.clone()),
+            object_hash: himmelcad_model::hash::ObjectHash(style.glyph_atlas_hash.clone()),
             media_type: "application/vnd.himmelcad.glyph-atlas+rgba8".to_owned(),
             byte_length: None,
         },
@@ -9621,7 +9621,7 @@ fn compile_panorama_entity(
 fn compile_panorama_analysis_batch(
     host: &GpuSurfaceHost<'_>,
     request: &WasmEntityRenderRequest,
-    raster: &himmelcad_core::entity_model::RasterImageGeometry,
+    raster: &himmelcad_model::entity_model::RasterImageGeometry,
     pick_slot: u32,
     floating_origin: WorldVec3,
     image_resources: &BTreeMap<String, WasmImageResource>,
@@ -9715,7 +9715,7 @@ fn compile_panorama_analysis_batch(
 fn compile_oriented_image_analysis_batch(
     host: &GpuSurfaceHost<'_>,
     request: &WasmEntityRenderRequest,
-    raster: &himmelcad_core::entity_model::RasterImageGeometry,
+    raster: &himmelcad_model::entity_model::RasterImageGeometry,
     pick_slot: u32,
     floating_origin: WorldVec3,
     image_resources: &BTreeMap<String, WasmImageResource>,
@@ -9766,7 +9766,7 @@ fn compile_oriented_image_analysis_batch(
 
 #[cfg(target_arch = "wasm32")]
 fn panorama_analysis_mesh(
-    raster: &himmelcad_core::entity_model::RasterImageGeometry,
+    raster: &himmelcad_model::entity_model::RasterImageGeometry,
     pose: Transform3d,
     radius: f64,
 ) -> Result<TriangleMeshGeometry, String> {
@@ -9842,7 +9842,7 @@ fn panorama_station_position(pose: Transform3d) -> Result<Position, String> {
 fn compile_raster_image_entity(
     host: &GpuSurfaceHost<'_>,
     request: &WasmEntityRenderRequest,
-    raster: &himmelcad_core::entity_model::RasterImageGeometry,
+    raster: &himmelcad_model::entity_model::RasterImageGeometry,
     pick_slot: u32,
     floating_origin: FloatingOrigin,
     image_resources: &BTreeMap<String, WasmImageResource>,
@@ -10008,7 +10008,7 @@ fn compile_raster_image_entity(
 
 #[cfg(target_arch = "wasm32")]
 fn resolve_raster_validity<'a>(
-    depth: Option<&himmelcad_core::entity_model::DepthField>,
+    depth: Option<&himmelcad_model::entity_model::DepthField>,
     width: u32,
     height: u32,
     resources: &'a BTreeMap<String, WasmBinaryResource>,
@@ -10026,7 +10026,7 @@ fn resolve_raster_validity<'a>(
 
 #[cfg(target_arch = "wasm32")]
 fn validate_raster_confidence(
-    depth: Option<&himmelcad_core::entity_model::DepthField>,
+    depth: Option<&himmelcad_model::entity_model::DepthField>,
     width: u32,
     height: u32,
     resources: &BTreeMap<String, WasmBinaryResource>,
@@ -10059,7 +10059,7 @@ fn validate_raster_confidence(
 
 #[cfg(target_arch = "wasm32")]
 fn raster_confidence_sample(
-    depth: Option<&himmelcad_core::entity_model::DepthField>,
+    depth: Option<&himmelcad_model::entity_model::DepthField>,
     width: u32,
     height: u32,
     sample_index: usize,
@@ -10095,7 +10095,7 @@ fn raster_confidence_sample(
 
 #[cfg(target_arch = "wasm32")]
 fn resolve_raster_connectivity_mask<'a>(
-    depth: Option<&himmelcad_core::entity_model::DepthField>,
+    depth: Option<&himmelcad_model::entity_model::DepthField>,
     width: u32,
     height: u32,
     wraps_horizontally: bool,
@@ -10142,9 +10142,9 @@ fn verify_raster_binary_resource<'a>(
 
 #[cfg(target_arch = "wasm32")]
 fn raster_planar_mesh(
-    raster: &himmelcad_core::entity_model::RasterImageGeometry,
+    raster: &himmelcad_model::entity_model::RasterImageGeometry,
     homography: [f64; 9],
-    frame: himmelcad_core::entity_model::PlaneFrame,
+    frame: himmelcad_model::entity_model::PlaneFrame,
 ) -> Result<TriangleMeshGeometry, String> {
     let vertex_columns = raster
         .width
@@ -10226,7 +10226,7 @@ fn planar_homography_sample(
 
 #[cfg(target_arch = "wasm32")]
 fn raster_pinhole_presentation_mesh(
-    raster: &himmelcad_core::entity_model::RasterImageGeometry,
+    raster: &himmelcad_model::entity_model::RasterImageGeometry,
     focal: [f64; 2],
     principal: [f64; 2],
     pose: Transform3d,
@@ -10277,8 +10277,8 @@ fn raster_pinhole_presentation_mesh(
 
 #[cfg(target_arch = "wasm32")]
 fn raster_ortho_mesh(
-    raster: &himmelcad_core::entity_model::RasterImageGeometry,
-    mapping: himmelcad_core::entity_model::OrthoGridMapping,
+    raster: &himmelcad_model::entity_model::RasterImageGeometry,
+    mapping: himmelcad_model::entity_model::OrthoGridMapping,
     depth: Option<&WasmDepthResource>,
     validity: Option<&[u8]>,
     connectivity_mask: Option<&[u8]>,
@@ -10370,8 +10370,8 @@ fn raster_ortho_mesh(
 
 #[cfg(target_arch = "wasm32")]
 fn raster_ortho_pixel_steps(
-    raster: &himmelcad_core::entity_model::RasterImageGeometry,
-    mapping: himmelcad_core::entity_model::OrthoGridMapping,
+    raster: &himmelcad_model::entity_model::RasterImageGeometry,
+    mapping: himmelcad_model::entity_model::OrthoGridMapping,
     depth: Option<&WasmDepthResource>,
     validity: Option<&[u8]>,
 ) -> Result<TriangleMeshGeometry, String> {
@@ -10470,7 +10470,7 @@ fn raster_cell_triangles(
 
 #[cfg(target_arch = "wasm32")]
 fn ortho_grid_position(
-    mapping: himmelcad_core::entity_model::OrthoGridMapping,
+    mapping: himmelcad_model::entity_model::OrthoGridMapping,
     column: f64,
     row: f64,
 ) -> DVec3 {
@@ -10987,7 +10987,7 @@ fn build_entity_compile_scope(
 fn compile_text_entity(
     host: &GpuSurfaceHost<'_>,
     request: &WasmEntityRenderRequest,
-    text: &himmelcad_core::entity_model::TextGeometry,
+    text: &himmelcad_model::entity_model::TextGeometry,
     pick_slot: u32,
     floating_origin: FloatingOrigin,
     glyph_atlases: &BTreeMap<String, WasmGlyphAtlasResource>,

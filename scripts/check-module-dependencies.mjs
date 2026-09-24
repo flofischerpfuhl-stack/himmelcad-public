@@ -17,6 +17,12 @@ const SKIPPED_DIRECTORIES = new Set([
   'node_modules',
   'release',
 ]);
+const DISPLAY_SAFE_RUST_CRATES = new Set([
+  'himmelcad-model',
+  'himmelcad-prepared',
+  'himmelcad-spatial',
+  'himmelcad-transform',
+]);
 
 function readJson(path) {
   return JSON.parse(readFileSync(path, 'utf8'));
@@ -57,7 +63,9 @@ function validateConfiguration(layerMap, allowlist) {
   const includeKeys = new Set();
   for (const entry of allowlist.sourceIncludes ?? []) {
     if (!entry.crate || !entry.file || !entry.target || !entry.reason) {
-      throw new Error(`source include allowlist entries need crate, file, target, and reason: ${JSON.stringify(entry)}`);
+      throw new Error(
+        `source include allowlist entries need crate, file, target, and reason: ${JSON.stringify(entry)}`,
+      );
     }
     const key = `${entry.crate}:${entry.file}->${entry.target}`;
     if (includeKeys.has(key)) throw new Error(`duplicate source include allowlist entry: ${key}`);
@@ -128,9 +136,10 @@ export function evaluateEdges({ edges, layers, allowlist, forced = new Set() }) 
 
 function cargoGraph(layerMap) {
   const metadata = JSON.parse(
-    execFileSync('cargo', ['metadata', '--format-version', '1', '--no-deps'], {
+    execFileSync('cargo', ['metadata', '--format-version', '1', '--all-features'], {
       cwd: root,
       encoding: 'utf8',
+      maxBuffer: 64 * 1024 * 1024,
       env: {
         ...process.env,
         CARGO_TARGET_DIR: '/media/oem/ZusatzSSD1/himmelcad-target/split',
@@ -139,6 +148,7 @@ function cargoGraph(layerMap) {
   );
   const members = new Set(metadata.workspace_members);
   const packages = metadata.packages.filter(({ id }) => members.has(id));
+  const packageNames = new Map(packages.map(({ id, name }) => [id, name]));
   const names = new Set(packages.map(({ name }) => name));
   const unknown = [...names].filter((name) => !layerMap.rust[name]).sort();
   const edges = [];
@@ -167,7 +177,57 @@ function cargoGraph(layerMap) {
       }
     }
   }
-  return { packages, unknown, edges: uniqueEdges(edges), packageRenames };
+  const normalEdges = [];
+  for (const node of metadata.resolve?.nodes ?? []) {
+    const from = packageNames.get(node.id);
+    if (!from) continue;
+    for (const dependency of node.deps) {
+      const to = packageNames.get(dependency.pkg);
+      if (to && dependency.dep_kinds.some(({ kind }) => kind === null || kind === 'normal')) {
+        normalEdges.push({ ecosystem: 'rust', from, to });
+      }
+    }
+  }
+  return {
+    packages,
+    unknown,
+    edges: uniqueEdges(edges),
+    normalEdges: uniqueEdges(normalEdges),
+    packageRenames,
+  };
+}
+
+export function evaluateDisplayRustClosure({ edges, layers, allowed = DISPLAY_SAFE_RUST_CRATES }) {
+  const adjacency = new Map();
+  for (const edge of edges.filter(({ ecosystem }) => ecosystem === 'rust')) {
+    const targets = adjacency.get(edge.from) ?? [];
+    targets.push(edge.to);
+    adjacency.set(edge.from, targets);
+  }
+  const errors = [];
+  for (const [rootModule, rootLayer] of layers) {
+    if (rootLayer !== 'display') continue;
+    const pending = [[rootModule]];
+    const visited = new Set([rootModule]);
+    while (pending.length) {
+      const path = pending.shift();
+      const current = path.at(-1);
+      for (const target of adjacency.get(current) ?? []) {
+        if (visited.has(target)) continue;
+        visited.add(target);
+        const targetPath = [...path, target];
+        const targetLayer = layers.get(target);
+        if (targetLayer && targetLayer !== 'display' && !allowed.has(target)) {
+          errors.push({
+            kind: 'display-normal-dependency-closure',
+            message: `${rootModule} reaches ${target} through normal dependencies: ${targetPath.join(' -> ')}`,
+          });
+        }
+        pending.push(targetPath);
+      }
+    }
+  }
+  return errors;
 }
 
 function rustSourceFiles(directory) {
@@ -235,7 +295,8 @@ function rustSourceRules(packages, layerMap) {
   const macroExports = [];
   const selfAliases = [];
   const directInclude = /\binclude(?:_str|_bytes)?!\s*\(\s*"([^"]+)"\s*\)/gu;
-  const manifestInclude = /\binclude(?:_str|_bytes)?!\s*\(\s*concat!\(\s*env!\(\s*"CARGO_MANIFEST_DIR"\s*\)\s*,\s*"([^"]+)"\s*\)\s*\)/gu;
+  const manifestInclude =
+    /\binclude(?:_str|_bytes)?!\s*\(\s*concat!\(\s*env!\(\s*"CARGO_MANIFEST_DIR"\s*\)\s*,\s*"([^"]+)"\s*\)\s*\)/gu;
   const anyInclude = /\binclude(?:_str|_bytes)?!\s*\(/gu;
   const macroExport = /#\s*\[\s*macro_export\s*\]/gu;
   const selfAlias = /\bextern\s+crate\s+self\s+as\b/gu;
@@ -264,13 +325,16 @@ function rustSourceRules(packages, layerMap) {
       }
       for (const match of matches) {
         const lexicalTarget = resolve(match.base, `.${sep}${match.target}`);
-        const resolvedTarget = existsSync(lexicalTarget) ? realpathSync(lexicalTarget) : lexicalTarget;
+        const resolvedTarget = existsSync(lexicalTarget)
+          ? realpathSync(lexicalTarget)
+          : lexicalTarget;
         includes.push({
           crate: pkg.name,
           file,
           target: match.target,
           leavesCrate:
-            resolvedTarget !== crateDirectory && !resolvedTarget.startsWith(`${crateDirectory}${sep}`),
+            resolvedTarget !== crateDirectory &&
+            !resolvedTarget.startsWith(`${crateDirectory}${sep}`),
         });
       }
       if (layerMap.rust[pkg.name] === 'domain' && macroExport.test(source)) {
@@ -505,6 +569,13 @@ export function evaluateFixture(fixture) {
     }),
     ...evaluateUndeclaredImports(fixture.undeclared ?? []),
     ...evaluateRustSourceRules(fixture.rustSourceRules ?? {}),
+    ...(fixture.displayClosure
+      ? evaluateDisplayRustClosure({
+          edges: fixture.edges,
+          layers,
+          allowed: new Set(fixture.displayClosure.allowed ?? []),
+        })
+      : []),
   ];
 }
 
@@ -537,6 +608,7 @@ function main() {
       forced,
     }),
   );
+  errors.push(...evaluateDisplayRustClosure({ edges: rust.normalEdges, layers: rustLayers }));
   errors.push(
     ...evaluateEdges({
       edges: typescript.edges,

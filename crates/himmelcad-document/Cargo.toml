@@ -17,6 +17,10 @@ sha2.workspace = true
 hex.workspace = true
 anyhow.workspace = true
 zip.workspace = true
+tracing.workspace = true
+
+# File locking for the native project store; the WASM viewer never opens a project store.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 fs2 = "0.4.3"
 
 [lints]

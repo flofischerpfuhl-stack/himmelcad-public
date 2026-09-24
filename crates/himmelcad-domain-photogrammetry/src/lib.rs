@@ -4,7 +4,7 @@
 #![recursion_limit = "256"]
 
 pub mod splat_tiler {
-    use himmelcad_prepared::splat_tiler::{PreparedSplatProduct, SplatTilerError};
+    use himmelcad_prepared_build::splat_tiler::{PreparedSplatProduct, SplatTilerError};
 
     use std::path::Path;
 
@@ -17,11 +17,11 @@ pub mod splat_tiler {
         project_transform: Option<GcpSimilarityTransform>,
         cancellation: &CancellationToken,
     ) -> Result<PreparedSplatProduct, SplatTilerError> {
-        himmelcad_prepared::splat_tiler::tile_brush_ply(
+        himmelcad_prepared_build::splat_tiler::tile_brush_ply(
             source,
             output_root,
             project_transform.map(|transform| {
-                himmelcad_prepared::splat_tiler::PreparedSimilarityTransform {
+                himmelcad_prepared_build::splat_tiler::PreparedSimilarityTransform {
                     scale: transform.scale,
                     rotation: transform.rotation,
                     translation_meters: transform.translation_meters,

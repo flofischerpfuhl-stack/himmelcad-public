@@ -33,11 +33,11 @@ pub use himmelcad_prepared::raster::{
     RasterByteOrder, RasterCrs, RasterGrid, RasterLevelSummary, RasterNoDataValue,
     RasterValidityResource, RasterViewLayer, RasterViewTileFormat,
 };
-use himmelcad_prepared::viewer_raster_manifest::{
+use himmelcad_prepared_build::viewer_raster_manifest::{
     publish_prepared_elevation_hierarchy, PreparedElevationHierarchyError,
     PreparedElevationHierarchyOptions,
 };
-use himmelcad_prepared::viewer_raster_surface_manifest::{
+use himmelcad_prepared_build::viewer_raster_surface_manifest::{
     publish_prepared_raster_surface_hierarchy, PreparedRasterSurfaceHierarchyError,
 };
 

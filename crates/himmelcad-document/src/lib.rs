@@ -2,13 +2,14 @@
 
 #![forbid(unsafe_code)]
 
-pub mod canonical_document;
+pub use himmelcad_model::canonical_document;
 pub mod canonical_import;
 pub mod canonical_json;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod canonical_project_store;
 pub mod domain_commands;
 pub mod durable_fs;
-pub mod entity_commands;
+pub use himmelcad_model::entity_commands;
 pub mod project;
 pub mod project_archive;
 pub mod publish_fs;

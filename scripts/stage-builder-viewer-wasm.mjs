@@ -61,7 +61,8 @@ export async function computeStageKeys({ root, profile, stagingScriptPath }) {
     'Cargo.lock',
     'rust-toolchain.toml',
     stagingScriptPath,
-    'crates/himmelcad-core',
+    'crates/himmelcad-model',
+    'crates/himmelcad-prepared',
     'crates/himmelcad-render',
   ]);
   const entries = await Promise.all(

@@ -39,7 +39,7 @@ use himmelcad_process::worker::{
 };
 use himmelcad_process::worker::{worker_command, WorkerMemoryLimitMode, WorkerMemoryLimitPlan};
 
-use himmelcad_prepared::mesh_tiler::PreparedMeshProduct;
+use himmelcad_prepared_build::mesh_tiler::PreparedMeshProduct;
 
 use crate::photolab_images::{
     DjiBrownConradyCalibration, ExifOrientation, ImageDimensions, PhotoFormat,
@@ -8381,10 +8381,10 @@ printf 'HIMMELCAD_PROGRESS 2/2\n'
             .expect("wait for poisson mesh job");
         assert_eq!(terminal.state, PhotolabJobState::Completed);
         let product =
-            himmelcad_prepared::prepared_triangle_mesh_ply::build_prepared_triangle_mesh_from_ply(
+            himmelcad_prepared_build::prepared_triangle_mesh_ply::build_prepared_triangle_mesh_from_ply(
                 &candidate.join("mesh.ply"),
                 &rig.project.join("prepared-poisson-product"),
-                himmelcad_prepared::prepared_triangle_mesh::PreparedTriangleMeshOptions::default(),
+                himmelcad_prepared_build::prepared_triangle_mesh::PreparedTriangleMeshOptions::default(),
                 &CancellationToken::new(),
             )
             .expect("poisson output reaches the PLY tiler");

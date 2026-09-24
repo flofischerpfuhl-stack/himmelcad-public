@@ -123,13 +123,13 @@ use himmelcad_document::publish_fs::{
 };
 use himmelcad_io::{CanonicalImportJsonObject, CanonicalPreparedDataset, PreparedDatasetArtifact};
 use himmelcad_prepared::dense::PreparedPotreeCloud;
-use himmelcad_prepared::mesh_tiler::PreparedMeshProduct;
 use himmelcad_prepared::mvs_scene::MvsSceneManifest;
 use himmelcad_prepared::pointcloud::PointCloudExportFormat;
 use himmelcad_prepared::raster::{
     GdalAudit, RasterBuildSummary, RasterNoDataValue, RasterValidityResource,
 };
-use himmelcad_prepared::splat_tiler::PreparedSplatProduct;
+use himmelcad_prepared_build::mesh_tiler::PreparedMeshProduct;
+use himmelcad_prepared_build::splat_tiler::PreparedSplatProduct;
 use himmelcad_process::jobs::{CancellationToken, ProgressMetrics};
 use himmelcad_process::raster_jobs::raster_checkpoint_content_key;
 
@@ -14466,18 +14466,18 @@ mod tests {
         ProviderOperationContext, ProviderProgress, PRODUCT_IMPORT_PACKAGE_FORMAT_ID,
     };
     use himmelcad_model::canonical_resources::CanonicalResourceRef;
-    use himmelcad_prepared::prepared_triangle_mesh::{
-        build_prepared_textured_triangle_mesh, build_prepared_triangle_mesh,
-        PreparedTriangleMeshOptions, TriangleRecord,
-    };
     use himmelcad_prepared::raster::{
         OrthomosaicElevationSupport, RasterBounds, RasterByteOrder, RasterCrs, RasterGrid,
         RasterLevelSummary, RasterViewLayer, RasterViewTileFormat,
     };
-    use himmelcad_prepared::viewer_raster_manifest::{
+    use himmelcad_prepared_build::prepared_triangle_mesh::{
+        build_prepared_textured_triangle_mesh, build_prepared_triangle_mesh,
+        PreparedTriangleMeshOptions, TriangleRecord,
+    };
+    use himmelcad_prepared_build::viewer_raster_manifest::{
         publish_prepared_elevation_hierarchy, PreparedElevationHierarchyOptions,
     };
-    use himmelcad_prepared::viewer_raster_surface_manifest::publish_prepared_raster_surface_hierarchy;
+    use himmelcad_prepared_build::viewer_raster_surface_manifest::publish_prepared_raster_surface_hierarchy;
     use himmelcad_process::jobs::{CheckpointId, ProgressMetrics};
 
     #[derive(Default)]

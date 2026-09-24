@@ -3,8 +3,8 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use himmelcad_core::entity_model::{AlignmentGeometry, TriangleMeshGeometry};
-use himmelcad_core::hash::ObjectHash;
+use himmelcad_model::entity_model::{AlignmentGeometry, TriangleMeshGeometry};
+use himmelcad_model::hash::ObjectHash;
 use himmelcad_render::{
     AlignmentPreviewConfig, AlignmentPreviewEvaluator, AlignmentPreviewPartition,
     AlignmentPreviewPartitionUpdate, AlignmentPreviewRevision, AlignmentStationRange,
@@ -78,7 +78,7 @@ struct AlignmentPreviewSlopeRenderPart<'a> {
     proxy_id: String,
     rule_id: &'a str,
     source_band_id: &'a str,
-    target_surface: &'a himmelcad_core::entity::EntityId,
+    target_surface: &'a himmelcad_model::entity::EntityId,
     target_surface_version: &'a ObjectHash,
     geometry_version: &'a ObjectHash,
     mesh: &'a TriangleMeshGeometry,
@@ -308,8 +308,8 @@ pub(crate) fn render_proxy_id(
 
 #[cfg(test)]
 mod tests {
-    use himmelcad_core::entity::EntityId;
-    use himmelcad_core::entity_model::{
+    use himmelcad_model::entity::EntityId;
+    use himmelcad_model::entity_model::{
         CurveGeometry, Position, SlopeRule, StationFunction, StationValue, Vector3,
         VerticalAlignmentSegment, WidthBand,
     };

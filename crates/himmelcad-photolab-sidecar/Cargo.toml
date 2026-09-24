@@ -26,6 +26,7 @@ himmelcad-domain-raster = { path = "../himmelcad-domain-raster" }
 himmelcad-io = { path = "../himmelcad-io" }
 himmelcad-model = { path = "../himmelcad-model" }
 himmelcad-prepared = { path = "../himmelcad-prepared" }
+himmelcad-prepared-build = { path = "../himmelcad-prepared-build" }
 himmelcad-process = { path = "../himmelcad-process" }
 himmelcad-sidecar = { path = "../himmelcad-sidecar" }
 himmelcad-transform = { path = "../himmelcad-transform" }

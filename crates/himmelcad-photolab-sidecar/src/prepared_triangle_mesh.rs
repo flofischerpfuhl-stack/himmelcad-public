@@ -1,7 +1,7 @@
 //! Compatibility exports for prepared triangle-mesh production and IO packaging.
 
 pub use himmelcad_io::package_prepared_triangle_mesh;
-pub use himmelcad_prepared::prepared_triangle_mesh::*;
+pub use himmelcad_prepared_build::prepared_triangle_mesh::*;
 
 #[cfg(test)]
 mod render_contract_tests {

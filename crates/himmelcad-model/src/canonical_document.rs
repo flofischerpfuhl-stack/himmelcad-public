@@ -10,7 +10,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use serde::Serialize;
 use thiserror::Error;
 
-pub use himmelcad_model::document_model::{
+pub use crate::document_model::{
     CanonicalCommandTransaction, CanonicalEntityEdit, CanonicalEntityEffect, CanonicalEntityField,
     CanonicalEntityMutation, CanonicalEntityTombstone, CanonicalJournalEntry,
     CanonicalJournalEntryKind, EntityVersionRef,
