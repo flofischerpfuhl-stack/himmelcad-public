@@ -6,6 +6,7 @@ members = [
     "crates/himmelcad-decode-wasm",
     "crates/himmelcad-document",
     "crates/himmelcad-domain-pointcloud",
+    "crates/himmelcad-domain-photogrammetry",
     "crates/himmelcad-domain-raster",
     "crates/himmelcad-domain-registration",
     "crates/himmelcad-domain-surface",

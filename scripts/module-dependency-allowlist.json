@@ -25,13 +25,6 @@
     },
     {
       "ecosystem": "rust",
-      "from": "himmelcad-sidecar",
-      "to": "himmelcad-core",
-      "reason": "The sidecar still reaches the mixed core monolith pending the document, command, and domain splits.",
-      "removeInStep": 5
-    },
-    {
-      "ecosystem": "rust",
       "from": "himmelcad-wasm",
       "to": "himmelcad-core",
       "reason": "The WASM display adapter needs model contracts that have not yet moved out of the core monolith.",

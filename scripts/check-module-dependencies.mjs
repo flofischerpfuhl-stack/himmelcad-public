@@ -149,7 +149,25 @@ function cargoGraph(layerMap) {
       }
     }
   }
-  return { packages, unknown, edges: uniqueEdges(edges) };
+  const packageRenames = [];
+  const manifests = [
+    { crate: '<workspace>', path: join(root, 'Cargo.toml') },
+    ...packages.map((pkg) => ({ crate: pkg.name, path: pkg.manifest_path })),
+  ];
+  const packageRename = /\bpackage\s*=\s*"([^"]+)"/gu;
+  for (const manifest of manifests) {
+    const source = readFileSync(manifest.path, 'utf8');
+    for (const match of source.matchAll(packageRename)) {
+      if (names.has(match[1])) {
+        packageRenames.push({
+          crate: manifest.crate,
+          dependency: relative(root, manifest.path),
+          package: match[1],
+        });
+      }
+    }
+  }
+  return { packages, unknown, edges: uniqueEdges(edges), packageRenames };
 }
 
 function rustSourceFiles(directory) {
@@ -171,7 +189,13 @@ function includeKey(entry) {
   return `${entry.crate}:${entry.file}->${entry.target}`;
 }
 
-export function evaluateRustSourceRules({ includes = [], macroExports = [], allowlist = [] }) {
+export function evaluateRustSourceRules({
+  includes = [],
+  macroExports = [],
+  selfAliases = [],
+  workspacePackageRenames = [],
+  allowlist = [],
+}) {
   const allowed = new Set(allowlist.map(includeKey));
   const seen = new Set();
   const errors = [];
@@ -187,6 +211,18 @@ export function evaluateRustSourceRules({ includes = [], macroExports = [], allo
       message: `${entry.crate}:${entry.file}`,
     });
   }
+  for (const entry of selfAliases) {
+    errors.push({
+      kind: 'crate-self-alias',
+      message: `${entry.crate}:${entry.file}`,
+    });
+  }
+  for (const entry of workspacePackageRenames) {
+    errors.push({
+      kind: 'workspace-crate-rename',
+      message: `${entry.crate}:${entry.dependency} renames ${entry.package}`,
+    });
+  }
   for (const entry of allowlist) {
     const key = includeKey(entry);
     if (!seen.has(key)) errors.push({ kind: 'stale-source-include-allowlist', message: key });
@@ -197,10 +233,12 @@ export function evaluateRustSourceRules({ includes = [], macroExports = [], allo
 function rustSourceRules(packages, layerMap) {
   const includes = [];
   const macroExports = [];
+  const selfAliases = [];
   const directInclude = /\binclude(?:_str|_bytes)?!\s*\(\s*"([^"]+)"\s*\)/gu;
   const manifestInclude = /\binclude(?:_str|_bytes)?!\s*\(\s*concat!\(\s*env!\(\s*"CARGO_MANIFEST_DIR"\s*\)\s*,\s*"([^"]+)"\s*\)\s*\)/gu;
   const anyInclude = /\binclude(?:_str|_bytes)?!\s*\(/gu;
   const macroExport = /#\s*\[\s*macro_export\s*\]/gu;
+  const selfAlias = /\bextern\s+crate\s+self\s+as\b/gu;
   for (const pkg of packages) {
     const crateDirectory = realpathSync(dirname(pkg.manifest_path));
     for (const filePath of rustSourceFiles(crateDirectory)) {
@@ -239,9 +277,11 @@ function rustSourceRules(packages, layerMap) {
         macroExports.push({ crate: pkg.name, file });
       }
       macroExport.lastIndex = 0;
+      if (selfAlias.test(source)) selfAliases.push({ crate: pkg.name, file });
+      selfAlias.lastIndex = 0;
     }
   }
-  return { includes, macroExports };
+  return { includes, macroExports, selfAliases };
 }
 
 function packageDirectories() {
@@ -485,6 +525,7 @@ function main() {
     ...evaluateUndeclaredImports(typescript.undeclared),
     ...evaluateRustSourceRules({
       ...sourceRules,
+      workspacePackageRenames: rust.packageRenames,
       allowlist: allowlist.sourceIncludes ?? [],
     }),
   ];

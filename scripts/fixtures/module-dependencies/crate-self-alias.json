@@ -1,0 +1,12 @@
+{
+  "layers": {},
+  "edges": [],
+  "rustSourceRules": {
+    "selfAliases": [
+      {
+        "crate": "himmelcad-domain-example",
+        "file": "src/lib.rs"
+      }
+    ]
+  }
+}

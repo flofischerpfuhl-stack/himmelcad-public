@@ -9,6 +9,7 @@ description = "Runtime-neutral job contracts and external-process containment fo
 [dependencies]
 himmelcad-model = { path = "../himmelcad-model" }
 serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 

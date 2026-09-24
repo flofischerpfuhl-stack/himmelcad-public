@@ -11,10 +11,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use himmelcad_core::canonical_document::{CanonicalCommandTransaction, EntityVersionRef};
-use himmelcad_core::entity_model::CanonicalEntity;
-use himmelcad_core::hash::ObjectHash;
-use himmelcad_core::typed_artifact::{
+use himmelcad_document::canonical_document::{CanonicalCommandTransaction, EntityVersionRef};
+use himmelcad_model::entity_model::CanonicalEntity;
+use himmelcad_model::hash::ObjectHash;
+use himmelcad_model::typed_artifact::{
     ArtifactElementType, ArtifactEndianness, TypedArtifactLayout,
 };
 use hmac::{Hmac, Mac};
@@ -502,7 +502,7 @@ impl AutomationRuntime {
         let requires_confirmation = request.transaction.mutations.iter().any(|mutation| {
             matches!(
                 mutation,
-                himmelcad_core::canonical_document::CanonicalEntityMutation::Delete { .. }
+                himmelcad_document::canonical_document::CanonicalEntityMutation::Delete { .. }
             )
         });
         let mut conflicts = Vec::new();
@@ -1177,11 +1177,11 @@ mod tests {
     use himmelcad_core::app_protocol::{
         AppProtocolRequest, AppProtocolRequestEnvelope, AppProtocolResponse, APP_PROTOCOL_SCHEMA_ID,
     };
-    use himmelcad_core::canonical_document::CanonicalEntityMutation;
-    use himmelcad_core::entity::EntityId;
-    use himmelcad_core::entity_model::GeometryResource;
-    use himmelcad_core::entity_validation::canonical_entity_version_hash;
-    use himmelcad_core::typed_artifact::TypedArtifactDescriptor;
+    use himmelcad_document::canonical_document::CanonicalEntityMutation;
+    use himmelcad_model::entity::EntityId;
+    use himmelcad_model::entity_model::GeometryResource;
+    use himmelcad_model::entity_validation::canonical_entity_version_hash;
+    use himmelcad_model::typed_artifact::TypedArtifactDescriptor;
 
     use crate::canonical_project_store::CanonicalStoredObject;
 

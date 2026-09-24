@@ -16,16 +16,13 @@ pub mod dwg_provider;
 pub mod dxf_provider;
 pub mod e57_import;
 pub mod gaussian_splat_provider;
-pub mod gcp_import;
 mod geotiff_preparation;
 pub mod geotiff_provider;
-pub mod hcap_import;
 pub mod ifc_provider;
 mod ifc_step;
 pub mod landxml;
 mod landxml_dom;
 pub mod las_import;
-pub mod photolab_image_import;
 mod prepared_triangle_mesh_package;
 pub mod product_import_package;
 pub mod slpk_provider;
@@ -79,10 +76,6 @@ pub use gaussian_splat_provider::{
     GaussianSplatPlyProvider, GAUSSIAN_SPLAT_PLY_FORMAT_ID, GAUSSIAN_SPLAT_PLY_PROVIDER_ID,
     LOSS_SPLAT_EXPORT_NOT_PASSTHROUGH, LOSS_SPLAT_EXPORT_SELECTION,
 };
-pub use gcp_import::{
-    import_gcp_csv_file, import_gcp_csv_file_with_cancel, preview_gcp_csv_file, GcpCsvImportResult,
-    GcpCsvPreview, GcpCsvPreviewRow, GcpCsvRowError, GcpCsvUncertaintyOrigin,
-};
 pub use geotiff_provider::{
     GeoTiffCanonicalProvider, GEOTIFF_FORMAT_ID, GEOTIFF_PROVIDER_ID,
     LOSS_EXPORT_MULTIPLE_ENTITIES, LOSS_EXPORT_NOT_PASSTHROUGH, UNSUPPORTED_ELEVATION_BANDS,
@@ -101,10 +94,6 @@ pub use las_import::{
     import_las_file, import_las_file_with_progress, import_las_file_with_progress_and_cancel,
     CanonicalImportJsonObject, ConverterProgress, LasImportSummary, LasPotreeCanonicalProvider,
     PreparedPotreeFile, PreparedPotreeManifest,
-};
-pub use photolab_image_import::{
-    discover_photo_files, import_photo_files, import_photo_files_with_capabilities_and_progress,
-    import_photo_files_with_progress, PhotoDiscovery, PhotoImportCandidate,
 };
 pub use prepared_triangle_mesh_package::package_prepared_triangle_mesh;
 pub use product_import_package::{

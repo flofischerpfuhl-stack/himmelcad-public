@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use himmelcad_core::photolab_jobs::{PhotolabJobKind, PhotolabWorkerTool};
+use himmelcad_domain_photogrammetry::photolab_jobs::{PhotolabJobKind, PhotolabWorkerTool};
 
 use crate::job_runtime::{JobAdmissionRefusal, WorkerToolchainAdmission};
 
@@ -413,13 +413,12 @@ mod tests {
         },
     };
 
-    use himmelcad_core::{
-        hash::ObjectHash,
-        photolab_jobs::{
-            JobProgress, NewPhotolabJob, PhotolabJobId, PhotolabJobState, PhotolabStage,
-            PhotolabStageKind, ProgressMetrics,
-        },
+    use himmelcad_domain_photogrammetry::photolab_jobs::{
+        JobProgress, NewPhotolabJob, PhotolabJobId, PhotolabJobState, PhotolabStage,
+        PhotolabStageKind,
     };
+    use himmelcad_model::hash::ObjectHash;
+    use himmelcad_process::jobs::ProgressMetrics;
 
     use crate::job_runtime::{JobAdmission, JobManager, JobManagerConfig};
 

@@ -1213,7 +1213,6 @@ mod tests {
     use std::fs;
 
     use super::*;
-    use himmelcad_core::photolab_capture::PhotolabSpatialReference;
     use himmelcad_core::product_import_package::{
         ProductImportPackageAdmissionV1, ProductImportPackageCountsV1,
         ProductImportPackageDatasetV1, ProductImportPackageLineageV1,
@@ -1223,6 +1222,7 @@ mod tests {
         ProductLineageProcessingSetChoiceV1, ProductLineageReferenceFrameV1, ProductLineageV1,
         PRODUCT_IMPORT_PACKAGE_SCHEMA_ID, PRODUCT_LINEAGE_SCHEMA_ID,
     };
+    use himmelcad_model::project_units::PhotolabSpatialReference;
 
     #[derive(Default)]
     struct Context;

@@ -5,7 +5,6 @@ use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::pin::Pin;
 use std::process::Stdio;
 use std::sync::Arc;
 use std::thread;
@@ -14,6 +13,9 @@ use std::time::Duration;
 use fs2::FileExt;
 use himmelcad_model::hash::ObjectHash;
 use himmelcad_process::jobs::CancellationToken;
+pub use himmelcad_process::raster_jobs::{
+    RasterCheckpointSink, RasterMemorySink, RasterPhase, RasterPreparationStagePlan, RasterProgress,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -181,20 +183,6 @@ pub struct RasterBuildCommand {
     pub product: RasterProductRequest,
 }
 
-/// Runtime phase used by the shared job progress adapter.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum RasterPhase {
-    Validating,
-    Rasterizing,
-    Orthorectifying,
-    Mosaicking,
-    BuildingPyramid,
-    ExportingCog,
-    ValidatingCog,
-    Committing,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RasterResumeCheckpointValidation {
     Compatible,
@@ -202,54 +190,6 @@ pub enum RasterResumeCheckpointValidation {
     ConfigHashMismatch,
     InputHashMismatch,
     Invalid,
-}
-
-/// Incremental progress; completed steps are durable checkpoint boundaries.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RasterProgress {
-    pub phase: RasterPhase,
-    pub completed_steps: u64,
-    pub total_steps: u64,
-    pub current_step: String,
-}
-
-/// One sequential raster-preparation unit and its resident worker cap.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RasterPreparationStagePlan {
-    pub stage: &'static str,
-    pub model_bytes: u64,
-    pub resident_limit_bytes: u64,
-}
-
-/// Lower callback used by the raster domain to persist worker memory evidence.
-pub trait RasterMemorySink: std::fmt::Debug + Send + Sync {
-    fn record_stage_peak(
-        &self,
-        stage: &'static str,
-        peak_rss_bytes: u64,
-        workers: u16,
-        parameters: Value,
-    ) -> Result<(), String>;
-
-    fn record_worker_memory_limit_hit(
-        &self,
-        stage: &'static str,
-        limit_bytes: u64,
-    ) -> Result<(), String>;
-}
-
-/// Lower callback used by the raster domain to persist committed checkpoints.
-pub trait RasterCheckpointSink: std::fmt::Debug + Send + Sync {
-    fn accepts_raster_checkpoints(&self) -> bool;
-
-    fn record_raster_committed<'a>(
-        &'a self,
-        sequence: u64,
-        progress: RasterProgress,
-        checkpoint_id: String,
-        payload_hash: ObjectHash,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + 'a>>;
 }
 
 #[derive(Debug, Error)]
@@ -1720,12 +1660,8 @@ pub fn raster_checkpoint_content_key(
     config_hash: &ObjectHash,
     input_hash: &ObjectHash,
 ) -> Result<String, RasterRuntimeError> {
-    if !matches!(kind, "buildDem" | "buildOrthomosaic") {
-        return Err(RasterRuntimeError::InvalidRequest(
-            "unsupported raster checkpoint kind".into(),
-        ));
-    }
-    Ok(ObjectHash::of_bytes(&serde_json::to_vec(&(kind, config_hash, input_hash))?).0)
+    himmelcad_process::raster_jobs::raster_checkpoint_content_key(kind, config_hash, input_hash)
+        .map_err(|message| RasterRuntimeError::InvalidRequest(message.into()))
 }
 
 fn raster_checkpoint_identity_key(

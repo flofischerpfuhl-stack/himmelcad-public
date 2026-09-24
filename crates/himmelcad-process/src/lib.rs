@@ -4,4 +4,5 @@
 
 pub mod jobs;
 pub mod process_group;
+pub mod raster_jobs;
 pub mod worker;

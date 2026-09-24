@@ -7,6 +7,7 @@
     "himmelcad-decode-wasm": "display",
     "himmelcad-document": "foundation",
     "himmelcad-domain-pointcloud": "domain",
+    "himmelcad-domain-photogrammetry": "domain",
     "himmelcad-domain-raster": "domain",
     "himmelcad-domain-registration": "domain",
     "himmelcad-domain-surface": "domain",
@@ -53,7 +54,6 @@
     { "ecosystem": "rust", "from": "himmelcad-sidecar", "to": "himmelcad-render" },
     { "ecosystem": "rust", "from": "himmelcad-render", "to": "himmelcad-core" },
     { "ecosystem": "rust", "from": "himmelcad-io", "to": "himmelcad-core" },
-    { "ecosystem": "rust", "from": "himmelcad-sidecar", "to": "himmelcad-core" },
     { "ecosystem": "rust", "from": "himmelcad-wasm", "to": "himmelcad-core" },
     {
       "ecosystem": "typescript",

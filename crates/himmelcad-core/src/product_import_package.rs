@@ -8,9 +8,9 @@ use thiserror::Error;
 use crate::canonical_json;
 use crate::canonical_json::Decimal64;
 use crate::hash::ObjectHash;
-use crate::photolab_capture::PhotolabSpatialReference;
-use crate::photolab_crs::{CrsDefinition, HeightReference};
-use crate::photolab_project::ProjectReferenceFrame;
+use himmelcad_model::project_units::PhotolabSpatialReference;
+use himmelcad_transform::photolab_crs::ProjectReferenceFrame;
+use himmelcad_transform::photolab_crs::{CrsDefinition, HeightReference};
 
 pub const PRODUCT_IMPORT_PACKAGE_SCHEMA_ID: &str = "hcad.product-import-package-manifest@1";
 pub const PRODUCT_IMPORT_PACKAGE_READY_SCHEMA_ID: &str = "hcad.product-import-package-ready@1";
@@ -1292,10 +1292,10 @@ mod tests {
     #[test]
     fn frozen_epoch_projects_to_decimal64_without_mutating_model() {
         let model = ProjectReferenceFrame {
-            target: crate::photolab_crs::FrozenCrsEndpoint {
-                horizontal: crate::photolab_crs::CrsWithEpoch {
+            target: himmelcad_transform::photolab_crs::FrozenCrsEndpoint {
+                horizontal: himmelcad_transform::photolab_crs::CrsWithEpoch {
                     crs: CrsDefinition::Epsg(7912),
-                    coordinate_epoch: Some(crate::photolab_crs::CoordinateEpoch {
+                    coordinate_epoch: Some(himmelcad_transform::photolab_crs::CoordinateEpoch {
                         decimal_year: 2025.25,
                     }),
                 },

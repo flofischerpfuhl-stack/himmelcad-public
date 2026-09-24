@@ -14,26 +14,6 @@ use himmelcad_core::app_protocol::{
     AppProtocolEnvelopeError, AppProtocolError, AppProtocolRequest, AppProtocolRequestEnvelope,
     AppProtocolResponse, AppProtocolResponseEnvelope, APP_PROTOCOL_SCHEMA_ID,
 };
-use himmelcad_core::canonical_document::{
-    CanonicalCommandTransaction, CanonicalDocumentError, CanonicalEntityEdit,
-    CanonicalEntityMutation, CanonicalJournalEntry, CanonicalJournalEntryKind, EntityVersionRef,
-};
-use himmelcad_core::canonical_resource_catalog::CanonicalPresentationResourceSet;
-use himmelcad_core::canonical_resources::PointCloudDisplayStyle;
-use himmelcad_core::entity::EntityId;
-use himmelcad_core::entity_model::{
-    built_in_type, CanonicalEntity, CurveGeometry, ElevationSurfaceGeometry, EntityTypeId,
-    GeometryObject, Position, Representation, RepresentationAuthority, RepresentationRole,
-    TriangleMeshStorage, Vector3,
-};
-use himmelcad_core::entity_validation::{
-    canonical_entity_version_hash, geometry_object_content_hash, validate_resolved_representation,
-};
-use himmelcad_core::geometry_representation_registry::{
-    CanonicalRepresentationAdmission, SectionIndexComponentType, SectionPositionComponentType,
-    SectionTopologyPartitionManifest,
-};
-use himmelcad_core::hash::ObjectHash;
 use himmelcad_core::property_schema::{
     canonical_entity_property_schema, compile_multi_entity_property_edit, query_properties,
     PropertySchemaError,
@@ -45,11 +25,31 @@ use himmelcad_core::release_05_admissions::{
     SupportRoleKindV1, SupportRoleV1, MEASUREMENT_SCHEMA_ID, RELEASE_05_SCHEMA_VERSION,
     SNAPSHOT_MARKER_SCHEMA_ID, SUPPORT_ROLE_SCHEMA_ID,
 };
-use himmelcad_core::typed_artifact::{TypedArtifactDescriptor, TypedArtifactManifest};
+use himmelcad_document::canonical_document::{
+    CanonicalCommandTransaction, CanonicalDocumentError, CanonicalEntityEdit,
+    CanonicalEntityMutation, CanonicalJournalEntry, CanonicalJournalEntryKind, EntityVersionRef,
+};
 use himmelcad_io::{
     CanonicalImportPackage, CanonicalJsonObject, CanonicalPreparedDataset, CanonicalStagedImport,
     CANONICAL_IO_SCHEMA_VERSION,
 };
+use himmelcad_model::canonical_resource_catalog::CanonicalPresentationResourceSet;
+use himmelcad_model::canonical_resources::PointCloudDisplayStyle;
+use himmelcad_model::entity::EntityId;
+use himmelcad_model::entity_model::{
+    built_in_type, CanonicalEntity, CurveGeometry, ElevationSurfaceGeometry, EntityTypeId,
+    GeometryObject, Position, Representation, RepresentationAuthority, RepresentationRole,
+    TriangleMeshStorage, Vector3,
+};
+use himmelcad_model::entity_validation::{
+    canonical_entity_version_hash, geometry_object_content_hash, validate_resolved_representation,
+};
+use himmelcad_model::geometry_representation_registry::{
+    CanonicalRepresentationAdmission, SectionIndexComponentType, SectionPositionComponentType,
+    SectionTopologyPartitionManifest,
+};
+use himmelcad_model::hash::ObjectHash;
+use himmelcad_model::typed_artifact::{TypedArtifactDescriptor, TypedArtifactManifest};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -87,7 +87,7 @@ use himmelcad_document::domain_commands::{
 pub struct AutomationObjectSource {
     pub metadata: CanonicalStoredObject,
     pub source: File,
-    pub source_entity: Option<himmelcad_core::canonical_document::EntityVersionRef>,
+    pub source_entity: Option<himmelcad_document::canonical_document::EntityVersionRef>,
     pub typed_artifact: Option<TypedArtifactDescriptor>,
     pub representation_slot: Option<String>,
     pub geometry_ref: Option<ObjectHash>,
@@ -451,7 +451,7 @@ impl CanonicalAppRuntime {
                 snapshot.marker.marked_generation,
             ));
         }
-        let target = himmelcad_core::canonical_document::CanonicalDocument::from_journal(
+        let target = himmelcad_document::canonical_document::CanonicalDocument::from_journal(
             &store.document().journal()[..marked_generation],
         )
         .map_err(CanonicalProjectStoreError::Document)?;
@@ -1313,11 +1313,13 @@ impl CanonicalAppRuntime {
                     .representations
                     .iter()
                     .any(|representation| representation.geometry_ref == *object_hash);
-            references_hash.then(|| himmelcad_core::canonical_document::EntityVersionRef {
-                id: entity.id.clone(),
-                revision: entity.revision,
-                version_hash: entity.version_hash.clone(),
-            })
+            references_hash.then(
+                || himmelcad_document::canonical_document::EntityVersionRef {
+                    id: entity.id.clone(),
+                    revision: entity.revision,
+                    version_hash: entity.version_hash.clone(),
+                },
+            )
         });
         let resolved = resolve_automation_artifact(store, object_hash)?;
         Ok(AutomationObjectSource {
@@ -2594,7 +2596,7 @@ fn point_cloud_metadata(
     };
     let placement = entity
         .placement
-        .unwrap_or(himmelcad_core::entity_model::Transform3d::IDENTITY);
+        .unwrap_or(himmelcad_model::entity_model::Transform3d::IDENTITY);
     Ok(Some(CanonicalPointCloudMetadata {
         point_count,
         source_crs: source
@@ -2661,7 +2663,7 @@ fn validate_residency_dataset(
 
 #[derive(Default)]
 struct ResolvedAutomationArtifact {
-    source_entity: Option<himmelcad_core::canonical_document::EntityVersionRef>,
+    source_entity: Option<himmelcad_document::canonical_document::EntityVersionRef>,
     typed_artifact: Option<TypedArtifactDescriptor>,
     representation_slot: Option<String>,
     geometry_ref: Option<ObjectHash>,
@@ -2769,7 +2771,7 @@ fn live_inventory_binding(
     entity_id: &str,
     representation_slot: &str,
 ) -> Option<(
-    himmelcad_core::canonical_document::EntityVersionRef,
+    himmelcad_document::canonical_document::EntityVersionRef,
     String,
     ObjectHash,
 )> {
@@ -2783,7 +2785,7 @@ fn live_inventory_binding(
         return None;
     }
     Some((
-        himmelcad_core::canonical_document::EntityVersionRef {
+        himmelcad_document::canonical_document::EntityVersionRef {
             id: entity.id.clone(),
             revision: entity.revision,
             version_hash: entity.version_hash.clone(),
@@ -3189,8 +3191,8 @@ fn maintain_session_start_snapshots(
 }
 
 fn restore_mutations(
-    current: &himmelcad_core::canonical_document::CanonicalDocument,
-    target: &himmelcad_core::canonical_document::CanonicalDocument,
+    current: &himmelcad_document::canonical_document::CanonicalDocument,
+    target: &himmelcad_document::canonical_document::CanonicalDocument,
 ) -> Result<Vec<CanonicalEntityMutation>, CanonicalAppRuntimeError> {
     let current_entities: BTreeMap<_, _> = current
         .entities()
@@ -3908,32 +3910,32 @@ mod tests {
         AppJournalReadRequest, AppProtocolExtensions, AppProtocolRequest,
         AppProtocolRequestEnvelope, AppProtocolResponse, APP_PROTOCOL_SCHEMA_ID,
     };
-    use himmelcad_core::canonical_document::{
-        CanonicalCommandTransaction, CanonicalEntityMutation, CanonicalJournalEntryKind,
-        EntityVersionRef,
-    };
-    use himmelcad_core::entity::EntityId;
-    use himmelcad_core::entity_model::{
-        built_in_type, CanonicalEntity, EntityTypeId, GeometryResource, Representation,
-        RepresentationAuthority, RepresentationRole, StreamedGeometry,
-    };
-    use himmelcad_core::entity_validation::{
-        canonical_entity_version_hash, geometry_object_content_hash,
-    };
-    use himmelcad_core::geometry_representation_registry::CanonicalRepresentationAdmission;
-    use himmelcad_core::hash::ObjectHash;
     use himmelcad_core::release_05_admissions::{
         AcquisitionTruthV1, PointAcquisitionKindV1, POINT_ACQUISITION_SCHEMA_ID,
     };
-    use himmelcad_core::typed_artifact::{
-        ArtifactElementType, ArtifactEndianness, TypedArtifactDescriptor, TypedArtifactLayout,
-        TypedArtifactManifest, TYPED_ARTIFACT_MANIFEST_NAME,
+    use himmelcad_document::canonical_document::{
+        CanonicalCommandTransaction, CanonicalEntityMutation, CanonicalJournalEntryKind,
+        EntityVersionRef,
     };
     use himmelcad_io::{
         CanonicalImportPackage, CanonicalImportProvider, CanonicalImportRequest,
         PhotoLabProductPackageProvider, PreparedDatasetArtifact, ProviderOperationContext,
         ProviderProgress, StagedArtifactRoots, CANONICAL_IO_SCHEMA_VERSION,
         PRODUCT_IMPORT_PACKAGE_FORMAT_ID,
+    };
+    use himmelcad_model::entity::EntityId;
+    use himmelcad_model::entity_model::{
+        built_in_type, CanonicalEntity, EntityTypeId, GeometryResource, Representation,
+        RepresentationAuthority, RepresentationRole, StreamedGeometry,
+    };
+    use himmelcad_model::entity_validation::{
+        canonical_entity_version_hash, geometry_object_content_hash,
+    };
+    use himmelcad_model::geometry_representation_registry::CanonicalRepresentationAdmission;
+    use himmelcad_model::hash::ObjectHash;
+    use himmelcad_model::typed_artifact::{
+        ArtifactElementType, ArtifactEndianness, TypedArtifactDescriptor, TypedArtifactLayout,
+        TypedArtifactManifest, TYPED_ARTIFACT_MANIFEST_NAME,
     };
     use serde_json::json;
 
@@ -4537,10 +4539,10 @@ mod tests {
 
     #[test]
     fn g_mi_command_measurements_round_trip_and_delete_atomically() {
-        use himmelcad_core::entity_model::Position;
         use himmelcad_core::release_05_admissions::{
             MeasurementKindV1, MeasurementMetricV1, MeasurementVerificationV1,
         };
+        use himmelcad_model::entity_model::Position;
 
         let root = temp_project("measurement-round-trip");
         let mut runtime = CanonicalAppRuntime::default();
@@ -5041,7 +5043,7 @@ mod tests {
 
         let mut display = metadata.display.clone();
         display.point_size_pixels = 4.5;
-        display.color_mode = himmelcad_core::canonical_resources::PointCloudColorMode::Elevation;
+        display.color_mode = himmelcad_model::canonical_resources::PointCloudColorMode::Elevation;
         runtime
             .set_point_cloud_display(
                 "point-cloud-display".to_owned(),
@@ -5063,7 +5065,7 @@ mod tests {
         assert_eq!(updated_display.point_size_pixels, 4.5);
         assert_eq!(
             updated_display.color_mode,
-            himmelcad_core::canonical_resources::PointCloudColorMode::Elevation
+            himmelcad_model::canonical_resources::PointCloudColorMode::Elevation
         );
 
         let points = staged.package.datasets[0]
@@ -5157,10 +5159,10 @@ mod tests {
         use crate::pointcloud_ground::{
             prepare_ground_datasets, GroundPrepareRequest, GroundScope,
         };
-        use himmelcad_core::photolab_jobs::CancellationToken;
         use himmelcad_core::release_05_admissions::{
             validate_mesh_source_roles, validate_recipe, DerivedRecipeV1, MeshSourceRolesV1,
         };
+        use himmelcad_process::jobs::CancellationToken;
 
         let root = temp_project("ground-atomic-publication");
         let staged = staged_ground_point_cloud(&root);
@@ -5288,7 +5290,7 @@ mod tests {
         use crate::pointcloud_segment::{
             prepare_segment_dataset, FenceVolume, SegmentPrepareRequest, SegmentSide,
         };
-        use himmelcad_core::photolab_jobs::CancellationToken;
+        use himmelcad_process::jobs::CancellationToken;
 
         let root = temp_project("segment-revision-chain");
         let staged = staged_ground_point_cloud(&root);
@@ -5493,10 +5495,10 @@ mod tests {
             RasterizeParameters, RasterizePrepareRequest, SamplePrepareRequest, SamplingMethod,
             SamplingParameters,
         };
-        use himmelcad_core::photolab_jobs::CancellationToken;
         use himmelcad_core::release_05_admissions::{
             validate_mesh_source_roles, validate_recipe, DerivedRecipeV1, MeshSourceRolesV1,
         };
+        use himmelcad_process::jobs::CancellationToken;
 
         let root = temp_project("sampling-raster-publication");
         let staged = staged_ground_point_cloud(&root);

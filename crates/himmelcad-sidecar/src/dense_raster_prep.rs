@@ -9,9 +9,9 @@ use std::{
 };
 
 #[cfg(test)]
-use himmelcad_core::hash::ObjectHash;
+use himmelcad_model::hash::ObjectHash;
 #[cfg(test)]
-use himmelcad_core::photolab_jobs::CancellationToken;
+use himmelcad_process::jobs::CancellationToken;
 #[cfg(test)]
 use himmelcad_process::worker::{WorkerMemoryLimitMode, WorkerMemoryLimitPlan};
 #[cfg(test)]
@@ -93,13 +93,12 @@ mod tests {
             plan_raster_preparation_memory, JobAdmission, JobManager, JobManagerConfig,
             MemoryPreflight,
         };
-        use himmelcad_core::{
-            hash::ObjectHash,
-            photolab_jobs::{
-                JobProgress, NewPhotolabJob, PhotolabJobId, PhotolabJobKind, PhotolabJobState,
-                PhotolabStage, PhotolabStageKind, ProgressMetrics,
-            },
+        use himmelcad_domain_photogrammetry::photolab_jobs::{
+            JobProgress, NewPhotolabJob, PhotolabJobId, PhotolabJobKind, PhotolabJobState,
+            PhotolabStage, PhotolabStageKind,
         };
+        use himmelcad_model::hash::ObjectHash;
+        use himmelcad_process::jobs::ProgressMetrics;
 
         let plan = plan_raster_preparation_memory(1, 1, 4 * 1024 * 1024 * 1024);
         let execution_plan = plan.clone();
@@ -196,13 +195,12 @@ mod tests {
             plan_raster_preparation_memory, JobAdmission, JobManager, JobManagerConfig,
             JobWorkerError, MemoryPreflight,
         };
-        use himmelcad_core::{
-            hash::ObjectHash,
-            photolab_jobs::{
-                JobProgress, NewPhotolabJob, PhotolabJobId, PhotolabJobKind, PhotolabJobState,
-                PhotolabMemoryDegradation, PhotolabStage, PhotolabStageKind, ProgressMetrics,
-            },
+        use himmelcad_domain_photogrammetry::photolab_jobs::{
+            JobProgress, NewPhotolabJob, PhotolabJobId, PhotolabJobKind, PhotolabJobState,
+            PhotolabMemoryDegradation, PhotolabStage, PhotolabStageKind,
         };
+        use himmelcad_model::hash::ObjectHash;
+        use himmelcad_process::jobs::ProgressMetrics;
 
         let plan = plan_raster_preparation_memory(1, 1, 4 * 1024 * 1024 * 1024);
         let stage = plan.gdal_grid;

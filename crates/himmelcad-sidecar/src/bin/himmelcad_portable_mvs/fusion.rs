@@ -9,7 +9,7 @@ use std::{
     sync::atomic::AtomicBool,
 };
 
-use himmelcad_core::hash::ObjectHash;
+use himmelcad_model::hash::ObjectHash;
 use serde::{Deserialize, Serialize};
 
 use super::{atomic_json, check_cancel, WorkerError};

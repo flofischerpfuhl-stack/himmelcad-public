@@ -1097,8 +1097,9 @@ name = "himmelcad-command"
 version = "0.0.0"
 dependencies = [
  "fs2",
- "himmelcad-core",
+ "himmelcad-domain-photogrammetry",
  "himmelcad-domain-raster",
+ "himmelcad-model",
  "himmelcad-process",
  "serde",
  "serde_json",
@@ -1147,6 +1148,34 @@ dependencies = [
  "serde_json",
  "sha2",
  "thiserror 1.0.69",
+ "zip",
+]
+
+[[package]]
+name = "himmelcad-domain-photogrammetry"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "fs2",
+ "hex",
+ "himmelcad-core",
+ "himmelcad-document",
+ "himmelcad-io",
+ "himmelcad-model",
+ "himmelcad-prepared",
+ "himmelcad-process",
+ "himmelcad-spatial",
+ "himmelcad-transform",
+ "image",
+ "nom-exif",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "zip",
 ]
 
 [[package]]
@@ -1287,6 +1316,7 @@ version = "0.0.0"
 dependencies = [
  "himmelcad-model",
  "serde",
+ "serde_json",
  "thiserror 1.0.69",
  "tracing",
 ]
@@ -1333,11 +1363,13 @@ dependencies = [
  "himmelcad-command",
  "himmelcad-core",
  "himmelcad-document",
+ "himmelcad-domain-photogrammetry",
  "himmelcad-domain-pointcloud",
  "himmelcad-domain-raster",
  "himmelcad-domain-registration",
  "himmelcad-domain-surface",
  "himmelcad-io",
+ "himmelcad-model",
  "himmelcad-prepared",
  "himmelcad-process",
  "himmelcad-render",

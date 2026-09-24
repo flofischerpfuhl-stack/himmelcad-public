@@ -9,7 +9,7 @@ mod render_contract_tests {
         path::{Path, PathBuf},
     };
 
-    use himmelcad_core::{
+    use himmelcad_model::{
         geometry_representation_registry::SectionTopologyPartitionManifest, hash::ObjectHash,
     };
     use himmelcad_prepared::raster::{

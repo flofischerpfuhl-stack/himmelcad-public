@@ -8,6 +8,14 @@ use thiserror::Error;
 
 use crate::hash::ObjectHash;
 
+/// Cartesian world frame established by the first georeferenced import.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectReferenceFrame {
+    pub target: FrozenCrsEndpoint,
+    pub established_by_transformation_sha256: ObjectHash,
+}
+
 pub use crate::crs::{
     BallparkConfirmation, CoordinateEpoch, CoordinateOperationKind, CrsDatabaseVersions,
     CrsDefinition, CrsWithEpoch, GeographicArea, GridLicenseMetadata, HeightReference,

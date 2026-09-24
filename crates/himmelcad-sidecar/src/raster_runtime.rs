@@ -10,11 +10,12 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicU64, Ordering};
 
-    use himmelcad_core::hash::ObjectHash;
-    use himmelcad_core::photolab_jobs::{
+    use himmelcad_domain_photogrammetry::photolab_jobs::{
         JobProgress, NewPhotolabJob, PhotolabJobId, PhotolabJobKind, PhotolabJobState,
-        PhotolabStage, PhotolabStageKind, ProgressMetrics,
+        PhotolabStage, PhotolabStageKind,
     };
+    use himmelcad_model::hash::ObjectHash;
+    use himmelcad_process::jobs::ProgressMetrics;
     use himmelcad_process::worker::{WorkerMemoryLimitMode, WorkerMemoryLimitPlan};
 
     use super::*;

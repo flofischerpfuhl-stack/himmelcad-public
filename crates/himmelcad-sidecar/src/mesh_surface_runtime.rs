@@ -3,8 +3,6 @@
 use std::io::Read;
 
 use anyhow::Result;
-use himmelcad_core::entity::EntityId;
-use himmelcad_core::hash::ObjectHash;
 use himmelcad_document::domain_commands::{
     SurfaceDocumentCommands, SurfaceDocumentCommit, SurfacePointCloudSampleRequest,
 };
@@ -17,6 +15,8 @@ use himmelcad_domain_surface::mesh_surface_runtime::{
     SurfaceDrawCurveSnapshot as DomainDrawCurveSnapshot,
 };
 use himmelcad_io::CanonicalStagedImport;
+use himmelcad_model::entity::EntityId;
+use himmelcad_model::hash::ObjectHash;
 use himmelcad_process::jobs::CancellationToken;
 
 use crate::canonical_app_runtime::CanonicalAppRuntime;

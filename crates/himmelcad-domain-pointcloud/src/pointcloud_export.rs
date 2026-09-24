@@ -8,32 +8,14 @@ use std::{
 
 use himmelcad_process::jobs::CancellationToken;
 use las::{point::Classification, Builder, Color, Point, Transform, Vector, Writer};
-use serde::{Deserialize, Serialize};
 use thiserror::Error;
+
+pub use himmelcad_prepared::pointcloud::PointCloudExportFormat;
 
 const SCALE_METERS: f64 = 0.001;
 const POINT_CHUNK: u64 = 8_192;
 const MAX_HEADER_BYTES: usize = 1024 * 1024;
 const MAX_POINTS: u64 = 4_000_000_000;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum PointCloudExportFormat {
-    Ply,
-    Las,
-    Laz,
-}
-
-impl PointCloudExportFormat {
-    #[must_use]
-    pub const fn extension(self) -> &'static str {
-        match self {
-            Self::Ply => "ply",
-            Self::Las => "las",
-            Self::Laz => "laz",
-        }
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PointCloudExportSummary {

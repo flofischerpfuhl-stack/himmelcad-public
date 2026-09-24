@@ -11,7 +11,7 @@ mod render_contract_tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
-    use himmelcad_core::geometry_representation_registry::SectionTopologyPartitionManifest;
+    use himmelcad_model::geometry_representation_registry::SectionTopologyPartitionManifest;
     use himmelcad_process::jobs::CancellationToken;
     use himmelcad_render::{section_open_mesh, SectionMeshInput, SectionPlane, WorldVec3};
 

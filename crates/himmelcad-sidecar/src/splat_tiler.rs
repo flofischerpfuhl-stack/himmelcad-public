@@ -2,8 +2,8 @@
 
 use std::path::Path;
 
-use himmelcad_core::photolab_gcp_optimization::GcpSimilarityTransform;
-use himmelcad_core::photolab_jobs::CancellationToken;
+use himmelcad_domain_photogrammetry::photolab_gcp_optimization::GcpSimilarityTransform;
+use himmelcad_process::jobs::CancellationToken;
 
 pub use himmelcad_prepared::splat_tiler::{PreparedSplatProduct, SplatTilerError};
 

@@ -3,6 +3,27 @@
 use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
+
+/// Output container selected for a prepared point-cloud export.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PointCloudExportFormat {
+    Ply,
+    Las,
+    Laz,
+}
+
+impl PointCloudExportFormat {
+    /// Conventional filename extension for this container.
+    #[must_use]
+    pub const fn extension(self) -> &'static str {
+        match self {
+            Self::Ply => "ply",
+            Self::Las => "las",
+            Self::Laz => "laz",
+        }
+    }
+}
 use std::path::PathBuf;
 
 use himmelcad_model::hash::ObjectHash;

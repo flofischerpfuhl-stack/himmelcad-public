@@ -1,6 +1,6 @@
 use std::{env, fs, path::PathBuf};
 
-use himmelcad_core::photolab_jobs::CancellationToken;
+use himmelcad_process::jobs::CancellationToken;
 use himmelcad_sidecar::prepared_triangle_mesh::{
     build_prepared_textured_triangle_mesh, PreparedTriangleMeshOptions, TriangleRecord,
 };

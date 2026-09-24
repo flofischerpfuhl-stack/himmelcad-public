@@ -15,11 +15,13 @@ use std::{
     thread,
 };
 
-use himmelcad_core::hash::ObjectHash;
+use himmelcad_model::hash::ObjectHash;
+use himmelcad_prepared::mvs_scene::{MvsPinholeCamera, MvsSceneImage, MvsSceneManifest};
+#[cfg(test)]
+use himmelcad_process::jobs::CancellationToken;
 use himmelcad_sidecar::mvs_runtime::{
     MvsCheckpoint, MvsComputeDevice, MvsDenseFusionEvidence, MvsDepthImageRecord, MvsDepthTileKey,
-    MvsDepthTileRecord, MvsOutputIndex, MvsPinholeCamera, MvsSceneImage, MvsSceneManifest,
-    MvsSettings, MvsWorkerRequest, MVS_DENSE_FUSION_ALGORITHM,
+    MvsDepthTileRecord, MvsOutputIndex, MvsSettings, MvsWorkerRequest, MVS_DENSE_FUSION_ALGORITHM,
 };
 use image::{imageops::FilterType, GrayImage, Luma, RgbImage};
 use serde::Serialize;
@@ -2707,7 +2709,7 @@ mod tests {
             &public_request,
             &scene,
             &settings_sha256,
-            &himmelcad_core::photolab_jobs::CancellationToken::new(),
+            &CancellationToken::new(),
         )
         .expect("runtime validates worker output");
         assert_eq!(validated.depth_images.len(), 4);

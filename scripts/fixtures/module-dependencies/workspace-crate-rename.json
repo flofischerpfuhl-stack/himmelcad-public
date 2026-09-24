@@ -1,0 +1,13 @@
+{
+  "layers": {},
+  "edges": [],
+  "rustSourceRules": {
+    "workspacePackageRenames": [
+      {
+        "crate": "himmelcad-example",
+        "dependency": "himmelcad-core",
+        "package": "himmelcad-domain-example"
+      }
+    ]
+  }
+}

@@ -8,6 +8,7 @@ pub mod domain_commands;
 pub mod durable_fs;
 pub mod entity_commands;
 pub mod project;
+pub mod project_archive;
 pub mod publish_fs;
 
 pub use himmelcad_model::entity;

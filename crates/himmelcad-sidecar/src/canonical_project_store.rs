@@ -14,14 +14,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use fs2::FileExt;
-use himmelcad_core::canonical_document::{
+use himmelcad_document::canonical_document::{
     CanonicalCommandTransaction, CanonicalDocument, CanonicalDocumentError, CanonicalJournalEntry,
     PreparedCanonicalTransaction,
 };
-use himmelcad_core::canonical_resource_catalog::CanonicalPresentationResourceSet;
-use himmelcad_core::entity_model::{GeometryObject, GeometryResource, Representation};
-use himmelcad_core::entity_validation::geometry_object_content_hash;
-use himmelcad_core::hash::ObjectHash;
 pub use himmelcad_document::domain_commands::{
     DomainImportProgress as CanonicalImportProgress,
     DomainImportProgressPhase as CanonicalImportProgressPhase,
@@ -30,6 +26,10 @@ use himmelcad_io::{
     CanonicalImportPackage, CanonicalJsonObject, CanonicalPreparedDataset, CanonicalResourceSet,
     ProviderContractError,
 };
+use himmelcad_model::canonical_resource_catalog::CanonicalPresentationResourceSet;
+use himmelcad_model::entity_model::{GeometryObject, GeometryResource, Representation};
+use himmelcad_model::entity_validation::geometry_object_content_hash;
+use himmelcad_model::hash::ObjectHash;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -2366,18 +2366,18 @@ fn sync_dir(path: &Path) -> Result<(), CanonicalProjectStoreError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use himmelcad_core::canonical_document::{CanonicalEntityMutation, EntityVersionRef};
-    use himmelcad_core::entity::EntityId;
-    use himmelcad_core::entity_model::{
+    use himmelcad_document::canonical_document::{CanonicalEntityMutation, EntityVersionRef};
+    use himmelcad_io::{
+        PreparedDatasetArtifact, PreparedResourceArtifact, CANONICAL_IO_SCHEMA_VERSION,
+    };
+    use himmelcad_model::entity::EntityId;
+    use himmelcad_model::entity_model::{
         built_in_type, CanonicalEntity, EntityTypeId, GeometryObject, OrthoGridMapping,
         RasterImageGeometry, RasterMapping, Representation, RepresentationAuthority,
         RepresentationRole, StreamedGeometry, Vector3,
     };
-    use himmelcad_core::entity_validation::canonical_entity_version_hash;
-    use himmelcad_core::geometry_representation_registry::CanonicalRepresentationAdmission;
-    use himmelcad_io::{
-        PreparedDatasetArtifact, PreparedResourceArtifact, CANONICAL_IO_SCHEMA_VERSION,
-    };
+    use himmelcad_model::entity_validation::canonical_entity_version_hash;
+    use himmelcad_model::geometry_representation_registry::CanonicalRepresentationAdmission;
 
     #[test]
     fn transaction_file_and_directory_sync_helpers_are_platform_safe() {

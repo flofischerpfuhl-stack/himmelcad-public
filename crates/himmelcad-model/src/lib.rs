@@ -10,6 +10,7 @@ pub mod entity_model;
 pub mod entity_validation;
 pub mod geometry_representation_registry;
 pub mod hash;
+pub mod project_units;
 pub mod property_schema;
 pub mod registration;
 pub mod release_05_admissions;

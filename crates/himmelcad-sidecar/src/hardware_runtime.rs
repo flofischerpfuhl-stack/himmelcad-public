@@ -4,7 +4,7 @@ use std::process::Command;
 #[cfg(any(target_os = "linux", test))]
 use std::{collections::BTreeSet, fs};
 
-use himmelcad_core::photolab_models::{
+use himmelcad_domain_photogrammetry::photolab_models::{
     CpuCapabilities, CudaCapabilities, CudaComputeCapability, HardwareCapabilities,
     HostOperatingSystem, VulkanCapabilities,
 };
