@@ -157,6 +157,9 @@ it('stops launching, terminates the process group, and leaves no orphan after fa
     const timings = JSON.parse(readFileSync(join(root, '.build/verify/timings.json'), 'utf8'));
     assert.equal(timings.firstFailure.taskId, 'first.failure');
     assert.ok(timings.firstFailure.latencyMs >= 100);
+    const resultById = new Map(timings.results.map((result) => [result.id, result]));
+    assert.equal(resultById.get('long.running').cancelled, true);
+    assert.equal(resultById.get('first.failure').cancelled, undefined);
     assert.equal(
       timings.results.some(({ id }) => id === 'must.not.launch'),
       false,

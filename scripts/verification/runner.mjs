@@ -227,8 +227,13 @@ export async function runPlan(
       resourceKeys: [...(active.task.resourceKeys ?? [])],
     };
     if (signal) result.signal = signal;
+    // Tasks terminated by fail-fast cancellation did not fail on their own;
+    // label them so they are not mistaken for independent failures.
+    if (exitCode !== 0 && firstFailure) result.cancelled = true;
     results.push(result);
-    process.stdout.write(`${exitCode === 0 ? 'PASS' : 'FAIL'} ${id} ${result.durationMs}ms\n`);
+    const status = exitCode === 0 ? 'PASS' : result.cancelled ? 'CANCELLED' : 'FAIL';
+    const reason = result.cancelled ? ` (after ${firstFailure.taskId} failed)` : '';
+    process.stdout.write(`${status} ${id} ${result.durationMs}ms${reason}\n`);
     if (exitCode !== 0 && !firstFailure) {
       firstFailure = {
         taskId: id,

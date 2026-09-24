@@ -13,7 +13,9 @@ const context: CommandContext = {
 
 void test('console help vocabulary is exactly the generated registry table', async () => {
   const expectedIds = (productId: string) =>
-    COMMAND_REGISTRY.filter((entry) => entry.products.includes(productId)).map((entry) => entry.id);
+    COMMAND_REGISTRY.filter(
+      (entry) => entry.surfaces.console && entry.products.includes(productId),
+    ).map((entry) => entry.id);
 
   const builderVocabulary = expectedIds('builder');
   assert.deepEqual(consoleVocabulary(), builderVocabulary);
@@ -26,10 +28,25 @@ void test('console help vocabulary is exactly the generated registry table', asy
     );
   }
 
+  // The console is shared: PhotoLab sees its own product rows, Builder never does.
   const photolabVocabulary = expectedIds('photolab');
+  const photolabHelp = await runConsoleCommand(
+    'help',
+    { ...context, productId: 'photolab' },
+    () => undefined,
+  );
+  assert.equal(photolabHelp.kind, 'help');
+  if (photolabHelp.kind === 'help') {
+    assert.deepEqual(
+      photolabHelp.lines.map((line) => line.split(/\s/, 1)[0]),
+      photolabVocabulary,
+    );
+  }
+  const photolabOnly = photolabVocabulary.filter((id) => !builderVocabulary.includes(id));
+  assert.ok(photolabOnly.length > 0);
   assert.deepEqual(
-    photolabVocabulary.filter((id) => !builderVocabulary.includes(id)),
-    ['photolab.images.remove', 'photolab.gcp.images'],
+    photolabOnly.filter((id) => !id.startsWith('photolab.')),
+    [],
   );
 });
 

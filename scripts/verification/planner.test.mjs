@@ -194,6 +194,33 @@ describe('verification planner', () => {
     assert.ok(ids(plan).includes('node.lint'));
   });
 
+  it('never passes deleted paths to prettier or eslint on commit', () => {
+    const existing = 'packages/@himmelcad/console/src/commands.ts';
+    const deleted = 'packages/@himmelcad/console/src/removedFile.ts';
+    const plan = createVerificationPlan({
+      root,
+      tier: 'commit',
+      paths: [existing, deleted],
+      pathExists: (path) => path === existing,
+    });
+    const prettier = plan.tasks.find((task) => task.id === 'node.prettier:changed');
+    const eslint = plan.tasks.find((task) => task.id === 'node.eslint:changed');
+    assert.deepEqual(prettier.args.slice(-1), [existing]);
+    assert.deepEqual(eslint.args.slice(-1), [existing]);
+    assert.equal(prettier.args.includes(deleted), false);
+    assert.equal(eslint.args.includes(deleted), false);
+    assert.ok(ids(plan).includes('node.test:@himmelcad/console'));
+
+    const onlyDeleted = createVerificationPlan({
+      root,
+      tier: 'commit',
+      paths: [deleted],
+      pathExists: () => false,
+    });
+    assert.equal(ids(onlyDeleted).includes('node.prettier:changed'), false);
+    assert.equal(ids(onlyDeleted).includes('node.eslint:changed'), false);
+  });
+
   it('deduplicates tasks and preserves stable ordering', () => {
     const plan = createVerificationPlan({
       root,

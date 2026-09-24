@@ -1,3 +1,6 @@
+import { existsSync } from 'node:fs';
+import { resolve } from 'node:path';
+
 import {
   classifyPath,
   affectsEnglishUi,
@@ -30,7 +33,10 @@ function add(map, value) {
   if (!map.has(value.id)) map.set(value.id, value);
 }
 
-export function createVerificationPlan({ root, tier, paths, cargoExecutable }) {
+export function createVerificationPlan({ root, tier, paths, cargoExecutable, pathExists }) {
+  // Deleted or moved-away paths still drive package selection, but file-level
+  // tools (prettier, eslint) must only receive paths that exist.
+  pathExists ??= (path) => existsSync(resolve(root, path));
   const classifications = paths.map((path) => ({ path, ...classifyPath(path) }));
   const risk = tier === 'release' ? 'release' : maxRisk(classifications);
   const tasks = new Map();
@@ -168,8 +174,9 @@ export function createVerificationPlan({ root, tier, paths, cargoExecutable }) {
 
   if (tier === 'commit') {
     add(tasks, task('modules.direction', 'pnpm', ['check:modules']));
-    const formatPaths = activePaths.filter(isFormatCandidate);
-    const lintPaths = activePaths.filter(isLintCandidate);
+    const existingPaths = activePaths.filter((path) => pathExists(path));
+    const formatPaths = existingPaths.filter(isFormatCandidate);
+    const lintPaths = existingPaths.filter(isLintCandidate);
     if (formatPaths.length)
       add(
         tasks,

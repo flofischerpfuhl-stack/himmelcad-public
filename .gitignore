@@ -131,3 +131,6 @@ website/.check-out/
 packages/@himmelcad/app/src/**/*.js
 packages/@himmelcad/app/src/**/*.d.ts
 packages/@himmelcad/app/src/**/*.map
+packages/@himmelcad/data/src/generated/**/*.js
+packages/@himmelcad/data/src/generated/**/*.d.ts
+packages/@himmelcad/data/src/generated/**/*.map
