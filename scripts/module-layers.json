@@ -27,8 +27,12 @@
     "himmelcad-wasm": "display"
   },
   "typescript": {
-    "@himmelcad/agent": { "layer": "interface" },
-    "@himmelcad/app": { "layer": "command" },
+    "@himmelcad/agent": {
+      "layer": "interface"
+    },
+    "@himmelcad/app": {
+      "layer": "command"
+    },
     "@himmelcad/automation-host": {
       "layer": "command",
       "subpaths": {
@@ -36,15 +40,36 @@
         "provider-credentials": "electron"
       }
     },
-    "@himmelcad/builder": { "layer": "product" },
-    "@himmelcad/console": { "layer": "interface" },
-    "@himmelcad/data": { "layer": "foundation" },
-    "@himmelcad/hardware-profile": { "layer": "foundation" },
-    "@himmelcad/photolab": { "layer": "product" },
-    "@himmelcad/plan": { "layer": "domain" },
-    "@himmelcad/specs": { "layer": "foundation" },
-    "@himmelcad/theme": { "layer": "interface" },
-    "@himmelcad/ui": { "layer": "interface" },
+    "@himmelcad/builder": {
+      "layer": "product"
+    },
+    "@himmelcad/builder-ui-lab": {
+      "layer": "product"
+    },
+    "@himmelcad/console": {
+      "layer": "interface"
+    },
+    "@himmelcad/data": {
+      "layer": "foundation"
+    },
+    "@himmelcad/hardware-profile": {
+      "layer": "foundation"
+    },
+    "@himmelcad/photolab": {
+      "layer": "product"
+    },
+    "@himmelcad/plan": {
+      "layer": "domain"
+    },
+    "@himmelcad/specs": {
+      "layer": "foundation"
+    },
+    "@himmelcad/theme": {
+      "layer": "interface"
+    },
+    "@himmelcad/ui": {
+      "layer": "interface"
+    },
     "@himmelcad/viewer": {
       "layer": "display",
       "subpaths": {
@@ -52,14 +77,36 @@
         "kernel/react": "display"
       }
     },
-    "@himmelcad/weltview": { "layer": "product" }
+    "@himmelcad/weltview": {
+      "layer": "product"
+    }
   },
   "exactForbiddenEdges": [
-    { "ecosystem": "rust", "from": "himmelcad-io", "to": "himmelcad-render" },
-    { "ecosystem": "rust", "from": "himmelcad-sidecar", "to": "himmelcad-render" },
-    { "ecosystem": "rust", "from": "himmelcad-render", "to": "himmelcad-core" },
-    { "ecosystem": "rust", "from": "himmelcad-io", "to": "himmelcad-core" },
-    { "ecosystem": "rust", "from": "himmelcad-wasm", "to": "himmelcad-core" },
+    {
+      "ecosystem": "rust",
+      "from": "himmelcad-io",
+      "to": "himmelcad-render"
+    },
+    {
+      "ecosystem": "rust",
+      "from": "himmelcad-sidecar",
+      "to": "himmelcad-render"
+    },
+    {
+      "ecosystem": "rust",
+      "from": "himmelcad-render",
+      "to": "himmelcad-core"
+    },
+    {
+      "ecosystem": "rust",
+      "from": "himmelcad-io",
+      "to": "himmelcad-core"
+    },
+    {
+      "ecosystem": "rust",
+      "from": "himmelcad-wasm",
+      "to": "himmelcad-core"
+    },
     {
       "ecosystem": "typescript",
       "from": "@himmelcad/automation-host:.",

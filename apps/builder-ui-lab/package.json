@@ -1,0 +1,28 @@
+{
+  "name": "@himmelcad/builder-ui-lab",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Standalone clickable prototype of the Builder UI redesign (no backend).",
+  "license": "BUSL-1.1",
+  "type": "module",
+  "scripts": {
+    "sample-cloud": "python3 scripts/sample-cloud.py",
+    "dev": "vite --host",
+    "build": "vite build",
+    "typecheck": "tsc -b"
+  },
+  "dependencies": {
+    "@himmelcad/theme": "workspace:*",
+    "@himmelcad/ui": "workspace:*",
+    "lucide-react": "^0.460.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.2",
+    "typescript": "^5.6.2",
+    "vite": "^5.4.8"
+  }
+}

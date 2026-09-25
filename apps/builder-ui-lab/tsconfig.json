@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "emitDeclarationOnly": true,
+    "rootDir": ".",
+    "outDir": ".tsbuild/types",
+    "tsBuildInfoFile": ".tsbuild/tsconfig.tsbuildinfo",
+    "types": ["vite/client"]
+  },
+  "include": ["src", "../../types"],
+  "references": [
+    { "path": "../../packages/@himmelcad/theme" },
+    { "path": "../../packages/@himmelcad/ui" }
+  ]
+}
