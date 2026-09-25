@@ -188,6 +188,12 @@ node:build:
   script:
     - pnpm build
 
+licenses:npm:
+  extends: .node
+  stage: licenses
+  script:
+    - node scripts/check-licenses.mjs --pnpm
+
 licenses:cargo-deny:
   extends: .rust
   stage: licenses

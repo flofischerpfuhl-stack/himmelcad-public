@@ -51,6 +51,10 @@ adapter selection.
 
 ## License
 
-Himmel:CAD is source-available under the repository license. Commercial use or
-distribution requires permission from the rights holder. Dependency rules are
-defined in [`docs/DEPENDENCY-POLICY.md`](docs/DEPENDENCY-POLICY.md).
+Himmel:CAD is source-available under the [Business Source License 1.1](LICENSE).
+Free for personal use and for organizations with up to 3 people, including
+commercial use. Larger organizations and hosted offerings need a commercial
+license. Each release becomes AGPL-3.0-or-later four years after publication.
+See [LICENSING.md](LICENSING.md) for a plain-language summary and
+[CLA.md](CLA.md) for contributions. Dependency rules are defined in
+[`docs/DEPENDENCY-POLICY.md`](docs/DEPENDENCY-POLICY.md).

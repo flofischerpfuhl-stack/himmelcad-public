@@ -2,10 +2,11 @@
 
 ## Product license boundary
 
-Himmel:CAD is source-available under the repository license. Commercial use or
-distribution requires permission from the rights holder. A dependency must be
-compatible with that distribution model before it enters product code or a
-shipped runtime.
+Himmel:CAD is source-available under the Business Source License 1.1 (see
+`LICENSE` and `LICENSING.md`), is dual-licensed commercially, and converts to
+AGPL-3.0-or-later per version after four years. A dependency must be
+compatible with all three before it enters product code or a shipped runtime;
+in practice that means permissive or file-level copyleft licenses only.
 
 ## Disallowed product inputs
 
