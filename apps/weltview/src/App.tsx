@@ -4,6 +4,9 @@ import { AppShell, EntityTree, FunctionPanel, Ribbon, StatusBar, TitleBar } from
 import type { HimmelcadViewerWasmLoader } from '@himmelcad/viewer/kernel';
 import { KernelViewport } from '@himmelcad/viewer/kernel/react';
 
+import styles from './App.module.css';
+import weltviewMarkUrl from './assets/weltview-mark.svg';
+
 const viewerWasmUrl = new URL('viewer-wasm/himmelcad_wasm.js', window.location.href).href;
 const decodeWasmUrl = new URL('viewer-decode-wasm/himmelcad_decode_wasm.js', window.location.href)
   .href;
@@ -36,7 +39,14 @@ export function App(): JSX.Element {
 
   return (
     <AppShell
-      titleBar={<TitleBar appName="HimmelCAD" productLabel="WeltView" controls={null} />}
+      titleBar={
+        <TitleBar
+          appName="HimmelCAD"
+          productLabel="WeltView"
+          brandMark={<img className={styles.brandLogo} src={weltviewMarkUrl} alt="" />}
+          controls={null}
+        />
+      }
       ribbon={<Ribbon tabs={VIEWER_TABS} />}
       leftPanel={<EntityTree project={null} selectedIds={new Set()} onSelect={() => undefined} />}
       rightPanel={<FunctionPanel activeFunctionId={null} />}

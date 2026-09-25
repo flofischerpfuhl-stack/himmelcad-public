@@ -1,0 +1,20 @@
+<svg
+  width="256"
+  height="256"
+  viewBox="0 0 256 256"
+  xmlns="http://www.w3.org/2000/svg"
+>
+  <title>Himmel:CAD Builder – Hard Hat, minimal (on light)</title>
+
+  <g
+    id="Builder-Low-Poly"
+    stroke="none"
+    fill-rule="evenodd"
+  >
+    <polygon fill="#1597F2" points="10 180 236 164 242 176 26 198"/>
+    <polygon fill="#0056A8" points="26 198 242 176 230 186 44 206"/>
+    <polygon fill="#1597F2" points="54 170 66 112 112 66 128 170"/>
+    <polygon fill="#92D5FF" points="112 66 170 60 210 100 128 170"/>
+    <polygon fill="#1597F2" points="210 100 220 168 128 170"/>
+  </g>
+</svg>

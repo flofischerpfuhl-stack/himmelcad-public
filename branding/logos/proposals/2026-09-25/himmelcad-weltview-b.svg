@@ -1,0 +1,67 @@
+<svg
+  width="256"
+  height="256"
+  viewBox="0 0 256 256"
+  xmlns="http://www.w3.org/2000/svg"
+>
+  <title>Himmel:CAD WeltView – Globe (Atlantic)</title>
+
+  <g
+    id="Globe-Low-Poly"
+    stroke="none"
+    fill-rule="evenodd"
+  >
+    <polygon fill="#0084E8" points="128 20 182 34.5 118 116"/>
+    <polygon fill="#0076D8" points="182 34.5 221.5 74 118 116"/>
+    <polygon fill="#0056A8" points="221.5 74 236 128 118 116"/>
+    <polygon fill="#003F7A" points="236 128 221.5 182 118 116"/>
+    <polygon fill="#003F7A" points="221.5 182 182 221.5 118 116"/>
+    <polygon fill="#003F7A" points="182 221.5 128 236 118 116"/>
+    <polygon fill="#003F7A" points="128 236 74 221.5 118 116"/>
+    <polygon fill="#0056A8" points="74 221.5 34.5 182 118 116"/>
+    <polygon fill="#0084E8" points="34.5 182 20 128 118 116"/>
+    <polygon fill="#1597F2" points="20 128 34.5 74 118 116"/>
+    <polygon fill="#1597F2" points="34.5 74 74 34.5 118 116"/>
+    <polygon fill="#1597F2" points="74 34.5 128 20 118 116"/>
+    <polygon fill="#D8F3FF" points="29.5 162.4 66 174.4 59.3 206.5"/>
+    <polygon fill="#F8FDFF" points="90.2 36.2 75.8 37.7 119.2 24.1"/>
+    <polygon fill="#F8FDFF" points="61.4 56.7 73.3 66.5 36.5 77.8"/>
+    <polygon fill="#E7F7FF" points="45.3 148.5 29.5 162.4 25.3 109.6"/>
+    <polygon fill="#D8F3FF" points="29.5 162.4 45.3 148.5 66 174.4"/>
+    <polygon fill="#F8FDFF" points="73.3 66.5 31.7 93.2 36.5 77.8"/>
+    <polygon fill="#F8FDFF" points="90.2 36.2 79.4 45.7 75.8 37.7"/>
+    <polygon fill="#F8FDFF" points="79.4 45.7 61.4 56.7 75.8 37.7"/>
+    <polygon fill="#F8FDFF" points="61.4 56.7 79.4 45.7 73.3 66.5"/>
+    <polygon fill="#F8FDFF" points="31.7 93.2 25.4 109.3 36.5 77.8"/>
+    <polygon fill="#F8FDFF" points="25.4 109.3 45.3 148.5 25.3 109.6"/>
+    <polygon fill="#92D5FF" points="200.5 138.9 210 143.2 194.8 188.7"/>
+    <polygon fill="#92D5FF" points="145.6 166.6 200.5 138.9 194.8 188.7"/>
+    <polygon fill="#92D5FF" points="145.6 166.6 194.8 188.7 157.8 219.2"/>
+    <polygon fill="#D8F3FF" points="218.3 75.8 169.6 44 151.3 29.6"/>
+    <polygon fill="#D8F3FF" points="174.2 80.1 169.6 44 218.3 75.8"/>
+    <polygon fill="#D8F3FF" points="145.6 166.6 151.6 102.3 162.2 103.7"/>
+    <polygon fill="#E7F7FF" points="152 68.6 169.6 44 174.2 80.1"/>
+    <polygon fill="#BDE8FF" points="181.6 88.7 174.2 80.1 218.3 75.8"/>
+    <polygon fill="#BDE8FF" points="198.3 104.5 181.6 88.7 218.3 75.8"/>
+    <polygon fill="#92D5FF" points="224 105 218.3 75.8 232.3 124.2"/>
+    <polygon fill="#92D5FF" points="224 105 198.3 104.5 218.3 75.8"/>
+    <polygon fill="#D8F3FF" points="118.9 107.6 151.6 102.3 145.6 166.6"/>
+    <polygon fill="#D8F3FF" points="113.1 165.6 118.9 107.6 145.6 166.6"/>
+    <polygon fill="#E7F7FF" points="118.9 107.6 113.1 165.6 96.4 145.2"/>
+    <polygon fill="#E7F7FF" points="152 68.6 145.8 55.5 169.6 44"/>
+    <polygon fill="#E7F7FF" points="145.1 88.9 151.6 102.3 139.9 91.8"/>
+    <polygon fill="#E7F7FF" points="145.1 88.9 139.9 91.8 133.6 68.1"/>
+    <polygon fill="#E7F7FF" points="145.1 88.9 152 68.6 174.2 80.1"/>
+    <polygon fill="#BDE8FF" points="180 109.5 181.6 88.7 198.3 104.5"/>
+    <polygon fill="#92D5FF" points="198.3 104.5 214.4 112.1 200.5 138.9"/>
+    <polygon fill="#F8FDFF" points="140.2 51 145.8 55.5 133.6 68.1"/>
+    <polygon fill="#D8F3FF" points="151.6 102.3 164.8 97.4 162.2 103.7"/>
+    <polygon fill="#E7F7FF" points="145.1 88.9 164.8 97.4 151.6 102.3"/>
+    <polygon fill="#D8F3FF" points="164.8 97.4 145.1 88.9 174.2 80.1"/>
+    <polygon fill="#D8F3FF" points="180 109.5 164.8 97.4 181.6 88.7"/>
+    <polygon fill="#BDE8FF" points="178.2 112.7 198.3 104.5 200.5 138.9"/>
+    <polygon fill="#BDE8FF" points="178.2 112.7 180 109.5 198.3 104.5"/>
+    <polygon fill="#BDE8FF" points="145.6 166.6 178.2 112.7 200.5 138.9"/>
+    <polygon fill="#D8F3FF" points="178.2 112.7 145.6 166.6 162.2 103.7"/>
+  </g>
+</svg>

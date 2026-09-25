@@ -1,0 +1,28 @@
+<svg
+  width="256"
+  height="256"
+  viewBox="0 0 256 256"
+  xmlns="http://www.w3.org/2000/svg"
+>
+  <title>Himmel:CAD PhotoLab – Prism Aperture</title>
+
+  <g
+    id="Aperture-Low-Poly"
+    stroke="none"
+    fill-rule="evenodd"
+  >
+    <polygon fill="#92D5FF" points="81.95 44.59 128 18 162.24 116.88"/>
+    <polygon fill="#BDE8FF" points="128 18 177.22 46.41 162.24 116.88"/>
+    <polygon fill="#55B8FF" points="177.22 46.41 223.26 73 154.75 152.09"/>
+    <polygon fill="#3EACF5" points="223.26 73 223.26 129.83 154.75 152.09"/>
+    <polygon fill="#1597F2" points="223.26 129.83 223.26 183 120.52 163.21"/>
+    <polygon fill="#0084E8" points="223.26 183 174.05 211.41 120.52 163.21"/>
+    <polygon fill="#0056A8" points="174.05 211.41 128 238 93.76 139.12"/>
+    <polygon fill="#003F7A" points="128 238 78.78 209.59 93.76 139.12"/>
+    <polygon fill="#0076D8" points="78.78 209.59 32.74 183 101.25 103.91"/>
+    <polygon fill="#0056A8" points="32.74 183 32.74 126.17 101.25 103.91"/>
+    <polygon fill="#BDE8FF" points="32.74 126.17 32.74 73 135.48 92.79"/>
+    <polygon fill="#92D5FF" points="32.74 73 81.95 44.59 135.48 92.79"/>
+    <polygon fill="#F8FDFF" points="135.48 92.79 162.24 116.88 154.75 152.09 120.52 163.21 93.76 139.12 101.25 103.91"/>
+  </g>
+</svg>

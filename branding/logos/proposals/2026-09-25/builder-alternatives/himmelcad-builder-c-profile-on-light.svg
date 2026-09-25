@@ -1,0 +1,25 @@
+<svg
+  width="256"
+  height="256"
+  viewBox="0 0 256 256"
+  xmlns="http://www.w3.org/2000/svg"
+>
+  <title>Himmel:CAD Builder – Hard Hat, profile (on light)</title>
+
+  <g
+    id="Builder-Low-Poly"
+    stroke="none"
+    fill-rule="evenodd"
+  >
+    <polygon fill="#55B8FF" points="10 184 62 166 132 166"/>
+    <polygon fill="#0084E8" points="10 184 132 166 224 166 244 172"/>
+    <polygon fill="#0056A8" points="10 184 244 172 238 180 24 194"/>
+    <polygon fill="#55B8FF" points="62 166 70 112 142 124"/>
+    <polygon fill="#55B8FF" points="70 112 112 72 142 124"/>
+    <polygon fill="#BDE8FF" points="112 72 164 64 142 124"/>
+    <polygon fill="#1597F2" points="164 64 206 92 142 124"/>
+    <polygon fill="#3EACF5" points="206 92 222 140 142 124"/>
+    <polygon fill="#0084E8" points="222 140 224 166 142 124"/>
+    <polygon fill="#1597F2" points="62 166 142 124 224 166"/>
+  </g>
+</svg>

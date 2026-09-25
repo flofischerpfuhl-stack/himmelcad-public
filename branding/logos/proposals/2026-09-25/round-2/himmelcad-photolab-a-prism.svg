@@ -1,0 +1,20 @@
+<svg
+  width="256"
+  height="256"
+  viewBox="0 0 256 256"
+  xmlns="http://www.w3.org/2000/svg"
+>
+  <title>Himmel:CAD PhotoLab – Prism</title>
+
+  <g
+    id="Prism-Low-Poly"
+    stroke="none"
+    fill-rule="evenodd"
+  >
+    <polygon fill="#E7F7FF" points="128 30 34 206 132 152"/>
+    <polygon fill="#55B8FF" points="128 30 132 152 222 206"/>
+    <polygon fill="#0084E8" points="34 206 222 206 132 152"/>
+    <polygon fill="#F8FDFF" points="77.24 125.04 79.24 132.04 130.4 110.2 130.4 103.2"/>
+    <polygon fill="#BDE8FF" points="130.4 103.2 130.4 110.2 184.28 146.12 186.28 139.12"/>
+  </g>
+</svg>

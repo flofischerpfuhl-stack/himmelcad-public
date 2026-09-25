@@ -1,0 +1,35 @@
+<svg
+  width="256"
+  height="256"
+  viewBox="0 0 256 256"
+  xmlns="http://www.w3.org/2000/svg"
+>
+  <title>Himmel:CAD Builder – Hard Hat</title>
+
+  <g
+    id="Hard-Hat-Low-Poly"
+    stroke="none"
+    fill-rule="evenodd"
+  >
+    <polygon fill="#55B8FF" points="38 176 46 130 90 124"/>
+    <polygon fill="#1597F2" points="38 176 90 124 86 176"/>
+    <polygon fill="#BDE8FF" points="46 130 70 92 90 124"/>
+    <polygon fill="#E7F7FF" points="70 92 104 70 90 124"/>
+    <polygon fill="#D8F3FF" points="104 70 108 68 90 124"/>
+    <polygon fill="#92D5FF" points="90 124 108 68 108 176"/>
+    <polygon fill="#3EACF5" points="86 176 90 124 108 176"/>
+    <polygon fill="#0084E8" points="218 176 210 130 166 124"/>
+    <polygon fill="#0056A8" points="218 176 166 124 170 176"/>
+    <polygon fill="#3EACF5" points="210 130 186 92 166 124"/>
+    <polygon fill="#92D5FF" points="186 92 152 70 166 124"/>
+    <polygon fill="#BDE8FF" points="152 70 148 68 166 124"/>
+    <polygon fill="#55B8FF" points="166 124 148 68 148 176"/>
+    <polygon fill="#1597F2" points="170 176 166 124 148 176"/>
+    <polygon fill="#F8FDFF" points="108 68 128 58 128 176 108 176"/>
+    <polygon fill="#BDE8FF" points="128 58 148 68 148 176 128 176"/>
+    <polygon fill="#1597F2" points="14 176 128 176 128 188 26 188"/>
+    <polygon fill="#0084E8" points="128 176 242 176 230 188 128 188"/>
+    <polygon fill="#0056A8" points="26 188 128 188 128 198 30 198"/>
+    <polygon fill="#003F7A" points="128 188 230 188 226 198 128 198"/>
+  </g>
+</svg>

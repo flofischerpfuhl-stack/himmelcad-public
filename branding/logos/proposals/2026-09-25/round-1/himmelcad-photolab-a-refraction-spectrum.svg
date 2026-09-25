@@ -1,0 +1,26 @@
+<svg
+  width="256"
+  height="256"
+  viewBox="0 0 256 256"
+  xmlns="http://www.w3.org/2000/svg"
+>
+  <title>Himmel:CAD PhotoLab – Prism Refraction (spectrum)</title>
+
+  <g
+    id="Prism-Low-Poly"
+    stroke="none"
+    fill-rule="evenodd"
+  >
+    <polygon fill="#F8FDFF" points="2 164 2 156 71.4 123.96 72.9 129.96"/>
+    <polygon fill="#F8FDFF" points="171.6 134.4 171.6 140.4 254 148.4 254 165.92"/>
+    <polygon fill="#FFE45C" points="171.6 134.4 254 165.92 254 183.44"/>
+    <polygon fill="#FF8A3D" points="171.6 134.4 254 183.44 254 200.96"/>
+    <polygon fill="#FF3D6E" points="171.6 134.4 254 200.96 254 218.48"/>
+    <polygon fill="#8F5BFF" points="171.6 134.4 254 218.48 254 236"/>
+    <polygon fill="#E7F7FF" points="120 30 30 204 124 150"/>
+    <polygon fill="#55B8FF" points="120 30 124 150 206 204"/>
+    <polygon fill="#0084E8" points="30 204 206 204 124 150"/>
+    <polygon fill="#F8FDFF" points="71.4 123.96 72.9 129.96 122.48 110.4 122.48 104.4"/>
+    <polygon fill="#BDE8FF" points="122.48 104.4 122.48 110.4 171.6 140.4 171.6 134.4"/>
+  </g>
+</svg>

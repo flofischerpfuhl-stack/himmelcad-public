@@ -1,0 +1,64 @@
+<svg
+  width="256"
+  height="256"
+  viewBox="0 0 256 256"
+  xmlns="http://www.w3.org/2000/svg"
+>
+  <title>Himmel:CAD Builder – Low-Poly Helmet</title>
+
+  <g
+    id="Helmet-Low-Poly"
+    stroke="none"
+    fill-rule="evenodd"
+    transform="translate(0 4)"
+  >
+    <polygon fill="#0056A8" points="16 172 48 184 50 192 18 180"/>
+    <polygon fill="#0056A8" points="48 184 88 191 90 199 50 192"/>
+    <polygon fill="#003F7A" points="88 191 128 193 128 201 90 199"/>
+    <polygon fill="#003F7A" points="240 172 208 184 206 192 238 180"/>
+    <polygon fill="#003F7A" points="208 184 168 191 166 199 206 192"/>
+    <polygon fill="#003F7A" points="168 191 128 193 128 201 166 199"/>
+    <polygon fill="#1597F2" points="16 172 40 160 48 184"/>
+    <polygon fill="#0084E8" points="40 160 80 160 48 184"/>
+    <polygon fill="#0076D8" points="80 160 88 191 48 184"/>
+    <polygon fill="#0084E8" points="80 160 112 160 88 191"/>
+    <polygon fill="#0076D8" points="112 160 128 193 88 191"/>
+    <polygon fill="#1597F2" points="112 160 128 160 128 193"/>
+    <polygon fill="#0056A8" points="240 172 216 160 208 184"/>
+    <polygon fill="#0076D8" points="216 160 176 160 208 184"/>
+    <polygon fill="#0056A8" points="176 160 168 191 208 184"/>
+    <polygon fill="#0076D8" points="176 160 144 160 168 191"/>
+    <polygon fill="#0056A8" points="144 160 128 193 168 191"/>
+    <polygon fill="#0076D8" points="144 160 128 160 128 193"/>
+    <polygon fill="#1597F2" points="40 160 44 122 80 122"/>
+    <polygon fill="#0076D8" points="40 160 80 122 80 160"/>
+    <polygon fill="#92D5FF" points="44 122 60 90 80 122"/>
+    <polygon fill="#55B8FF" points="60 90 94 88 80 122"/>
+    <polygon fill="#E7F7FF" points="60 90 86 66 94 88"/>
+    <polygon fill="#3EACF5" points="80 160 80 122 112 122"/>
+    <polygon fill="#0084E8" points="80 160 112 122 112 160"/>
+    <polygon fill="#BDE8FF" points="80 122 94 88 112 88"/>
+    <polygon fill="#92D5FF" points="80 122 112 88 112 122"/>
+    <polygon fill="#F8FDFF" points="94 88 86 66 112 56"/>
+    <polygon fill="#D8F3FF" points="94 88 112 56 112 88"/>
+    <polygon fill="#0056A8" points="216 160 212 122 176 122"/>
+    <polygon fill="#003F7A" points="216 160 176 122 176 160"/>
+    <polygon fill="#0084E8" points="212 122 196 90 176 122"/>
+    <polygon fill="#0076D8" points="196 90 162 88 176 122"/>
+    <polygon fill="#55B8FF" points="196 90 170 66 162 88"/>
+    <polygon fill="#1597F2" points="176 160 176 122 144 122"/>
+    <polygon fill="#0076D8" points="176 160 144 122 144 160"/>
+    <polygon fill="#92D5FF" points="176 122 162 88 144 88"/>
+    <polygon fill="#3EACF5" points="176 122 144 88 144 122"/>
+    <polygon fill="#BDE8FF" points="162 88 170 66 144 56"/>
+    <polygon fill="#92D5FF" points="162 88 144 56 144 88"/>
+    <polygon fill="#F8FDFF" points="112 56 128 48 128 58"/>
+    <polygon fill="#D8F3FF" points="128 48 144 56 128 58"/>
+    <polygon fill="#E7F7FF" points="112 56 128 58 128 88 112 88"/>
+    <polygon fill="#BDE8FF" points="128 58 144 56 144 88 128 88"/>
+    <polygon fill="#BDE8FF" points="112 88 128 88 128 122 112 122"/>
+    <polygon fill="#92D5FF" points="128 88 144 88 144 122 128 122"/>
+    <polygon fill="#55B8FF" points="112 122 128 122 128 162 112 160"/>
+    <polygon fill="#3EACF5" points="128 122 144 122 144 160 128 162"/>
+  </g>
+</svg>

@@ -74,7 +74,7 @@ const logoHashes = {
     '3a919e417991335abca348488744b20e89a17a871c67b8e7c87d3d0a56d8b001',
   'himmelcad-builder-reserve-hoodie-ready.svg':
     '55db337467be8d98795dc4fbf9dffddd90e69ba0f87c0d8c62a9cc744fad4754',
-  'himmelcad-photolab.svg': '32b82d92c0d188530cae0d794fcf1cb75c3defc38aa30ef2deccff6a3373b3f8',
+  'himmelcad-photolab.svg': '462b9ebd2dd701c3d7fa9d1ec50f4ea6a3c95f9b318fab3a3a545663bf92c310',
 };
 for (const [name, expected] of Object.entries(logoHashes)) {
   const source = join(root, 'src/assets/logos', name);
