@@ -1,2 +1,3 @@
 .check-out/
 node_modules/
+dist/
