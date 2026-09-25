@@ -1,0 +1,68 @@
+<svg
+  width="256"
+  height="256"
+  viewBox="0 0 256 256"
+  xmlns="http://www.w3.org/2000/svg"
+>
+  <title>Himmel:CAD Builder – Hard Hat, three-quarter (reference)</title>
+
+  <g
+    id="Builder-Low-Poly"
+    stroke="none"
+    fill-rule="evenodd"
+  >
+    <polygon fill="#003F7A" points="12 160 40 182 80 200 122 212 122 221 80 209 40 191 12 169"/>
+    <polygon fill="#0056A8" points="122 212 172 210 216 198 246 180 246 189 216 207 172 219 122 221"/>
+    <polygon fill="#0076D8" points="20 148 12 160 32 150"/>
+    <polygon fill="#0076D8" points="12 160 40 182 32 150"/>
+    <polygon fill="#0084E8" points="32 150 40 182 70 170"/>
+    <polygon fill="#0084E8" points="40 182 80 200 70 170"/>
+    <polygon fill="#1597F2" points="70 170 80 200 110 184"/>
+    <polygon fill="#1597F2" points="80 200 122 212 110 184"/>
+    <polygon fill="#3EACF5" points="110 184 122 212 144 186"/>
+    <polygon fill="#55B8FF" points="122 212 172 210 144 186"/>
+    <polygon fill="#92D5FF" points="144 186 172 210 192 178"/>
+    <polygon fill="#BDE8FF" points="172 210 216 198 192 178"/>
+    <polygon fill="#D8F3FF" points="192 178 216 198 246 180"/>
+    <polygon fill="#92D5FF" points="192 178 246 180 216 146"/>
+    <polygon fill="#3EACF5" points="216 146 246 180 236 156"/>
+    <polygon fill="#0056A8" points="32 150 34 112 70 148"/>
+    <polygon fill="#0076D8" points="34 112 48 76 62 100"/>
+    <polygon fill="#003F7A" points="34 112 62 100 70 148"/>
+    <polygon fill="#3EACF5" points="48 76 72 48 62 100"/>
+    <polygon fill="#0084E8" points="72 48 94 62 62 100"/>
+    <polygon fill="#55B8FF" points="72 48 98 32 94 62"/>
+    <polygon fill="#92D5FF" points="98 32 120 26 94 62"/>
+    <polygon fill="#1597F2" points="120 26 132 82 94 62"/>
+    <polygon fill="#0056A8" points="94 62 132 82 98 126"/>
+    <polygon fill="#0076D8" points="62 100 94 62 98 126"/>
+    <polygon fill="#003F7A" points="62 100 98 126 70 148"/>
+    <polygon fill="#0056A8" points="32 150 70 148 70 170"/>
+    <polygon fill="#0076D8" points="70 148 98 126 70 170"/>
+    <polygon fill="#003F7A" points="98 126 110 184 70 170"/>
+    <polygon fill="#0084E8" points="98 126 132 82 138 134"/>
+    <polygon fill="#0056A8" points="98 126 138 134 110 184"/>
+    <polygon fill="#0076D8" points="138 134 144 186 110 184"/>
+    <polygon fill="#F8FDFF" points="120 26 150 28 174 78"/>
+    <polygon fill="#D8F3FF" points="120 26 174 78 132 82"/>
+    <polygon fill="#E7F7FF" points="132 82 174 78 188 128"/>
+    <polygon fill="#BDE8FF" points="132 82 188 128 138 134"/>
+    <polygon fill="#92D5FF" points="138 134 188 128 192 178"/>
+    <polygon fill="#55B8FF" points="138 134 192 178 144 186"/>
+    <polygon fill="#55B8FF" points="150 28 182 46 174 78"/>
+    <polygon fill="#3EACF5" points="182 46 204 76 174 78"/>
+    <polygon fill="#92D5FF" points="204 76 202 114 174 78"/>
+    <polygon fill="#1597F2" points="204 76 214 112 202 114"/>
+    <polygon fill="#55B8FF" points="174 78 202 114 188 128"/>
+    <polygon fill="#0084E8" points="214 112 216 146 202 114"/>
+    <polygon fill="#1597F2" points="202 114 216 146 188 128"/>
+    <polygon fill="#3EACF5" points="188 128 216 146 192 178"/>
+    <polygon fill="#003F7A" points="62 152 82 156 80 176 64 172"/>
+    <polygon fill="#3EACF5" points="62 152 82 156 86 151 67 147"/>
+    <polygon fill="#0076D8" points="82 156 86 151 84 171 80 176"/>
+    <polygon fill="#0056A8" points="24 126 32 124 32 148 24 150"/>
+    <polygon fill="#0084E8" points="24 126 32 124 36 121 28 123"/>
+    <polygon fill="#0084E8" points="204 128 211 124 212 150 205 154"/>
+    <polygon fill="#55B8FF" points="204 128 211 124 214 121 207 125"/>
+  </g>
+</svg>

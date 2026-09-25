@@ -28,10 +28,16 @@ const variants = [
     sourceSha256: '72e6130ab1b27cc5fdbb1357de54eef2f7f0f6ed567d352dab3a4c5edf3da90a',
   },
   {
+    id: 'builder',
+    source: 'himmelcad-builder.svg',
+    sourceSha256: 'afe2e9f80140ce2014d92890aebbfd95a3b59de1b567ed651da5004025283db2',
+    app: 'builder',
+  },
+  {
+    // the cloud: general Himmel:CAD icon, Builder's mark until 2026-09-25
     id: 'builder-primary',
     source: 'himmelcad-builder-primary.svg',
     sourceSha256: '3a919e417991335abca348488744b20e89a17a871c67b8e7c87d3d0a56d8b001',
-    app: 'builder',
   },
   {
     id: 'builder-reserve-hoodie-ready',
