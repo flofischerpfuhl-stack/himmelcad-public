@@ -110,6 +110,10 @@ function build() {
   const releases = JSON.parse(readFileSync(join(root, 'content/releases.json'), 'utf8'));
   const context = {
     releases,
+    asset(key) {
+      if (!assets[key]) throw new Error(`Unknown asset: ${key}`);
+      return assets[key];
+    },
     media(id) {
       const slot = mediaById.get(id);
       return slot ? mediaFigure(slot, slot.assetPath) : '';
