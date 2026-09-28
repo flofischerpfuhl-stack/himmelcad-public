@@ -1,0 +1,1957 @@
+[
+  {
+    "url": "https://discourse.shapr3d.com/t/bug-update-drawing/28439",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://github.com/3MFConsortium/lib3mf",
+    "retrieved": "2026-09-28",
+    "kind": "code"
+  },
+  {
+    "url": "https://github.com/CadQuery/cadquery",
+    "retrieved": "2026-09-28",
+    "kind": "code"
+  },
+  {
+    "url": "https://github.com/FreeCAD/FreeCAD-documentation/blob/15406d1498e284739fd921d6fdc071905601b34b/wiki/Draft_Move.md",
+    "retrieved": "2026-09-28",
+    "kind": "code"
+  },
+  {
+    "url": "https://github.com/FreeCAD/FreeCAD-documentation/blob/15406d1498e284739fd921d6fdc071905601b34b/wiki/Feature_editing.md",
+    "retrieved": "2026-09-28",
+    "kind": "code"
+  },
+  {
+    "url": "https://github.com/FreeCAD/FreeCAD-documentation/blob/15406d1498e284739fd921d6fdc071905601b34b/wiki/PartDesign_Fillet.md",
+    "retrieved": "2026-09-28",
+    "kind": "code"
+  },
+  {
+    "url": "https://github.com/FreeCAD/FreeCAD-documentation/blob/15406d1498e284739fd921d6fdc071905601b34b/wiki/PartDesign_MoveFeature.md",
+    "retrieved": "2026-09-28",
+    "kind": "code"
+  },
+  {
+    "url": "https://github.com/FreeCAD/FreeCAD-documentation/blob/15406d1498e284739fd921d6fdc071905601b34b/wiki/PartDesign_Pocket.md",
+    "retrieved": "2026-09-28",
+    "kind": "code"
+  },
+  {
+    "url": "https://github.com/FreeCAD/FreeCAD-documentation/blob/15406d1498e284739fd921d6fdc071905601b34b/wiki/PartDesign_Preferences.md",
+    "retrieved": "2026-09-28",
+    "kind": "code"
+  },
+  {
+    "url": "https://github.com/FreeCAD/FreeCAD-documentation/blob/15406d1498e284739fd921d6fdc071905601b34b/wiki/PartDesign_ShapeBinder.md",
+    "retrieved": "2026-09-28",
+    "kind": "code"
+  },
+  {
+    "url": "https://github.com/FreeCAD/FreeCAD-documentation/blob/15406d1498e284739fd921d6fdc071905601b34b/wiki/PartDesign_Workbench.md",
+    "retrieved": "2026-09-28",
+    "kind": "code"
+  },
+  {
+    "url": "https://github.com/FreeCAD/FreeCAD-documentation/blob/15406d1498e284739fd921d6fdc071905601b34b/wiki/Part_Fillet.md",
+    "retrieved": "2026-09-28",
+    "kind": "code"
+  },
+  {
+    "url": "https://github.com/FreeCAD/FreeCAD-documentation/blob/15406d1498e284739fd921d6fdc071905601b34b/wiki/Topological_naming_problem.md",
+    "retrieved": "2026-09-28",
+    "kind": "code"
+  },
+  {
+    "url": "https://github.com/FreeCAD/FreeCAD-documentation/blob/main/wiki/License.md",
+    "retrieved": "2026-09-28",
+    "kind": "code"
+  },
+  {
+    "url": "https://github.com/FreeCAD/FreeCAD-documentation/tree/15406d1498e284739fd921d6fdc071905601b34b",
+    "retrieved": "2026-09-28",
+    "kind": "code"
+  },
+  {
+    "url": "https://github.com/FreeCAD/FreeCAD/blob/f2065c6624af8afa3587646193980618cf1208fd/src/App/Application.cpp",
+    "retrieved": "2026-09-28",
+    "kind": "code"
+  },
+  {
+    "url": "https://github.com/FreeCAD/FreeCAD/blob/f2065c6624af8afa3587646193980618cf1208fd/src/App/DocumentObject.h",
+    "retrieved": "2026-09-28",
+    "kind": "code"
+  },
+  {
+    "url": "https://github.com/FreeCAD/FreeCAD/blob/f2065c6624af8afa3587646193980618cf1208fd/src/Mod/Part/App/PartFeatures.cpp",
+    "retrieved": "2026-09-28",
+    "kind": "code"
+  },
+  {
+    "url": "https://github.com/FreeCAD/FreeCAD/blob/f2065c6624af8afa3587646193980618cf1208fd/src/Mod/Part/App/TopoShape.cpp",
+    "retrieved": "2026-09-28",
+    "kind": "code"
+  },
+  {
+    "url": "https://github.com/FreeCAD/FreeCAD/blob/f2065c6624af8afa3587646193980618cf1208fd/src/Mod/PartDesign/App/Body.cpp",
+    "retrieved": "2026-09-28",
+    "kind": "code"
+  },
+  {
+    "url": "https://github.com/FreeCAD/FreeCAD/blob/f2065c6624af8afa3587646193980618cf1208fd/src/Mod/PartDesign/App/FeatureDraft.h",
+    "retrieved": "2026-09-28",
+    "kind": "code"
+  },
+  {
+    "url": "https://github.com/FreeCAD/FreeCAD/blob/f2065c6624af8afa3587646193980618cf1208fd/src/Mod/PartDesign/App/FeatureExtrude.cpp",
+    "retrieved": "2026-09-28",
+    "kind": "code"
+  },
+  {
+    "url": "https://github.com/FreeCAD/FreeCAD/blob/f2065c6624af8afa3587646193980618cf1208fd/src/Mod/PartDesign/App/FeatureHelix.cpp",
+    "retrieved": "2026-09-28",
+    "kind": "code"
+  },
+  {
+    "url": "https://github.com/FreeCAD/FreeCAD/blob/f2065c6624af8afa3587646193980618cf1208fd/src/Mod/PartDesign/App/FeatureLoft.cpp",
+    "retrieved": "2026-09-28",
+    "kind": "code"
+  },
+  {
+    "url": "https://github.com/FreeCAD/FreeCAD/blob/f2065c6624af8afa3587646193980618cf1208fd/src/Mod/PartDesign/App/FeaturePipe.cpp",
+    "retrieved": "2026-09-28",
+    "kind": "code"
+  },
+  {
+    "url": "https://github.com/FreeCAD/FreeCAD/blob/f2065c6624af8afa3587646193980618cf1208fd/src/Mod/PartDesign/App/FeatureRevolution.cpp",
+    "retrieved": "2026-09-28",
+    "kind": "code"
+  },
+  {
+    "url": "https://github.com/FreeCAD/FreeCAD/blob/f2065c6624af8afa3587646193980618cf1208fd/src/Mod/PartDesign/App/FeatureSketchBased.cpp",
+    "retrieved": "2026-09-28",
+    "kind": "code"
+  },
+  {
+    "url": "https://github.com/FreeCAD/FreeCAD/blob/f2065c6624af8afa3587646193980618cf1208fd/src/Mod/PartDesign/App/FeatureThickness.cpp",
+    "retrieved": "2026-09-28",
+    "kind": "code"
+  },
+  {
+    "url": "https://github.com/FreeCAD/FreeCAD/blob/f2065c6624af8afa3587646193980618cf1208fd/src/Mod/PartDesign/App/FeatureTransformed.cpp",
+    "retrieved": "2026-09-28",
+    "kind": "code"
+  },
+  {
+    "url": "https://github.com/FreeCAD/FreeCAD/blob/f2065c6624af8afa3587646193980618cf1208fd/src/Mod/PartDesign/PartDesignTests/TestBoolean.py",
+    "retrieved": "2026-09-28",
+    "kind": "code"
+  },
+  {
+    "url": "https://github.com/FreeCAD/FreeCAD/blob/f2065c6624af8afa3587646193980618cf1208fd/src/Mod/PartDesign/PartDesignTests/TestChamfer.py",
+    "retrieved": "2026-09-28",
+    "kind": "code"
+  },
+  {
+    "url": "https://github.com/FreeCAD/FreeCAD/blob/f2065c6624af8afa3587646193980618cf1208fd/src/Mod/PartDesign/PartDesignTests/TestFillet.py",
+    "retrieved": "2026-09-28",
+    "kind": "code"
+  },
+  {
+    "url": "https://github.com/FreeCAD/FreeCAD/blob/f2065c6624af8afa3587646193980618cf1208fd/src/Mod/PartDesign/PartDesignTests/TestLoft.py",
+    "retrieved": "2026-09-28",
+    "kind": "code"
+  },
+  {
+    "url": "https://github.com/FreeCAD/FreeCAD/blob/f2065c6624af8afa3587646193980618cf1208fd/src/Mod/PartDesign/PartDesignTests/TestPad.py",
+    "retrieved": "2026-09-28",
+    "kind": "code"
+  },
+  {
+    "url": "https://github.com/FreeCAD/FreeCAD/blob/f2065c6624af8afa3587646193980618cf1208fd/src/Mod/PartDesign/PartDesignTests/TestPipe.py",
+    "retrieved": "2026-09-28",
+    "kind": "code"
+  },
+  {
+    "url": "https://github.com/FreeCAD/FreeCAD/blob/f2065c6624af8afa3587646193980618cf1208fd/src/Mod/PartDesign/PartDesignTests/TestThickness.py",
+    "retrieved": "2026-09-28",
+    "kind": "code"
+  },
+  {
+    "url": "https://github.com/FreeCAD/FreeCAD/blob/f2065c6624af8afa3587646193980618cf1208fd/src/Mod/PartDesign/PartDesignTests/TestTopologicalNamingProblem.py",
+    "retrieved": "2026-09-28",
+    "kind": "code"
+  },
+  {
+    "url": "https://github.com/FreeCAD/FreeCAD/blob/f2065c6624af8afa3587646193980618cf1208fd/src/Mod/Sketcher/App/Sketch.cpp",
+    "retrieved": "2026-09-28",
+    "kind": "code"
+  },
+  {
+    "url": "https://github.com/FreeCAD/FreeCAD/blob/f2065c6624af8afa3587646193980618cf1208fd/src/Mod/Sketcher/App/SketchObject.cpp",
+    "retrieved": "2026-09-28",
+    "kind": "code"
+  },
+  {
+    "url": "https://github.com/FreeCAD/FreeCAD/blob/f2065c6624af8afa3587646193980618cf1208fd/src/Mod/Sketcher/App/planegcs/GCS.cpp",
+    "retrieved": "2026-09-28",
+    "kind": "code"
+  },
+  {
+    "url": "https://github.com/FreeCAD/FreeCAD/blob/f2065c6624af8afa3587646193980618cf1208fd/src/Mod/Sketcher/App/planegcs/SubSystem.cpp",
+    "retrieved": "2026-09-28",
+    "kind": "code"
+  },
+  {
+    "url": "https://github.com/FreeCAD/FreeCAD/blob/f2065c6624af8afa3587646193980618cf1208fd/src/Mod/Sketcher/SketcherTests/TestSketchFillet.py",
+    "retrieved": "2026-09-28",
+    "kind": "code"
+  },
+  {
+    "url": "https://github.com/FreeCAD/FreeCAD/blob/f2065c6624af8afa3587646193980618cf1208fd/src/Mod/Sketcher/SketcherTests/TestSketchInternalFaces.py",
+    "retrieved": "2026-09-28",
+    "kind": "code"
+  },
+  {
+    "url": "https://github.com/FreeCAD/FreeCAD/blob/f2065c6624af8afa3587646193980618cf1208fd/src/Mod/Sketcher/SketcherTests/TestSketcherSolver.py",
+    "retrieved": "2026-09-28",
+    "kind": "code"
+  },
+  {
+    "url": "https://github.com/FreeCAD/FreeCAD/issues/22031",
+    "retrieved": "2026-09-28",
+    "kind": "code"
+  },
+  {
+    "url": "https://github.com/FreeCAD/FreeCAD/tree/f2065c6624af8afa3587646193980618cf1208fd",
+    "retrieved": "2026-09-28",
+    "kind": "code"
+  },
+  {
+    "url": "https://github.com/FreeCAD/FreeCAD/tree/f2065c6624af8afa3587646193980618cf1208fd/src/Mod/PartDesign/PartDesignTests",
+    "retrieved": "2026-09-28",
+    "kind": "code"
+  },
+  {
+    "url": "https://github.com/FreeCAD/FreeCAD/tree/f2065c6624af8afa3587646193980618cf1208fd/src/Mod/Sketcher/App/planegcs",
+    "retrieved": "2026-09-28",
+    "kind": "code"
+  },
+  {
+    "url": "https://github.com/Open-Cascade-SAS/OCCT/blob/master/LICENSE_LGPL_21.txt",
+    "retrieved": "2026-09-28",
+    "kind": "code"
+  },
+  {
+    "url": "https://github.com/Open-Cascade-SAS/OCCT/blob/master/OCCT_LGPL_EXCEPTION.txt",
+    "retrieved": "2026-09-28",
+    "kind": "code"
+  },
+  {
+    "url": "https://github.com/elalish/manifold",
+    "retrieved": "2026-09-28",
+    "kind": "code"
+  },
+  {
+    "url": "https://github.com/gumyr/build123d",
+    "retrieved": "2026-09-28",
+    "kind": "code"
+  },
+  {
+    "url": "https://occt3d.com/dev/doc/overview/html/occt__tutorial.html",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://occt3d.com/dev/doc/overview/html/occt_user_guides__modeling_algos.html",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://occt3d.com/dev/doc/refman/html/class_b_rep_feat.html",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://occt3d.com/dev/doc/refman/html/class_b_rep_fillet_a_p_i___make_fillet.html",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://occt3d.com/dev/doc/refman/html/class_b_rep_tools___re_shape.html",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://occt3d.com/dev/doc/refman/html/package_brepalgoapi.html",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://occt3d.com/dev/doc/refman/html/package_brepfeat.html",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.claude.com/en/articles/11647753-how-do-usage-and-length-limits-work",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/article_attachments/11567903082012",
+    "retrieved": "2026-09-28",
+    "kind": "image"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/article_attachments/11634825662620",
+    "retrieved": "2026-09-28",
+    "kind": "image"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/article_attachments/13190124996892",
+    "retrieved": "2026-09-28",
+    "kind": "image"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/article_attachments/13190125012636",
+    "retrieved": "2026-09-28",
+    "kind": "image"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/article_attachments/17236283328156",
+    "retrieved": "2026-09-28",
+    "kind": "image"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/article_attachments/19326344492572",
+    "retrieved": "2026-09-28",
+    "kind": "image"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/article_attachments/19326344494620",
+    "retrieved": "2026-09-28",
+    "kind": "image"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/article_attachments/19326355136924",
+    "retrieved": "2026-09-28",
+    "kind": "image"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/article_attachments/26832193794716",
+    "retrieved": "2026-09-28",
+    "kind": "image"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/article_attachments/27407221888924",
+    "retrieved": "2026-09-28",
+    "kind": "image"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/article_attachments/8353168011292",
+    "retrieved": "2026-09-28",
+    "kind": "image"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/article_attachments/8400414880668",
+    "retrieved": "2026-09-28",
+    "kind": "image"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/article_attachments/8611171547548",
+    "retrieved": "2026-09-28",
+    "kind": "image"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/article_attachments/8611203336220",
+    "retrieved": "2026-09-28",
+    "kind": "image"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/article_attachments/8611203854876",
+    "retrieved": "2026-09-28",
+    "kind": "image"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/article_attachments/8613070484508",
+    "retrieved": "2026-09-28",
+    "kind": "image"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/article_attachments/8695273676828",
+    "retrieved": "2026-09-28",
+    "kind": "image"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/article_attachments/8695523335964",
+    "retrieved": "2026-09-28",
+    "kind": "image"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/article_attachments/8724367351580",
+    "retrieved": "2026-09-28",
+    "kind": "image"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/article_attachments/9303744651804",
+    "retrieved": "2026-09-28",
+    "kind": "image"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/article_attachments/9303772314908",
+    "retrieved": "2026-09-28",
+    "kind": "image"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/article_attachments/9310605258908",
+    "retrieved": "2026-09-28",
+    "kind": "image"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/article_attachments/9310634613788",
+    "retrieved": "2026-09-28",
+    "kind": "image"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/article_attachments/9310634614428",
+    "retrieved": "2026-09-28",
+    "kind": "image"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/article_attachments/9312203557916",
+    "retrieved": "2026-09-28",
+    "kind": "image"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/article_attachments/9312227538076",
+    "retrieved": "2026-09-28",
+    "kind": "image"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/article_attachments/9312258118300",
+    "retrieved": "2026-09-28",
+    "kind": "image"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/article_attachments/9312258118556",
+    "retrieved": "2026-09-28",
+    "kind": "image"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/article_attachments/9325320043676",
+    "retrieved": "2026-09-28",
+    "kind": "image"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/article_attachments/9325322989596",
+    "retrieved": "2026-09-28",
+    "kind": "image"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/article_attachments/9840623560476",
+    "retrieved": "2026-09-28",
+    "kind": "image"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/article_attachments/9841324248348",
+    "retrieved": "2026-09-28",
+    "kind": "image"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/article_attachments/9994846282140",
+    "retrieved": "2026-09-28",
+    "kind": "image"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/article_attachments/9994846285084",
+    "retrieved": "2026-09-28",
+    "kind": "image"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/article_attachments/11017077131036",
+    "retrieved": "2026-09-28",
+    "kind": "image"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/11567903089180-History",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/11882948231196-Error-messages-in-History",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/12208897524380-Video-tutorials",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/12469620407452",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/12469688911516",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/12469721233692",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/12469721233692-Sketch-constraints-and-splines",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/12469811306524",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/12469816603548",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/12469816603548-Mastering-the-Project-tool",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/12469864912412",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/12469904681244",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/12469977533212",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/12470629354396",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/12470669638300",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/12470682567452",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/12470702103708",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/12470725468444",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/12470906447900",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/12470976705180",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/12471044573468",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/12471567028252",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/12471618355996",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/12707541267100",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/12709343447196-Rendering-accuracy",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/12728937668252",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13079041629852",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13079101770268",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13079101770268-Get-started-A-Shapr3D-Overview",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13079104356380",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13079111514524",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13079113458332",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13079114694684",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13079128172956",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13079128172956-Control-the-view-of-your-modeling-environment",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13079130132508",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13079145254172",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13079146643484",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13079147107740",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13079147721500",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13079148474012",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13079161457692",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13079163714076",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13079164309276",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13079164901788",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13079165236892",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13079180261148",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13079180591388",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13079183578524",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13079184714780",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13079184714780-Primary-and-secondary-fillets",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13079186051996",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13079191928476",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13079200041244",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13079201809436",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13079201809436-Import-models",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13079202547868",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13079202547868-Section-View-and-Isolate",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13079207858332",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13079212341916",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13079217268892",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13079217268892-Troubleshoot-geometric-errors",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13079217871644",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13079217871644-Design-History-and-importing",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13079226479260",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13079228238876",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13079228238876-Manufacture-ready-2D-drawings",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13388494785052",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13388547608604",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13388548101532",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13388549010204",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13388549543324",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13388552171676",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13388552625948",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13388563684892",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13388563684892-Adjusting-components",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13388568272796",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13388580089884",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13388582153372",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13388582566300",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13388586866204",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13388589809564",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13388595165468",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13388604246556",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13388610292124",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13388614253212",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13388615432988",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13388621707804",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13388637953052",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13778796096284",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13778811223324",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13778812143132",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13778812916636",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13778812916636-Using-History-and-Extrude",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13778814117276",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13778823546268",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13778831587740",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13778860832796",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/13905997206300",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/14013428392988",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/14030414856988",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/14030414856988-Introduction-to-Solid-Modeling",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/14030415438748",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/14030415438748-Direct-vs-Parametric",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/14030432018076",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/14030453623580",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/14030453623580-Housekeeping",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/14030467197724",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/14030468016540",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/14030476361756",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/14032719899804",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/14034235963036-5-620-Merge-History-steps",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/14123801176860",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/14123807461916",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/14357203656348",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/14357230661020",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/14410530503580-Fix-broken-dependencies-in-Design-History",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/14606728571036",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/14667720594716-Shapr3D-Enterprise",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/14716303463580-5-650-Manage-references-in-History",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/14723930086172",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/14852772513180-Shapr3D-on-Vision-Pro",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/14979752930972",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/14979837916700",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/15376294411932",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/15376347789468",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/15376494410524",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/15808437059228",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/15984936815132",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/15984945123484",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/15984985933596",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/16074344685468-Project-Versions",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/16265118385052",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/16307206651932-Immersive-View-settings",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/16307214853276-Host-or-join-a-collaborative-Immersive-View",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/16495917385244-5-740-Construction-Sketching",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/16733836929820",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/17354443052956",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/17355126719004",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/17355659698972",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/18320182069916-Variables-and-expressions",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/18547786660764",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/18568693265820",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/18588192096540",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/18588192096540-Quick-concepts-part-3-Refinements-and-History-based-editing",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/18763796906396",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/19006270240284",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/19202990944284",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/19415232408220-5-840-Tool-and-Section-View-visual-updates",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/19704555060508",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/19704555060508-Building-parametric-models-with-driving-sketches",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/19985993256092",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/20233386582172",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/20233801582748",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/20524622488476-5-880-Navigate-faster-manage-items-better-track-edits-clearly",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/20630445127580",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/21142471202972-Share-project-details-to-your-team",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/21937354512284",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/22702015069468-Generate-AI-renders-in-Visualization",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/23096320932380",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/23096320932380-Interference-analysis-with-Section-View",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/23219229222172-5-1000-Display-modes-and-grid-visibility",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/25620612815260-Wrap-Emboss",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/25704787506460-26-30-Wrap-Emboss-tool-is-here",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/26649952348828",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/26649987200796",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/26649987200796-The-Extrude-tool",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/26650023443228",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/26650101603100",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/26650101603100-The-Revolve-tool",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/26650105781660",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/26650105781660-The-Loft-tool",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/26653091404316-26-80-Decals-in-Visualization",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/26807298276124-Display-Modes",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/27741962859932-26-170-Multicolor-Support-for-Slicer-Integrations",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/28302712921756",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/28560000526108",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/28560000526108-Wall-Clock-Part-2-Real-world-dimensions",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/28560008826268",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/28560008826268-Wall-Clock-Part-3-Hands-and-assembly",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/28560017321372",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/28560017321372-Wall-Clock-Part-1-Concept-Design",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/30117804471964-Shapr3D-sample-models",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7257132997916-Spline",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7321295290012-Sketch-pattern-constraint",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7378907587484-Accessing-tools",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7383914603548-Move-and-copy-items-using-the-gizmo",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7394385784476-Constraint-Settings",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7407627891100-Adding-and-removing-constraints",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7536511116188-Changelog",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7770045712540-Shapr3D-release-updates",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7770681244316-Automatic-Line-Arc",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7770768736924-Selecting-geometry",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7871961422364-Shapr3D-subscription-plans",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7872024839452-Shapr3D-Basic",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7873125176220-Shapr3D-Educational-license",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7873833167132-Shapr3D-Sync",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7873879962524-Shapr3D-Dashboard",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7873880676508-Shapr3D-modeling-space",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7873881091356-Navigation-Presets",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7873882619548-Adaptive-user-interface",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7873906073884-Keyboard-shortcuts-gestures-and-hotkeys",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7873936188956-Items-Manager",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7873937480604-Orientation-Cube",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7873938030492-Section-View",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7873939944476-Access-or-manage-projects-and-folders",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7873942151068-Context-menus",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7873942926876-Command-Search",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7873943982620-Settings-or-Preferences",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7873944390812-Views-and-Appearance",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7873946289564-Snapping-Options",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7873983670044-Constraints-overview",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7874038080668-Defining-and-calculating-numerical-values",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7874240047388-Using-sketch-planes",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7874244766748-Make-construction",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7874245890844-Editing-sketch-dimensions",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7874250627484-Line",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7874294891804-Arc",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7874296426140-Circle",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7874297089564-Ellipse",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7874297964956-Polygon",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7874298998172-Offset-Edge-Sketch",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7874319307804-Rectangle",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7874323891228-Pattern-Sketch",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7874324658204-Trim",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7874363611676-Construction-Axis",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7874364567452-Construction-Plane",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7874366069788-Text",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7874396289308-Move-Rotate-3D",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7874396722460-Scale",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7874397541532-Pattern-3D",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7874398317596-Align",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7874400678428-Offset-Face",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7874402399900-Chamfer-Fillet",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7874421304092-Rotate-Around-Axis",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7874422018588-Mirror",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7874427098268-Shell",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7874427572508-Loft",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7874427955996-Union",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7874453786908-Extrude",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7874455776668-Intersect",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7874456570268-Revolve",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7874456833948-Sweep",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7874457242268-Replace-Face",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7874459464092-Visualization",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7874461913884-Subtract",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7874462683036-Split-Body",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7874464169244-Offset-Edge-3D",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7874464667676-Project",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7874465678236-Measure",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7874466328348-2D-Drawings",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7874497767708-Team-Collaboration",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7874499279900-Augmented-Reality",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7874501326108-Assemblies",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7874501645724-Import",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7874502103068-STL-units",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7874521411612-Published-Versions",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7874523091484-Capture-images-of-your-visualized-model",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7874523532956-Screenshot-tool",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7874523890076-Supported-file-types",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7874524196764-Export",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/7888735383580-Translate",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/9325439776924-Isolate",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/9671864574364-5-420-2D-Drawings-dimensions",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/9760033847964-Shapr3D-Manual",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/articles/9971839217436-5-440-User-Interface-Refresh",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://support.shapr3d.com/hc/en-us/sections/13077968770332-Starter-guide",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://www.blender.org/about/license/",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://www.freecad.org/contributing.php?lang=de",
+    "retrieved": "2026-09-28",
+    "kind": "document"
+  },
+  {
+    "url": "https://www.youtube.com/playlist?list=PLi4l3wxwkqyx_nCh6NcwgC6LJeMBRu193",
+    "retrieved": "2026-09-28",
+    "kind": "video"
+  },
+  {
+    "url": "https://www.youtube.com/shapr3d",
+    "retrieved": "2026-09-28",
+    "kind": "video"
+  },
+  {
+    "url": "https://www.youtube.com/watch?v=4c6xx_z2-Kc",
+    "retrieved": "2026-09-28",
+    "kind": "video"
+  },
+  {
+    "url": "https://www.youtube.com/watch?v=4c6xx_z2-Kc&t=1s",
+    "retrieved": "2026-09-28",
+    "kind": "video"
+  },
+  {
+    "url": "https://www.youtube.com/watch?v=4c6xx_z2-Kc&t=29s",
+    "retrieved": "2026-09-28",
+    "kind": "video"
+  },
+  {
+    "url": "https://www.youtube.com/watch?v=AiS_E686zn4",
+    "retrieved": "2026-09-28",
+    "kind": "video"
+  },
+  {
+    "url": "https://www.youtube.com/watch?v=AiS_E686zn4&t=70s",
+    "retrieved": "2026-09-28",
+    "kind": "video"
+  },
+  {
+    "url": "https://www.youtube.com/watch?v=K3Ht-rk7yoA",
+    "retrieved": "2026-09-28",
+    "kind": "video"
+  },
+  {
+    "url": "https://www.youtube.com/watch?v=RTgDg2kxkG0",
+    "retrieved": "2026-09-28",
+    "kind": "video"
+  },
+  {
+    "url": "https://www.youtube.com/watch?v=RTgDg2kxkG0&t=29s",
+    "retrieved": "2026-09-28",
+    "kind": "video"
+  },
+  {
+    "url": "https://www.youtube.com/watch?v=RTgDg2kxkG0&t=59s",
+    "retrieved": "2026-09-28",
+    "kind": "video"
+  },
+  {
+    "url": "https://www.youtube.com/watch?v=Vbb4HQLW9CQ",
+    "retrieved": "2026-09-28",
+    "kind": "video"
+  },
+  {
+    "url": "https://www.youtube.com/watch?v=Vbb4HQLW9CQ&t=0s",
+    "retrieved": "2026-09-28",
+    "kind": "video"
+  },
+  {
+    "url": "https://www.youtube.com/watch?v=Vbb4HQLW9CQ&t=144s",
+    "retrieved": "2026-09-28",
+    "kind": "video"
+  },
+  {
+    "url": "https://www.youtube.com/watch?v=Vbb4HQLW9CQ&t=199s",
+    "retrieved": "2026-09-28",
+    "kind": "video"
+  },
+  {
+    "url": "https://www.youtube.com/watch?v=Vbb4HQLW9CQ&t=32s",
+    "retrieved": "2026-09-28",
+    "kind": "video"
+  },
+  {
+    "url": "https://www.youtube.com/watch?v=Y2xdCvHiRLE",
+    "retrieved": "2026-09-28",
+    "kind": "video"
+  },
+  {
+    "url": "https://www.youtube.com/watch?v=Y2xdCvHiRLE&t=233s",
+    "retrieved": "2026-09-28",
+    "kind": "video"
+  },
+  {
+    "url": "https://www.youtube.com/watch?v=Y2xdCvHiRLE&t=272s",
+    "retrieved": "2026-09-28",
+    "kind": "video"
+  },
+  {
+    "url": "https://www.youtube.com/watch?v=eX-Tgr9YhoI",
+    "retrieved": "2026-09-28",
+    "kind": "video"
+  },
+  {
+    "url": "https://www.youtube.com/watch?v=eX-Tgr9YhoI&t=343s",
+    "retrieved": "2026-09-28",
+    "kind": "video"
+  },
+  {
+    "url": "https://www.youtube.com/watch?v=gEmQYFF7kE0",
+    "retrieved": "2026-09-28",
+    "kind": "video"
+  },
+  {
+    "url": "https://www.youtube.com/watch?v=n_AQRSRtrKk",
+    "retrieved": "2026-09-28",
+    "kind": "video"
+  },
+  {
+    "url": "https://www.youtube.com/watch?v=u-ceX6v_F0g",
+    "retrieved": "2026-09-28",
+    "kind": "video"
+  },
+  {
+    "url": "https://www.youtube.com/watch?v=u-ceX6v_F0g&t=0s",
+    "retrieved": "2026-09-28",
+    "kind": "video"
+  },
+  {
+    "url": "https://www.youtube.com/watch?v=u-ceX6v_F0g&t=28s",
+    "retrieved": "2026-09-28",
+    "kind": "video"
+  },
+  {
+    "url": "https://www.youtube.com/watch?v=u-ceX6v_F0g&t=43s",
+    "retrieved": "2026-09-28",
+    "kind": "video"
+  }
+]

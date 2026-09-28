@@ -1,0 +1,303 @@
+{
+  "imported_on": "2026-09-28",
+  "purpose": "Assembler planning and research archive",
+  "files": [
+    {
+      "file": "media-manifest.json",
+      "sha256": "78840707b39e99a0b47c344df54d0925575aecec4a6241a6d939ec5916e042ac",
+      "bytes": 15238,
+      "original_import_sha256": "1d760a96d91efba1f2e0cdc83c53e36fd637c0814d73e78fc2c1a53558f43ef0",
+      "original_import_bytes": 15589
+    },
+    {
+      "file": "source-index.json",
+      "sha256": "854b274932ac5e8b0fa2def446253c7a8b942579679812620a3f451cdf36f139",
+      "bytes": 58649,
+      "original_import_sha256": "bf61a9b907c8e59e5ab0c80b6dc6c99f688db5165804654519df86d03bd495b2",
+      "original_import_bytes": 60604
+    },
+    {
+      "file": "research-stats.json",
+      "sha256": "4ba29100968bc53663afbe0942adc9596eede77ec2f59d84a2e7439dd64d4cc1",
+      "bytes": 187,
+      "original_import_sha256": "98637bf58f297c64a71b79fc994ffd016158eed4a27c6d9ffa96482b9d454af9",
+      "original_import_bytes": 194
+    },
+    {
+      "file": "media/11567880618268.png",
+      "sha256": "f59876d3bdcae511ff600f9e6ac523aea90ef595b7b74f078c72cd3fc4183cb7",
+      "bytes": 99681
+    },
+    {
+      "file": "media/11567903082012.png",
+      "sha256": "3668a052f540a5aba932a4d026dc4c86c3c8c56300ff02d338b6d4207e55756e",
+      "bytes": 103653
+    },
+    {
+      "file": "media/11567907258652.png",
+      "sha256": "5f9691dee897ded9740ebbc23ba8b9deb0831ee48a64a923abc8006124bd5687",
+      "bytes": 124187
+    },
+    {
+      "file": "media/11634825662620.png",
+      "sha256": "d33748bda7bcd9278b6d76e402f95f734807cf270c2dd91dd85460b2398f3893",
+      "bytes": 106141
+    },
+    {
+      "file": "media/13190124996892-frame-101.png",
+      "sha256": "05d44b6e5c3bfd5e974f6a57a1f9e16ee67d8c40c5d0268062b111de3afd035e",
+      "bytes": 651630
+    },
+    {
+      "file": "media/13190124996892.gif",
+      "sha256": "a61fc2fd63444a455155db9ae3835791125038688d6220d7233e03fa7af2e43b",
+      "bytes": 5399984
+    },
+    {
+      "file": "media/13190125012636-frame-77.png",
+      "sha256": "f438a0118b01400b3e84babcc452c5baeffa4816f65b3d7597af5995bfe11860",
+      "bytes": 1032539
+    },
+    {
+      "file": "media/13190125012636.gif",
+      "sha256": "bbdc37869e9929dbca5aa04a4b3eab089266f532f3a50ae47187d91729f3bd3f",
+      "bytes": 4834610
+    },
+    {
+      "file": "media/14178061056412.png",
+      "sha256": "3caad427b244fdbfd5125f8cadcae0fb3955621f32296af3b2654d415e928334",
+      "bytes": 249932
+    },
+    {
+      "file": "media/19326355136924-frame-34.png",
+      "sha256": "bd479c7a6277b493214833472bb4c4b857e887130d899cfc9e379022b3d72647",
+      "bytes": 746785
+    },
+    {
+      "file": "media/19326355136924.gif",
+      "sha256": "b907505c254fff245c0132556d591f5da057d501d416a57a5e5012d1c8aae7a8",
+      "bytes": 2078036
+    },
+    {
+      "file": "media/25290706303004-frame-239.png",
+      "sha256": "f6bb062010f6d7f19194ae23b019383971f93236ec34166874fff4dd4ba72404",
+      "bytes": 752687
+    },
+    {
+      "file": "media/25290706303004.gif",
+      "sha256": "6e9b63bee736b7ad304b91b7cabaeb893eea340edd4309a90711dbc7df8476f1",
+      "bytes": 9486870
+    },
+    {
+      "file": "media/27407221888924-frame-173.png",
+      "sha256": "09d945b6c7dd44b9b46d276738622a4b2aec60106c74ada1b67b4e859b6a875e",
+      "bytes": 249835
+    },
+    {
+      "file": "media/27407221888924.gif",
+      "sha256": "25ca366d6a2884c9b5708afcbd772b305d295d9451fd9ae72091b82049cacfd4",
+      "bytes": 4269548
+    },
+    {
+      "file": "media/8400404452124-frame-121.png",
+      "sha256": "0d5073ff7b0f25065b320e8065a51e4f7c4dfd38172a093c234df8fd0bb5be2a",
+      "bytes": 715470
+    },
+    {
+      "file": "media/8400404452124.gif",
+      "sha256": "995920a724aa4ef40819e21eb0590ce02a5f43392898b637ee1b7fd66b457a9c",
+      "bytes": 2730562
+    },
+    {
+      "file": "media/8400404586268-frame-94.png",
+      "sha256": "2a7e7d7ac1f9a750bb2306a1a926cee4ef43ba1b316a11bc45a2cc57fe80f91c",
+      "bytes": 172196
+    },
+    {
+      "file": "media/8400404586268.gif",
+      "sha256": "45f2038ced489e1f6765e15ebd6a184aad647b1c1654e7be0e2ffdfaf137ba60",
+      "bytes": 3547562
+    },
+    {
+      "file": "media/8400404679324-frame-81.png",
+      "sha256": "4fd179d21494bf541fab5b043ed42f0179ab4420d5038e6a78427eb64683dabe",
+      "bytes": 852766
+    },
+    {
+      "file": "media/8400404679324.gif",
+      "sha256": "e05d899849a0dd9de2a3b22f534a901130fe352ace9114b40bd155fc9f00d494",
+      "bytes": 2053207
+    },
+    {
+      "file": "media/8400414548892-frame-37.png",
+      "sha256": "13b24e882a59639b50299f723a372d170dce3a3eaf2387350dea8e586d309d1e",
+      "bytes": 504837
+    },
+    {
+      "file": "media/8400414548892.gif",
+      "sha256": "66cf136636921979a28b1bff4e41e343a060f9acc74573ff1fda8814f5e5e9b5",
+      "bytes": 1774280
+    },
+    {
+      "file": "media/8400414880668.png",
+      "sha256": "cad151f3792d51179755791f55c28ad2a7658b46a2a2ba547e9a4ce64cce0a32",
+      "bytes": 969960
+    },
+    {
+      "file": "media/8611171547548-frame-11.png",
+      "sha256": "e536931fdf6e129fbe232047bd498df47e50861395348ae533d7c385c7057181",
+      "bytes": 459516
+    },
+    {
+      "file": "media/8611171547548.gif",
+      "sha256": "dc38b6941c1a23a3d095f396fc875efe628e9bad35d2d40eebe11b0e1049d63a",
+      "bytes": 331441
+    },
+    {
+      "file": "media/8611203336220-frame-22.png",
+      "sha256": "f8b83691babb9f5f307b69a628ee8f5d8ecf896058b82c67a7c91933c944cee0",
+      "bytes": 649070
+    },
+    {
+      "file": "media/8611203336220.gif",
+      "sha256": "aa578dcc2b7eeb4ae156b8e339fedce3fe6fbafb3095ef51dbc4aeee9ecf142c",
+      "bytes": 1291957
+    },
+    {
+      "file": "media/8611203854876-frame-37.png",
+      "sha256": "117d1144c353d457cedc2bc3845cc25f5ec39f871b4678bd69e6c03e283440b6",
+      "bytes": 435543
+    },
+    {
+      "file": "media/8611203854876.gif",
+      "sha256": "dc71c3ed9c41945c39de9b45b975680d2a8b048b46b2635d92c5accaca81e64b",
+      "bytes": 612239
+    },
+    {
+      "file": "media/8695273676828.png",
+      "sha256": "d0dcab5cf6d4159012ff001070d0aafa744d64dde2e0a36de163c72f38520927",
+      "bytes": 176676
+    },
+    {
+      "file": "media/8695320162332.png",
+      "sha256": "59b33a18a56e716e51aa69b35d2cd956df0f8e2c33930f73d98dee38594210af",
+      "bytes": 5860
+    },
+    {
+      "file": "media/8695495934748.png",
+      "sha256": "31b97c060c1bf29af673ed9b562bc90295eff03f34bb9cbe042ef4fd16f87ab4",
+      "bytes": 414915
+    },
+    {
+      "file": "media/8695523335964.png",
+      "sha256": "2ac93eb2a4b4918fcaa8d640f3175df146405ab9dda1d34445387382d6eccd34",
+      "bytes": 563121
+    },
+    {
+      "file": "media/9310605258908.png",
+      "sha256": "67e96303977e2507ca8b01bcc0ed8c782a5b449d636b80439f83794e515aa1d7",
+      "bytes": 1206740
+    },
+    {
+      "file": "media/9310634613788.png",
+      "sha256": "2b17bbdc6faf8be5a1f910ea408737cc251c4d70d4bd549153a75e210f51223d",
+      "bytes": 1337763
+    },
+    {
+      "file": "media/9310634614428.png",
+      "sha256": "52e7dde57183f0f02800b7736166810703aee3fae7018326d333f40eee2f6e83",
+      "bytes": 1368858
+    },
+    {
+      "file": "media/9312203557916-frame-15.png",
+      "sha256": "81f4bbf80745d64379e36da640958eb8e01b36d949eea3be1501365e79a2e282",
+      "bytes": 1297527
+    },
+    {
+      "file": "media/9312203557916.gif",
+      "sha256": "60a864f79123a036bddb27a938b925c7791dc0da1ac5c92569c3a4520418ff2d",
+      "bytes": 764131
+    },
+    {
+      "file": "media/9312227538076-frame-12.png",
+      "sha256": "7cf0c2c48b287772c5f375d25c939ffbfb43f8313852ee404392353f6fe03b0a",
+      "bytes": 1357610
+    },
+    {
+      "file": "media/9312227538076.gif",
+      "sha256": "b48b496026588834aeeeb1ab764c8a1f04a6ccf615dd3e7703c47dfdf8bab81e",
+      "bytes": 690340
+    },
+    {
+      "file": "media/9995358408092-frame-103.png",
+      "sha256": "66f729a8762091902a864712cf9cf1983f191e1e58f930ff99088845ee7c4213",
+      "bytes": 969386
+    },
+    {
+      "file": "media/9995358408092.gif",
+      "sha256": "301dcf62540eabf0238785120deaf38661e85a191b79e2cb69028ee67d7b3cb6",
+      "bytes": 3739041
+    },
+    {
+      "file": "media/9995364445980-frame-77.png",
+      "sha256": "16cd49b3faf02c7adf05998b0b1187323cc88079cd39ac9f710ed68bc3df1230",
+      "bytes": 238379
+    },
+    {
+      "file": "media/9995364445980.gif",
+      "sha256": "d5f787f83f5be4e193fbe506e5b1299c6b00272f7e53e40192c0014618d7d71b",
+      "bytes": 6730338
+    },
+    {
+      "file": "notes/interaction.md",
+      "sha256": "a51cf0f8f413da44ff258a25f9cec8dd01c8ec52492d578908f3ac1cda296855",
+      "bytes": 40364,
+      "original_import_sha256": "9ba77595304241d48a99e43d7aad662d8a18b3a2543f59b98bd11197ee6eab9e",
+      "original_import_bytes": 35058
+    },
+    {
+      "file": "notes/modeling.md",
+      "sha256": "993cfe323ace2789a0e8d189f353b512b7c187855f1a6ebd3173a9f9c3075b86",
+      "bytes": 50278,
+      "original_import_sha256": "7ced9ea469bec0ce3f63ccb9655e8b3b75b5c97f543e390b5405138fc16efca2",
+      "original_import_bytes": 36604
+    },
+    {
+      "file": "notes/scope-media.md",
+      "sha256": "7edb886f191dff947ffee348ba0725ba98b0fe363d61c5839f04e5d35d03d2c9",
+      "bytes": 36754,
+      "original_import_sha256": "f06a4aea3c11f2523982abb176237ebeb9cd0bce018620a40ae2e444d7646b1c",
+      "original_import_bytes": 31399
+    },
+    {
+      "file": "notes/freecad-mapping.md",
+      "sha256": "4505f528b5f2f298e80655ba7c070832e0435e9a62f35755b5a983f5e66d1450",
+      "bytes": 48861,
+      "original_import_sha256": "bf9caf87d613bddd12b3d88ec1d72b2bb327f95fb057df5c0787a9d5eeac181e",
+      "original_import_bytes": 32057
+    },
+    {
+      "file": "notes/coverage-audit.md",
+      "sha256": "5aa37b895e4c57c1036e1f889193c4d2923bdbf725d87fb1ee87fac5b9793178",
+      "bytes": 20274,
+      "original_import_sha256": "1419b0556b90bf83594fbc91c361163e6199630896b52c3530db2d35e57d0b85",
+      "original_import_bytes": 12254
+    },
+    {
+      "file": "notes/tutorial-catalog.md",
+      "sha256": "c8e2fb5721386672aa9eb36737c907b4950b5f56857ffe7d21b6777844b743cd",
+      "bytes": 37862,
+      "original_import_sha256": "81eee043ce2da31a381a36c44156e63f77495c9ed9a020a56822243ca63e00f9",
+      "original_import_bytes": 26903
+    },
+    {
+      "file": "Report.md",
+      "sha256": "1d3dd9271d5fee9a4bad4a3aa1fbc95d46990242971c077f87b723eccf2eede6",
+      "source_sha256": "61818d20608adaaa8908dc6e298053f9a724f97da58667c32c1bdd3dc15129d9",
+      "modification": "Added current-plan/fork status banner; normalized text newlines.",
+      "original_import_sha256": "898b738177c048844877554e8af60154502b63bd19b56d337c8db68013722873",
+      "bytes": 254178
+    }
+  ],
+  "repository_formatting": "Text files formatted with repository Prettier settings and LF for Git. Original import digests are retained separately when bytes changed; media bytes are unchanged."
+}

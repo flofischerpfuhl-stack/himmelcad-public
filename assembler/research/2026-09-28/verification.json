@@ -1,0 +1,9 @@
+{
+  "checked_on": "2026-09-28",
+  "hashes_checked": 55,
+  "hash_mismatches": [],
+  "markdown_local_links_checked": 68,
+  "missing_local_links": [],
+  "html_status_banner_present": true,
+  "implementation_tests": "Not run: documentation and reference-media import only."
+}
