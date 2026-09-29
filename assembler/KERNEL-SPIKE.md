@@ -37,8 +37,9 @@ Why, for this slice:
 ## What was built
 
 - `kernel/evaluator.ts` — replays the feature list with replicad/OCCT:
-  `sketch` (XY/XZ/YZ + offset or a planar face; rectangle and circle
-  profiles, data-driven), `extrude` (distance, both sides, new/join/cut;
+  `sketch` (XY/XZ/YZ + offset or a planar face; since the sketch-solver
+  merge a constrained sketch whose closed regions are the profiles, see
+  `SKETCHING.md`; originally rectangle and circle profiles), `extrude` (distance, both sides, new/join/cut;
   planar-face push/pull), `fillet`, `chamfer`, `shell`, `boolean`
   (union/subtract/intersect, tools consumed), `move`, `setAppearance`.
   A failing feature records an error and leaves bodies unchanged; later
@@ -158,13 +159,24 @@ Limits (known, not solved by the spike):
 
 Added on top of the slice, as real kernel features (`model/features.ts`,
 `kernel/features/*`, hooked into `evaluator.ts` through a small
-`FeatureKit` — the evaluator stays the owner of body state, profile
-construction and reference resolution):
+`FeatureKit` — the evaluator stays the owner of body state and reference
+resolution). Profiles are read like Extrude's: the detected sketch regions
+(`regions` keys, else every region; faces built by
+`kernel/sketchGeometry.ts#regionFace`) or a planar body face. Generated faces
+are named after the sketch entity of the boundary piece that swept them
+(`<feature>:side:<p>:<entityId>`, `~k` for several pieces of one entity; a
+face profile uses the edge index), `p` being the region's position in the
+reference — the same scheme as Extrude, so v1 files migrate with one rule. A
+revolve/pattern axis can be any sketch line by entity id, construction lines
+included (`{kind: "sketchLine", featureId, entityId}`); the Revolve tool
+defaults to a construction line of the profile's sketch that does not cross
+the profile, and sketch lines become pickable axis targets while Revolve or
+Pattern runs.
 
 | Feature                                                                | OCCT route                                                                                                                                        | Naming                                                                                                                                                                                                                          |
 | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Revolve (profile + world/edge/sketch-line axis)                        | `BRepPrimAPI_MakeRevol` per profile, New/Join/Cut via the extrude booleans                                                                        | from OCCT history: `Generated(edge)` → `:side:<p>:<segment>`, `FirstShape/LastShape` → `:start/:end`; faces OCCT does not report (planar annuli of a full revolve) fall back to the profile segment lying on the face's surface |
-| Sweep (edge chain, sketch outline or straight line path)               | `BRepOffsetAPI_MakePipeShell` (corrected Frenet), `MakeSolid`                                                                                     | same scheme (`Generated`, first/last shape)                                                                                                                                                                                     |
+| Revolve (profile + world/edge/sketch-line axis)                        | `BRepPrimAPI_MakeRevol` per profile, New/Join/Cut via the extrude booleans                                                                        | from OCCT history: `Generated(edge)` → `:side:<p>:<entityId>`, `FirstShape/LastShape` → `:start/:end`; faces OCCT does not report (planar annuli of a full revolve) fall back to the boundary piece lying on the face's surface |
+| Sweep (edge chain, sketch region outline or straight line path)        | `BRepOffsetAPI_MakePipeShell` (corrected Frenet), `MakeSolid`                                                                                     | same scheme (`Generated`, first/last shape)                                                                                                                                                                                     |
 | Loft (≥ 2 profiles, smooth or ruled)                                   | `BRepOffsetAPI_ThruSections` with compatibility check                                                                                             | `GeneratedFace(edge of the first section)`, first/last shape                                                                                                                                                                    |
 | Mirror, Pattern (linear/circular), Transform (move/rotate/copy), Align | `gp_Trsf` (`SetMirror/SetRotation/SetTranslation`) + `BRepBuilderAPI_Transform`                                                                   | the face descriptors are transformed with the same affine map (`rigid.ts`), so in-place motions keep every key; copies are new bodies (`body:<feature>:<n>`) carrying the source keys                                           |
 | Split Body (world plane or planar face)                                | `intersect`/`cut` with a half-space prism                                                                                                         | inherited by surface identity; the new cut faces are `<feature>:cut`; the positive side becomes `body:<feature>`                                                                                                                |

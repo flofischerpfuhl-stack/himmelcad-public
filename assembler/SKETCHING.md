@@ -1,6 +1,8 @@
 # Assembler — constrained sketches and sketch mode
 
-Status: **implemented slice** (2026-09-29, branch `asm/solver-20260929`). This
+Status: **implemented slice** (2026-09-29, branch `asm/solver-20260929`;
+merged with the modelling features and the agent API on
+`feat/assembler-phase0-20260929`). This
 records the design, the solver decision, what works and the known limits. It
 serves owner intent U1/U2 (Shapr3D-like sketching for printable parts) and the
 `PLAN.md` §2 scope item "2D-Konstruktionsskizzen … Maße, Constraints und
@@ -96,6 +98,10 @@ is skipped with a warning instead of failing the sketch.
 
 ### v1 → v2 migration (`sketch/migration.ts`, schema version 2)
 
+The project format has one ordered migration chain (`model/project/format.ts`
+`MIGRATIONS`, `n` → `n + 1`, then strict validation of the current schema);
+v1 → v2 is its first step.
+
 `.hcasm` files of schema 1 (rectangle/circle `profiles`) load through a
 tested migration: each profile becomes a fully dimensioned sketch (rectangle:
 4 lines, 2 horizontal + 2 vertical, corner position from the origin + width
@@ -105,6 +111,11 @@ tested migration: each profile becomes a fully dimensioned sketch (rectangle:
   keys; index-based face keys in fillet/chamfer/shell/sketch-plane references
   are renamed (`side:0:0` → `side:0:l1`). The stored v1 demo bracket migrates
   to exactly the v2 demo document (`test/model/project/format.test.ts`).
+  Schema-1 files written by the modelling-features build migrate the same way:
+  revolve/sweep/loft `profileIndex` → `regions` (and their face keys), a
+  sweep's sketch path → `region`, a revolve/pattern `sketchEdge` axis
+  (profile segment) → `sketchLine` (entity id)
+  (`test/kernel/features.test.ts`, migrated and evaluated on the kernel).
 
 ## Sketch mode (Shapr3D behaviour)
 
@@ -196,5 +207,9 @@ calibration).
   (same as FreeCAD); undo restores the previous state.
 - Sketches on non-XY planes draw their own light grid in the overlay; the
   WebGL grid stays on world XY.
-- The other workstreams' features (e.g. revolve) must read sketch profiles
-  through `regions`, not the removed v1 `profiles`/`profileIndex`.
+- Revolve, Sweep and Loft read profiles through `regions` like Extrude; a
+  sweep path is a region's outer outline (open sketch curves are not a sweep
+  path yet).
+- Agents drive sketches through the agent API (`assembler/AGENT-API.md`):
+  shapes, polylines, arcs, constraints and dimensions, each solved by the same
+  planeGCS solver (in-process in the headless CLI).
