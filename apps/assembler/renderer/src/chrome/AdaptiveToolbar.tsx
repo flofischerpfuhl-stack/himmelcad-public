@@ -54,7 +54,10 @@ export function AdaptiveToolbar({ state }: { state: AssemblerState }): JSX.Eleme
             onClick={() => run(command)}
           >
             <Icon size={16} />
-            {labels === 'always' ? <span className={styles.caption}>{command.label}</span> : null}
+            {labels === 'always' ? (
+              // A break opportunity after "/" ("Move/Rotate" wraps as "Move/ Rotate").
+              <span className={styles.caption}>{command.label.replace('/', '/​')}</span>
+            ) : null}
           </button>
         );
         // Settings › Toolbar labels: icons only, tooltip on hover, or always captioned.
