@@ -1,0 +1,137 @@
+/**
+ * Icon lookups for the chrome. Own icon choices from `lucide-react` (never
+ * Shapr3D assets) — see the task brief's reference-only note.
+ */
+import {
+  ArrowDown,
+  ArrowUp,
+  ArrowUpFromLine,
+  Axis3D,
+  Box,
+  BoxSelect,
+  Boxes,
+  CircleDot,
+  Combine,
+  CopyMinus,
+  CopyPlus,
+  Diff,
+  Eye,
+  EyeOff,
+  FileOutput,
+  FilePlus2,
+  FolderOpen,
+  Home,
+  Maximize,
+  Move3d,
+  MoveDiagonal,
+  PackageOpen,
+  PanelBottom,
+  PanelLeft,
+  PanelRight,
+  PanelTop,
+  PenLine,
+  PenSquare,
+  RectangleHorizontal,
+  Redo2,
+  RotateCw,
+  Ruler,
+  Save,
+  Scan,
+  Scissors,
+  Spline,
+  SquareDashedMousePointer,
+  Trash2,
+  Undo2,
+  type LucideIcon,
+} from 'lucide-react';
+
+import type { Command, CommandGroup } from '../model/commands/registry.js';
+import type { Feature } from '../model/mockDocument.js';
+import type { SelectionItem } from '../model/store.js';
+
+export const GROUP_ICON: Record<CommandGroup, LucideIcon> = {
+  sketch: PenSquare,
+  add: Combine,
+  transform: MoveDiagonal,
+  tools: Scissors,
+  modes: Scan,
+  edit: SquareDashedMousePointer,
+  view: Axis3D,
+  file: Box,
+};
+
+/**
+ * Per-command icon, keyed by `Command.id` — used by the adaptive toolbar so
+ * e.g. Extrude gets its own icon instead of falling back to its group's
+ * (Tools -> scissors) icon, which reads as "delete/cut" for an additive
+ * operation. Deliberately distinct from {@link GROUP_ICON}: a command's
+ * icon should never be the same glyph as its own group trigger, so the two
+ * are never visually interchangeable in the same surface.
+ */
+export const COMMAND_ICON: Partial<Record<string, LucideIcon>> = {
+  'sketch.rectangle': RectangleHorizontal,
+  'sketch.line': PenLine,
+  'sketch.circle': CircleDot,
+  'tools.extrude': ArrowUpFromLine,
+  'tools.filletChamfer': Spline,
+  'tools.shell': PackageOpen,
+  'tools.revolve': RotateCw,
+  'tools.union': CopyPlus,
+  'tools.subtract': CopyMinus,
+  'tools.intersect': Diff,
+  'transform.moveRotate': Move3d,
+  'transform.delete': Trash2,
+  'view.front': ArrowDown,
+  'view.back': ArrowUp,
+  'view.top': PanelTop,
+  'view.bottom': PanelBottom,
+  'view.right': PanelRight,
+  'view.left': PanelLeft,
+  'view.iso': Home,
+  'view.zoomToFit': Maximize,
+  'modes.section': Scan,
+  'modes.isolate': Boxes,
+  'modes.measure': Ruler,
+  'edit.undo': Undo2,
+  'edit.redo': Redo2,
+  'edit.hide': EyeOff,
+  'edit.showAll': Eye,
+  'edit.selectAllBodies': BoxSelect,
+  'file.new': FilePlus2,
+  'file.open': FolderOpen,
+  'file.save': Save,
+  'file.export3mf': FileOutput,
+};
+
+/** `COMMAND_ICON[command.id]`, falling back to the command's group icon. */
+export function commandIcon(command: Pick<Command, 'id' | 'group'>): LucideIcon {
+  return COMMAND_ICON[command.id] ?? GROUP_ICON[command.group];
+}
+
+export function featureKindIcon(kind: Feature['kind']): LucideIcon {
+  switch (kind) {
+    case 'sketchRect':
+      return PenSquare;
+    case 'extrude':
+      return Combine;
+    case 'move':
+      return MoveDiagonal;
+    case 'setAppearance':
+      return Eye;
+  }
+}
+
+export function selectionKindIcon(kind: SelectionItem['kind']): LucideIcon {
+  switch (kind) {
+    case 'body':
+      return Box;
+    case 'face':
+      return Scan;
+    case 'edge':
+      return Spline;
+    case 'sketchProfile':
+      return PenSquare;
+    case 'feature':
+      return Combine;
+  }
+}

@@ -1,0 +1,60 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--hc-space-1);
+  padding: var(--hc-space-1);
+  background: var(--hc-bg-island);
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-lg);
+  box-shadow: var(--hc-shadow-island);
+}
+
+.button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: none;
+  border-radius: var(--hc-radius-md);
+  background: transparent;
+  color: var(--hc-fg-default);
+  cursor: pointer;
+  transition:
+    background var(--hc-motion-fast),
+    color var(--hc-motion-fast);
+}
+
+.button:hover {
+  background: var(--hc-hover-bg);
+}
+
+.button:focus-visible {
+  outline: 2px solid var(--hc-focus-ring);
+  outline-offset: 1px;
+}
+
+.recommended {
+  background: var(--hc-accent-base);
+  color: var(--hc-fg-on-accent);
+}
+
+.recommended:hover {
+  background: var(--hc-accent-hover);
+}
+
+.divider {
+  height: 1px;
+  margin: 2px 4px;
+  background: var(--hc-border-subtle);
+}
+
+.clear {
+  color: var(--hc-fg-subtle);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .button {
+    transition: none;
+  }
+}

@@ -1,0 +1,85 @@
+.pill {
+  position: absolute;
+  /* Top bar island is `top: 12px` + `height: 40px` (TopBar.module.css) =
+     bottom edge at 52px; sit 8px below that so the pill never overlaps the
+     top bar at any viewport width (960-1920px). */
+  top: 60px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: var(--hc-space-2);
+  padding: var(--hc-space-1) var(--hc-space-3);
+  background: var(--hc-bg-island);
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-lg);
+  box-shadow: var(--hc-shadow-island);
+  pointer-events: auto;
+}
+
+.name {
+  font-family: var(--hc-font-ui);
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--hc-fg-strong);
+}
+
+.shortcut {
+  font-family: var(--hc-font-mono);
+  font-size: 11px;
+  color: var(--hc-fg-subtle);
+}
+
+.divider {
+  width: 1px;
+  height: 14px;
+  background: var(--hc-border-default);
+}
+
+.prompt {
+  font-family: var(--hc-font-ui);
+  font-size: 12px;
+  color: var(--hc-fg-muted);
+}
+
+.badge {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 3px;
+  border-radius: var(--hc-radius-sm);
+  background: var(--hc-bg-chip);
+}
+
+.badgeOption {
+  padding: 3px 8px;
+  border: none;
+  border-radius: var(--hc-radius-sm);
+  background: transparent;
+  color: var(--hc-fg-muted);
+  font-family: var(--hc-font-ui);
+  font-size: 11px;
+  cursor: pointer;
+  transition: background var(--hc-motion-fast);
+}
+
+.badgeOptionActive {
+  background: var(--hc-accent-base);
+  color: var(--hc-fg-on-accent);
+}
+
+.actions {
+  position: absolute;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: var(--hc-space-2);
+  pointer-events: auto;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .badgeOption {
+    transition: none;
+  }
+}

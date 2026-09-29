@@ -1,0 +1,94 @@
+.root {
+  position: absolute;
+  top: 64px;
+  bottom: 64px;
+  left: 12px;
+  width: 48px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--hc-space-2);
+  pointer-events: auto;
+}
+
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--hc-space-1);
+  background: var(--hc-bg-island);
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-lg);
+  box-shadow: var(--hc-shadow-island);
+}
+
+.spacer {
+  flex: 1;
+}
+
+.iconButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: var(--hc-radius-md);
+  background: transparent;
+  color: var(--hc-fg-default);
+  cursor: pointer;
+  transition: background var(--hc-motion-fast);
+}
+
+.iconButton:hover {
+  background: var(--hc-hover-bg);
+}
+
+.iconButton:focus-visible {
+  outline: 2px solid var(--hc-focus-ring);
+  outline-offset: 1px;
+}
+
+.iconButtonActive {
+  background: var(--hc-accent-base);
+  color: var(--hc-fg-on-accent);
+}
+
+.iconButtonActive:hover {
+  background: var(--hc-accent-hover);
+}
+
+.modeButton {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 108px;
+  padding: 6px 8px;
+  border: none;
+  border-radius: var(--hc-radius-md);
+  background: transparent;
+  color: var(--hc-fg-default);
+  cursor: pointer;
+  font-family: var(--hc-font-ui);
+  font-size: 10px;
+}
+
+.modeButton:hover {
+  background: var(--hc-hover-bg);
+}
+
+.modeButtonActive {
+  background: var(--hc-accent-base);
+  color: var(--hc-fg-on-accent);
+}
+
+.modeState {
+  margin-left: auto;
+  opacity: 0.85;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .iconButton {
+    transition: none;
+  }
+}

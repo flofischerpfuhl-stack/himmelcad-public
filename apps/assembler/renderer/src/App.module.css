@@ -1,26 +1,32 @@
-.frame {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  height: 100vh;
+/*
+ * Full-bleed viewport with floating "island" chrome on top — see
+ * docs/DESIGN-SYSTEM.md "Visual language" (Dark Islands) and the task's
+ * layout brief. The viewport is the first child and fills `.root`; every
+ * other child is absolutely positioned within it and only occupies its
+ * own box, so it never blocks pointer events elsewhere in the canvas.
+ */
+.root {
+  position: relative;
   width: 100vw;
+  height: 100vh;
+  overflow: hidden;
   background: var(--hc-bg-void);
   color: var(--hc-fg-default);
-  text-align: center;
-}
-
-.title {
-  font-family: var(--hc-font-display);
-  font-size: 22px;
-  color: var(--hc-fg-strong);
-  margin: 0;
-}
-
-.subtitle {
   font-family: var(--hc-font-ui);
-  font-size: 14px;
-  color: var(--hc-fg-muted);
-  margin: 0;
+}
+
+.viewportLayer {
+  position: absolute;
+  inset: 0;
+}
+
+.viewportFallback {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--hc-fg-subtle);
+  font-family: var(--hc-font-ui);
+  font-size: 13px;
 }

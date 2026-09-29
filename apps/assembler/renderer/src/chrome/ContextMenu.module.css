@@ -1,0 +1,26 @@
+.menu {
+  min-width: 200px;
+  padding: var(--hc-space-1);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--hc-space-3);
+  width: 100%;
+}
+
+.label {
+  display: flex;
+  align-items: center;
+  gap: var(--hc-space-2);
+  min-width: 0;
+}
+
+.shortcut {
+  font-family: var(--hc-font-mono);
+  font-size: 11px;
+  color: var(--hc-fg-subtle);
+  flex-shrink: 0;
+}

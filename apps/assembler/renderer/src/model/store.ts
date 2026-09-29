@@ -131,6 +131,13 @@ export type FeaturePatch =
 
 export interface AssemblerState {
   projectName: string;
+  /**
+   * Sets the project's display name (view/document metadata, not part of
+   * the undo-tracked `features` history — matches `loadDocument`'s
+   * `projectName` option). `name` is trimmed; a blank result is a no-op so
+   * the top bar always has something to show.
+   */
+  setProjectName: (name: string) => void;
   features: Feature[];
   evaluation: EvaluationResult;
 
@@ -236,7 +243,25 @@ function selectionItemResolves(
   }
 }
 
-let featureIdCounter = 0;
+/**
+ * Seeded from the demo document's own ids (`feature-extrude-3`, etc.) so
+ * newly created features never collide with the pre-existing mock document
+ * — starting this at `0` made the very first feature created in any fresh
+ * session (e.g. the first Extrude) reuse an id like `feature-extrude-1`
+ * that the seed data already owns, corrupting id-keyed lookups
+ * (`editFeatureParams`/`deleteFeature`/`renameFeature`/`setSuppressed` all
+ * find-by-id) and producing duplicate React keys in the History panel.
+ */
+let featureIdCounter = highestFeatureIdSuffix(createDemoDocument());
+
+function highestFeatureIdSuffix(features: readonly { id: string }[]): number {
+  let max = 0;
+  for (const feature of features) {
+    const match = /-(\d+)$/.exec(feature.id);
+    if (match) max = Math.max(max, Number(match[1]));
+  }
+  return max;
+}
 
 function createFeatureId(kind: string): string {
   featureIdCounter += 1;
@@ -320,7 +345,12 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
   }
 
   return {
-    projectName: 'Untitled Assembler Project',
+    projectName: 'Bracket',
+    setProjectName: (name) => {
+      const trimmed = name.trim();
+      if (!trimmed) return;
+      set({ projectName: trimmed });
+    },
     features: createDemoDocument(),
     evaluation: evaluate(createDemoDocument()),
 

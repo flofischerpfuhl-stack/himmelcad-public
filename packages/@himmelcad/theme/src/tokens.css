@@ -77,6 +77,13 @@
   --hc-geometry-active-preview: #ffd166;
   --hc-geometry-reticle: #f0f1f3;
   --hc-geometry-prohibited: #f75464;
+  /*
+   * CAD body-edge "ink" — crisp dark silhouette/edge lines on body
+   * surfaces, independent of body appearance color and of the app theme
+   * (Shapr3D-style light bodies with dark edges reads correctly in both
+   * Dark Islands and the light dashboard).
+   */
+  --hc-geometry-edge-ink: #14161a;
 
   /* Status — solid only, no gradients */
   --hc-success: #73b00a;
@@ -202,6 +209,7 @@
   --hc-geometry-active-preview: #7a5200;
   --hc-geometry-reticle: #0f1115;
   --hc-geometry-prohibited: #d63b4a;
+  --hc-geometry-edge-ink: #14161a;
 
   --hc-success: #3d8b0a;
   --hc-success-fg: #1f4a05;

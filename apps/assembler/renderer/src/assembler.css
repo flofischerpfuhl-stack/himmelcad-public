@@ -1,6 +1,6 @@
 /* Assembler renderer shell — reads only shared HimmelCAD tokens.
- * No product-specific colors, shadows, radii, or fonts here yet: the real
- * ribbon/entity-tree/viewport shell is designed in a follow-up pass. */
+ * The application chrome (top bar, docks, panels, viewport overlays) lives
+ * in `App.tsx`/`chrome/**`; this file only sets the document-level base. */
 
 html,
 body,

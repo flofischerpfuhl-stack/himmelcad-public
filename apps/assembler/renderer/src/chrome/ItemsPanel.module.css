@@ -1,0 +1,77 @@
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--hc-space-2);
+  padding: 6px var(--hc-space-2);
+  border-radius: var(--hc-radius-sm);
+  cursor: pointer;
+  color: var(--hc-fg-default);
+  transition: background var(--hc-motion-fast);
+}
+
+.row:hover {
+  background: var(--hc-hover-bg);
+}
+
+.rowSelected {
+  background: var(--hc-press-bg);
+  border: 1px solid var(--hc-selection-accent-border);
+  padding: 5px 7px;
+}
+
+.rowHidden {
+  color: var(--hc-fg-subtle);
+}
+
+.icon {
+  display: flex;
+  color: var(--hc-fg-muted);
+  flex-shrink: 0;
+}
+
+.name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--hc-font-ui);
+  font-size: 12px;
+}
+
+.rowButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  border: none;
+  border-radius: var(--hc-radius-sm);
+  background: transparent;
+  color: var(--hc-fg-subtle);
+  cursor: pointer;
+}
+
+.rowButton:hover {
+  background: var(--hc-active-bg);
+  color: var(--hc-fg-default);
+}
+
+.rowButtonActive {
+  color: var(--hc-accent-base);
+}
+
+.sectionLabel {
+  padding: 6px var(--hc-space-2) 2px;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--hc-fg-subtle);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .row {
+    transition: none;
+  }
+}

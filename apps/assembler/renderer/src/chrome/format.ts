@@ -1,0 +1,53 @@
+/**
+ * Small presentation helpers shared across the chrome: selection summary
+ * text, body dimensions, and feature/command display names. Pure, no
+ * store access — callers pass in the already-read state.
+ */
+import { bodyDimensions } from '../model/mockDocument.js';
+import type { Body, Feature } from '../model/mockDocument.js';
+import type { SelectionItem } from '../model/store.js';
+
+const KIND_LABELS: Record<SelectionItem['kind'], [string, string]> = {
+  body: ['body', 'bodies'],
+  face: ['face', 'faces'],
+  edge: ['edge', 'edges'],
+  sketchProfile: ['sketch', 'sketches'],
+  feature: ['feature', 'features'],
+};
+
+/** `"1 face"`, `"2 edges & 1 body"`, `""` for an empty selection. */
+export function selectionSummary(selection: readonly SelectionItem[]): string {
+  if (selection.length === 0) return '';
+  const counts = new Map<SelectionItem['kind'], number>();
+  for (const item of selection) counts.set(item.kind, (counts.get(item.kind) ?? 0) + 1);
+  const parts = [...counts.entries()].map(([kind, count]) => {
+    const [singular, plural] = KIND_LABELS[kind];
+    return `${count} ${count === 1 ? singular : plural}`;
+  });
+  if (parts.length === 1) return parts[0]!;
+  return `${parts.slice(0, -1).join(', ')} & ${parts[parts.length - 1]}`;
+}
+
+/** `"80 x 50 x 6 mm"` — width (X) x depth (Y) x height (Z). */
+export function formatBodyDimensions(body: Body): string {
+  const [w, d, h] = bodyDimensions(body).map((v) => round1(Math.abs(v)));
+  return `${w} × ${d} × ${h} mm`;
+}
+
+function round1(value: number): number {
+  return Math.round(value * 10) / 10;
+}
+
+/** Display name for a feature-history card icon lookup / a11y label. */
+export function featureKindLabel(kind: Feature['kind']): string {
+  switch (kind) {
+    case 'sketchRect':
+      return 'Sketch';
+    case 'extrude':
+      return 'Extrude';
+    case 'move':
+      return 'Move';
+    case 'setAppearance':
+      return 'Appearance';
+  }
+}

@@ -397,15 +397,25 @@ function componentwiseMax3(
   return [Math.max(a[0], b[0]), Math.max(a[1], b[1]), Math.max(a[2], b[2])];
 }
 
+/**
+ * Body appearance colors, assigned by creation order. `[0]` is the
+ * Shapr3D-style neutral light-grey default body appearance; the rest are
+ * deliberately desaturated so no palette entry reads as the viewport's
+ * vivid selection orange (`--hc-geometry-selection`, `#ff9f1c`) or
+ * support/hover blue (`--hc-geometry-support`, `#43b9ff`) — see
+ * `viewport/theme.ts`. This is the one place sRGB constants are allowed
+ * (task scope): body appearance is theme-independent document data, not
+ * chrome CSS.
+ */
 const COLOR_PALETTE: readonly string[] = [
-  '#5B8DEF',
-  '#F2994A',
-  '#27AE60',
-  '#BB6BD9',
-  '#EB5757',
-  '#2D9CDB',
-  '#F2C94C',
-  '#6FCF97',
+  '#B8BCC2', // neutral light grey (default)
+  '#9AAE9B', // soft sage green
+  '#C7AE8E', // soft sand
+  '#AEA6B6', // muted lavender-grey
+  '#B79690', // muted terracotta
+  '#A0B0A6', // muted seafoam green
+  '#C2B79E', // warm taupe
+  '#A8A29A', // warm grey
 ];
 
 function paletteColor(creationIndex: number): string {

@@ -1,0 +1,136 @@
+.root {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  right: 172px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  gap: var(--hc-space-2);
+  padding: 0 var(--hc-space-2);
+  background: var(--hc-bg-island);
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-lg);
+  box-shadow: var(--hc-shadow-island);
+  pointer-events: auto;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 4px;
+  flex-shrink: 0;
+}
+
+.mark {
+  color: var(--hc-accent-base);
+}
+
+.wordmark {
+  font-family: var(--hc-font-ui);
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--hc-fg-strong);
+  white-space: nowrap;
+}
+
+.projectName {
+  flex-shrink: 0;
+  min-width: 60px;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--hc-radius-sm);
+  padding: 4px 6px;
+  font-family: var(--hc-font-ui);
+  font-size: 13px;
+  color: var(--hc-fg-default);
+  cursor: text;
+}
+
+.projectName:hover {
+  background: var(--hc-hover-bg);
+}
+
+.projectName:focus-visible {
+  outline: 2px solid var(--hc-focus-ring);
+  outline-offset: 1px;
+}
+
+.projectNameInput {
+  flex-shrink: 0;
+  min-width: 60px;
+  max-width: 220px;
+  background: var(--hc-bg-input);
+  border: 1px solid var(--hc-focus-ring);
+  border-radius: var(--hc-radius-sm);
+  padding: 4px 6px;
+  font-family: var(--hc-font-ui);
+  font-size: 13px;
+  color: var(--hc-fg-default);
+}
+
+.projectNameInput:focus {
+  outline: none;
+}
+
+.menus {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.menuTrigger {
+  padding: 6px 10px;
+  border-radius: var(--hc-radius-sm);
+  font-family: var(--hc-font-ui);
+  font-size: 13px;
+  color: var(--hc-fg-default);
+}
+
+.menuTrigger:hover {
+  background: var(--hc-hover-bg);
+}
+
+.spacer {
+  flex: 1;
+}
+
+.historyButtons {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.iconButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: none;
+  border-radius: var(--hc-radius-sm);
+  background: transparent;
+  color: var(--hc-fg-default);
+  cursor: pointer;
+}
+
+.iconButton:hover:not(:disabled) {
+  background: var(--hc-hover-bg);
+}
+
+.iconButton:disabled {
+  color: var(--hc-fg-subtle);
+  cursor: not-allowed;
+}
+
+.iconButton:focus-visible {
+  outline: 2px solid var(--hc-focus-ring);
+  outline-offset: 1px;
+}

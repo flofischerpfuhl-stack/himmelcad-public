@@ -1,0 +1,106 @@
+.root {
+  position: absolute;
+  top: 174px;
+  right: 12px;
+  width: 150px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--hc-space-2);
+  pointer-events: auto;
+}
+
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--hc-space-1);
+  padding: var(--hc-space-2);
+  background: var(--hc-bg-island);
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-lg);
+  box-shadow: var(--hc-shadow-island);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--hc-space-2);
+}
+
+.snapButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  border: none;
+  border-radius: var(--hc-radius-sm);
+  background: transparent;
+  color: var(--hc-fg-muted);
+  cursor: pointer;
+}
+
+.snapButtonActive {
+  background: var(--hc-accent-base);
+  color: var(--hc-fg-on-accent);
+}
+
+.select {
+  flex: 1;
+  height: 26px;
+  font-size: 12px;
+}
+
+.label {
+  font-family: var(--hc-font-ui);
+  font-size: 10px;
+  color: var(--hc-fg-subtle);
+}
+
+/*
+ * Same quiet toggle-button language as `LeftDock`'s Items toggle: an icon
+ * (+ label, since this one stands alone rather than in an icon-only rail),
+ * transparent by default, a neutral hover, and a subtle accent fill only
+ * while the panel is open — not a large, always-bright primary button.
+ */
+.historyToggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  align-self: flex-end;
+  gap: 6px;
+  padding: 6px 10px;
+  border: none;
+  border-radius: var(--hc-radius-md);
+  background: var(--hc-bg-island);
+  border: 1px solid var(--hc-border-default);
+  box-shadow: var(--hc-shadow-island);
+  color: var(--hc-fg-default);
+  font-family: var(--hc-font-ui);
+  font-size: 12px;
+  cursor: pointer;
+  transition:
+    background var(--hc-motion-fast),
+    color var(--hc-motion-fast);
+}
+
+.historyToggle:hover {
+  background: var(--hc-hover-bg);
+}
+
+.historyToggleActive {
+  background: var(--hc-active-bg);
+  border-color: var(--hc-border-accent);
+  color: var(--hc-accent-base);
+}
+
+.historyToggleActive:hover {
+  background: var(--hc-hover-bg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .historyToggle {
+    transition: none;
+  }
+}

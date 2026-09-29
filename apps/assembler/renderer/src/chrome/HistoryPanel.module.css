@@ -1,0 +1,114 @@
+.card {
+  margin-bottom: 2px;
+  border-radius: var(--hc-radius-md);
+  overflow: hidden;
+  border: 1px solid transparent;
+}
+
+.cardHeader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px var(--hc-space-2);
+  cursor: pointer;
+  transition: background var(--hc-motion-fast);
+}
+
+.cardHeader:hover {
+  background: var(--hc-hover-bg);
+}
+
+.cardSelected .cardHeader {
+  background: var(--hc-press-bg);
+}
+
+.cardSuppressed .cardHeader {
+  opacity: 0.5;
+}
+
+.cardError {
+  border-color: var(--hc-warning);
+}
+
+.icon {
+  display: flex;
+  color: var(--hc-fg-muted);
+  flex-shrink: 0;
+}
+
+.name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--hc-font-ui);
+  font-size: 12px;
+  background: transparent;
+  border: none;
+  color: inherit;
+}
+
+.chevron {
+  display: flex;
+  color: var(--hc-fg-subtle);
+  flex-shrink: 0;
+}
+
+.menuButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  border: none;
+  border-radius: var(--hc-radius-sm);
+  background: transparent;
+  color: var(--hc-fg-subtle);
+  cursor: pointer;
+}
+
+.menuButton:hover {
+  background: var(--hc-active-bg);
+  color: var(--hc-fg-default);
+}
+
+.errorMessage {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px var(--hc-space-2) 6px 30px;
+  font-family: var(--hc-font-ui);
+  font-size: 11px;
+  color: var(--hc-warning-fg);
+}
+
+.params {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--hc-space-2);
+  padding: 4px var(--hc-space-2) var(--hc-space-2) 30px;
+}
+
+.paramsFull {
+  grid-column: 1 / -1;
+}
+
+.renameInput {
+  flex: 1;
+  min-width: 0;
+  background: var(--hc-bg-input);
+  border: 1px solid var(--hc-focus-ring);
+  border-radius: var(--hc-radius-sm);
+  color: var(--hc-fg-default);
+  font-family: var(--hc-font-ui);
+  font-size: 12px;
+  padding: 2px 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cardHeader {
+    transition: none;
+  }
+}
