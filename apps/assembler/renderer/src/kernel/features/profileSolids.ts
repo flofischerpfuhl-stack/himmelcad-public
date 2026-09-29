@@ -354,7 +354,8 @@ function finishProfileSolid(
   }
   kit.addBody(ctx, {
     id: bodyIdFor(feature.id),
-    name: feature.resultBodyName ?? `${label} ${ctx.createdCount + 1}`,
+    // Named after its creating feature ("Revolve 1"), not the global body count.
+    name: feature.resultBodyName ?? (feature.name.trim() || label),
     createdBy: feature.id,
     shape: tool.shape,
     faces: tool.faces,
