@@ -222,7 +222,7 @@ void test('memory: our caches stay bounded; the heap grows only by small leaks i
   );
   // wasm memory never shrinks and grows in steps. Before the arena/leak fixes the demo
   // session grew ~3.5 MB per edit; what is left is OCCT's own leakage inside its
-  // algorithms (~85 KB per boolean, ~16 KB per BRepCheck'd face, a few KB per prism
+  // algorithms (40–260 KB per boolean, ~16 KB per BRepCheck'd face, a few KB per prism
   // or wire), which the adapters handle by recycling the kernel (RECYCLE_HEAP_BYTES).
   const perEdit = (heap[heap.length - 1]! - heap[0]!) / (edits - 20);
   assert.ok(perEdit < 1024 * 1024, `heap grew ${(perEdit / 1024).toFixed(0)} KB per edit`);

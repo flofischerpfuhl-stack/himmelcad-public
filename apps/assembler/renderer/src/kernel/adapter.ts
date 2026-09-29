@@ -281,9 +281,9 @@ export const CRASH_WINDOW_MS = 60_000;
 
 /**
  * wasm heap size above which the kernel is restarted when it next runs
- * idle. OCCT in this build leaks a little inside its own algorithms (~85 KB
- * per boolean, ~16 KB per `BRepCheck` face check, ~27 B per explored
- * sub-shape; wasm memory never shrinks), so a long session is recycled
+ * idle. OCCT in this build leaks inside its own algorithms (40–260 KB per
+ * boolean, ~16 KB per `BRepCheck` face check, ~27 B per explored sub-shape;
+ * wasm memory never shrinks), so a long session is recycled
  * before wasm32 runs out of address space. The document lives in the store;
  * a restart only drops the kernel's caches.
  */

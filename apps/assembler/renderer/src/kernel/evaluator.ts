@@ -159,7 +159,7 @@ export interface EvaluateOptions {
   quality?: TessellationQuality;
   /**
    * Keep the checkpoint of the last feature (default: `true` for `final`,
-   * `false` for `preview` â€” a tool's provisional feature is never reused).
+   * `false` for `preview` — a tool's provisional feature is never reused).
    */
   cacheTail?: boolean;
   /** Called before every evaluated feature and before tessellation. */
@@ -549,7 +549,7 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
     profileIndex: number,
   ): { shape: Shape3D; faces: KeyedFace[] } {
     if (region.area < MIN_FEATURE_SIZE_MM * MIN_FEATURE_SIZE_MM) {
-      throw new FeatureError(`Sketch profile is too small (${region.area.toFixed(4)} mmÂ²)`);
+      throw new FeatureError(`Sketch profile is too small (${region.area.toFixed(4)} mm²)`);
     }
     const face = regionFace(frame, region);
     const n = frame.normal;
@@ -1508,7 +1508,7 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
   function describeError(error: unknown): string {
     if (error instanceof Error) return error.message;
     // OCCT throws C++ exceptions: a pointer (number) or, with native wasm
-    // exceptions, a `WebAssembly.Exception` object â€” never show those raw.
+    // exceptions, a `WebAssembly.Exception` object — never show those raw.
     const wasmException =
       typeof WebAssembly !== 'undefined' &&
       'Exception' in WebAssembly &&
