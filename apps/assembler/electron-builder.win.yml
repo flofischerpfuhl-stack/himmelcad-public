@@ -10,12 +10,21 @@ productName: HimmelCAD Assembler
 artifactName: HimmelCAD-Assembler-${version}-${arch}.${ext}
 directories:
   output: release
+# Everything the app runs is in `dist/`: Vite bundles the renderer and both
+# workers (React, replicad, the OCCT and planeGCS glue included) and the main
+# process only needs Electron and Node built-ins. Without the `!node_modules`
+# exclusion electron-builder would add the production dependencies again
+# (~80 MB, including a second, sealed copy of the OCCT package). Source maps
+# and TypeScript build info are not shipped.
 files:
   - dist/electron/**
   - dist/renderer/**
   - build/icon.ico
   - build/icon.png
   - package.json
+  - '!node_modules/**'
+  - '!**/*.map'
+  - '!**/*.tsbuildinfo'
 asar: true
 # The OCCT and planeGCS `.wasm` binaries and their Emscripten loader chunks
 # are the admitted LGPL components (`docs/DEPENDENCY-POLICY.md`,
@@ -55,6 +64,8 @@ win:
       icon: build/icon.ico
       role: Editor
 nsis:
+  # Uninstall hook: removes the `.hcasm` extension key left behind by electron-builder.
+  include: build/installer.nsh
   artifactName: HimmelCAD-Assembler-${version}-${arch}-setup.${ext}
   oneClick: false
   allowToChangeInstallationDirectory: true

@@ -18,6 +18,7 @@ build/
 !apps/assembler/build/
 !apps/assembler/build/icon.png
 !apps/assembler/build/icon.ico
+!apps/assembler/build/installer.nsh
 out/
 .vite/
 .turbo/

@@ -140,7 +140,13 @@ properties, colour is a `setAppearance` step) and limits:
   forwards it to the running window). The OCCT and planeGCS `.wasm` files,
   their Emscripten loader chunks and the licence texts are unpacked next to
   `app.asar` (`resources/app.asar.unpacked/dist/renderer/`) so the LGPL
-  components stay replaceable files. Unsigned; the icon is a placeholder.
+  components stay replaceable files (verified: a broken replacement of either
+  `.wasm` makes the installed app report that module's load failure).
+  `app.asar` holds only `dist/` (~1.6 MB; `node_modules` are excluded, Vite
+  bundles everything). Measured 2026-09-30: installer 108 MB, 372 MB
+  installed, silent install `/S /D=<dir>` about 18 s; the uninstaller also
+  removes the `.hcasm` association (`build/installer.nsh`). Unsigned; the
+  icon is a placeholder.
 
 ## Agent API (UI, Python and agents share one command layer)
 
