@@ -740,6 +740,170 @@
           "additionalProperties": false
         }
       ]
+    },
+    "EdgeRule": {
+      "description": "Edges picked by rule, re-evaluated on every replay: every edge of a face, or every sharp concave (inside) / convex (outside) edge of a body.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "faceEdges"
+            },
+            "face": {
+              "$ref": "#/$defs/FaceInput"
+            }
+          },
+          "required": ["kind", "face"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "concave"
+            },
+            "bodyId": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": ["kind", "bodyId"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "convex"
+            },
+            "bodyId": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": ["kind", "bodyId"],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "HolePlacement": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "point"
+            },
+            "u": {
+              "type": "number"
+            },
+            "v": {
+              "type": "number"
+            }
+          },
+          "required": ["kind", "u", "v"],
+          "additionalProperties": false,
+          "description": "A point in the face plane frame (for axis-aligned faces the world axes of the parallel construction plane: XY u=X v=Y, XZ u=X v=Z, YZ u=Y v=Z)."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "sketchPoint"
+            },
+            "featureId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "entityId": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": ["kind", "featureId", "entityId"],
+          "additionalProperties": false,
+          "description": "A sketch point entity, or a circle/arc (its centre), projected onto the face."
+        }
+      ]
+    },
+    "HoleExtent": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "blind"
+            },
+            "depth": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          },
+          "required": ["kind", "depth"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "through"
+            }
+          },
+          "required": ["kind"],
+          "additionalProperties": false,
+          "description": "Through the whole body."
+        }
+      ]
+    },
+    "ThickenSource": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "faces"
+            },
+            "faces": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/FaceInput"
+              },
+              "minItems": 1
+            }
+          },
+          "required": ["kind", "faces"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "profile"
+            },
+            "profile": {
+              "$ref": "#/$defs/ExtrudeProfile"
+            }
+          },
+          "required": ["kind", "profile"],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "ShellFaceThickness": {
+      "type": "object",
+      "properties": {
+        "face": {
+          "$ref": "#/$defs/FaceInput"
+        },
+        "thickness": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      },
+      "required": ["face", "thickness"],
+      "additionalProperties": false,
+      "description": "The wall growing from `face` gets its own thickness."
     }
   },
   "featureKinds": {
@@ -817,7 +981,7 @@
     },
     "fillet": {
       "label": "Fillet",
-      "summary": "Rounds edges of one body with a constant radius (exact B-rep fillet).",
+      "summary": "Rounds edges of one body (exact B-rep fillet): constant radius, or variable from `radius` to `radius2`; edges picked one by one and/or by `rules` (all edges of a face, all concave/convex edges).",
       "params": {
         "type": "object",
         "properties": {
@@ -825,21 +989,32 @@
             "type": "array",
             "items": {
               "$ref": "#/$defs/EdgeInput"
-            },
-            "minItems": 1
+            }
           },
           "radius": {
             "type": "number",
             "exclusiveMinimum": 0
+          },
+          "radius2": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "description": "Variable radius: `radius` at the start of each edge chain, `radius2` at its end."
+          },
+          "rules": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/EdgeRule"
+            }
           }
         },
-        "required": ["edges", "radius"],
-        "additionalProperties": false
+        "required": ["radius"],
+        "additionalProperties": false,
+        "description": "`edges` defaults to [] (then `rules` must pick edges)."
       }
     },
     "chamfer": {
       "label": "Chamfer",
-      "summary": "Bevels edges of one body with a constant distance.",
+      "summary": "Bevels edges of one body: equal distance, two distances, or distance and angle; edges picked and/or by `rules`.",
       "params": {
         "type": "object",
         "properties": {
@@ -847,21 +1022,46 @@
             "type": "array",
             "items": {
               "$ref": "#/$defs/EdgeInput"
-            },
-            "minItems": 1
+            }
           },
           "distance": {
             "type": "number",
             "exclusiveMinimum": 0
+          },
+          "mode": {
+            "enum": ["equal", "twoDistances", "distanceAngle"],
+            "default": "equal",
+            "description": "`twoDistances`: `distance` and `distance2`; `distanceAngle`: `distance` and `angle`."
+          },
+          "distance2": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "angle": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "maximum": 90,
+            "description": "Degrees."
+          },
+          "flip": {
+            "type": "boolean",
+            "description": "Measure `distance` on the other face of each edge (default: the face with the smaller key)."
+          },
+          "rules": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/EdgeRule"
+            }
           }
         },
-        "required": ["edges", "distance"],
-        "additionalProperties": false
+        "required": ["distance"],
+        "additionalProperties": false,
+        "description": "`edges` defaults to [] (then `rules` must pick edges)."
       }
     },
     "shell": {
       "label": "Shell",
-      "summary": "Hollows a body, opening the given faces; walls grow inwards.",
+      "summary": "Hollows a body, opening the given faces; walls grow inwards (or outwards with `direction`), walls listed in `faceThickness` get their own thickness.",
       "params": {
         "type": "object",
         "properties": {
@@ -879,6 +1079,16 @@
           "thickness": {
             "type": "number",
             "exclusiveMinimum": 0
+          },
+          "direction": {
+            "enum": ["inside", "outside"],
+            "default": "inside"
+          },
+          "faceThickness": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/ShellFaceThickness"
+            }
           }
         },
         "required": ["faces", "thickness"],
@@ -887,7 +1097,7 @@
     },
     "boolean": {
       "label": "Boolean",
-      "summary": "Union/subtract/intersect; the tool bodies are consumed.",
+      "summary": "Union/subtract/intersect; the tool bodies are consumed unless `keepTools`.",
       "params": {
         "type": "object",
         "properties": {
@@ -905,6 +1115,11 @@
               "minLength": 1
             },
             "minItems": 1
+          },
+          "keepTools": {
+            "type": "boolean",
+            "default": false,
+            "description": "Keep the tool bodies."
           }
         },
         "required": ["operation", "targetBodyId", "toolBodyIds"],
@@ -1252,6 +1467,186 @@
           }
         },
         "required": ["faces"],
+        "additionalProperties": false
+      }
+    },
+    "hole": {
+      "label": "Hole",
+      "summary": "Simple, counterbored or countersunk holes on a planar face, blind or through all, several per feature. Standard sizes are presets of the tool (ISO 273 clearance M2-M10, tap drill, DIN 974-1 counterbores, ISO 15065 countersinks) and are stored as plain diameters; `thread` is a cosmetic label only (no thread geometry).",
+      "params": {
+        "type": "object",
+        "properties": {
+          "face": {
+            "$ref": "#/$defs/FaceInput"
+          },
+          "placements": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/HolePlacement"
+            },
+            "minItems": 1,
+            "maxItems": 200
+          },
+          "holeType": {
+            "enum": ["simple", "counterbore", "countersink"],
+            "default": "simple"
+          },
+          "diameter": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "extent": {
+            "$ref": "#/$defs/HoleExtent"
+          },
+          "counterboreDiameter": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "counterboreDepth": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "countersinkDiameter": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "countersinkAngle": {
+            "type": "number",
+            "minimum": 30,
+            "maximum": 150,
+            "default": 90
+          },
+          "thread": {
+            "type": "string",
+            "description": "Cosmetic thread label, e.g. \"M3\"."
+          },
+          "preset": {
+            "type": "string",
+            "description": "Display name of the preset the size came from."
+          }
+        },
+        "required": ["face", "placements", "diameter"],
+        "additionalProperties": false,
+        "description": "Default extent: through all."
+      }
+    },
+    "emboss": {
+      "label": "Emboss",
+      "summary": "Raises (positive depth) or engraves (negative) sketch profiles on a face: projected onto a planar face (sketch parallel to it), or wrapped around a cylinder keeping surface lengths (sketch plane parallel to the axis; wrap centre where the sketch normal through the axis meets the surface).",
+      "params": {
+        "type": "object",
+        "properties": {
+          "profile": {
+            "$ref": "#/$defs/ExtrudeProfile"
+          },
+          "face": {
+            "$ref": "#/$defs/FaceInput"
+          },
+          "depth": {
+            "type": "number"
+          }
+        },
+        "required": ["profile", "face", "depth"],
+        "additionalProperties": false
+      }
+    },
+    "draft": {
+      "label": "Draft",
+      "summary": "Tilts planar, cylindrical or conical faces by `angle` degrees about their intersection with the neutral plane (a face: the pull points into the body; a construction plane: along its normal; `flip` reverses). Positive removes material on the pull side.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "faces": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/FaceInput"
+            },
+            "minItems": 1
+          },
+          "neutral": {
+            "$ref": "#/$defs/SketchPlane"
+          },
+          "angle": {
+            "type": "number",
+            "minimum": -45,
+            "maximum": 45
+          },
+          "flip": {
+            "type": "boolean",
+            "default": false
+          }
+        },
+        "required": ["faces", "neutral", "angle"],
+        "additionalProperties": false
+      }
+    },
+    "rib": {
+      "label": "Rib",
+      "summary": "A rib/web/gusset from open sketch lines: thickened symmetrically across the sketch plane and filled from each line until it meets the body (`flip` fills the other side); joined into `targetBodyId` (default: the last changed body).",
+      "params": {
+        "type": "object",
+        "properties": {
+          "sketchId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "entityIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
+          },
+          "thickness": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "flip": {
+            "type": "boolean",
+            "default": false
+          },
+          "targetBodyId": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": ["sketchId", "entityIds", "thickness"],
+        "additionalProperties": false
+      }
+    },
+    "thicken": {
+      "label": "Thicken",
+      "summary": "Turns body faces (or sketch profiles) into a solid of `thickness`: outside along the normal, inside, or both; New/Join/Cut like Extrude.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "$ref": "#/$defs/ThickenSource"
+          },
+          "thickness": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "direction": {
+            "enum": ["outside", "inside", "both"],
+            "default": "outside"
+          },
+          "operation": {
+            "enum": ["new", "join", "cut"],
+            "default": "new",
+            "description": "New body, or join/cut into `targetBodyId` (default: the most recently changed body)."
+          },
+          "targetBodyId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "resultBodyName": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": ["source", "thickness"],
         "additionalProperties": false
       }
     }

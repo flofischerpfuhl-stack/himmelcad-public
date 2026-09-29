@@ -28,6 +28,7 @@ from typing import Any, TypeVar
 
 from .client import AssemblerClient
 from .errors import AssemblerError, NotFoundError
+from .printing import PrintToolsMixin
 
 Vec3 = tuple[float, float, float]
 _AXES = {"X": 0, "Y": 1, "Z": 2}
@@ -410,8 +411,8 @@ class _LoggedCall:
     params: Mapping[str, Any]
 
 
-class Document:
-    """An Assembler document driven through canonical commands."""
+class Document(PrintToolsMixin):
+    """An Assembler document driven through canonical commands (print-part helpers: :mod:`.printing`)."""
 
     def __init__(self, client: AssemblerClient) -> None:
         self.client = client

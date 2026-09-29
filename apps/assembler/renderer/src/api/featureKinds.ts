@@ -214,6 +214,18 @@ function normalise(
         );
         dedupeByKey(out, 'edges');
       }
+      if (Array.isArray(out.rules)) {
+        out.rules = out.rules.map((rule, i) =>
+          isRecord(rule) && rule.kind === 'faceEdges'
+            ? {
+                kind: 'faceEdges',
+                face: resolveFaceInput(rule.face, evaluation, features, `params.rules[${i}].face`, {
+                  single: true,
+                })[0],
+              }
+            : rule,
+        );
+      }
       return out;
     case 'shell':
       if (Array.isArray(out.faces)) {
@@ -222,7 +234,56 @@ function normalise(
         );
         dedupeByKey(out, 'faces');
       }
+      if (Array.isArray(out.faceThickness)) {
+        out.faceThickness = out.faceThickness.map((entry, i) =>
+          isRecord(entry)
+            ? {
+                ...entry,
+                face: resolveFaceInput(
+                  entry.face,
+                  evaluation,
+                  features,
+                  `params.faceThickness[${i}].face`,
+                  { single: true },
+                )[0],
+              }
+            : entry,
+        );
+      }
       return out;
+    case 'hole':
+    case 'emboss':
+      if (out.face !== undefined) {
+        out.face = resolveFaceInput(out.face, evaluation, features, 'params.face', {
+          single: true,
+        })[0];
+      }
+      if (out.profile !== undefined) out.profile = profileRef(out.profile, 'params.profile');
+      return out;
+    case 'draft':
+      if (Array.isArray(out.faces)) {
+        out.faces = out.faces.flatMap((face, i) =>
+          resolveFaceInput(face, evaluation, features, `params.faces[${i}]`, { single: false }),
+        );
+        dedupeByKey(out, 'faces');
+      }
+      if (out.neutral !== undefined) out.neutral = planeRef(out.neutral, 'params.neutral');
+      return out;
+    case 'thicken': {
+      const source = out.source as Json | undefined;
+      if (source?.kind === 'faces' && Array.isArray(source.faces)) {
+        const faces = source.faces.flatMap((face, i) =>
+          resolveFaceInput(face, evaluation, features, `params.source.faces[${i}]`, {
+            single: false,
+          }),
+        );
+        out.source = { kind: 'faces', faces };
+        dedupeByKey(out.source as Json, 'faces');
+      } else if (source?.kind === 'profile') {
+        out.source = { kind: 'profile', profile: profileRef(source.profile, 'params.source.profile') };
+      }
+      return out;
+    }
     default:
       return FEATURE_KIND_SCHEMAS[kind]
         ? out
@@ -265,6 +326,16 @@ function defaults(kind: string, params: Json): Json {
       const faces = params.faces as { bodyId: string }[] | undefined;
       return faces?.[0] ? { bodyId: faces[0].bodyId } : {};
     }
+    case 'fillet':
+    case 'chamfer':
+      return { edges: [] };
+    case 'hole':
+      return { holeType: 'simple', extent: { kind: 'through' } };
+    case 'draft':
+    case 'rib':
+      return { flip: false };
+    case 'thicken':
+      return { direction: 'outside', operation: 'new' };
     default:
       return {};
   }
