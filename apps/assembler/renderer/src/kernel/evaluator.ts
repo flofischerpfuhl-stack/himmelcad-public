@@ -7,7 +7,16 @@
  * Evaluation is a deterministic fold over the features; a failing feature
  * records an error under its id and leaves the bodies exactly as they were
  * before it, and every later feature is still evaluated.
+ *
+ * Incremental (see `evalCache.ts`): the state after every feature is kept
+ * as a checkpoint keyed by the hash of the feature prefix, so an evaluation
+ * starts from the deepest checkpoint its document shares with an earlier
+ * one. Tessellation is incremental per body (an unchanged body shape reuses
+ * its mesh) and per face (OCCT keeps each face's triangulation). OCCT
+ * objects are released deterministically (`occtArena.ts`), not by the
+ * JavaScript garbage collector.
  */
+import './occtArena.js';
 import * as R from 'replicad';
 
 import {
@@ -17,7 +26,6 @@ import {
   frameForPlane,
   type BooleanFeature,
   type ChamferFeature,
-  type CurveKind,
   type EdgeRef,
   type ExtrudeFeature,
   type FaceRef,
@@ -38,6 +46,7 @@ import {
   GEOMETRY_TOLERANCE,
   assignEdgeKeys,
   assignFaceKeys,
+  assignFaceKeysFromHistory,
   baseFaceKey,
   cylinderId,
   resolveEdgeRef,
@@ -49,14 +58,71 @@ import {
   type KeyedFaceKeys,
   type SurfaceId,
 } from './naming.js';
-import type { Body, EdgeInfo, EvaluatedSketch, EvaluationResult, FaceInfo } from './types.js';
+import {
+  CheckpointCache,
+  prefixHashes,
+  type BodySnapshot,
+  type Checkpoint,
+  type CheckpointCacheStats,
+} from './evalCache.js';
+import {
+  blendWithHistory,
+  booleanWithHistory,
+  buildTopology,
+  distanceToShape,
+  edgesOf,
+  faceOrigins,
+  facesOf,
+  heapBytes,
+  meshShapeEdges,
+  shapeHash,
+  shellWithHistory,
+  type HistoryResult,
+  type OwnedTopology,
+  type RawShape,
+  type Topology,
+} from './occt.js';
+import { closeArena, inArena, isPinned, openArena, pin, release, unpin } from './occtArena.js';
+import type {
+  Body,
+  EdgeInfo,
+  EvaluatedSketch,
+  EvaluationProgress,
+  EvaluationResult,
+  FaceInfo,
+  TessellationQuality,
+} from './types.js';
 import { applyModelingFeature, type FeatureKit } from './features/index.js';
+import { rebindRegion } from './regionRebind.js';
+import { FaceMeshCache } from './tessellate.js';
+import { FacePropsCache } from './faceProps.js';
+import type { HistorySource } from './occt.js';
 
 type OpenCascade = ReturnType<typeof R.getOC>;
 type Shape3D = R.Shape3D;
 
 /** Raised for a feature that cannot be evaluated; caught per feature. */
 class FeatureError extends Error {}
+
+/**
+ * The kernel itself failed (wasm abort, out of memory, memory corruption):
+ * the OCCT instance is unusable. Never caught per feature â€” the adapter
+ * restarts the kernel and re-evaluates the document.
+ */
+export class KernelFatalError extends Error {
+  readonly fatal = true;
+}
+
+/** `true` for errors after which the OCCT instance must not be used again. */
+export function isFatalKernelError(error: unknown): boolean {
+  if (error instanceof KernelFatalError) return true;
+  const RuntimeError = (globalThis as { WebAssembly?: { RuntimeError?: new () => Error } })
+    .WebAssembly?.RuntimeError;
+  if (RuntimeError && error instanceof RuntimeError) return true;
+  if (error instanceof RangeError && /memory|allocation/i.test(error.message)) return true;
+  const message = error instanceof Error ? error.message : typeof error === 'string' ? error : '';
+  return /Aborted\(|out of memory|Cannot enlarge memory|memory access out of bounds/i.test(message);
+}
 
 /**
  * Body appearance colors, assigned by creation order. `[0]` is the neutral
@@ -80,54 +146,190 @@ interface BodyState {
   color: string;
   createdBy: string;
   shape: Shape3D;
-  /** Keyed descriptors aligned with `shape.faces` order. */
+  /** Keyed descriptors aligned with the shape's faces (explorer order). */
   faces: KeyedFace[];
 }
 
-interface Topology {
-  faces: R.Face[];
-  edges: R.Edge[];
-  /** Edge indices per face. */
-  faceEdges: number[][];
-  /** Face indices per edge. */
-  edgeFaces: number[][];
-  edgeGeoms: {
-    curve: CurveKind;
-    midpoint: Vec3;
-    length: number;
-    direction: Vec3 | null;
-    radius: number | null;
-  }[];
-}
+/** Tessellation settings per quality: chordal deflection relative to the body diagonal. */
+const QUALITY: Record<
+  TessellationQuality,
+  { relative: number; min: number; max: number; angular: number }
+> = {
+  final: { relative: 0.0005, min: 0.005, max: 0.2, angular: 0.15 },
+  preview: { relative: 0.002, min: 0.02, max: 0.5, angular: 0.35 },
+};
 
 export interface EvaluatorOptions {
-  /** Chordal tessellation tolerance as a fraction of the body diagonal (clamped to [0.005, 0.2] mm). */
+  /** Chordal tessellation tolerance (final quality) as a fraction of the body diagonal. */
   relativeTolerance?: number;
-  /** Angular tessellation tolerance in radians. */
+  /** Angular tessellation tolerance (final quality) in radians. */
   angularTolerance?: number;
+  /** Estimated B-rep bytes the checkpoint cache may keep (default 256 MiB). */
+  cacheBudgetBytes?: number;
+  /** Estimated mesh bytes kept for unchanged bodies (default 128 MiB). */
+  meshBudgetBytes?: number;
+}
+
+export interface EvaluateOptions {
+  /** Tessellation quality: `preview` is coarser (drags), `final` for committed documents. Default `final`. */
+  quality?: TessellationQuality;
+  /**
+   * Keep the checkpoint of the last feature (default: `true` for `final`,
+   * `false` for `preview` â€” a tool's provisional feature is never reused).
+   */
+  cacheTail?: boolean;
+  /** Called before every evaluated feature and before tessellation. */
+  onProgress?: (progress: EvaluationProgress) => void;
+  /** Record per-phase timings in `stats.phases` (bench/diagnostics). */
+  profile?: boolean;
+}
+
+export interface KernelCacheInfo extends CheckpointCacheStats {
+  meshBytes: number;
+  meshes: number;
+  /** Faces with cached triangles, and faces meshed/extracted since the evaluator started. */
+  faceMeshes: number;
+  facesMeshed: number;
+  heapBytes: number;
 }
 
 export interface KernelEvaluator {
   /**
    * Replays `features` into evaluated bodies. Async because STEP import
    * (`ImportStepFeature`) parses the file through replicad's asynchronous
-   * `importSTEP`; every other feature resolves synchronously.
+   * `importSTEP`; every other feature resolves synchronously. Calls are
+   * serialized.
    */
-  evaluate(features: readonly Feature[]): Promise<EvaluationResult>;
+  evaluate(features: readonly Feature[], options?: EvaluateOptions): Promise<EvaluationResult>;
   /**
    * Replays `features` and exports the resulting bodies (or a subset, by
    * body id) as one STEP file, one object per body, named and coloured.
    * Uses the exact B-rep, not the tessellated mesh.
    */
   exportStep(features: readonly Feature[], bodyIds?: readonly string[]): Promise<Uint8Array>;
+  /** Sizes of the incremental-evaluation caches and of the wasm heap. */
+  cacheInfo(): KernelCacheInfo;
+  /** Drops every cached checkpoint and mesh (frees their OCCT shapes). */
+  clearCache(): void;
+}
+
+/** Per-shape derived data, released with the shape. */
+interface ShapeInfo {
+  topology?: OwnedTopology;
+  diagonal?: number;
+  valid?: boolean;
+  volume?: number;
+  bounds?: [Vec3, Vec3];
+  edgeKeys?: { faces: KeyedFace[]; keys: string[] };
+}
+
+interface MeshEntry {
+  quality: TessellationQuality;
+  faces: KeyedFace[];
+  body: Body;
+  bytes: number;
+  lastUsed: number;
 }
 
 export function createEvaluator(oc: OpenCascade, options: EvaluatorOptions = {}): KernelEvaluator {
   R.setOC(oc);
-  const relativeTolerance = options.relativeTolerance ?? 0.0005;
-  const angularTolerance = options.angularTolerance ?? 0.15;
+  const quality = {
+    ...QUALITY,
+    final: {
+      ...QUALITY.final,
+      relative: options.relativeTolerance ?? QUALITY.final.relative,
+      angular: options.angularTolerance ?? QUALITY.final.angular,
+    },
+  };
 
-  // ---- geometry description ---------------------------------------------------
+  // ---- shape bookkeeping -----------------------------------------------------------
+
+  /** Phase timings of the running evaluation when profiling (see EvaluateOptions.profile). */
+  let phases: Record<string, number> | null = null;
+  function timed<T>(name: string, run: () => T): T {
+    if (!phases) return run();
+    const t = now();
+    try {
+      return run();
+    } finally {
+      phases[name] = (phases[name] ?? 0) + now() - t;
+    }
+  }
+
+  const infos = new Map<Shape3D, ShapeInfo>();
+  /** Info entries created while the current feature runs (dropped unless their shape is kept). */
+  let featureInfos: Shape3D[] = [];
+  const meshes = new Map<Shape3D, MeshEntry>();
+  let meshBytes = 0;
+  let meshClock = 0;
+  const meshBudget = (options.meshBudgetBytes ?? 128 * 1024 * 1024) / 2;
+  const faceMeshes = new FaceMeshCache(oc, meshBudget);
+  const faceProps = new FacePropsCache(oc);
+  let meshSerial = 0;
+  let facesMeshedTotal = 0;
+
+  function infoOf(shape: Shape3D): ShapeInfo {
+    let info = infos.get(shape);
+    if (!info) {
+      info = {};
+      infos.set(shape, info);
+      featureInfos.push(shape);
+    }
+    return info;
+  }
+
+  function dropInfo(shape: Shape3D): void {
+    const info = infos.get(shape);
+    if (!info) return;
+    infos.delete(shape);
+    info.topology?.dispose();
+  }
+
+  function dropMesh(shape: Shape3D): void {
+    const entry = meshes.get(shape);
+    if (!entry) return;
+    meshes.delete(shape);
+    meshBytes -= entry.bytes;
+  }
+
+  /** Deletes a shape that nothing (no checkpoint, no replay) holds any more. */
+  function freeShape(shape: Shape3D): void {
+    dropInfo(shape);
+    dropMesh(shape);
+    unpin((shape as unknown as { _wrapped: object | null })._wrapped);
+    release(shape);
+  }
+
+  const cache = new CheckpointCache({
+    ...(options.cacheBudgetBytes !== undefined ? { budgetBytes: options.cacheBudgetBytes } : {}),
+    estimateBytes: (_shape, faces) => estimateShapeBytes(faces.length),
+    onFree: freeShape,
+  });
+
+  // ---- geometry description ---------------------------------------------------------
+
+  /** Cached topology of shape; 
+euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
+  function topologyOf(shape: Shape3D, reuseFrom: readonly Shape3D[] = []): Topology {
+    const info = infoOf(shape);
+    if (!info.topology) {
+      const reuse = reuseFrom
+        .map((s) => infos.get(s)?.topology)
+        .filter((t): t is OwnedTopology => t !== undefined);
+      info.topology = timed('topology', () => buildTopology(oc, shape, reuse));
+      info.topology.pinAll();
+    }
+    return info.topology;
+  }
+
+  function firstVertexOf(face: R.Face): Vec3 | null {
+    const [edge] = edgesOf(oc, face);
+    if (!edge) return null;
+    const p = edge.startPoint;
+    const out: Vec3 = [p.x, p.y, p.z];
+    p.delete();
+    return out;
+  }
 
   function describeFace(face: R.Face): FaceGeom {
     const surface = surfaceKindOf(face.geomType);
@@ -168,57 +370,8 @@ export function createEvaluator(oc: OpenCascade, options: EvaluatorOptions = {})
     return { surface, id, normal, centroid, area };
   }
 
-  function firstVertexOf(face: R.Face): Vec3 | null {
-    const edges = face.edges;
-    const edge = edges[0];
-    if (!edge) return null;
-    const p = edge.startPoint;
-    const out: Vec3 = [p.x, p.y, p.z];
-    p.delete();
-    return out;
-  }
-
-  function topologyOf(shape: Shape3D): Topology {
-    const faces = shape.faces;
-    const edges = shape.edges;
-    const byHash = new Map<number, number[]>();
-    edges.forEach((edge, index) => {
-      const list = byHash.get(edge.hashCode) ?? [];
-      list.push(index);
-      byHash.set(edge.hashCode, list);
-    });
-    const faceEdges: number[][] = faces.map(() => []);
-    const edgeFaces: number[][] = edges.map(() => []);
-    faces.forEach((face, faceIndex) => {
-      for (const edge of face.edges) {
-        const candidates = byHash.get(edge.hashCode) ?? [];
-        const match = candidates.find((i) => edges[i]!.isSame(edge));
-        if (match === undefined) continue;
-        if (!faceEdges[faceIndex]!.includes(match)) faceEdges[faceIndex]!.push(match);
-        if (!edgeFaces[match]!.includes(faceIndex)) edgeFaces[match]!.push(faceIndex);
-      }
-    });
-    const edgeGeoms = edges.map((edge) => {
-      const curve = curveKindOf(edge.geomType);
-      const mid = edge.pointAt(0.5);
-      const midpoint: Vec3 = [mid.x, mid.y, mid.z];
-      mid.delete();
-      let direction: Vec3 | null = null;
-      let radius: number | null = null;
-      if (curve === 'line') {
-        const t = edge.tangentAt(0.5);
-        direction = normalize([t.x, t.y, t.z]);
-        t.delete();
-      } else if (curve === 'circle') {
-        const adaptor = new oc.BRepAdaptor_Curve(edge.wrapped);
-        const circle = adaptor.Circle();
-        radius = circle.Radius();
-        circle.delete();
-        adaptor.delete();
-      }
-      return { curve, midpoint, length: edge.length, direction, radius };
-    });
-    return { faces, edges, faceEdges, edgeFaces, edgeGeoms };
+  function describeShape(shape: Shape3D): FaceGeom[] {
+    return topologyOf(shape).faces.map(describeFace);
   }
 
   function neighbourFaces(topology: Topology, faceIndex: number): number[] {
@@ -230,14 +383,109 @@ export function createEvaluator(oc: OpenCascade, options: EvaluatorOptions = {})
   }
 
   function withKeys(geoms: FaceGeom[], keys: KeyedFaceKeys[]): KeyedFace[] {
-    return geoms.map((g, i) => ({ ...g, key: keys[i]!.key, aliases: keys[i]!.aliases }));
+    return geoms.map((g, i) => ({
+      surface: g.surface,
+      id: g.id,
+      normal: g.normal,
+      centroid: g.centroid,
+      area: g.area,
+      key: keys[i]!.key,
+      aliases: keys[i]!.aliases,
+    }));
   }
 
-  // ---- reference resolution ------------------------------------------------------
+  function boundsOf(shape: Shape3D): [Vec3, Vec3] {
+    const info = infoOf(shape);
+    info.bounds ??= faceProps.bounds(topologyOf(shape));
+    return info.bounds;
+  }
 
   function diagonalOf(shape: Shape3D): number {
-    const [min, max] = shape.boundingBox.bounds;
-    return Math.hypot(max[0] - min[0], max[1] - min[1], max[2] - min[2]);
+    const info = infoOf(shape);
+    if (info.diagonal === undefined) {
+      const [min, max] = boundsOf(shape);
+      info.diagonal = Math.hypot(max[0] - min[0], max[1] - min[1], max[2] - min[2]);
+    }
+    return info.diagonal;
+  }
+
+  /**
+   * Result face descriptors and keys of an operation, from OCCT's history
+   * (reference scheme v2, `naming.ts#assignFaceKeysFromHistory`). Faces that
+   * are identical to an input face reuse its descriptor (no OCCT query).
+   */
+  function nameResult(
+    result: Shape3D,
+    op: HistorySource | null,
+    inputs: { shape: Shape3D; faces: readonly KeyedFace[]; reversed?: boolean }[],
+    featureOrder: ReadonlyMap<string, number>,
+    nameNew: (
+      index: number,
+      provisional: readonly (KeyedFaceKeys | null)[],
+      topology: Topology,
+    ) => string,
+    generators: { raw: RawShape; role: string }[] = [],
+  ): KeyedFace[] {
+    for (const input of inputs) topologyOf(input.shape);
+    const topology = topologyOf(
+      result,
+      inputs.map((i) => i.shape),
+    );
+    const inputFaces: KeyedFace[] = [];
+    const rawInputs: RawShape[] = [];
+    const fallback: KeyedFace[] = [];
+    for (const input of inputs) {
+      const topo = topologyOf(input.shape);
+      topo.faces.forEach((face, i) => {
+        const keyed = input.faces[i];
+        if (!keyed) return;
+        rawInputs.push(face.wrapped as RawShape);
+        inputFaces.push(keyed);
+        fallback.push(input.reversed ? reverseGeom(keyed) : keyed);
+      });
+    }
+    const origins = timed('history', () => faceOrigins(oc, op, topology, rawInputs, generators));
+    const geoms = topology.faces.map((face, j) => {
+      const same = origins.identical[j]!;
+      if (same >= 0) {
+        const input = inputFaces[same]!;
+        return origins.flipped[j] ? reverseGeom(input) : input;
+      }
+      return timed('describe', () => describeFace(face));
+    });
+    const keys = assignFaceKeysFromHistory(
+      geoms,
+      inputFaces,
+      origins,
+      featureOrder,
+      (index, provisional) => nameNew(index, provisional, topology),
+      fallback,
+    );
+    return withKeys(geoms, keys);
+  }
+
+  // ---- reference resolution ------------------------------------------------------------
+
+  function faceProbe(topology: Topology) {
+    return (index: number, point: Vec3): number => {
+      const face = topology.faces[index];
+      return face ? distanceToShape(oc, point, face) : Infinity;
+    };
+  }
+
+  function edgeKeysOf(body: BodyState): string[] {
+    const info = infoOf(body.shape);
+    if (info.edgeKeys && info.edgeKeys.faces === body.faces) return info.edgeKeys.keys;
+    const topology = topologyOf(body.shape);
+    const keys = assignEdgeKeys(
+      topology.edgeFaces.map((faces, i) => ({
+        faceIndices: faces,
+        midpoint: topology.edgeGeoms[i]!.midpoint,
+      })),
+      body.faces.map((f) => f.key),
+    );
+    info.edgeKeys = { faces: body.faces, keys };
+    return keys;
   }
 
   function resolveFace(
@@ -246,10 +494,10 @@ export function createEvaluator(oc: OpenCascade, options: EvaluatorOptions = {})
     warn: (message: string) => void,
   ): { face: R.Face; geom: KeyedFace; topology: Topology; index: number } {
     const topology = topologyOf(body.shape);
-    const resolvable = body.faces;
-    const resolution = resolveFaceRef(ref, resolvable, diagonalOf(body.shape));
+    const resolution = resolveFaceRef(ref, body.faces, diagonalOf(body.shape), faceProbe(topology));
     if (!resolution.ok) throw new FeatureError(`${resolution.message} on "${body.name}"`);
     if (resolution.rebound) warn(`Face reference "${ref.key}" was re-bound by geometry`);
+    if (resolution.note) warn(resolution.note);
     return {
       face: topology.faces[resolution.index]!,
       geom: body.faces[resolution.index]!,
@@ -266,13 +514,19 @@ export function createEvaluator(oc: OpenCascade, options: EvaluatorOptions = {})
     const topology = topologyOf(body.shape);
     const edges = topology.edgeGeoms.map((g, i) => ({ ...g, faceIndices: topology.edgeFaces[i]! }));
     const diagonal = diagonalOf(body.shape);
+    const edgeKeys = edgeKeysOf(body);
+    const probe = (index: number, point: Vec3): number => {
+      const edge = topology.edges[index];
+      return edge ? distanceToShape(oc, point, edge) : Infinity;
+    };
     const indices = refs.map((ref) => {
       if (ref.bodyId !== body.id) {
         throw new FeatureError('All edges of one feature must belong to the same body');
       }
-      const resolution = resolveEdgeRef(ref, edges, body.faces, diagonal);
+      const resolution = resolveEdgeRef(ref, edges, body.faces, diagonal, { edgeKeys, probe });
       if (!resolution.ok) throw new FeatureError(`${resolution.message} on "${body.name}"`);
       if (resolution.rebound) warn(`Edge reference "${ref.key}" was re-bound by geometry`);
+      if (resolution.note) warn(resolution.note);
       return resolution.index;
     });
     return { topology, indices };
@@ -308,6 +562,7 @@ export function createEvaluator(oc: OpenCascade, options: EvaluatorOptions = {})
       for (const message of warnings) warn(message);
       return { evaluated, regions };
     } catch (error) {
+      if (isFatalKernelError(error)) throw error;
       throw new FeatureError(`Sketch profiles could not be built: ${describeError(error)}`);
     }
   }
@@ -320,7 +575,7 @@ export function createEvaluator(oc: OpenCascade, options: EvaluatorOptions = {})
     profileIndex: number,
   ): { shape: Shape3D; faces: KeyedFace[] } {
     if (region.area < MIN_FEATURE_SIZE_MM * MIN_FEATURE_SIZE_MM) {
-      throw new FeatureError(`Sketch profile is too small (${region.area.toFixed(4)} mm²)`);
+      throw new FeatureError(`Sketch profile is too small (${region.area.toFixed(4)} mmÂ²)`);
     }
     const face = regionFace(frame, region);
     const n = frame.normal;
@@ -334,12 +589,12 @@ export function createEvaluator(oc: OpenCascade, options: EvaluatorOptions = {})
     const shape = R.basicFaceExtrusion(base, vector);
     vector.delete();
     const travel = scale(n, Math.sign(length) || 1);
-    const geoms = shape.faces.map(describeFace);
+    const geoms = describeShape(shape);
     const caps = geoms
       .map((g, i) => ({ g, i }))
       .filter(({ g }) => g.normal !== null && Math.abs(dot(g.normal, n)) > 1 - 1e-9)
       .sort((a, b) => dot(a.g.centroid, travel) - dot(b.g.centroid, travel));
-    const shapeFaces = shape.faces;
+    const shapeFaces = topologyOf(shape).faces;
     const keys = geoms.map((_, i) => {
       if (caps.length === 2 && caps[0]!.i === i) return `${feature.id}:start:${profileIndex}`;
       if (caps.length === 2 && caps[1]!.i === i) return `${feature.id}:end:${profileIndex}`;
@@ -351,6 +606,7 @@ export function createEvaluator(oc: OpenCascade, options: EvaluatorOptions = {})
     return { shape, faces: geoms.map((g, i) => ({ ...g, key: keys[i]!, aliases: [] })) };
   }
 
+  /** Boolean of `tool` into `target` (in place), naming the result from OCCT's history. */
   function combine(
     target: BodyState,
     tool: { shape: Shape3D; faces: KeyedFace[] },
@@ -358,20 +614,30 @@ export function createEvaluator(oc: OpenCascade, options: EvaluatorOptions = {})
     featureId: string,
     featureOrder: ReadonlyMap<string, number>,
   ): void {
-    let result: Shape3D;
-    if (operation === 'join') result = target.shape.fuse(tool.shape);
-    else if (operation === 'cut') result = target.shape.cut(tool.shape);
-    else result = target.shape.intersect(tool.shape);
-    const toolFaces = operation === 'cut' ? tool.faces.map(reverseGeom) : tool.faces;
-    const geoms = result.faces.map(describeFace);
-    const keys = assignFaceKeys(
-      geoms,
-      [...target.faces, ...toolFaces],
-      featureOrder,
-      () => `${featureId}:new`,
-    );
-    target.shape = result;
-    target.faces = withKeys(geoms, keys);
+    const op = operation === 'join' ? 'fuse' : operation === 'cut' ? 'cut' : 'common';
+    let built: HistoryResult;
+    try {
+      built = booleanWithHistory(oc, op, target.shape, tool.shape);
+    } catch (error) {
+      if (isFatalKernelError(error)) throw error;
+      throw new FeatureError(`Boolean failed: ${describeError(error)}`);
+    }
+    try {
+      const faces = nameResult(
+        built.shape,
+        built.history,
+        [
+          { shape: target.shape, faces: target.faces },
+          { shape: tool.shape, faces: tool.faces, reversed: operation === 'cut' },
+        ],
+        featureOrder,
+        () => `${featureId}:new`,
+      );
+      target.shape = built.shape;
+      target.faces = faces;
+    } finally {
+      built.history.delete();
+    }
   }
 
   function pickTarget(
@@ -386,6 +652,28 @@ export function createEvaluator(oc: OpenCascade, options: EvaluatorOptions = {})
     }
     const last = order[order.length - 1];
     return last ? (bodies.get(last) ?? null) : null;
+  }
+
+  /** The detected regions an extrude-like feature reads (with best-effort rebind of redrawn ones). */
+  function profileRegions(
+    sketchFeature: SketchFeature,
+    regions: SketchRegion[],
+    keys: readonly string[] | undefined,
+    warn: (message: string) => void,
+  ): SketchRegion[] {
+    if (!keys) return regions;
+    const bound = new Set(keys.filter((key) => regions.some((r) => r.key === key)));
+    return keys.map((key) => {
+      const region = regions.find((r) => r.key === key);
+      if (region) return region;
+      const rebound = rebindRegion(key, regions, bound, sketchFeature);
+      if (!rebound) {
+        throw new FeatureError(`Missing reference: profile "${key}" of "${sketchFeature.name}"`);
+      }
+      bound.add(rebound.region.key);
+      warn(rebound.message);
+      return rebound.region;
+    });
   }
 
   function applyExtrude(feature: ExtrudeFeature, ctx: ReplayContext): void {
@@ -407,26 +695,20 @@ export function createEvaluator(oc: OpenCascade, options: EvaluatorOptions = {})
     if (regions.length === 0) {
       throw new FeatureError(`"${sketchFeature.name}" has no closed profile`);
     }
-    const keys = feature.profile.regions ?? regions.map((r) => r.key);
+    const chosen = profileRegions(sketchFeature, regions, feature.profile.regions, ctx.warn);
     let tool: { shape: Shape3D; faces: KeyedFace[] } | null = null;
-    for (const [index, key] of keys.entries()) {
-      const region = regions.find((r) => r.key === key);
-      if (!region) {
-        throw new FeatureError(`Missing reference: profile "${key}" of "${sketchFeature.name}"`);
-      }
+    for (const [index, region] of chosen.entries()) {
       const prism = extrudeProfile(feature, sketch.frame, region, index);
       if (!tool) {
         tool = prism;
       } else {
-        const fused: Shape3D = tool.shape.fuse(prism.shape);
-        const geoms: FaceGeom[] = fused.faces.map(describeFace);
-        const keys: KeyedFaceKeys[] = assignFaceKeys(
-          geoms,
-          [...tool.faces, ...prism.faces],
-          ctx.featureOrder,
-          () => `${feature.id}:new`,
-        );
-        tool = { shape: fused, faces: withKeys(geoms, keys) };
+        const next: { shape: Shape3D; faces: KeyedFace[] } = {
+          shape: tool.shape,
+          faces: tool.faces,
+        };
+        const holder = { ...next, id: '', name: '', color: '', createdBy: '' };
+        combine(holder, prism, 'join', feature.id, ctx.featureOrder);
+        tool = { shape: holder.shape, faces: holder.faces };
       }
     }
     if (!tool) throw new FeatureError('Nothing to extrude');
@@ -469,18 +751,12 @@ export function createEvaluator(oc: OpenCascade, options: EvaluatorOptions = {})
     const vector = new R.Vector(scale(n, feature.distance));
     const prismShape = R.basicFaceExtrusion(face.clone(), vector);
     vector.delete();
-    const faceEdgeKeys = assignEdgeKeys(
-      topology.edgeFaces.map((faces, i) => ({
-        faceIndices: faces,
-        midpoint: topology.edgeGeoms[i]!.midpoint,
-      })),
-      body.faces.map((f) => f.key),
-    );
+    const faceEdgeKeys = edgeKeysOf(body);
     const sourceEdges = (topology.faceEdges[index] ?? [])
       .map((e) => ({ key: faceEdgeKeys[e]!, midpoint: topology.edgeGeoms[e]!.midpoint }))
       .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
     const travel = scale(n, Math.sign(feature.distance));
-    const geoms = prismShape.faces.map(describeFace);
+    const geoms = describeShape(prismShape);
     const caps = geoms
       .map((g, i) => ({ g, i }))
       .filter(({ g }) => g.normal !== null && Math.abs(dot(g.normal, n)) > 1 - 1e-9)
@@ -510,6 +786,7 @@ export function createEvaluator(oc: OpenCascade, options: EvaluatorOptions = {})
 
   function applyBlend(feature: FilletFeature | ChamferFeature, ctx: ReplayContext): void {
     const size = feature.kind === 'fillet' ? feature.radius : feature.distance;
+    const label = feature.kind === 'fillet' ? 'Fillet' : 'Chamfer';
     if (!(size >= MIN_FEATURE_SIZE_MM / 10)) {
       throw new FeatureError(
         `${feature.kind === 'fillet' ? 'Radius' : 'Distance'} must be positive`,
@@ -520,38 +797,49 @@ export function createEvaluator(oc: OpenCascade, options: EvaluatorOptions = {})
     const body = ctx.bodies.get(bodyId);
     if (!body) throw new FeatureError(`Missing reference: body "${bodyId}"`);
     const { topology, indices } = resolveEdges(body, feature.edges, ctx.warn);
-    const selected = indices.map((i) => topology.edges[i]!);
+    // In shape order, like the edge filter the fillet used before (same OCCT input order).
+    const unique = [...new Set(indices)].sort((a, b) => a - b);
+    const selected = unique.map((i) => topology.edges[i]!);
     const edgeFaceKeys = indices.map((i) =>
       (topology.edgeFaces[i] ?? []).map((f) => body.faces[f]!),
     );
-    const pick = (edge: R.Edge): number | null =>
-      selected.some((s) => s.isSame(edge)) ? size : null;
-    let result: Shape3D;
+    let built: HistoryResult;
     try {
-      result = feature.kind === 'fillet' ? body.shape.fillet(pick) : body.shape.chamfer(pick);
+      built = blendWithHistory(oc, feature.kind, body.shape, selected, size);
     } catch (error) {
-      throw new FeatureError(
-        `${feature.kind === 'fillet' ? 'Fillet' : 'Chamfer'} failed: ${describeError(error)}`,
-      );
+      if (isFatalKernelError(error)) throw error;
+      throw new FeatureError(`${label} failed: ${describeError(error)}`);
     }
-    const resultTopology = topologyOf(result);
-    const geoms = resultTopology.faces.map(describeFace);
     const role = feature.kind === 'fillet' ? 'round' : 'chamfer';
-    const keys = assignFaceKeys(geoms, body.faces, ctx.featureOrder, (index, provisional) => {
-      const neighbours = neighbourFaces(resultTopology, index)
-        .map((f) => provisional[f])
-        .filter((k): k is KeyedFaceKeys => k !== null);
-      const has = (face: KeyedFace): boolean =>
-        neighbours.some(
-          (k) => k.key === baseFaceKey(face.key) || k.aliases.includes(baseFaceKey(face.key)),
-        );
-      const edgeIndex = edgeFaceKeys.findIndex(
-        (faces) => faces.length === 2 && faces.every((f) => has(f)),
+    try {
+      body.faces = nameResult(
+        built.shape,
+        built.history,
+        [{ shape: body.shape, faces: body.faces }],
+        ctx.featureOrder,
+        (index, provisional, resultTopology) => {
+          // v1 fallback (corner patches etc.): the new face adjacent to both faces of an edge.
+          const neighbours = neighbourFaces(resultTopology, index)
+            .map((f) => provisional[f])
+            .filter((k): k is KeyedFaceKeys => k !== null);
+          const has = (face: KeyedFace): boolean =>
+            neighbours.some(
+              (k) => k.key === baseFaceKey(face.key) || k.aliases.includes(baseFaceKey(face.key)),
+            );
+          const edgeIndex = edgeFaceKeys.findIndex(
+            (faces) => faces.length === 2 && faces.every((f) => has(f)),
+          );
+          return edgeIndex >= 0 ? `${feature.id}:${role}:${edgeIndex}` : `${feature.id}:new`;
+        },
+        indices.map((edgeIndex, i) => ({
+          raw: topology.edges[edgeIndex]!.wrapped as RawShape,
+          role: `${feature.id}:${role}:${i}`,
+        })),
       );
-      return edgeIndex >= 0 ? `${feature.id}:${role}:${edgeIndex}` : `${feature.id}:new`;
-    });
-    body.shape = result;
-    body.faces = withKeys(geoms, keys);
+      body.shape = built.shape;
+    } finally {
+      built.history.delete();
+    }
     ctx.touch(body.id);
   }
 
@@ -567,23 +855,37 @@ export function createEvaluator(oc: OpenCascade, options: EvaluatorOptions = {})
         throw new FeatureError('Shell faces must belong to the shelled body');
       return resolveFace(body, ref, ctx.warn).face;
     });
-    let result: Shape3D;
+    let built: HistoryResult;
     try {
-      result = body.shape.shell(feature.thickness, (finder) =>
-        finder.when(({ element }) => removed.some((face) => face.isSame(element))),
-      );
+      built = shellWithHistory(oc, body.shape, removed, feature.thickness);
     } catch (error) {
+      if (isFatalKernelError(error)) throw error;
       throw new FeatureError(`Shell failed: ${describeError(error)}`);
     }
-    const geoms = result.faces.map(describeFace);
     const t = feature.thickness;
-    const keys = assignFaceKeys(geoms, body.faces, ctx.featureOrder, (index) => {
-      const g = geoms[index]!;
-      const original = body.faces.find((f) => isOffsetOf(g.id, f.id, t));
-      return original ? `${feature.id}:inner:${baseFaceKey(original.key)}` : `${feature.id}:new`;
-    });
-    body.shape = result;
-    body.faces = withKeys(geoms, keys);
+    const topology = topologyOf(body.shape);
+    try {
+      body.faces = nameResult(
+        built.shape,
+        built.history,
+        [{ shape: body.shape, faces: body.faces }],
+        ctx.featureOrder,
+        (index) => {
+          const g = describeFace(topologyOf(built.shape).faces[index]!);
+          const original = body.faces.find((f) => isOffsetOf(g.id, f.id, t));
+          return original
+            ? `${feature.id}:inner:${baseFaceKey(original.key)}`
+            : `${feature.id}:new`;
+        },
+        topology.faces.map((face, i) => ({
+          raw: face.wrapped as RawShape,
+          role: `${feature.id}:inner:${baseFaceKey(body.faces[i]!.key)}`,
+        })),
+      );
+      body.shape = built.shape;
+    } finally {
+      built.history.delete();
+    }
     ctx.touch(body.id);
   }
 
@@ -619,7 +921,7 @@ export function createEvaluator(oc: OpenCascade, options: EvaluatorOptions = {})
     const delta: Vec3 = [feature.dx, feature.dy, feature.dz];
     const moved = body.faces.map((f) => translateGeom(f, delta));
     const result = body.shape.clone().translate(delta);
-    const geoms = result.faces.map(describeFace);
+    const geoms = describeShape(result);
     const keys = assignFaceKeys(geoms, moved, ctx.featureOrder, () => `${feature.id}:new`);
     body.shape = result;
     body.faces = withKeys(geoms, keys);
@@ -644,10 +946,10 @@ export function createEvaluator(oc: OpenCascade, options: EvaluatorOptions = {})
       }
       shape = imported as Shape3D;
     } catch (error) {
-      if (error instanceof FeatureError) throw error;
+      if (error instanceof FeatureError || isFatalKernelError(error)) throw error;
       throw new FeatureError(`STEP import failed: ${describeError(error)}`);
     }
-    const geoms = shape.faces.map(describeFace);
+    const geoms = describeShape(shape);
     const id = bodyIdFor(feature.id);
     const created = ctx.createdCount;
     ctx.bodies.set(id, {
@@ -668,13 +970,18 @@ export function createEvaluator(oc: OpenCascade, options: EvaluatorOptions = {})
     fail: (message) => {
       throw new FeatureError(message);
     },
-    isFailure: (error) => error instanceof FeatureError,
+    isFailure: (error) => error instanceof FeatureError || isFatalKernelError(error),
     describeError: (error) => describeError(error),
     describeFace,
+    describeShape,
     topologyOf,
+    facesOf: (shape) => facesOf(oc, shape),
+    edgesOf: (shape) => edgesOf(oc, shape),
     resolveFace,
     resolveEdges,
     combine,
+    nameResult: (result, history, inputs, featureOrder, nameNew, generators) =>
+      nameResult(result, history, inputs, featureOrder, nameNew, generators),
     withKeys,
     diagonalOf,
     addBody: (ctx, body, color) => {
@@ -692,59 +999,56 @@ export function createEvaluator(oc: OpenCascade, options: EvaluatorOptions = {})
 
   // ---- output ------------------------------------------------------------------
 
-  function toBody(state: BodyState): { body: Body; triangles: number } {
-    const shape = state.shape;
-    const topology = topologyOf(shape);
-    const [min, max] = shape.boundingBox.bounds as [Vec3, Vec3];
-    const diagonal = Math.hypot(max[0] - min[0], max[1] - min[1], max[2] - min[2]);
-    const tolerance = Math.min(0.2, Math.max(0.005, diagonal * relativeTolerance));
-    const mesh = shape.mesh({ tolerance, angularTolerance });
-    const edgeMesh = shape.meshEdges({ tolerance, angularTolerance });
+  /** Deflection for a body: relative to its size, snapped down to a power of two so small size changes keep face meshes. */
+  function deflection(
+    shape: Shape3D,
+    q: TessellationQuality,
+  ): { tolerance: number; angular: number } {
+    const settings = quality[q];
+    const raw = Math.min(
+      settings.max,
+      Math.max(settings.min, diagonalOf(shape) * settings.relative),
+    );
+    const tolerance = Math.max(settings.min, 2 ** Math.floor(Math.log2(raw)));
+    return { tolerance, angular: settings.angular };
+  }
 
-    const faceByHash = new Map<number, number[]>();
-    topology.faces.forEach((face, i) => {
-      const list = faceByHash.get(face.hashCode) ?? [];
-      list.push(i);
-      faceByHash.set(face.hashCode, list);
-    });
+  function toBody(state: BodyState, q: TessellationQuality): { body: Body; triangles: number } {
+    const shape = state.shape;
+    const info = infoOf(shape);
+    const topology = topologyOf(shape);
+    const [min, max] = timed('bounds', () => boundsOf(shape));
+    const { tolerance, angular } = deflection(shape, q);
+    const mesh = timed('mesh', () => faceMeshes.tessellate(shape, topology, tolerance, angular));
+    const edgeMesh = timed('edgeMesh', () => meshShapeEdges(oc, shape, tolerance, angular));
+
     const edgeByHash = new Map<number, number[]>();
     topology.edges.forEach((edge, i) => {
-      const list = edgeByHash.get(edge.hashCode) ?? [];
+      const hash = shapeHash(oc, edge.wrapped as RawShape);
+      const list = edgeByHash.get(hash) ?? [];
       list.push(i);
-      edgeByHash.set(edge.hashCode, list);
+      edgeByHash.set(hash, list);
     });
 
-    const faceKeys = state.faces.map((f) => f.key);
-    const edgeKeys = assignEdgeKeys(
-      topology.edgeFaces.map((faces, i) => ({
-        faceIndices: faces,
-        midpoint: topology.edgeGeoms[i]!.midpoint,
-      })),
-      faceKeys,
-    );
-
-    const triangleCount = mesh.triangles.length / 3;
+    const edgeKeys = edgeKeysOf(state);
+    const triangleCount = mesh.indices.length / 3;
     const triangleFaces = new Uint32Array(triangleCount);
     const faceRange = new Map<number, { start: number; count: number }>();
-    const usedFaces = new Set<number>();
-    for (const group of mesh.faceGroups) {
-      const faceIndex = takeUnused(faceByHash.get(group.faceId), usedFaces);
-      if (faceIndex === null) continue;
-      const start = group.start / 3;
-      const count = group.count / 3;
-      faceRange.set(faceIndex, { start, count });
-      triangleFaces.fill(faceIndex, start, start + count);
-    }
+    mesh.faceRanges.forEach((range, faceIndex) => {
+      if (range.count === 0) return;
+      faceRange.set(faceIndex, range);
+      triangleFaces.fill(faceIndex, range.start, range.start + range.count);
+    });
+    facesMeshedTotal += mesh.facesMeshed;
 
     const segmentsByEdge = new Map<number, Float32Array>();
     const usedEdges = new Set<number>();
-    for (const group of edgeMesh.edgeGroups) {
-      const edgeIndex = takeUnused(edgeByHash.get(group.edgeId), usedEdges);
+    for (let g = 0; g + 2 < edgeMesh.edgeGroups.length; g += 3) {
+      const edgeIndex = takeUnused(edgeByHash.get(edgeMesh.edgeGroups[g + 2]!), usedEdges);
       if (edgeIndex === null) continue;
-      segmentsByEdge.set(
-        edgeIndex,
-        Float32Array.from(edgeMesh.lines.slice(group.start * 3, (group.start + group.count) * 3)),
-      );
+      const start = edgeMesh.edgeGroups[g]!;
+      const count = edgeMesh.edgeGroups[g + 1]!;
+      segmentsByEdge.set(edgeIndex, edgeMesh.lines.slice(start * 3, (start + count) * 3));
     }
 
     const faces: FaceInfo[] = state.faces.map((f, i) => ({
@@ -770,10 +1074,12 @@ export function createEvaluator(oc: OpenCascade, options: EvaluatorOptions = {})
       segments: segmentsByEdge.get(i) ?? new Float32Array(0),
     }));
 
-    const analyzer = new oc.BRepCheck_Analyzer(shape.wrapped, true, false, false);
-    const valid = analyzer.IsValid();
-    analyzer.delete();
+    info.valid ??= timed('validity', () =>
+      faceProps.valid(shape, topology, mesh.facesReused === 0),
+    );
+    info.volume ??= timed('volume', () => faceProps.volume(topology));
 
+    meshSerial += 1;
     return {
       triangles: triangleCount,
       body: {
@@ -781,14 +1087,15 @@ export function createEvaluator(oc: OpenCascade, options: EvaluatorOptions = {})
         name: state.name,
         color: state.color,
         createdBy: state.createdBy,
+        meshId: `m${meshSerial}`,
         min: [min[0], min[1], min[2]],
         max: [max[0], max[1], max[2]],
-        volume: R.measureVolume(shape),
-        valid,
+        volume: info.volume,
+        valid: info.valid,
         mesh: {
-          positions: Float32Array.from(mesh.vertices),
-          normals: Float32Array.from(mesh.normals),
-          indices: Uint32Array.from(mesh.triangles),
+          positions: mesh.positions,
+          normals: mesh.normals,
+          indices: mesh.indices,
           triangleFaces,
         },
         faces,
@@ -796,6 +1103,69 @@ export function createEvaluator(oc: OpenCascade, options: EvaluatorOptions = {})
       },
     };
   }
+
+  function meshBytesOf(body: Body): number {
+    let bytes =
+      body.mesh.positions.byteLength +
+      body.mesh.normals.byteLength +
+      body.mesh.indices.byteLength +
+      body.mesh.triangleFaces.byteLength;
+    for (const edge of body.edges) bytes += edge.segments.byteLength + 200;
+    return bytes + body.faces.length * 300;
+  }
+
+  /** The tessellated body of `state`, reusing the mesh of an unchanged shape. */
+  function tessellate(
+    state: BodyState,
+    q: TessellationQuality,
+    keep: boolean,
+  ): { body: Body; triangles: number; reused: boolean } {
+    const cached = meshes.get(state.shape);
+    if (
+      cached &&
+      cached.faces === state.faces &&
+      (cached.quality === q || cached.quality === 'final')
+    ) {
+      cached.lastUsed = ++meshClock;
+      const body: Body = {
+        ...cached.body,
+        id: state.id,
+        name: state.name,
+        color: state.color,
+        createdBy: state.createdBy,
+      };
+      return { body, triangles: body.mesh.indices.length / 3, reused: true };
+    }
+    const out = inArena(() => toBody(state, q));
+    if (keep) {
+      if (cached) dropMesh(state.shape);
+      const bytes = meshBytesOf(out.body);
+      meshes.set(state.shape, {
+        quality: q,
+        faces: state.faces,
+        body: out.body,
+        bytes,
+        lastUsed: ++meshClock,
+      });
+      meshBytes += bytes;
+    }
+    return { ...out, reused: false };
+  }
+
+  function evictMeshes(keep: ReadonlySet<Shape3D>): void {
+    faceMeshes.evict();
+    faceProps.evict();
+    if (meshBytes <= meshBudget) return;
+    const entries = [...meshes.entries()]
+      .filter(([shape]) => !keep.has(shape))
+      .sort((a, b) => a[1].lastUsed - b[1].lastUsed);
+    for (const [shape] of entries) {
+      if (meshBytes <= meshBudget) break;
+      dropMesh(shape);
+    }
+  }
+
+  // ---- replay --------------------------------------------------------------------
 
   interface ReplayContext {
     bodies: Map<string, BodyState>;
@@ -810,25 +1180,32 @@ export function createEvaluator(oc: OpenCascade, options: EvaluatorOptions = {})
     touch: (bodyId: string) => void;
   }
 
-  /** Replays `features` into `ctx.bodies`, in creation order. Shared by `evaluate` and `exportStep`. */
-  async function replayFeatures(features: readonly Feature[]): Promise<{
+  interface Replay {
     ctx: ReplayContext;
     creationOrder: string[];
     errors: Record<string, string>;
     warnings: Record<string, string>;
-  }> {
-    const errors: Record<string, string> = {};
-    const warnings: Record<string, string> = {};
-    const featureOrder = new Map(features.map((f, i) => [f.id, i]));
+    /** Features restored from a checkpoint / evaluated now. */
+    reused: number;
+    evaluated: number;
+    /** Hashes of this document's checkpoints (protected from eviction). */
+    hashes: string[];
+  }
+
+  function restore(checkpoint: Checkpoint | null, featureOrder: ReadonlyMap<string, number>) {
+    const errors: Record<string, string> = { ...(checkpoint?.errors ?? {}) };
+    const warnings: Record<string, string> = { ...(checkpoint?.warnings ?? {}) };
     let currentId = '';
     const ctx: ReplayContext = {
-      bodies: new Map(),
-      order: [],
-      sketches: new Map(),
-      sketchFeatures: new Map(),
-      sketchRegions: new Map(),
+      bodies: new Map(
+        [...(checkpoint?.bodies.values() ?? [])].map((b) => [b.id, { ...b } as BodyState]),
+      ),
+      order: [...(checkpoint?.order ?? [])],
+      sketches: new Map(checkpoint?.sketches ?? []),
+      sketchFeatures: new Map(checkpoint?.sketchFeatures ?? []),
+      sketchRegions: new Map(checkpoint?.sketchRegions ?? []),
       featureOrder,
-      createdCount: 0,
+      createdCount: checkpoint?.createdCount ?? 0,
       warn: (message) => {
         warnings[currentId] = warnings[currentId] ? `${warnings[currentId]}; ${message}` : message;
       },
@@ -841,106 +1218,316 @@ export function createEvaluator(oc: OpenCascade, options: EvaluatorOptions = {})
         }
       },
     };
-    const creationOrder: string[] = [];
+    return {
+      ctx,
+      errors,
+      warnings,
+      creationOrder: [...(checkpoint?.creationOrder ?? [])],
+      setCurrent: (id: string) => {
+        currentId = id;
+      },
+    };
+  }
 
-    for (const feature of features) {
-      if (feature.suppressed) continue;
-      currentId = feature.id;
-      const snapshot = snapshotBodies(ctx.bodies);
-      try {
-        switch (feature.kind) {
-          case 'sketch': {
-            const { evaluated, regions } = evaluateSketch(feature, ctx.bodies, ctx.warn);
-            ctx.sketches.set(feature.id, evaluated);
-            ctx.sketchFeatures.set(feature.id, feature);
-            ctx.sketchRegions.set(feature.id, regions);
-            break;
-          }
-          case 'extrude':
-            applyExtrude(feature, ctx);
-            break;
-          case 'fillet':
-          case 'chamfer':
-            applyBlend(feature, ctx);
-            break;
-          case 'shell':
-            applyShell(feature, ctx);
-            break;
-          case 'boolean':
-            applyBoolean(feature, ctx);
-            break;
-          case 'move':
-            applyMove(feature, ctx);
-            break;
-          case 'setAppearance':
-            applyAppearance(feature, ctx);
-            break;
-          case 'importStep':
-            await applyImportStep(feature, ctx);
-            break;
-          default:
-            applyModelingFeature(feature, ctx, kit);
-        }
-      } catch (error) {
-        errors[feature.id] = error instanceof FeatureError ? error.message : describeError(error);
-        restoreBodies(ctx, snapshot);
+  function snapshotOf(
+    hash: string,
+    index: number,
+    replay: {
+      ctx: ReplayContext;
+      creationOrder: string[];
+      errors: Record<string, string>;
+      warnings: Record<string, string>;
+    },
+    previous: Checkpoint | null,
+  ): Checkpoint {
+    const bodies = new Map<string, BodySnapshot>();
+    for (const [id, body] of replay.ctx.bodies) {
+      const before = previous?.bodies.get(id);
+      // Unchanged bodies share their snapshot object with the previous checkpoint.
+      if (
+        before &&
+        before.shape === body.shape &&
+        before.faces === body.faces &&
+        before.color === body.color &&
+        before.name === body.name &&
+        before.createdBy === body.createdBy
+      ) {
+        bodies.set(id, before);
+      } else {
+        bodies.set(id, Object.freeze({ ...body }));
       }
-      for (const id of ctx.order) if (!creationOrder.includes(id)) creationOrder.push(id);
     }
-    return { ctx, creationOrder, errors, warnings };
+    return {
+      hash,
+      index,
+      bodies,
+      order: [...replay.ctx.order],
+      creationOrder: [...replay.creationOrder],
+      sketches: new Map(replay.ctx.sketches),
+      sketchFeatures: new Map(replay.ctx.sketchFeatures),
+      sketchRegions: new Map(replay.ctx.sketchRegions),
+      createdCount: replay.ctx.createdCount,
+      errors: { ...replay.errors },
+      warnings: { ...replay.warnings },
+    };
+  }
+
+  async function applyFeature(feature: Feature, ctx: ReplayContext): Promise<void> {
+    switch (feature.kind) {
+      case 'sketch': {
+        const { evaluated, regions } = evaluateSketch(feature, ctx.bodies, ctx.warn);
+        ctx.sketches.set(feature.id, evaluated);
+        ctx.sketchFeatures.set(feature.id, feature);
+        ctx.sketchRegions.set(feature.id, regions);
+        return;
+      }
+      case 'extrude':
+        return applyExtrude(feature, ctx);
+      case 'fillet':
+      case 'chamfer':
+        return applyBlend(feature, ctx);
+      case 'shell':
+        return applyShell(feature, ctx);
+      case 'boolean':
+        return applyBoolean(feature, ctx);
+      case 'move':
+        return applyMove(feature, ctx);
+      case 'setAppearance':
+        return applyAppearance(feature, ctx);
+      case 'importStep':
+        return applyImportStep(feature, ctx);
+      default:
+        applyModelingFeature(feature, ctx, kit);
+    }
+  }
+
+  /** Replays `features` from the deepest cached checkpoint, storing new checkpoints. */
+  async function replayFeatures(
+    features: readonly Feature[],
+    options: {
+      cacheTail: boolean;
+      onProgress?: ((progress: EvaluationProgress) => void) | undefined;
+    },
+  ): Promise<Replay> {
+    const hashes = timed('hash', () => prefixHashes(features));
+    let start = features.length;
+    let checkpoint: Checkpoint | null = null;
+    while (start > 0) {
+      const found = cache.get(hashes[start - 1]!);
+      if (found) {
+        checkpoint = found;
+        break;
+      }
+      start -= 1;
+    }
+    // Everything before the checkpoint is part of this document too.
+    for (let i = 0; i < start - 1; i += 1) cache.get(hashes[i]!);
+
+    const featureOrder = new Map(features.map((f, i) => [f.id, i]));
+    const replay = restore(checkpoint, featureOrder);
+    const { ctx, errors } = replay;
+    let previous = checkpoint;
+    const total = features.length - start;
+    for (let i = start; i < features.length; i += 1) {
+      const feature = features[i]!;
+      replay.setCurrent(feature.id);
+      options.onProgress?.({
+        phase: 'model',
+        done: i - start,
+        total,
+        featureId: feature.id,
+        featureName: feature.name,
+      });
+      if (!feature.suppressed) {
+        const snapshot = snapshotBodies(ctx.bodies);
+        featureInfos = [];
+        openArena();
+        try {
+          const t = now();
+          await applyFeature(feature, ctx);
+          if (phases)
+            phases[`feature:${feature.kind}`] =
+              (phases[`feature:${feature.kind}`] ?? 0) + now() - t;
+        } catch (error) {
+          if (isFatalKernelError(error)) {
+            closeArena();
+            throw error instanceof KernelFatalError
+              ? error
+              : new KernelFatalError(`CAD kernel failure: ${describeError(error)}`);
+          }
+          errors[feature.id] = error instanceof FeatureError ? error.message : describeError(error);
+          restoreBodies(ctx, snapshot);
+        }
+        // Keep the bodies' shapes, release everything else the feature created.
+        for (const body of ctx.bodies.values()) pin(body.shape.wrapped);
+        for (const shape of featureInfos) {
+          if (!isPinned(shape.wrapped)) dropInfo(shape);
+        }
+        featureInfos = [];
+        timed('release', () => closeArena());
+        for (const id of ctx.order)
+          if (!replay.creationOrder.includes(id)) replay.creationOrder.push(id);
+      }
+      const isTail = i === features.length - 1;
+      const next = timed('checkpoint', () => snapshotOf(hashes[i]!, i, replay, previous));
+      if (!isTail || options.cacheTail) cache.put(next);
+      previous = next;
+    }
+    return {
+      ctx,
+      creationOrder: replay.creationOrder,
+      errors: replay.errors,
+      warnings: replay.warnings,
+      reused: start,
+      evaluated: features.length - start,
+      hashes,
+    };
+  }
+
+  /** Frees the shapes of a finished replay that no checkpoint holds (an uncached preview tail). */
+  function releaseTransient(replay: Replay): void {
+    for (const body of replay.ctx.bodies.values()) {
+      if (!cache.holds(body.shape)) freeShape(body.shape);
+    }
+  }
+
+  // Serializes evaluate/exportStep: arenas and the caches are not re-entrant.
+  let queue: Promise<unknown> = Promise.resolve();
+  let broken: Error | null = null;
+  function serialized<T>(run: () => Promise<T>): Promise<T> {
+    const next = queue.then(() => {
+      if (broken) throw broken;
+      return run();
+    });
+    queue = next.catch(() => undefined);
+    return next.catch((error: unknown) => {
+      if (isFatalKernelError(error)) {
+        broken =
+          error instanceof KernelFatalError
+            ? error
+            : new KernelFatalError(`CAD kernel failure: ${describeError(error)}`);
+        throw broken;
+      }
+      throw error;
+    });
   }
 
   return {
-    async evaluate(features) {
-      const t0 = now();
-      const { ctx, creationOrder, errors, warnings } = await replayFeatures(features);
+    evaluate(features, evaluateOptions = {}) {
+      return serialized(async () => {
+        const q: TessellationQuality = evaluateOptions.quality ?? 'final';
+        const cacheTail = evaluateOptions.cacheTail ?? q === 'final';
+        phases = evaluateOptions.profile ? {} : null;
+        const t0 = now();
+        const replay = await replayFeatures(features, {
+          cacheTail,
+          onProgress: evaluateOptions.onProgress,
+        });
+        const { ctx, creationOrder, errors, warnings } = replay;
 
-      const t1 = now();
-      const bodies: Body[] = [];
-      let triangles = 0;
-      for (const id of creationOrder) {
-        const state = ctx.bodies.get(id);
-        if (!state) continue;
-        try {
-          const out = toBody(state);
-          bodies.push(out.body);
-          triangles += out.triangles;
-        } catch (error) {
-          errors[state.createdBy] = `Tessellation failed: ${describeError(error)}`;
+        const t1 = now();
+        evaluateOptions.onProgress?.({
+          phase: 'tessellate',
+          done: replay.evaluated,
+          total: replay.evaluated,
+          featureId: null,
+          featureName: null,
+        });
+        const bodies: Body[] = [];
+        let triangles = 0;
+        let reusedBodies = 0;
+        for (const id of creationOrder) {
+          const state = ctx.bodies.get(id);
+          if (!state) continue;
+          try {
+            const out = tessellate(state, q, cache.holds(state.shape));
+            bodies.push(out.body);
+            triangles += out.triangles;
+            if (out.reused) reusedBodies += 1;
+          } catch (error) {
+            if (isFatalKernelError(error)) throw error;
+            errors[state.createdBy] = `Tessellation failed: ${describeError(error)}`;
+          }
         }
-      }
-      const t2 = now();
+        const t2 = now();
+        releaseTransient(replay);
+        cache.evict(new Set(replay.hashes));
+        evictMeshes(new Set([...ctx.bodies.values()].map((b) => b.shape)));
+        const cacheStats = cache.stats();
+        return {
+          bodies,
+          sketches: [...ctx.sketches.values()],
+          errors,
+          warnings,
+          stats: {
+            modelMs: t1 - t0,
+            tessellateMs: t2 - t1,
+            triangles,
+            reusedFeatures: replay.reused,
+            evaluatedFeatures: replay.evaluated,
+            reusedBodies,
+            tessellatedBodies: bodies.length - reusedBodies,
+            heapBytes: heapBytes(oc),
+            cacheBytes: cacheStats.bytes + meshBytes + faceMeshes.byteSize,
+            ...(phases ? { phases: roundPhases(phases) } : {}),
+          },
+        };
+      });
+    },
+
+    exportStep(features, bodyIds) {
+      return serialized(async () => {
+        const replay = await replayFeatures(features, { cacheTail: true });
+        try {
+          const { ctx, creationOrder, errors } = replay;
+          const firstError = Object.entries(errors)[0];
+          if (firstError) throw new Error(`Cannot export: ${firstError[1]}`);
+          const wanted = bodyIds ? new Set(bodyIds) : null;
+          const shapes = creationOrder
+            .map((id) => ctx.bodies.get(id))
+            .filter(
+              (state): state is BodyState =>
+                state !== undefined && (!wanted || wanted.has(state.id)),
+            )
+            .map((state) => ({ shape: state.shape, color: state.color, name: state.name }));
+          if (shapes.length === 0) throw new Error('Nothing to export');
+          openArena();
+          try {
+            const blob = R.exportSTEP(shapes, { unit: 'mm', modelUnit: 'mm' });
+            const buffer = await blob.arrayBuffer();
+            return new Uint8Array(buffer);
+          } finally {
+            closeArena();
+          }
+        } finally {
+          releaseTransient(replay);
+        }
+      });
+    },
+
+    cacheInfo() {
       return {
-        bodies,
-        sketches: [...ctx.sketches.values()],
-        errors,
-        warnings,
-        stats: { modelMs: t1 - t0, tessellateMs: t2 - t1, triangles },
+        ...cache.stats(),
+        meshBytes: meshBytes + faceMeshes.byteSize,
+        meshes: meshes.size,
+        faceMeshes: faceMeshes.size,
+        facesMeshed: facesMeshedTotal,
+        heapBytes: heapBytes(oc),
       };
     },
 
-    async exportStep(features, bodyIds) {
-      const { ctx, creationOrder, errors } = await replayFeatures(features);
-      const firstError = Object.entries(errors)[0];
-      if (firstError) throw new Error(`Cannot export: ${firstError[1]}`);
-      const wanted = bodyIds ? new Set(bodyIds) : null;
-      const shapes = creationOrder
-        .map((id) => ctx.bodies.get(id))
-        .filter(
-          (state): state is BodyState => state !== undefined && (!wanted || wanted.has(state.id)),
-        )
-        .map((state) => ({ shape: state.shape, color: state.color, name: state.name }));
-      if (shapes.length === 0) throw new Error('Nothing to export');
-      const blob = R.exportSTEP(shapes, { unit: 'mm', modelUnit: 'mm' });
-      const buffer = await blob.arrayBuffer();
-      return new Uint8Array(buffer);
+    clearCache() {
+      cache.clear();
+      for (const shape of [...meshes.keys()]) dropMesh(shape);
+      faceMeshes.clear();
+      faceProps.clear();
     },
   };
 
   function describeError(error: unknown): string {
     if (error instanceof Error) return error.message;
     // OCCT throws C++ exceptions: a pointer (number) or, with native wasm
-    // exceptions, a `WebAssembly.Exception` object — never show those raw.
+    // exceptions, a `WebAssembly.Exception` object â€” never show those raw.
     const wasmException =
       typeof WebAssembly !== 'undefined' &&
       'Exception' in WebAssembly &&
@@ -963,6 +1550,15 @@ export function createEvaluator(oc: OpenCascade, options: EvaluatorOptions = {})
     }
     return String(error);
   }
+}
+
+/**
+ * Estimated wasm-heap bytes of a B-rep with `faces` faces (surfaces,
+ * p-curves, edges, vertices; triangulations are counted by the mesh cache).
+ * Calibrated on this kernel build with the bench parts.
+ */
+export function estimateShapeBytes(faces: number): number {
+  return 4096 + faces * 6144;
 }
 
 interface BodiesSnapshot {
@@ -1044,17 +1640,12 @@ function surfaceKindOf(type: R.SurfaceType): SurfaceKind {
   }
 }
 
-function curveKindOf(type: R.CurveType): CurveKind {
-  switch (type) {
-    case 'LINE':
-      return 'line';
-    case 'CIRCLE':
-      return 'circle';
-    case 'ELLIPSE':
-      return 'ellipse';
-    default:
-      return 'other';
-  }
+function roundPhases(phases: Record<string, number>): Record<string, number> {
+  return Object.fromEntries(
+    Object.entries(phases)
+      .sort((a, b) => b[1] - a[1])
+      .map(([k, v]) => [k, Math.round(v * 10) / 10]),
+  );
 }
 
 function now(): number {

@@ -72,6 +72,12 @@ export interface Body {
   color: string;
   /** The id of the feature that created this body. */
   createdBy: string;
+  /**
+   * Identity of the tessellation (`mesh`, edge `segments`): equal ids carry
+   * the very same mesh, so consumers can skip re-uploading unchanged bodies.
+   * Absent in results of older kernels.
+   */
+  meshId?: string;
   /** Axis-aligned bounding box of the exact B-rep. */
   min: Vec3;
   max: Vec3;
@@ -120,6 +126,32 @@ export interface EvaluationStats {
   /** Tessellation + topology extraction time, ms. */
   tessellateMs: number;
   triangles: number;
+  /** Features restored from the prefix cache instead of being evaluated. */
+  reusedFeatures?: number;
+  /** Features evaluated by this request. */
+  evaluatedFeatures?: number;
+  /** Bodies whose mesh was reused (shape unchanged) / tessellated now. */
+  reusedBodies?: number;
+  tessellatedBodies?: number;
+  /** wasm heap size after the evaluation (a high-water mark), bytes. */
+  heapBytes?: number;
+  /** Estimated bytes held by the kernel's incremental caches. */
+  cacheBytes?: number;
+  /** Per-phase milliseconds, only when profiling was requested. */
+  phases?: Record<string, number>;
+}
+
+/** Mesh density: `preview` (coarser, during drags and tool previews) or `final` (committed). */
+export type TessellationQuality = 'preview' | 'final';
+
+/** Progress of a running evaluation, reported between features. */
+export interface EvaluationProgress {
+  phase: 'model' | 'tessellate';
+  /** Features evaluated so far / features this request evaluates (cached ones excluded). */
+  done: number;
+  total: number;
+  featureId: string | null;
+  featureName: string | null;
 }
 
 /** Result of replaying a feature list. */
@@ -151,6 +183,11 @@ export interface EvaluationRequest {
   /** Caller-owned revision; echoed back so stale results can be discarded. */
   revision: number;
   features: Feature[];
+  /**
+   * Tessellation quality. Default `final`; tool previews ask for `preview`
+   * (coarser mesh, the provisional feature is not kept in the prefix cache).
+   */
+  quality?: TessellationQuality;
 }
 
 export type EvaluationOutcome =

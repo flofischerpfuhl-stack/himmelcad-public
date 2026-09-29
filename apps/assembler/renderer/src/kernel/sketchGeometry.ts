@@ -5,6 +5,7 @@
  * and in Node tests; the solver is never needed here because a sketch
  * feature stores its last solved positions.
  */
+import './occtArena.js';
 import * as R from 'replicad';
 
 import {

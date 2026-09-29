@@ -255,7 +255,8 @@ void test('shell tool: removes the selected face, walls inward, preview then one
   assert.ok(Math.abs(bodyVolume() - (40 * 30 * 20 - inner)) < 0.01);
   store.getState().undo();
   assert.equal(store.getState().features.length, count);
-  assert.equal(bodyVolume(), 40 * 30 * 20);
+  // The kernel sums per-face volume contributions (cached across edits): equal up to rounding.
+  assert.ok(Math.abs(bodyVolume() - 40 * 30 * 20) < 1e-6);
 });
 
 /** A plain click at sketch position `pos` (no snapping) for the active sketch tool. */

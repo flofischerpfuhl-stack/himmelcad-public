@@ -5,6 +5,7 @@
  * `rigid.ts`); copies are new, independent bodies whose faces carry the
  * source keys (a reference is `bodyId` + key, so they stay unambiguous).
  */
+import '../occtArena.js';
 import * as R from 'replicad';
 
 import {
@@ -24,6 +25,7 @@ import {
   type TransformFeature,
 } from '../../model/features.js';
 import { assignFaceKeys } from '../naming.js';
+import { booleanWithHistory, type HistoryResult } from '../occt.js';
 import type { BodyStateLike, FeatureKit, ReplayContextLike, Shape3D } from './kit.js';
 import { transformShape } from './occRigid.js';
 import { bodyOrFail, resolveAxis, resolvePlane } from './refs.js';
@@ -71,9 +73,21 @@ function rigidCopy(
   }
   const affine = opsAffine(ops);
   const moved = body.faces.map((f) => transformGeom(f, affine));
-  const geoms = shape.faces.map((f) => kit.describeFace(f));
-  const keys = assignFaceKeys(geoms, moved, ctx.featureOrder, () => `${featureId}:new`);
-  return { shape, faces: kit.withKeys(geoms, keys) };
+  if (sameFacesMoved(kit, body.shape, shape)) {
+    // Same B-rep under a new location: the moved descriptors are exact, no OCCT query needed.
+    const keys = assignFaceKeys(moved, moved, ctx.featureOrder, () => `${featureId}:new`);
+    return { shape, faces: kit.withKeys(moved, keys) };
+  }
+  const geoms = kit.describeShape(shape);
+  const matched = assignFaceKeys(geoms, moved, ctx.featureOrder, () => `${featureId}:new`);
+  return { shape, faces: kit.withKeys(geoms, matched) };
+}
+
+/** `true` when `moved` has the faces of `source` (same B-rep, only relocated) in the same order. */
+function sameFacesMoved(kit: FeatureKit, source: Shape3D, moved: Shape3D): boolean {
+  const a = kit.topologyOf(source).faces;
+  const b = kit.topologyOf(moved).faces;
+  return a.length === b.length && a.every((face, i) => face.wrapped.IsPartner(b[i]!.wrapped));
 }
 
 function addCopy(
@@ -179,42 +193,52 @@ export function applySplit(feature: SplitFeature, ctx: ReplayContextLike, kit: F
     [1, 1],
     [-1, 1],
   ].map(([a, b]) => framePoint(frame, uv.u + a! * size, uv.v + b! * size));
-  let positive: Shape3D;
-  let negative: Shape3D;
+  let positive: HistoryResult;
+  let negative: HistoryResult;
   try {
     const base = R.makePolygon(corners);
     const vector = new R.Vector(scale(plane.normal, size * 2));
     const halfSpace = R.basicFaceExtrusion(base, vector);
     vector.delete();
-    positive = body.shape.intersect(halfSpace);
-    negative = body.shape.cut(halfSpace);
+    positive = booleanWithHistory(kit.oc, 'common', body.shape, halfSpace);
+    negative = booleanWithHistory(kit.oc, 'cut', body.shape, halfSpace);
   } catch (error) {
+    if (kit.isFailure(error)) throw error;
     kit.fail(`Split failed: ${kit.describeError(error)}`);
   }
-  const tiny = 1e-6 * Math.max(1, R.measureVolume(body.shape));
-  if (!(R.measureVolume(positive) > tiny) || !(R.measureVolume(negative) > tiny)) {
-    kit.fail(`The plane does not cut "${body.name}"`);
+  try {
+    const tiny = 1e-6 * Math.max(1, R.measureVolume(body.shape));
+    if (!(R.measureVolume(positive.shape) > tiny) || !(R.measureVolume(negative.shape) > tiny)) {
+      kit.fail(`The plane does not cut "${body.name}"`);
+    }
+    const keyed = (part: HistoryResult) =>
+      kit.nameResult(
+        part.shape,
+        part.history,
+        [{ shape: body.shape, faces: body.faces }],
+        ctx.featureOrder,
+        () => `${feature.id}:cut`,
+      );
+    const positiveFaces = keyed(positive);
+    const negativeFaces = keyed(negative);
+    body.shape = negative.shape;
+    body.faces = negativeFaces;
+    ctx.touch(body.id);
+    kit.addBody(
+      ctx,
+      {
+        id: bodyIdFor(feature.id),
+        name: `${body.name} (split)`,
+        createdBy: feature.id,
+        shape: positive.shape,
+        faces: positiveFaces,
+      },
+      body.color,
+    );
+  } finally {
+    positive.history.delete();
+    negative.history.delete();
   }
-  const keyed = (shape: Shape3D) => {
-    const geoms = shape.faces.map((f) => kit.describeFace(f));
-    const keys = assignFaceKeys(geoms, body.faces, ctx.featureOrder, () => `${feature.id}:cut`);
-    return kit.withKeys(geoms, keys);
-  };
-  const positiveFaces = keyed(positive);
-  body.shape = negative;
-  body.faces = keyed(negative);
-  ctx.touch(body.id);
-  kit.addBody(
-    ctx,
-    {
-      id: bodyIdFor(feature.id),
-      name: `${body.name} (split)`,
-      createdBy: feature.id,
-      shape: positive,
-      faces: positiveFaces,
-    },
-    body.color,
-  );
 }
 
 // ---- Transform (Move/Rotate gizmo) ---------------------------------------------------

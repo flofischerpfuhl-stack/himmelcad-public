@@ -186,6 +186,72 @@ export interface KeyedFaceKeys {
   aliases: string[];
 }
 
+/**
+ * Where each result face came from according to the kernel's modelling
+ * history (see `occt.ts#faceOrigins`); indices point into `inputs`.
+ */
+export interface FaceHistory {
+  /** The input face that is the very same face, `-1` if none. */
+  identical: readonly number[];
+  /** Input faces the result face was modified from (split or merged). */
+  modified: readonly (readonly number[])[];
+  /** Generated names (e.g. `<fillet>:round:0`) of generators that produced the face. */
+  generated: readonly (readonly string[])[];
+}
+
+/**
+ * Reference scheme v2: assigns keys from the kernel's history first — an
+ * identical face keeps its key, a modified face inherits the keys of the
+ * faces it was modified from (several: earliest feature wins, the others
+ * become aliases; one face split into several: `#n` pieces), a generated
+ * face takes its generator's name. Only faces the history says nothing
+ * about fall back to surface identity against `fallbackInputs` (v1), and
+ * then to `nameNew`.
+ */
+export function assignFaceKeysFromHistory(
+  result: readonly FaceGeom[],
+  inputs: readonly KeyedFace[],
+  history: FaceHistory,
+  featureOrder: ReadonlyMap<string, number>,
+  nameNew: (index: number, provisional: readonly (KeyedFaceKeys | null)[]) => string,
+  fallbackInputs: readonly KeyedFace[] = inputs,
+): KeyedFaceKeys[] {
+  const order = (keys: Set<string>): KeyedFaceKeys | null => {
+    if (keys.size === 0) return null;
+    const ordered = [...keys].sort((a, b) => compareKeys(a, b, featureOrder));
+    return { key: ordered[0]!, aliases: ordered.slice(1) };
+  };
+  const collect = (indices: readonly number[]): Set<string> => {
+    const keys = new Set<string>();
+    for (const i of indices) {
+      const input = inputs[i];
+      if (!input) continue;
+      keys.add(baseFaceKey(input.key));
+      for (const alias of input.aliases) keys.add(baseFaceKey(alias));
+    }
+    return keys;
+  };
+  const provisional: (KeyedFaceKeys | null)[] = result.map((face, j) => {
+    const same = history.identical[j] ?? -1;
+    if (same >= 0) return order(collect([same]));
+    const modified = history.modified[j] ?? [];
+    if (modified.length > 0) return order(collect(modified));
+    const generated = history.generated[j] ?? [];
+    if (generated.length > 0) return order(new Set(generated));
+    const keys = new Set<string>();
+    for (const input of fallbackInputs) {
+      if (!sameSurface(face.id, input.id)) continue;
+      keys.add(baseFaceKey(input.key));
+      for (const alias of input.aliases) keys.add(baseFaceKey(alias));
+    }
+    return order(keys);
+  });
+  const named: KeyedFaceKeys[] = provisional.map(
+    (entry, index) => entry ?? { key: nameNew(index, provisional), aliases: [] },
+  );
+  return disambiguate(named, result, '#');
+}
+
 function compareKeys(a: string, b: string, featureOrder: ReadonlyMap<string, number>): number {
   const oa = featureOrder.get(keyFeatureId(a)) ?? Number.MAX_SAFE_INTEGER;
   const ob = featureOrder.get(keyFeatureId(b)) ?? Number.MAX_SAFE_INTEGER;
@@ -262,12 +328,48 @@ export interface ResolvableEdge {
 }
 
 export type Resolution =
-  | { ok: true; index: number; rebound: boolean }
+  | {
+      ok: true;
+      index: number;
+      rebound: boolean;
+      /** Set when the referenced face/edge was split and one piece was chosen (shown as a warning). */
+      note?: string;
+    }
   | { ok: false; message: string };
+
+/**
+ * Distance of a point from candidate `index` (a face or an edge); used to
+ * decide which piece of a split face/edge keeps a reference.
+ */
+export type DistanceProbe = (index: number, point: Vec3) => number;
+
+/**
+ * Split rule (reference scheme v2): when several pieces carry the
+ * referenced (unsuffixed) key, the piece nearest to the point recorded in
+ * the reference's signature keeps it — but only if that is unambiguous:
+ * every other piece must be more than twice as far away and farther than
+ * `tolerance`. Otherwise the reference is ambiguous.
+ */
+function pickSplitPiece(
+  candidates: readonly number[],
+  point: Vec3,
+  probe: DistanceProbe,
+  tolerance: number,
+): number | null {
+  const scored = candidates
+    .map((index) => ({ index, d: probe(index, point) }))
+    .sort((a, b) => a.d - b.d);
+  const [best, second] = scored;
+  if (!best) return null;
+  if (!second) return best.index;
+  return second.d > Math.max(tolerance, 2 * best.d) ? best.index : null;
+}
 
 /** Relative thresholds of the geometric fallback (fractions of the body diagonal / of the size). */
 export const REBIND_POSITION_FRACTION = 0.01;
 export const REBIND_SIZE_FRACTION = 0.05;
+/** A point this close to a split piece (fraction of the body diagonal) lies on it. */
+export const SPLIT_TOLERANCE_FRACTION = 1e-6;
 
 function faceHasKey(face: ResolvableFace, key: string): boolean {
   const base = baseFaceKey(key);
@@ -278,12 +380,35 @@ export function resolveFaceRef(
   ref: Pick<FaceRef, 'key' | 'signature'>,
   faces: readonly ResolvableFace[],
   diagonal: number,
+  probe?: DistanceProbe,
 ): Resolution {
   const byKey = faces.map((f, i) => ({ f, i })).filter(({ f }) => faceHasKey(f, ref.key));
   if (byKey.length === 1) return { ok: true, index: byKey[0]!.i, rebound: false };
   if (byKey.length > 1) {
     const exact = byKey.filter(({ f }) => f.key === ref.key);
-    const pool = exact.length === 1 ? exact : byKey;
+    if (exact.length === 1) return { ok: true, index: exact[0]!.i, rebound: false };
+    if (probe) {
+      const tolerance = SPLIT_TOLERANCE_FRACTION * Math.max(diagonal, 1);
+      const index = pickSplitPiece(
+        byKey.map(({ i }) => i),
+        ref.signature.centroid,
+        probe,
+        tolerance,
+      );
+      if (index === null) {
+        return {
+          ok: false,
+          message: `Ambiguous reference: face "${ref.key}" was split into ${byKey.length} faces — re-select the face`,
+        };
+      }
+      return {
+        ok: true,
+        index,
+        rebound: false,
+        note: `Face "${ref.key}" was split into ${byKey.length} faces; the piece at its recorded position keeps the reference`,
+      };
+    }
+    const pool = byKey;
     pool.sort(
       (a, b) =>
         distance(a.f.centroid, ref.signature.centroid) -
@@ -320,6 +445,7 @@ export function resolveEdgeRef(
   edges: readonly ResolvableEdge[],
   faces: readonly ResolvableFace[],
   diagonal: number,
+  options: { edgeKeys?: readonly string[]; probe?: DistanceProbe } = {},
 ): Resolution {
   const [keyA, keyB] = splitEdgeKey(ref.key);
   const byKey: number[] = [];
@@ -336,6 +462,27 @@ export function resolveEdgeRef(
         byKey.push(index);
       }
     });
+  }
+  if (byKey.length === 1) return { ok: true, index: byKey[0]!, rebound: false };
+  if (byKey.length > 1 && options.edgeKeys) {
+    const exact = byKey.filter((i) => options.edgeKeys![i] === ref.key);
+    if (exact.length === 1) return { ok: true, index: exact[0]!, rebound: false };
+  }
+  if (byKey.length > 1 && options.probe) {
+    const tolerance = SPLIT_TOLERANCE_FRACTION * Math.max(diagonal, 1);
+    const index = pickSplitPiece(byKey, ref.signature.midpoint, options.probe, tolerance);
+    if (index === null) {
+      return {
+        ok: false,
+        message: `Ambiguous reference: edge "${ref.key}" now matches ${byKey.length} edges — re-select the edge`,
+      };
+    }
+    return {
+      ok: true,
+      index,
+      rebound: false,
+      note: `Edge "${ref.key}" now matches ${byKey.length} edges; the one at its recorded position keeps the reference`,
+    };
   }
   if (byKey.length >= 1) {
     byKey.sort(
