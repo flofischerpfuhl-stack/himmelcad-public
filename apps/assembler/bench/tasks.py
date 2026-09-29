@@ -29,8 +29,9 @@ class Expectation:
 @dataclass
 class TaskResult:
     expectations: list[Expectation]
-    #: A parametric edit for the load test: (feature id, params patch, expected bbox size of body 0 after it).
-    edit: tuple[str, dict[str, Any], tuple[float, float, float]] | None = None
+    #: A parametric edit for the load test: (sketch feature id, dimension name, new value,
+    #: expected bbox size of body 0 after it) - the History panel's sketch dimension edit.
+    edit: tuple[str, str, float, tuple[float, float, float]] | None = None
     notes: list[str] = field(default_factory=list)
 
 
@@ -63,7 +64,7 @@ def enclosure_with_lid(doc: Document) -> TaskResult:
             Expectation(box, (-30, -20, 0), (30, 20, 25), box_volume),
             Expectation(lid, (45, -20, 0), (105, 20, 5), lid_volume),
         ],
-        edit=(s.id, {"profiles": [{"kind": "rectangle", "x": -35, "y": -20, "width": 70, "height": 40}]}, (70, 40, 25)),
+        edit=(s.id, s.dimension(0, "width"), 70, (70, 40, 25)),
     )
 
 
@@ -99,14 +100,14 @@ def bracket_with_slot(doc: Document) -> TaskResult:
     )
     return TaskResult(
         [Expectation(bracket, (0, 0, 0), (60, 30, 45), volume)],
-        edit=(s.id, {"profiles": [{"kind": "rectangle", "x": 0, "y": 0, "width": 60, "height": 36}]}, (60, 36, 45)),
-        notes=["The slot is a sketch macro (rectangle + two circles fused on extrude); no sketch lines/arcs yet."],
+        edit=(s.id, s.dimension(0, "height"), 36, (60, 36, 45)),
+        notes=["The slot is a sketch macro (rectangle + two circles; their overlapping regions extrude together)."],
     )
 
 
 def pipe_adapter(doc: Document) -> TaskResult:
     """Reducer 30 -> 20 mm OD, 16 mm bore, 26 mm x 12 mm socket, 1 mm chamfers. Built from
-    stacked extrusions (no revolve in this build)."""
+    stacked extrusions."""
     s = doc.sketch("XY")
     s.circle(d=30)
     adapter = doc.extrude(s, 15, body_name="Adapter")
@@ -135,15 +136,14 @@ def pipe_adapter(doc: Document) -> TaskResult:
     )
     return TaskResult(
         [Expectation(adapter, (-15, -15, 0), (15, 15, 35), volume)],
-        edit=(neck.id, {"profiles": [{"kind": "circle", "cx": 0, "cy": 0, "radius": 11}]}, (30, 30, 35)),
-        notes=["Revolve is not in this build; the part is stacked cylinder extrusions (same printed result)."],
+        edit=(neck.id, neck.dimension(0, "diameter"), 22, (30, 30, 35)),
+        notes=["Stacked cylinder extrusions (same printed result as a revolve; kept for comparability with earlier runs)."],
     )
 
 
 def phone_stand(doc: Document) -> TaskResult:
     """80 x 70 x 6 base, 8 mm back rest 80 mm high, 14 mm front lip with a 16 mm cable notch,
-    R5/R3 inner fillets. Upright back rest: this build has no rotate and no sketch lines, so an
-    inclined rest is not expressible yet."""
+    R5/R3 inner fillets. Upright back rest."""
     s = doc.sketch("XY")
     s.rect_corner(0, 0, 80, 70)
     stand = doc.extrude(s, 6, body_name="Phone stand")
@@ -166,8 +166,8 @@ def phone_stand(doc: Document) -> TaskResult:
     volume = 80 * 70 * 6 + 80 * 8 * 80 + 80 * 6 * 14 - 16 * 6 * 10 + (25 - math.pi * 25 / 4) * 80 + (9 - math.pi * 9 / 4) * 80
     return TaskResult(
         [Expectation(stand, (0, 0, 0), (80, 70, 86), volume)],
-        edit=(back.id, {"profiles": [{"kind": "rectangle", "x": 0, "y": 48, "width": 80, "height": 10}]}, (80, 70, 86)),
-        notes=["Inclined back rest not expressible (no rotate / sketch lines yet)."],
+        edit=(back.id, back.dimension(0, "height"), 10, (80, 70, 86)),
+        notes=["Upright back rest kept for comparability (an inclined one is now expressible with a sketch polyline or Move/Rotate)."],
     )
 
 
@@ -211,7 +211,7 @@ def cable_clip(doc: Document) -> TaskResult:
     )
     return TaskResult(
         [Expectation(clip, (-12, -11, 0), (12, math.sqrt(49 - 2.5**2), 8), volume, volume_tolerance=1e-3)],
-        edit=(bore.id, {"profiles": [{"kind": "circle", "cx": 0, "cy": 0, "radius": 5.2}]}, (24, 11 + math.sqrt(49 - 2.5**2), 8)),
+        edit=(bore.id, bore.dimension(0, "diameter"), 10.4, (24, 11 + math.sqrt(49 - 2.5**2), 8)),
     )
 
 

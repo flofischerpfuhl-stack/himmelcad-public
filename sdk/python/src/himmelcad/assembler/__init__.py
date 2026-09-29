@@ -27,10 +27,11 @@ from .errors import (
     NotFoundError,
     PermissionDeniedError,
     ReferenceNotFoundError,
+    SketchConflictError,
     TransactionStateError,
     TransportError,
 )
-from .modeling import BBox, Body, Document, Edge, EdgeSet, Face, FaceSet, Feature, Sketch, Transaction
+from .modeling import BBox, Body, Document, Edge, EdgeSet, Face, FaceSet, Feature, Sketch, SketchLine, Transaction
 from .transport import LoopbackTransport, StdioTransport, Transport, find_headless_command
 
 __all__ = [
@@ -38,6 +39,6 @@ __all__ = [
     "AssemblerClient", "AssemblerError", "BBox", "Body", "BusyError", "ConfirmationRequiredError",
     "ConflictError", "Document", "Edge", "EdgeSet", "Face", "FaceSet", "Feature", "FeatureFailedError",
     "InvalidParamsError", "LoopbackTransport", "NotFoundError", "PermissionDeniedError",
-    "ReferenceNotFoundError", "Sketch", "StdioTransport", "Transaction", "TransactionStateError",
+    "ReferenceNotFoundError", "Sketch", "SketchConflictError", "SketchLine", "StdioTransport", "Transaction", "TransactionStateError",
     "Transport", "TransportError", "find_headless_command",
 ]

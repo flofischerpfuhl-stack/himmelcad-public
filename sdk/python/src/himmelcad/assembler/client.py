@@ -22,7 +22,8 @@ METHODS = (
     "document.get", "features.list", "feature.get", "bodies.list", "body.get",
     "faces.list", "edges.list", "sketches.list", "selection.get", "selection.set",
     "feature.create", "feature.edit", "feature.delete", "feature.suppress", "feature.rename",
-    "sketch.addProfile", "sketch.editProfile", "sketch.removeProfile",
+    "sketch.addProfile", "sketch.addPolyline", "sketch.addArc", "sketch.addConstraint",
+    "sketch.addDimension", "sketch.setDimension", "sketch.deleteItems",
     "transaction.begin", "transaction.preview", "transaction.commit", "transaction.cancel",
     "history.undo", "history.redo",
     "export.stl", "export.3mf", "export.step", "import.step",
@@ -127,11 +128,24 @@ class AssemblerClient:
     def add_profile(self, feature_id: str, profile: Mapping[str, Any]) -> Mapping[str, Any]:
         return self.call("sketch.addProfile", {"featureId": feature_id, "profile": dict(profile)})
 
-    def edit_profile(self, feature_id: str, index: int, profile: Mapping[str, Any]) -> Mapping[str, Any]:
-        return self.call("sketch.editProfile", {"featureId": feature_id, "index": index, "profile": dict(profile)})
+    def add_polyline(self, feature_id: str, points: list[tuple[float, float]], *, closed: bool = False, construction: bool = False, auto_constrain: bool = True) -> Mapping[str, Any]:
+        return self.call("sketch.addPolyline", {"featureId": feature_id, "points": [[float(u), float(v)] for u, v in points], "closed": closed, "construction": construction, "autoConstrain": auto_constrain})
 
-    def remove_profile(self, feature_id: str, index: int) -> Mapping[str, Any]:
-        return self.call("sketch.removeProfile", {"featureId": feature_id, "index": index})
+    def add_arc(self, feature_id: str, center: tuple[float, float], start: tuple[float, float], end: tuple[float, float], *, construction: bool = False) -> Mapping[str, Any]:
+        return self.call("sketch.addArc", {"featureId": feature_id, "center": list(center), "start": list(start), "end": list(end), "construction": construction})
+
+    def add_constraint(self, feature_id: str, kind: str, refs: list[str]) -> Mapping[str, Any]:
+        return self.call("sketch.addConstraint", {"featureId": feature_id, "kind": kind, "refs": list(refs)})
+
+    def add_dimension(self, feature_id: str, kind: str, refs: list[str], *, value: float | None = None, expression: str | None = None, name: str | None = None) -> Mapping[str, Any]:
+        return self.call("sketch.addDimension", {"featureId": feature_id, "kind": kind, "refs": list(refs), "value": value, "expression": expression, "name": name})
+
+    def set_dimension(self, feature_id: str, dimension: str, *, value: float | None = None, expression: str | None = None) -> Mapping[str, Any]:
+        """Changes a sketch dimension by id or name (``"d3"``) to a value or an expression (``"d1 / 2"``)."""
+        return self.call("sketch.setDimension", {"featureId": feature_id, "dimension": dimension, "value": value, "expression": expression})
+
+    def delete_sketch_items(self, feature_id: str, ids: list[str]) -> Mapping[str, Any]:
+        return self.call("sketch.deleteItems", {"featureId": feature_id, "ids": list(ids)})
 
     def begin(self, label: str | None = None) -> Mapping[str, Any]:
         return self.call("transaction.begin", {"label": label})

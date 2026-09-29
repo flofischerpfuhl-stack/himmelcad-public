@@ -20,6 +20,7 @@ ERROR_CODES = (
     "notFound",
     "referenceNotFound",
     "featureFailed",
+    "sketchConflict",
     "conflict",
     "busy",
     "transactionState",
@@ -76,6 +77,18 @@ class FeatureFailedError(AssemblerError):
     """The CAD kernel rejected the feature; nothing was committed."""
 
 
+class SketchConflictError(AssemblerError):
+    """The sketch solver rejected the edit (conflicting/redundant constraints, collapsing geometry); nothing was committed."""
+
+    @property
+    def conflicting(self) -> list[str]:
+        return list(self.details.get("conflicting", []))
+
+    @property
+    def redundant(self) -> list[str]:
+        return list(self.details.get("redundant", []))
+
+
 class ConflictError(AssemblerError):
     pass
 
@@ -107,6 +120,7 @@ _CLASSES: dict[str, type[AssemblerError]] = {
     "notFound": NotFoundError,
     "referenceNotFound": ReferenceNotFoundError,
     "featureFailed": FeatureFailedError,
+    "sketchConflict": SketchConflictError,
     "conflict": ConflictError,
     "busy": BusyError,
     "transactionState": TransactionStateError,

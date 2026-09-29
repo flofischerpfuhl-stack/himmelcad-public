@@ -1,9 +1,11 @@
-"""Idiomatic modelling layer for HimmelCAD Assembler â€” familiar to CadQuery/build123d users.
+"""Idiomatic modelling layer for HimmelCAD Assembler — familiar to CadQuery/build123d users.
 
 Every modelling call issues exactly **one** canonical command (``feature.create``,
-``feature.edit``, ``sketch.addProfile`` â€¦) through :class:`AssemblerClient`;
+``feature.edit``, ``sketch.addProfile``, ``sketch.setDimension`` …) through :class:`AssemblerClient`
+— except ``Sketch.edit_profile`` (one ``sketch.setDimension`` per changed dimension) and a
+first ``polyline``/``line`` on a new sketch (which also creates the sketch feature);
 ``Document.log`` records them. The result is a normal parametric feature history
-â€” sketches, extrudes, fillets â€” that opens and stays editable in the desktop app.
+— sketches, extrudes, fillets — that opens and stays editable in the desktop app.
 Nothing is baked into meshes, and there is no ``bpy`` emulation.
 
 Conventions: millimetres, Z up. Sketches on the construction planes use
@@ -119,7 +121,7 @@ class _Selection(list[T]):
         return self._new(item for item in self if (predicate is None or predicate(item)) and all(getattr(item, k) == v for k, v in equals.items()))
 
     def max(self, axis: str, tolerance: float = 1e-6) -> _Selection[T]:
-        """Items with the largest centre coordinate along ``axis`` (ties kept) â€” CadQuery ``>Z``."""
+        """Items with the largest centre coordinate along ``axis`` (ties kept) — CadQuery ``>Z``."""
         if not self:
             return self._new(())
         i = _axis(axis)
@@ -227,7 +229,7 @@ class Body:
         return bool(self.info()["valid"])
 
     def faces(self, select: str | None = None) -> FaceSet:
-        """Faces, optionally by server-side selector (``">Z"``, ``"+Y"``, ``"%CYLINDER"``â€¦)."""
+        """Faces, optionally by server-side selector (``">Z"``, ``"+Y"``, ``"%CYLINDER"``…)."""
         return FaceSet(Face.from_wire(f) for f in self.doc.client.faces(self.id, select))
 
     def face(self, select: str) -> Face:
@@ -237,12 +239,30 @@ class Body:
         return faces[0]
 
     def edges(self, select: str | None = None) -> EdgeSet:
-        """Edges, optionally by server-side selector (``"|Z"``, ``"%CIRCLE"``, ``"%LINE and >Z"``â€¦)."""
+        """Edges, optionally by server-side selector (``"|Z"``, ``"%CIRCLE"``, ``"%LINE and >Z"``…)."""
         return EdgeSet(Edge.from_wire(e) for e in self.doc.client.edges(self.id, select))
 
 
+@dataclass(frozen=True)
+class SketchLine:
+    """A straight sketch line (construction lines included), usable as a revolve axis or pattern direction."""
+
+    feature_id: str
+    entity_id: str
+
+    @property
+    def ref(self) -> dict[str, str]:
+        return {"kind": "sketchLine", "featureId": self.feature_id, "entityId": self.entity_id}
+
+
 class Sketch:
-    """A sketch; the first profile creates the sketch feature, later ones add profiles (one command each)."""
+    """A constrained sketch; the first shape creates the sketch feature, later ones are added (one command each).
+
+    ``rect``/``circle`` add fully dimensioned shapes (position from the sketch origin + size);
+    their dimensions stay editable by role (``s.edit_profile(0, width=90)``) or by name
+    (``s.set_dimension("d3", 90)``). ``polyline``/``line`` add plain geometry (axis-aligned
+    segments constrained horizontal/vertical); a ``construction`` line never bounds a profile.
+    """
 
     def __init__(self, doc: Document, plane: Mapping[str, Any], on_body: str | None) -> None:
         self.doc = doc
@@ -250,24 +270,35 @@ class Sketch:
         self.on_body = on_body
         self.feature: Feature | None = None
         self.profiles: list[dict[str, Any]] = []
+        #: Per shape: its dimension names by role (``{"x": "d1", "y": "d2", "width": "d3", "height": "d4"}``).
+        self.dimensions: list[dict[str, str]] = []
 
     @property
     def id(self) -> str:
         if self.feature is None:
-            raise AssemblerError(raw_code="invalidParams", message="the sketch has no profile yet", hint="Add a rect/circle before extruding.")
+            raise AssemblerError(raw_code="invalidParams", message="the sketch has no geometry yet", hint="Add a rect/circle/polyline before using the sketch.")
+        return self.feature.id
+
+    def _ensure(self) -> str:
+        if self.feature is None:
+            result = self.doc.client.create_feature("sketch", {"plane": self.plane})
+            self.feature = Feature(self.doc, result["featureId"], "sketch", result["name"])
         return self.feature.id
 
     def _add(self, profile: dict[str, Any]) -> int:
         if self.feature is None:
             result = self.doc.client.create_feature("sketch", {"plane": self.plane, "profiles": [profile]})
             self.feature = Feature(self.doc, result["featureId"], "sketch", result["name"])
+            shapes = result.get("shapes") or [{}]
+            shape = shapes[0]
         else:
-            self.doc.client.add_profile(self.feature.id, profile)
+            shape = self.doc.client.add_profile(self.feature.id, profile).get("shape") or {}
         self.profiles.append(profile)
+        self.dimensions.append(dict(shape.get("dimensions") or {}))
         return len(self.profiles) - 1
 
     def rect(self, width: float, height: float, *, center: tuple[float, float] = (0.0, 0.0)) -> int:
-        """Axis-aligned rectangle centred on ``center`` (like CadQuery ``rect``). Returns the profile index."""
+        """Axis-aligned rectangle centred on ``center`` (like CadQuery ``rect``). Returns the shape index."""
         return self._add({"kind": "rectangle", "x": center[0] - width / 2, "y": center[1] - height / 2, "width": width, "height": height})
 
     def rect_corner(self, x: float, y: float, width: float, height: float) -> int:
@@ -283,9 +314,9 @@ class Sketch:
     def slot(self, length: float, width: float, *, center: tuple[float, float] = (0.0, 0.0), vertical: bool = False) -> list[int]:
         """Axis-aligned stadium slot (overall ``length`` x ``width``).
 
-        Convenience macro: three canonical profile commands (a rectangle and two
-        end circles); extruding the sketch fuses them into one slot. Each stays
-        editable in the app.
+        Convenience macro: three shape commands (a rectangle and two end circles);
+        the overlapping regions extrude together into one slot. Each stays editable
+        in the app.
         """
         straight = max(length - width, 0.0)
         cx, cy = center
@@ -298,15 +329,52 @@ class Sketch:
         indices += [self.circle(width / 2, center=end) for end in ends]
         return indices
 
-    def edit_profile(self, index: int, **changes: Any) -> None:
-        """Changes one profile's dimensions, e.g. ``s.edit_profile(0, width=90)``."""
-        profile = {**self.profiles[index], **changes}
-        self.doc.client.edit_profile(self.id, index, profile)
-        self.profiles[index] = profile
+    def polyline(self, points: Sequence[tuple[float, float]], *, closed: bool = True, construction: bool = False) -> list[SketchLine]:
+        """Connected lines through ``points`` (closed by default: a profile). Returns the lines."""
+        result = self.doc.client.add_polyline(self._ensure(), list(points), closed=closed, construction=construction)
+        return [SketchLine(self.id, line_id) for line_id in result.get("lineIds", [])]
 
+    def line(self, start: tuple[float, float], end: tuple[float, float], *, construction: bool = False) -> SketchLine:
+        """One line; ``construction=True`` makes a reference line, e.g. a revolve axis."""
+        lines = self.polyline([start, end], closed=False, construction=construction)
+        if not lines:
+            raise AssemblerError(raw_code="internal", message="the server returned no line id")
+        return lines[0]
+
+    def dimension(self, index: int, role: str) -> str:
+        """Name of a shape's dimension (roles: rectangle x, y, width, height; circle cx, cy, diameter)."""
+        try:
+            return self.dimensions[index][role]
+        except (IndexError, KeyError) as error:
+            raise ValueError(f"shape {index} has no dimension {role!r}") from error
+
+    def set_dimension(self, name: str, value: float | None = None, *, expression: str | None = None) -> Mapping[str, Any]:
+        """Changes a dimension by name (``"d3"``) to a value or an expression over other names (``"d1 / 2"``)."""
+        return self.doc.client.set_dimension(self.id, name, value=value, expression=expression)
+
+    def edit_profile(self, index: int, **changes: Any) -> None:
+        """Changes one shape's dimensions, e.g. ``s.edit_profile(0, width=90)`` (one command per dimension).
+
+        Rectangle: ``x``, ``y`` (corner), ``width``, ``height``; circle: ``cx``, ``cy``, ``radius``/``d``.
+        """
+        for key, value in changes.items():
+            role, amount = key, float(value)
+            if key == "radius":
+                role, amount = "diameter", 2 * float(value)
+            elif key == "d":
+                role = "diameter"
+            self.set_dimension(self.dimension(index, role), abs(amount))
+        self.profiles[index] = {**self.profiles[index], **changes}
+
+    def regions(self) -> list[Mapping[str, Any]]:
+        """The sketch's closed regions (profiles) with their stable keys."""
+        for sketch in self.doc.client.sketches():
+            if sketch["featureId"] == self.id:
+                return list(sketch.get("regions", []))
+        return []
 
 class Transaction:
-    """``with doc.transaction("Lid"):`` â€” staged, previewable, one undo step; cancelled on exceptions."""
+    """``with doc.transaction("Lid"):`` — staged, previewable, one undo step; cancelled on exceptions."""
 
     def __init__(self, doc: Document, label: str | None) -> None:
         self.doc, self.label = doc, label
@@ -398,8 +466,8 @@ class Document:
     def _feature(self, result: Mapping[str, Any]) -> Feature:
         return Feature(self, str(result["featureId"]), str(result["kind"]), str(result["name"]))
 
-    def extrude(self, profile: Sketch | Face, distance: float, *, op: str = "new", target: Body | None = None, symmetric: bool = False, profile_index: int | None = None, name: str | None = None, body_name: str | None = None) -> Body:
-        """Extrudes a sketch (all profiles, or ``profile_index``) or pushes/pulls a planar face.
+    def extrude(self, profile: Sketch | Face, distance: float, *, op: str = "new", target: Body | None = None, symmetric: bool = False, regions: Sequence[str] | None = None, name: str | None = None, body_name: str | None = None) -> Body:
+        """Extrudes a sketch (all regions, or the region keys in ``regions``) or pushes/pulls a planar face.
 
         ``op``: ``"new"`` body, ``"join"`` or ``"cut"`` (into ``target``; default: the
         body the sketch lies on, else the last changed body). Returns the new
@@ -410,8 +478,8 @@ class Document:
             target_id = profile.body_id
         else:
             ref = {"kind": "sketch", "featureId": profile.id}
-            if profile_index is not None:
-                ref["profileIndex"] = profile_index
+            if regions is not None:
+                ref["regions"] = list(regions)
             target_id = target.id if target else profile.on_body
         params: dict[str, Any] = {"profile": ref, "distance": distance, "symmetric": symmetric}
         if isinstance(profile, Sketch):
@@ -442,6 +510,35 @@ class Document:
         normal), along the plane normal for a construction-plane sketch."""
         distance = -abs(depth) if sketch.on_body else abs(depth)
         return self.extrude(sketch, distance, op="cut", target=target, **kwargs)
+
+    def revolve(self, profile: Sketch | Face, axis: str | Edge | SketchLine, angle: float = 360.0, *, op: str = "new", target: Body | None = None, regions: Sequence[str] | None = None, name: str | None = None, body_name: str | None = None) -> Body:
+        """Revolves a sketch (all regions, or ``regions``) or a planar face about ``axis``:
+        ``"X"``/``"Y"``/``"Z"`` (world axis through the origin), a straight/circular :class:`Edge`,
+        or a :class:`SketchLine` (e.g. ``s.line((0, 0), (0, 10), construction=True)``)."""
+        if isinstance(axis, str):
+            axis_ref: dict[str, Any] = {"kind": "world", "axis": axis.upper()}
+        elif isinstance(axis, Edge):
+            axis_ref = {"kind": "edge", "edge": axis.ref}
+        else:
+            axis_ref = axis.ref
+        if isinstance(profile, Face):
+            ref: dict[str, Any] = {"kind": "face", "face": profile.ref}
+            target_id = target.id if target else profile.body_id
+        else:
+            ref = {"kind": "sketch", "featureId": profile.id}
+            if regions is not None:
+                ref["regions"] = list(regions)
+            target_id = target.id if target else profile.on_body
+        params: dict[str, Any] = {"profile": ref, "axis": axis_ref, "angle": angle, "operation": op}
+        if op != "new" and target_id:
+            params["targetBodyId"] = target_id
+        if body_name:
+            params["resultBodyName"] = body_name
+        result = self.client.create_feature("revolve", params, name=name)
+        feature = self._feature(result)
+        if op == "new":
+            return Body(self, f"body:{feature.id}", feature)
+        return Body(self, target_id or self._last_body_id(result), feature)
 
     @staticmethod
     def _edge_refs(edges: Edge | Iterable[Edge]) -> list[dict[str, str]]:
@@ -541,4 +638,4 @@ class Document:
         return self.client.new_project(name)
 
 
-__all__ = ["BBox", "Body", "Document", "Edge", "EdgeSet", "Face", "FaceSet", "Feature", "Sketch", "Transaction"]
+__all__ = ["BBox", "Body", "Document", "Edge", "EdgeSet", "Face", "FaceSet", "Feature", "Sketch", "SketchLine", "Transaction"]

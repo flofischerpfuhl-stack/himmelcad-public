@@ -7,8 +7,8 @@ Usage (repository root, after ``pnpm --filter @himmelcad/assembler build:headles
 Per task: canonical commands issued, wall time, validity, bbox and volume against a hand
 calculation, 3MF + STL export, ``.hcasm`` save, and a load test in a *fresh* headless
 process: reopen the file (strict format validation, full re-evaluation), compare, apply a
-parametric edit to an early sketch (the same ``feature.edit`` command the app's history
-panel parameter edit maps to) and check that the whole history still evaluates.
+parametric edit to an early sketch dimension (``sketch.setDimension``, the command the
+app's History-panel dimension edit maps to) and check that the whole history still evaluates.
 Writes ``results.json`` and prints a Markdown table.
 """
 from __future__ import annotations
@@ -58,7 +58,7 @@ def check(result: TaskResult) -> list[dict[str, Any]]:
     return rows
 
 
-def load_test(hcasm: Path, expected: list[dict[str, Any]], edit: tuple[str, dict[str, Any], tuple[float, float, float]] | None) -> dict[str, Any]:
+def load_test(hcasm: Path, expected: list[dict[str, Any]], edit: tuple[str, str, float, tuple[float, float, float]] | None) -> dict[str, Any]:
     """Reopens the saved project in a fresh headless process and edits it."""
     with AssemblerClient.headless() as client:
         opened = client.open_project(hcasm)
@@ -69,9 +69,9 @@ def load_test(hcasm: Path, expected: list[dict[str, Any]], edit: tuple[str, dict
         )
         out: dict[str, Any] = {"reopened": reopened_ok, "features": len(client.features())}
         if edit is not None:
-            feature_id, params, size = edit
+            feature_id, dimension, value, size = edit
             try:
-                edited = client.edit_feature(feature_id, params)
+                edited = client.set_dimension(feature_id, dimension, value=value)
                 body = next(b for b in edited["bodies"] if b["id"] == expected[0]["bodyId"])
                 out["editOk"] = not edited["errors"] and body["valid"] and close(tuple(body["bbox"]["size"]), size)
                 out["editErrors"] = edited["errors"]

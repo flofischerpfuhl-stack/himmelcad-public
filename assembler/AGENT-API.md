@@ -1,6 +1,8 @@
 # HimmelCAD Assembler — agent API and Python access
 
-Status: implemented 2026-09-29 (branch `asm/agentapi-20260929`). Serves owner
+Status: implemented 2026-09-29 (branch `asm/agentapi-20260929`); constrained
+sketches and the modelling-feature kinds added when merging the sketch-solver
+and features workstreams (integration branch `feat/assembler-phase0-20260929`). Serves owner
 intent **U5** ("as usable by agents as possible, taking their training into
 account") and `PLAN.md` §5, under ADR 0024 (one canonical command/query
 contract for UI, Python and agents) and ADR 0033 §4. This document records the
@@ -48,16 +50,16 @@ regenerate with `pnpm --filter @himmelcad/assembler api:schema`).
 `api.describe` returns it at runtime. JSON Schema 2020-12 subset, validated by a
 small in-repo validator (no new dependency).
 
-| Group        | Methods                                                                                                                                 |
-| ------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
-| Meta         | `api.hello` (version, capabilities, feature kinds), `api.describe`                                                                      |
-| Queries      | `document.get`, `features.list`, `feature.get`, `bodies.list`, `body.get`, `faces.list`, `edges.list`, `sketches.list`, `selection.get` |
-| Features     | `feature.create {kind, params}`, `feature.edit`, `feature.delete`, `feature.suppress`, `feature.rename`                                 |
-| Sketches     | `sketch.addProfile`, `sketch.editProfile`, `sketch.removeProfile` (profile parameters are the dimensions)                               |
-| Transactions | `transaction.begin`, `transaction.preview`, `transaction.commit`, `transaction.cancel`                                                  |
-| History      | `history.undo`, `history.redo`                                                                                                          |
-| Files        | `export.stl`, `export.3mf`, `export.step`, `import.step`, `project.new`, `project.open`, `project.save`                                 |
-| View         | `selection.set` (not undoable)                                                                                                          |
+| Group        | Methods                                                                                                                                                                               |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Meta         | `api.hello` (version, capabilities, feature kinds), `api.describe`                                                                                                                    |
+| Queries      | `document.get`, `features.list`, `feature.get`, `bodies.list`, `body.get`, `faces.list`, `edges.list`, `sketches.list`, `selection.get`                                               |
+| Features     | `feature.create {kind, params}`, `feature.edit`, `feature.delete`, `feature.suppress`, `feature.rename`                                                                               |
+| Sketches     | `sketch.addProfile` (dimensioned rectangle/circle), `sketch.addPolyline`, `sketch.addArc`, `sketch.addConstraint`, `sketch.addDimension`, `sketch.setDimension`, `sketch.deleteItems` |
+| Transactions | `transaction.begin`, `transaction.preview`, `transaction.commit`, `transaction.cancel`                                                                                                |
+| History      | `history.undo`, `history.redo`                                                                                                                                                        |
+| Files        | `export.stl`, `export.3mf`, `export.step`, `import.step`, `project.new`, `project.open`, `project.save`                                                                               |
+| View         | `selection.set` (not undoable)                                                                                                                                                        |
 
 Design rules:
 
@@ -66,6 +68,29 @@ Design rules:
   `id`/`name`/`kind`/`suppressed`), so `features.list` output round-trips into
   `feature.create`/`feature.edit`, and agents build real history features —
   never meshes.
+- **Constrained sketches.** A `sketch` stores `entities` (points, lines,
+  circles, arcs in the sketch's `(u, v)` mm, always the last solved state),
+  `constraints` and driving `dimensions` (`assembler/SKETCHING.md`). Every
+  sketch write — `feature.create`/`feature.edit` of a sketch and each
+  `sketch.*` command — re-solves the whole sketch with the same planeGCS
+  solver the UI uses (in-process in the headless CLI, the solver worker in the
+  app) before the kernel validates it. A conflicting or redundant constraint,
+  a dimension that collapses geometry or an invalid expression fails with
+  `sketchConflict` (`details.conflicting` / `details.redundant` name the ids)
+  and nothing changes. Results report the remaining degrees of freedom
+  (`dof`) and the detected `regions` (profiles) with their stable keys and
+  boundary entity ids; extrudes/revolves/sweeps/lofts reference
+  `profile: {kind: "sketch", featureId, regions?: [key]}`. Convenience:
+  `sketch.addProfile` (and the input shorthand `profiles: [shape]` of
+  `feature.create sketch`) adds a rectangle/circle **fully dimensioned** —
+  position from the origin and size — and returns the dimension names by role
+  (`{x, y, width, height}` / `{cx, cy, diameter}`), so an agent edits a width
+  with `sketch.setDimension {dimension: "d3", value: 90}` (the History panel's
+  dimension edit). `sketch.addPolyline` constrains axis-aligned segments
+  horizontal/vertical (what the UI line tool infers); `construction: true`
+  lines never bound a profile and serve as revolve axes
+  (`axis: {kind: "sketchLine", featureId, entityId}`). Dimension expressions
+  use the other dimensions' names (`"d4 / 2"`).
 - **New feature kinds plug in by schema.** Adding a kind means one entry in
   `FEATURE_KIND_SCHEMAS` (params schema, label) and, if it has reference
   fields that accept selectors, one case in `featureKinds.ts#normalise`. Until
@@ -97,7 +122,7 @@ select}` expands a CadQuery-style selector server-side: `+Z`/`-Y` (facing /
   accept `expectedRevision` (optimistic concurrency, `conflict` on mismatch).
 - **Structured errors.** `invalidRequest`, `methodNotFound`, `invalidParams`,
   `notFound`, `referenceNotFound`, `featureFailed`, `conflict`, `busy`,
-  `transactionState`, `permissionDenied`, `confirmationRequired`,
+  `sketchConflict`, `transactionState`, `permissionDenied`, `confirmationRequired`,
   `unsupported`, `cancelled`, `internal` — each with `message`, and where
   predictable a `hint` and `details` (e.g. the 12 most similar face/edge keys
   with names for an unknown reference, the existing ids for an unknown body,
@@ -154,25 +179,31 @@ from himmelcad.assembler import Document
 
 with Document.headless() as doc:              # or Document.connect_app('{"url": ..., "token": ...}')
     s = doc.sketch("XY")
-    s.rect(80, 50)                            # feature.create sketch
+    s.rect(80, 50)                            # feature.create sketch (dimensioned: s.dimensions[0])
     plate = doc.extrude(s, 6)                 # feature.create extrude -> Body
     doc.fillet(plate.edges("|Z"), 3)          # feature.create fillet (explicit edge keys)
     holes = doc.sketch(plate.face(">Z"))
     holes.circle(d=6, center=(20, 0))         # feature.create sketch (on the face)
     holes.circle(d=6, center=(-20, 0))        # sketch.addProfile
     doc.cut(holes, 6)                         # extrude, operation cut, into the face's body
-    s.edit_profile(0, width=90)               # sketch.editProfile: the early change re-evaluates the history
+    s.edit_profile(0, width=90)               # sketch.setDimension d3: the early change re-evaluates the history
     assert plate.valid and plate.bbox.size == (90.0, 50.0, 6.0)
     doc.export_3mf("plate.3mf"); doc.save("plate.hcasm")
+
+    turned = doc.sketch("XZ")
+    turned.polyline([(5, 0), (15, 0), (15, 4), (9, 4), (9, 10), (5, 10)])  # sketch.addPolyline
+    axis = turned.line((0, -2), (0, 12), construction=True)                  # centre line
+    doc.revolve(turned, axis)                                                # feature.create revolve
 ```
 
 - Every modelling call is exactly one canonical command (`doc.log`,
-  `doc.commands`); the one macro, `Sketch.slot`, is three profile commands and
-  says so. Selections (`FaceSet`/`EdgeSet`) filter client-side with
+  `doc.commands`); the exceptions say so: the macro `Sketch.slot` is three
+  shape commands, `Sketch.edit_profile` one `sketch.setDimension` per changed
+  dimension, and a first `polyline`/`line` also creates the sketch feature. Selections (`FaceSet`/`EdgeSet`) filter client-side with
   CadQuery-flavoured helpers (`max("Z")`, `lines()`, `of_face(face)`,
   `filter(curve="circle")`, `.one()` raising with the candidates' names).
 - Errors are `HimmelcadError` subclasses (`ReferenceNotFoundError`,
-  `FeatureFailedError`, `ConflictError`, …) with `raw_code`, `hint`,
+  `FeatureFailedError`, `SketchConflictError`, `ConflictError`, …) with `raw_code`, `hint`,
   `candidates`.
 - No `bpy` emulation (PLAN §5): familiarity comes from CadQuery/build123d
   vocabulary (sketch → extrude → fillet with selectors), which maps 1:1 onto
@@ -182,18 +213,20 @@ with Document.headless() as doc:              # or Document.connect_app('{"url":
 
 Scripts: `apps/assembler/bench/tasks.py` (five parts), `run_bench.py` (runner).
 Run from the repository root after `build:headless`:
-`python apps/assembler/bench/run_bench.py` (outputs to
+`python apps/assembler/bench/run_bench.py --out <dir>` (default
 `D:\AgentWork\HimmelCAD-Asm-agentapi\bench`: `.3mf`, `.stl`, `.hcasm`,
 `results.json`). Every volume is checked against a hand calculation (exact
 B-rep; tolerance 1e-4, the clip 1e-3 because its opening is integrated
 numerically), every bbox to 1e-3 mm. "Reopen" = a fresh headless process opens
 the saved `.hcasm` (strict format validation, full re-evaluation, same volumes,
-no feature errors). "Edit + undo" = a dimension of an early sketch is changed
-with `feature.edit` (the whole later history must still evaluate and the bbox
-must follow) and then undone. The Electron test (`test/electron/agentAccess.test.ts`)
+no feature errors). "Edit + undo" = a size dimension of an early sketch is changed
+with `sketch.setDimension` (the whole later history must still evaluate and the
+bbox must follow) and then undone. The Electron test (`test/electron/agentAccess.test.ts`)
 additionally opens all five files in the **production app** through Agent
-access, checks the History panel lists them, edits the first sketch and
-reverts it with the app's Ctrl+Z.
+access (the default directory holds the schema-1 files of the first run, so this
+also exercises the v1 → v2 migration in the app), checks the History panel lists
+them, changes a size dimension of the first sketch and reverts it with the
+app's Ctrl+Z.
 
 Measured 2026-09-29 on the Windows host DESKTOP-BNB2PBA (Ryzen 3 PRO 3200G), tasks run sequentially; other agent sessions were active on the host, so times are indicative only:
 
@@ -207,6 +240,27 @@ Measured 2026-09-29 on the Windows host DESKTOP-BNB2PBA (Ryzen 3 PRO 3200G), tas
 
 Commands include `project.new`; time includes two kernel starts (modelling
 process and the fresh reopen process, ≈ 1 s each) and the exports.
+
+Re-run 2026-09-29 on the merged sketch-solver + features + agent-API head
+(same host, same scripts except the edit, now `sketch.setDimension`; the sketch
+shapes are now constrained, fully dimensioned sketches and every sketch write is
+solved by planeGCS; outputs in `D:\AgentWork\HimmelCAD-Assembler\bench-integration`).
+Same command counts, volumes and file sizes as before (identical geometry);
+times are indicative only (other agent sessions were active on the host):
+
+| Task               | Commands (queries) | Valid | BBox | Volume mm³ (expected)                | 3MF / STL bytes | Reopen | Edit + undo | Time s |
+| ------------------ | ------------------ | ----- | ---- | ------------------------------------ | --------------- | ------ | ----------- | ------ |
+| enclosure-with-lid | 11 (5)             | yes   | ok   | 13367.6 (13367.6); 10702.3 (10702.3) | 163286 / 70084  | yes    | yes         | 4.73   |
+| bracket-with-slot  | 14 (5)             | yes   | ok   | 20429.0 (20429.0)                    | 150395 / 65084  | yes    | yes         | 6.44   |
+| pipe-adapter       | 11 (5)             | yes   | ok   | 5814.0 (5814.0)                      | 197289 / 84084  | yes    | yes         | 3.42   |
+| phone-stand        | 11 (3)             | yes   | ok   | 91143.7 (91143.7)                    | 25957 / 11084   | yes    | yes         | 3.42   |
+| cable-clip         | 13 (4)             | yes   | ok   | 1337.6 (1337.6)                      | 162909 / 69684  | yes    | yes         | 4.59   |
+
+The "In app" column of the first run was re-checked by `test:electron` on the
+merged head (the five schema-1 files open, migrate, evaluate and stay editable
+in the production app). The tasks still model the pipe adapter as stacked
+extrusions and the phone stand's rest upright, so the numbers stay comparable;
+both are now expressible with a revolve and a sketch polyline.
 
 Repair rounds (the scripts were written by the implementing agent against the
 API, then run): 3 of 5 passed first time; 2 needed one fix each, both in the
@@ -224,18 +278,19 @@ the 3MF files.
 
 ## Limits and open risks
 
-- **Sketches are rectangles and circles.** No lines, arcs, constraints or
-  dimensions as separate entities; a profile's parameters are its dimensions.
-  An inclined phone rest or a true stadium profile is not expressible (the
-  slot is a fused rectangle + circles). The parallel sketch-solver workstream
-  will change `SketchFeature`: its `FEATURE_KIND_SCHEMAS.sketch` entry
-  (closed schema) and the `sketch.*Profile` commands must follow at merge. The
-  contract test that validates every demo feature against its kind schema is
-  the tripwire.
-- **Revolve/sweep/loft/pattern** come from the parallel features workstream;
-  they are reachable generically (`feature.create {kind}` / `doc.create`) as
-  soon as they are persisted kinds; schemas and Python helpers are one entry
-  each.
+- **Sketch API granularity.** Commands add whole shapes, polylines, arcs,
+  single constraints and dimensions; there is no drag, trim or offset command
+  (the UI has them) and no reference (driven) dimension — dimensioning an
+  already determined length fails with `sketchConflict` (redundant). Region
+  keys are entity-id based: deleting and redrawing a boundary gives a new key,
+  and a feature referencing the old key reports `Missing reference: profile …`.
+  An under-constrained sketch moves where the solver prefers when a dimension
+  changes (like the UI); lock or dimension what must stay.
+- **Modelling kinds** (revolve, sweep, loft, mirror, pattern, split,
+  transform, align, offsetFace, deleteFace) have closed schemas and selector
+  resolution for their face/edge fields; Python has `doc.revolve` and reaches
+  the others with `doc.create(kind, **params)`. Automatic New/Join/Cut (the UI
+  tools' default) is not applied by the API: `operation` defaults to `new`.
 - **Reference resolution while editing mid-history** uses the current
   (final) evaluation to fill signatures of _changed_ reference fields; keys
   are what bind, signatures are only the fallback, but a signature taken from

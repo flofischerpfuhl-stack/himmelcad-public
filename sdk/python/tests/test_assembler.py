@@ -30,6 +30,7 @@ from himmelcad.assembler import (  # noqa: E402
     FeatureFailedError,
     LoopbackTransport,
     ReferenceNotFoundError,
+    SketchConflictError,
     StdioTransport,
     TransportError,
 )
@@ -240,6 +241,40 @@ class HeadlessIntegrationTests(unittest.TestCase):
             self.assertEqual(doc.errors(), {})
             out = doc.export_3mf(Path(tmp) / "plate.3mf")
             self.assertTrue(out.read_bytes().startswith(b"PK"))
+
+    def test_constrained_sketch_revolve_about_a_construction_line(self) -> None:
+        import math
+
+        with Document(AssemblerClient(StdioTransport())) as doc:
+            s = doc.sketch("XZ")
+            s.polyline([(5, 0), (15, 0), (15, 4), (9, 4), (9, 10), (5, 10)])
+            axis = s.line((0, -2), (0, 12), construction=True)
+            self.assertEqual(len(s.regions()), 1)
+            part = doc.revolve(s, axis)
+            ring = lambda r0, r1, h: math.pi * (r1 * r1 - r0 * r0) * h  # noqa: E731
+            self.assertAlmostEqual(part.volume, ring(5, 15, 4) + ring(5, 9, 6), places=3)
+            # A redundant constraint is rejected by the solver with its diagnosis.
+            with self.assertRaises(SketchConflictError) as caught:
+                doc.client.add_constraint(s.id, "horizontal", ["l1"])
+            self.assertTrue(caught.exception.redundant or caught.exception.conflicting)
+            # Lock the inner corner, dimension the bottom width and drive it: the revolved part follows.
+            doc.client.add_constraint(s.id, "fixed", ["p1"])
+            dim = doc.client.add_dimension(s.id, "distance", ["l1"], value=10)
+            self.assertEqual(dim["name"], "d1")
+            s.set_dimension("d1", 12)
+            self.assertAlmostEqual(part.bbox.size[0], 2 * 17, places=6)
+            self.assertEqual(doc.errors(), {})
+
+    def test_shape_dimensions_by_role(self) -> None:
+        with Document(AssemblerClient(StdioTransport())) as doc:
+            s = doc.sketch("XY")
+            s.rect(60, 40)
+            s.circle(d=10, center=(50, 0))
+            self.assertEqual(s.dimensions[0], {"x": "d1", "y": "d2", "width": "d3", "height": "d4"})
+            self.assertEqual(s.dimension(1, "diameter"), "d7")
+            body = doc.extrude(s, 5)
+            s.edit_profile(1, radius=6)
+            self.assertEqual(body.bbox.max[0], 56.0)
 
 
 if __name__ == "__main__":
