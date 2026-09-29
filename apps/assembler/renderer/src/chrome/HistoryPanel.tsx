@@ -20,6 +20,8 @@ import {
 
 import { featureKindIcon } from './icons.js';
 import { ExpressionField } from './ExpressionField.js';
+import { ModelingFeatureParams } from './FeatureParams.js';
+import { isModelingFeature } from '../model/features.js';
 import type { AssemblerState, FeaturePatch } from '../model/store.js';
 import type { ExtrudeOperation, Feature, SketchProfile } from '../model/document.js';
 import panelStyles from './Panel.module.css';
@@ -402,6 +404,8 @@ function FeatureParams({
       </div>
     );
   }
+
+  if (isModelingFeature(feature)) return <ModelingFeatureParams feature={feature} state={state} />;
 
   return <div className={styles.params}>No editable parameters.</div>;
 }

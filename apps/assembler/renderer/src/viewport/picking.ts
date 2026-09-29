@@ -19,7 +19,18 @@ export type PickTarget =
   /** Drag handle of the fillet/chamfer, shell tool or the section plane. */
   | { kind: 'toolHandle'; handle: ToolHandleKind };
 
-export type ToolHandleKind = 'blend' | 'shell' | 'section';
+/**
+ * `feature:<id>` = a handle of the running feature tool (`featureTools.ts`
+ * `draftHandles`); `ring:<axis>` = a Move/Rotate rotation ring; `pivot` =
+ * the gizmo centre.
+ */
+export type ToolHandleKind =
+  | 'blend'
+  | 'shell'
+  | 'section'
+  | `feature:${string}`
+  | `ring:${0 | 1 | 2}`
+  | 'pivot';
 
 export const NO_PICK_ID = 0;
 

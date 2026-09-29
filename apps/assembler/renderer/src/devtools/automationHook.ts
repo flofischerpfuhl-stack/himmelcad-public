@@ -12,6 +12,7 @@ import type { Body, EdgeInfo, EvaluationResult, FaceInfo } from '../kernel/types
 import type { Feature } from '../model/document.js';
 import { isPreviewTool, useAssemblerStore } from '../model/store.js';
 import { getViewportProbe, type ScreenPoint } from '../viewport/automation.js';
+import type { ToolHandleKind } from '../viewport/picking.js';
 
 export interface FaceListing {
   bodyId: string;
@@ -41,8 +42,12 @@ export interface AssemblerAutomation {
   faceAnchor(ref: { bodyId: string; faceKey?: string; key?: string }): ScreenPoint | null;
   /** A visible, unoccluded point on the edge (via the picking id buffer), or `null`. */
   edgeAnchor(ref: { bodyId: string; edgeKey?: string; key?: string }): ScreenPoint | null;
-  /** A visible point of a drag handle: extrude arrow, fillet/chamfer, shell or section plane. */
-  handleAnchor(handle: 'extrude' | 'blend' | 'shell' | 'section'): ScreenPoint | null;
+  /**
+   * A visible point of a drag handle: extrude arrow, fillet/chamfer, shell or section plane,
+   * a feature-tool handle (`feature:angle`, `feature:offset`, …), a Move/Rotate ring (`ring:0..2`)
+   * or the gizmo centre (`pivot`).
+   */
+  handleAnchor(handle: 'extrude' | ToolHandleKind): ScreenPoint | null;
   /** Bodies currently displayed (the active tool's preview if there is one). */
   bodies(): { id: string; name: string; volume: number; min: number[]; max: number[] }[];
   faces(bodyId: string): FaceListing[];

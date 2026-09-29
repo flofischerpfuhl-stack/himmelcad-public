@@ -13,6 +13,8 @@
  * list can be posted to the kernel worker unchanged.
  */
 
+import type { ModelingFeature } from './features.js';
+
 /** A length or coordinate in millimetres. */
 export type Millimeters = number;
 
@@ -195,7 +197,8 @@ export type Feature =
   | BooleanFeature
   | MoveFeature
   | SetAppearanceFeature
-  | ImportStepFeature;
+  | ImportStepFeature
+  | ModelingFeature;
 
 /** Minimum size, in millimetres, of sketch dimensions and extrude distances. */
 export const MIN_FEATURE_SIZE_MM: Millimeters = 0.1;

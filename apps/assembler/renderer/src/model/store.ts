@@ -59,9 +59,13 @@ import {
   type SketchFeature,
   type SketchFrame,
   type SketchPlaneRef,
+  type Vec3,
 } from './document.js';
+import { MODELING_FEATURE_LABEL, type TransformFeature } from './features.js';
+import { draftToFeature, type FeatureDraft } from './featureTools.js';
 import {
   autoExtrudeOperation,
+  extrudeStartDepth,
   defaultSectionOffset,
   findSketchContact,
   visibleBounds,
@@ -166,11 +170,32 @@ export interface SketchCircleTool extends ToolSessionBase {
   dimension: 'radius' | 'diameter';
 }
 
-/** `M` — translates a single body. */
+/**
+ * `M` — the Move/Rotate gizmo on a single body: translate along the axis
+ * arrows, rotate with the rings (degrees about world X, then Y, then Z,
+ * through `pivot`), optionally as a copy. Commits a `move` feature for a
+ * plain translation, else a `transform` feature.
+ */
 export interface MoveTool extends ToolSessionBase {
   kind: 'move';
   bodyId: string;
   delta: { dx: number; dy: number; dz: number };
+  rotation: { rx: number; ry: number; rz: number };
+  /** Rotation centre (world, before the translation). Defaults to the body's box centre. */
+  pivot: Vec3;
+  /** Creates a copy instead of moving the body. */
+  copy: boolean;
+}
+
+/**
+ * Revolve, Sweep, Loft, Mirror, Pattern, Split, Align, Offset Face and
+ * Delete Face: one generic session whose references/parameters are a
+ * {@link FeatureDraft} (see `featureTools.ts`), previewed like the other
+ * kernel tools.
+ */
+export interface FeatureTool extends ToolSessionBase, KernelPreviewFields {
+  kind: 'feature';
+  draft: FeatureDraft;
 }
 
 export type ToolSession =
@@ -180,17 +205,19 @@ export type ToolSession =
   | MoveTool
   | EdgeBlendTool
   | ShellTool
-  | BooleanTool;
+  | BooleanTool
+  | FeatureTool;
 
 /** Tools that show a live kernel preview. */
-export type PreviewTool = ExtrudeTool | EdgeBlendTool | ShellTool | BooleanTool;
+export type PreviewTool = ExtrudeTool | EdgeBlendTool | ShellTool | BooleanTool | FeatureTool;
 
 export function isPreviewTool(tool: ToolSession | null): tool is PreviewTool {
   return (
     tool?.kind === 'extrude' ||
     tool?.kind === 'edgeBlend' ||
     tool?.kind === 'shell' ||
-    tool?.kind === 'boolean'
+    tool?.kind === 'boolean' ||
+    tool?.kind === 'feature'
   );
 }
 
@@ -283,6 +310,18 @@ export interface AssemblerState {
   setExtrudeOperation: (operation: ExtrudeOperation) => void;
   beginMove: (bodyId: string) => void;
   setDelta: (dx: number, dy: number, dz: number) => void;
+  /** Move/Rotate gizmo rings: degrees about world X, Y, Z through the pivot. */
+  setRotation: (rx: number, ry: number, rz: number) => void;
+  /** Moves the gizmo centre (rotation pivot). */
+  setPivot: (pivot: Vec3) => void;
+  /** Copy badge of the Move/Rotate tool. */
+  setMoveCopy: (copy: boolean) => void;
+  /** Starts a modelling-feature tool (Revolve, Sweep, Loft, …) with a live preview. */
+  beginFeatureTool: (draft: FeatureDraft) => void;
+  /** Updates the running feature tool's draft (references/parameters) and re-previews. */
+  updateFeatureDraft: (
+    update: (draft: FeatureDraft, evaluation: EvaluationResult) => FeatureDraft,
+  ) => void;
   /** `C` — starts the circle tool on the XY plane or on a planar body face. */
   beginSketchCircle: (origin?: { bodyId: string; faceKey: string }) => void;
   /**
@@ -563,7 +602,26 @@ function buildProvisional(tool: PreviewTool): Feature | null {
         targetBodyId: tool.targetBodyId,
         toolBodyIds: tool.toolBodyIds,
       };
+    case 'feature':
+      return draftToFeature(tool.draft, { id: PREVIEW_FEATURE_ID, name: 'Preview' });
   }
+}
+
+function featureToolPhase(draft: FeatureDraft): ToolPhase {
+  return draftToFeature(draft, { id: PREVIEW_FEATURE_ID, name: '' })
+    ? 'preview'
+    : 'collectingReferences';
+}
+
+/** Box centre of a body, or the origin. */
+function bodyCentre(evaluation: EvaluationResult, bodyId: string): Vec3 {
+  const body = evaluation.bodies.find((b) => b.id === bodyId);
+  if (!body) return [0, 0, 0];
+  return [
+    (body.min[0] + body.max[0]) / 2,
+    (body.min[1] + body.max[1]) / 2,
+    (body.min[2] + body.max[2]) / 2,
+  ];
 }
 
 const BOOLEAN_LABEL: Record<BooleanFeature['operation'], string> = {
@@ -964,6 +1022,21 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
         ...NO_PREVIEW,
       };
       endPreview();
+      // A closed profile inside a body face starts as a through-cut (Shapr3D), previewed at once.
+      const cutDepth =
+        profile.kind === 'sketch' && contact
+          ? extrudeStartDepth(
+              state.evaluation,
+              state.features,
+              profile.featureId,
+              profile.profileIndex,
+              contact,
+            )
+          : null;
+      if (cutDepth !== null) {
+        updatePreviewTool({ ...tool, phase: 'preview', distance: cutDepth, operation: 'cut' });
+        return;
+      }
       // A zero distance has no geometry to preview; the first drag/entry requests one.
       set({ activeTool: tool });
     },
@@ -1122,6 +1195,9 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
           phase: 'collectingReferences',
           bodyId,
           delta: { dx: 0, dy: 0, dz: 0 },
+          rotation: { rx: 0, ry: 0, rz: 0 },
+          pivot: bodyCentre(get().evaluation, bodyId),
+          copy: false,
         },
       });
     },
@@ -1129,6 +1205,33 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
       const tool = get().activeTool;
       if (!tool || tool.kind !== 'move') return;
       set({ activeTool: { ...tool, phase: 'preview', delta: { dx, dy, dz } } });
+    },
+    setRotation: (rx, ry, rz) => {
+      const tool = get().activeTool;
+      if (tool?.kind !== 'move' || ![rx, ry, rz].every(Number.isFinite)) return;
+      set({ activeTool: { ...tool, phase: 'preview', rotation: { rx, ry, rz } } });
+    },
+    setPivot: (pivot) => {
+      const tool = get().activeTool;
+      if (tool?.kind !== 'move' || !pivot.every(Number.isFinite)) return;
+      set({ activeTool: { ...tool, pivot: [...pivot] } });
+    },
+    setMoveCopy: (copy) => {
+      const tool = get().activeTool;
+      if (tool?.kind !== 'move') return;
+      set({ activeTool: { ...tool, copy } });
+    },
+    beginFeatureTool: (draft) => {
+      endPreview();
+      updatePreviewTool({ kind: 'feature', phase: featureToolPhase(draft), draft, ...NO_PREVIEW });
+    },
+    updateFeatureDraft: (update) => {
+      const state = get();
+      const tool = state.activeTool;
+      if (tool?.kind !== 'feature') return;
+      const draft = update(tool.draft, state.evaluation);
+      if (draft === tool.draft) return;
+      updatePreviewTool({ ...tool, draft, phase: featureToolPhase(draft) });
     },
     beginNumericEditing: () => {
       const tool = get().activeTool;
@@ -1216,6 +1319,34 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
           name: nextFeatureName(prefix, state.features),
         } as Feature;
         appendFeature(feature);
+        return;
+      }
+
+      if (tool.kind === 'feature') {
+        const kind = tool.draft.kind;
+        const feature = draftToFeature(tool.draft, {
+          id: createFeatureId(kind),
+          name: nextFeatureName(MODELING_FEATURE_LABEL[kind], state.features),
+        });
+        if (!feature) return; // references still missing: the tool stays open
+        appendFeature(feature);
+        return;
+      }
+
+      const { rotation } = tool;
+      if (tool.copy || rotation.rx !== 0 || rotation.ry !== 0 || rotation.rz !== 0) {
+        const transform: TransformFeature = {
+          id: createFeatureId('transform'),
+          name: nextFeatureName(MODELING_FEATURE_LABEL.transform, state.features),
+          suppressed: false,
+          kind: 'transform',
+          bodyId: tool.bodyId,
+          ...tool.delta,
+          ...rotation,
+          pivot: tool.pivot,
+          copy: tool.copy,
+        };
+        commitFeatures([...state.features, transform]);
         return;
       }
 

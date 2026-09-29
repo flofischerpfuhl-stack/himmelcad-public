@@ -17,7 +17,7 @@ import {
   translatePositions,
 } from './geometry.js';
 import { sectionNormal, sectionOutline, type AxisHandle } from './toolAnchors.js';
-import { PickTable, type PickTarget } from './picking.js';
+import { PickTable, type PickTarget, type ToolHandleKind } from './picking.js';
 import type { FlatBatch, IdBatch, SceneFrame, TriBatch } from './gl.js';
 import type { ViewportColors } from './theme.js';
 import type { Vec3 } from './math.js';
@@ -100,6 +100,29 @@ export interface SceneInput {
   ghostBodies?: readonly Body[];
   /** Drag handles of the active tool / the section plane. */
   axisHandles?: readonly AxisHandleState[];
+  /** Bodies the running tool creates (translucent, preview accent), like an extrude preview. */
+  previewNewBodyIds?: readonly string[];
+  /** Angle drags: Move/Rotate rings, revolve and circular-pattern arcs. */
+  angleHandles?: readonly AngleHandleState[];
+  /** Reference geometry of the running tool: axis lines and planes. */
+  guides?: { lines: readonly [Vec3, Vec3][]; planes: readonly [Vec3, Vec3, Vec3, Vec3][] } | null;
+  /** Move/Rotate gizmo centre (the rotation pivot), draggable onto geometry. */
+  pivot?: { point: Vec3; hovered: boolean; pickable?: boolean } | null;
+}
+
+/** An angle handle: arc about `axis` through `center`, from `ref` by `value` degrees. */
+export interface AngleHandleState {
+  handle: ToolHandleKind;
+  center: Vec3;
+  axis: Vec3;
+  ref: Vec3;
+  radius: number;
+  value: number;
+  /** Full rotation ring (the gizmo) instead of a value arc with a knob. */
+  ring: boolean;
+  /** Ring colour; `null` = the tool accent. */
+  color: readonly [number, number, number] | null;
+  hovered: boolean;
 }
 
 export interface BuiltScene {
@@ -215,6 +238,7 @@ export function buildScene(input: SceneInput): BuiltScene {
     });
   };
   const accentBodies = new Set(input.previewAccentBodyIds ?? []);
+  const newPreviewBodies = new Set(input.previewNewBodyIds ?? []);
 
   const hiddenSet = new Set(input.hiddenBodyIds);
   const isolatedSet = input.isolatedBodyIds ? new Set(input.isolatedBodyIds) : null;
@@ -359,7 +383,8 @@ export function buildScene(input: SceneInput): BuiltScene {
   // ---- Bodies ---------------------------------------------------------------
   for (const body of visibleBodies) {
     const isMovePreview = input.movePreview?.bodyId === body.id;
-    const isExtrudePreview = input.extrudePreviewBodyId === body.id;
+    const isExtrudePreview =
+      input.extrudePreviewBodyId === body.id || newPreviewBodies.has(body.id);
     const delta: [number, number, number] | null =
       isMovePreview && input.movePreview
         ? [input.movePreview.delta.dx, input.movePreview.delta.dy, input.movePreview.delta.dz]
@@ -696,6 +721,163 @@ export function buildScene(input: SceneInput): BuiltScene {
       eye,
       worldPerPixel(Math.hypot(...sub3(eye, handle.base))) * 14,
     );
+  }
+
+  // ---- Tool guides: axis lines and planes (on top, not picked) ----------------
+  if (input.guides) {
+    const color = input.colors.sketchOutline;
+    for (const [a, b] of input.guides.lines) {
+      const ribbon = buildScreenRibbon(new Float32Array([...a, ...b]), eye, 1.5, worldPerPixel, 0);
+      flat.push({
+        positions: ribbon,
+        colors: lineColors(ribbon.length / 3, color, 0.9),
+        mode: 'triangles',
+        depthTest: false,
+        noClip: true,
+      });
+    }
+    for (const quad of input.guides.planes) {
+      const fill = { positions: [] as number[], colors: [] as number[] };
+      pushFlatQuad(fill, quad, color, 0.05);
+      pushFlatQuad(fill, [quad[0], quad[3], quad[2], quad[1]], color, 0.05);
+      const outline = { positions: [] as number[], colors: [] as number[] };
+      for (let i = 0; i < 4; i += 1)
+        pushFlatLine(outline, quad[i]!, quad[(i + 1) % 4]!, color, 0.85);
+      flat.push(
+        {
+          positions: new Float32Array(fill.positions),
+          colors: new Float32Array(fill.colors),
+          mode: 'triangles',
+          depthTest: true,
+          noClip: true,
+        },
+        {
+          positions: new Float32Array(outline.positions),
+          colors: new Float32Array(outline.colors),
+          mode: 'lines',
+          depthTest: false,
+          noClip: true,
+        },
+      );
+    }
+  }
+
+  // ---- Angle handles: rotation rings and value arcs (on top; picked) ----------
+  for (const handle of input.angleHandles ?? []) {
+    const base = handle.color ?? input.colors.selection;
+    const color = handle.hovered ? input.colors.hover : base;
+    const u = normalize3(handle.ref);
+    const v = normalize3(cross3(handle.axis, u));
+    const at = (degrees: number): Vec3 => {
+      const a = (degrees * Math.PI) / 180;
+      return addScaled(
+        handle.center,
+        u,
+        Math.cos(a) * handle.radius,
+        v,
+        Math.sin(a) * handle.radius,
+      );
+    };
+    const arcSegments = (from: number, to: number): Float32Array => {
+      const steps = Math.max(2, Math.ceil(Math.abs(to - from) / 4));
+      const out = new Float32Array(steps * 6);
+      for (let i = 0; i < steps; i += 1) {
+        const p = at(from + ((to - from) * i) / steps);
+        const q = at(from + ((to - from) * (i + 1)) / steps);
+        out.set([...p, ...q], i * 6);
+      }
+      return out;
+    };
+    const pushRibbon = (segments: Float32Array, widthPx: number, alpha: number) => {
+      const ribbon = buildScreenRibbon(segments, eye, widthPx, worldPerPixel, 0);
+      flat.push({
+        positions: ribbon,
+        colors: lineColors(ribbon.length / 3, color, alpha),
+        mode: 'triangles',
+        depthTest: false,
+        noClip: true,
+      });
+    };
+    const id = pickTable.add({ kind: 'toolHandle', handle: handle.handle });
+    if (handle.ring) {
+      const circle = arcSegments(0, 360);
+      pushRibbon(circle, handle.hovered ? 3.5 : 2.5, 0.9);
+      if (Math.abs(handle.value) > 1e-9) pushRibbon(arcSegments(0, handle.value), 5, 0.95);
+      idBatches.push({
+        positions: buildScreenRibbon(circle, eye, 14, worldPerPixel, 0),
+        id,
+        mode: 'triangles',
+        onTop: true,
+      });
+    } else {
+      const arc = arcSegments(0, handle.value);
+      pushRibbon(arc, handle.hovered ? 4 : 3, 0.95);
+      const spokes = new Float32Array([
+        ...handle.center,
+        ...at(0),
+        ...handle.center,
+        ...at(handle.value),
+      ]);
+      pushRibbon(spokes, 1.25, 0.7);
+      const knob = at(handle.value);
+      const knobRadius = worldPerPixel(Math.hypot(...sub3(eye, knob))) * (handle.hovered ? 7 : 6);
+      const dot = { positions: [] as number[], colors: [] as number[] };
+      pushBillboardQuad(dot, eye, knob, knobRadius, color, 0.95);
+      flat.push({
+        positions: new Float32Array(dot.positions),
+        colors: new Float32Array(dot.colors),
+        mode: 'triangles',
+        depthTest: false,
+        noClip: true,
+      });
+      const hit = { positions: [] as number[], colors: [] as number[] };
+      pushBillboardQuad(hit, eye, knob, knobRadius * 1.8, color, 1);
+      idBatches.push({
+        positions: new Float32Array(hit.positions),
+        id,
+        mode: 'triangles',
+        onTop: true,
+      });
+      idBatches.push({
+        positions: buildScreenRibbon(arc, eye, 12, worldPerPixel, 0),
+        id,
+        mode: 'triangles',
+        onTop: true,
+      });
+    }
+  }
+
+  // ---- Move/Rotate gizmo centre (pivot knob) --------------------------------------
+  if (input.pivot) {
+    const { point, hovered, pickable = true } = input.pivot;
+    const radius = worldPerPixel(Math.hypot(...sub3(eye, point))) * (hovered ? 8 : 6.5);
+    const knob = { positions: [] as number[], colors: [] as number[] };
+    pushBillboardQuad(
+      knob,
+      eye,
+      point,
+      radius,
+      hovered ? input.colors.hover : input.colors.selection,
+      1,
+    );
+    pushBillboardQuad(knob, eye, point, radius * 0.45, input.colors.background, 1);
+    flat.push({
+      positions: new Float32Array(knob.positions),
+      colors: new Float32Array(knob.colors),
+      mode: 'triangles',
+      depthTest: false,
+      noClip: true,
+    });
+    if (pickable) {
+      const hit = { positions: [] as number[], colors: [] as number[] };
+      pushBillboardQuad(hit, eye, point, radius * 1.6, input.colors.selection, 1);
+      idBatches.push({
+        positions: new Float32Array(hit.positions),
+        id: pickTable.add({ kind: 'toolHandle', handle: 'pivot' }),
+        mode: 'triangles',
+        onTop: true,
+      });
+    }
   }
 
   const frame: SceneFrame = {

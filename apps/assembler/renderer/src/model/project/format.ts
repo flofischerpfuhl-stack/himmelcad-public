@@ -25,6 +25,7 @@ import {
   type SketchFeature,
   type SketchProfile,
 } from '../document.js';
+import { isModelingFeatureKind, validateModelingFeature } from './featureFormat.js';
 
 export const PROJECT_FORMAT_ID = 'himmelcad-assembler';
 export const CURRENT_SCHEMA_VERSION = 1;
@@ -247,6 +248,13 @@ function validateFeature(v: unknown, index: number): Feature {
       return r as unknown as ImportStepFeature;
     }
     default:
+      if (isModelingFeatureKind(r.kind)) {
+        return validateModelingFeature(r, path, {
+          fail,
+          faceRef: validateFaceRef,
+          edgeRef: validateEdgeRef,
+        });
+      }
       fail(`${path}.kind`, `unknown feature kind "${String(r.kind)}"`);
   }
 }

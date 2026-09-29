@@ -10,6 +10,7 @@
  */
 import { useAutomationStore } from '../../api/app/automationStore.js';
 import { useProjectStore } from '../project/projectStore.js';
+import { FEATURE_COMMANDS } from './featureCommands.js';
 import { isPlanarFace, makeFaceRef, type AssemblerState, type SelectionItem } from '../store.js';
 
 /** Read access to the store snapshot and its actions. Commands never mutate `ctx` directly — they call its action methods. */
@@ -53,7 +54,6 @@ export interface Command {
 
 export const KERNEL_LOADING_REASON = 'The CAD kernel is still loading.';
 const KERNEL_FAILED_REASON = 'The CAD kernel failed to load.';
-const NOT_IN_SPIKE_REASON = 'Not part of the Phase 1 kernel spike yet';
 const SKETCH_SOLVER_REASON = 'Requires the sketch solver (Phase 1)';
 
 /** The single selected face if it is planar (a sketch plane), else `null`. */
@@ -259,16 +259,7 @@ export const COMMANDS: readonly Command[] = [
     },
     run: (ctx) => ctx.beginShell(),
   },
-  {
-    id: 'tools.revolve',
-    label: 'Revolve',
-    group: 'tools',
-    shortcut: 'V',
-    keywords: ['lathe', 'rotate profile'],
-    requiresKernel: true,
-    availability: () => ({ enabled: false, reason: NOT_IN_SPIKE_REASON }),
-    run: () => undefined,
-  },
+  ...FEATURE_COMMANDS,
   {
     id: 'tools.union',
     label: 'Union',
@@ -328,6 +319,12 @@ export const COMMANDS: readonly Command[] = [
     availability: (ctx) =>
       ctx.selection.length > 0 ? alwaysEnabled : { enabled: false, reason: 'Nothing selected.' },
     run: (ctx) => {
+      // Deleting faces removes them from the body and heals it (Delete Face tool).
+      if (ctx.selection.every((item) => item.kind === 'face')) {
+        const deleteFace = FEATURE_COMMANDS.find((c) => c.id === 'tools.deleteFace');
+        if (deleteFace?.availability(ctx).enabled) deleteFace.run(ctx);
+        return;
+      }
       for (const item of ctx.selection) {
         if (item.kind === 'feature' || item.kind === 'sketchProfile') {
           ctx.deleteFeature(item.featureId);

@@ -15,6 +15,7 @@ import {
   type AssemblerState,
   type ToolSession as ToolSessionState,
 } from '../model/store.js';
+import { draftBadges, draftMeta } from '../model/featureTools.js';
 import styles from './ToolSession.module.css';
 
 interface ToolMeta {
@@ -54,7 +55,14 @@ function toolMeta(tool: ToolSessionState): ToolMeta {
             : 'Drag the arrow or type a distance, then Done.',
       };
     case 'move':
-      return { label: 'Move', shortcut: 'M', prompt: 'Drag the arrow or type an offset.' };
+      return {
+        label: 'Move/Rotate',
+        shortcut: 'M',
+        prompt:
+          'Drag an arrow or ring, or type a value. Rings snap to 15° (Shift: free); drag the centre to move the pivot.',
+      };
+    case 'feature':
+      return draftMeta(tool.draft);
     case 'edgeBlend':
       return {
         label: tool.blend === 'fillet' ? 'Fillet' : 'Chamfer',
@@ -163,6 +171,36 @@ function ToolBadge({
           ]}
           onChange={(dimension) => state.setCircleDimension(dimension)}
         />
+      );
+    case 'move':
+      return (
+        <Badge
+          ariaLabel="Move or copy"
+          value={tool.copy ? 'copy' : 'move'}
+          options={[
+            { value: 'move', label: 'Move' },
+            { value: 'copy', label: 'Copy' },
+          ]}
+          onChange={(value) => state.setMoveCopy(value === 'copy')}
+        />
+      );
+    case 'feature':
+      return (
+        <>
+          {draftBadges(tool.draft).map((badge) => (
+            <Badge
+              key={badge.ariaLabel}
+              ariaLabel={badge.ariaLabel}
+              value={badge.value}
+              options={badge.options}
+              onChange={(value) =>
+                state.updateFeatureDraft((draft, evaluation) =>
+                  badge.apply(draft, value, evaluation),
+                )
+              }
+            />
+          ))}
+        </>
       );
     default:
       return null;

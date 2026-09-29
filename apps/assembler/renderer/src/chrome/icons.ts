@@ -50,6 +50,7 @@ import {
 import type { Command, CommandGroup } from '../model/commands/registry.js';
 import type { Feature } from '../model/document.js';
 import type { SelectionItem } from '../model/store.js';
+import { MODELING_COMMAND_ICON, MODELING_FEATURE_ICON } from './featureIcons.js';
 
 export const GROUP_ICON: Record<CommandGroup, LucideIcon> = {
   sketch: PenSquare,
@@ -104,6 +105,7 @@ export const COMMAND_ICON: Partial<Record<string, LucideIcon>> = {
   'file.open': FolderOpen,
   'file.save': Save,
   'file.export3mf': FileOutput,
+  ...MODELING_COMMAND_ICON,
 };
 
 /** `COMMAND_ICON[command.id]`, falling back to the command's group icon. */
@@ -130,6 +132,8 @@ export function featureKindIcon(kind: Feature['kind']): LucideIcon {
       return Eye;
     case 'importStep':
       return FileInput;
+    default:
+      return MODELING_FEATURE_ICON[kind];
   }
 }
 
