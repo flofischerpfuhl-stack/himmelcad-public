@@ -135,27 +135,64 @@ export function curveKindOf(type: string): CurveKind {
   }
 }
 
-function describeEdge(oc: OpenCascade, edge: R.Edge): EdgeGeom {
-  const curve = curveKindOf(edge.geomType);
-  const mid = edge.pointAt(0.5);
-  const midpoint: Vec3 = [mid.x, mid.y, mid.z];
-  mid.delete();
-  let direction: Vec3 | null = null;
-  let radius: number | null = null;
-  if (curve === 'line') {
-    const t = edge.tangentAt(0.5);
-    direction = normalize([t.x, t.y, t.z]);
-    t.delete();
-  } else if (curve === 'circle') {
-    const adaptor = new oc.BRepAdaptor_Curve(edge.wrapped);
-    const circle = adaptor.Circle();
-    radius = circle.Radius();
-    circle.delete();
+/**
+ * Point of an edge at `t` in [0, 1] of its parameter range (replicad's
+ * `edge.pointAt(t)`, without its leak of a raw `gp_Pnt` per call).
+ */
+export function edgePointAt(oc: OpenCascade, edge: R.Edge, t: number): Vec3 {
+  const adaptor = new oc.BRepAdaptor_Curve(edge.wrapped as never);
+  const p = new oc.gp_Pnt();
+  try {
+    const first = adaptor.FirstParameter();
+    adaptor.D0(first + (adaptor.LastParameter() - first) * t, p);
+    return [p.X(), p.Y(), p.Z()];
+  } finally {
+    p.delete();
     adaptor.delete();
   }
-  return { curve, midpoint, length: edge.length, direction, radius };
 }
 
+/**
+ * Curve kind, midpoint, length, direction (lines) and radius (circles) of an
+ * edge with one curve adaptor — the values replicad's `geomType`,
+ * `pointAt(0.5)`, `tangentAt(0.5)` and `length` give, without the wasm heap
+ * those getters leak (~2 KB per edge).
+ */
+function describeEdge(oc: OpenCascade, edge: R.Edge): EdgeGeom {
+  const adaptor = new oc.BRepAdaptor_Curve(edge.wrapped as never);
+  const p = new oc.gp_Pnt();
+  const d = new oc.gp_Vec();
+  const props = new oc.GProp_GProps();
+  try {
+    const types = oc.GeomAbs_CurveType as unknown as Record<string, unknown>;
+    const type = adaptor.GetType() as unknown;
+    const curve: CurveKind =
+      type === types.GeomAbs_Line
+        ? 'line'
+        : type === types.GeomAbs_Circle
+          ? 'circle'
+          : type === types.GeomAbs_Ellipse
+            ? 'ellipse'
+            : 'other';
+    const first = adaptor.FirstParameter();
+    adaptor.D1(first + (adaptor.LastParameter() - first) * 0.5, p, d);
+    const midpoint: Vec3 = [p.X(), p.Y(), p.Z()];
+    const direction: Vec3 | null = curve === 'line' ? normalize([d.X(), d.Y(), d.Z()]) : null;
+    let radius: number | null = null;
+    if (curve === 'circle') {
+      const circle = adaptor.Circle();
+      radius = circle.Radius();
+      circle.delete();
+    }
+    oc.BRepGProp.LinearProperties(edge.wrapped as never, props, true, false);
+    return { curve, midpoint, length: props.Mass(), direction, radius };
+  } finally {
+    props.delete();
+    d.delete();
+    p.delete();
+    adaptor.delete();
+  }
+}
 /**
  * Builds the topology of `shape` (wrappers are arena-tracked unless
  * pinned). Edges that are identical (`IsSame`) to an edge of one of the

@@ -17,14 +17,13 @@ import {
 } from '../../model/document.js';
 import type { LoftFeature, RevolveFeature, SweepFeature } from '../../model/features.js';
 import { assignFaceKeys, type FaceGeom, type KeyedFace } from '../naming.js';
-import type { RawShape } from '../occt.js';
+import { edgePointAt, type RawShape } from '../occt.js';
 import type { FeatureKit, ReplayContextLike, Shape3D } from './kit.js';
 import {
   bodyOrFail,
   distance,
   listShapes,
   pickTarget,
-  pointOf,
   profileSections,
   resolveAxis,
   type Line3,
@@ -188,7 +187,9 @@ function sweepPath(kit: FeatureKit, ctx: ReplayContextLike, feature: SweepFeatur
 /** Orders edges into a connected chain (endpoint to endpoint). */
 function chainEdges(kit: FeatureKit, edges: R.Edge[]): R.Edge[] {
   if (edges.length < 2) return edges;
-  const ends = edges.map((e) => [pointOf(e.startPoint), pointOf(e.endPoint)] as [Vec3, Vec3]);
+  const ends = edges.map(
+    (e) => [edgePointAt(kit.oc, e, 0), edgePointAt(kit.oc, e, 1)] as [Vec3, Vec3],
+  );
   const tol = 1e-4;
   const touches = (i: number, j: number) =>
     ends[i]!.some((p) => ends[j]!.some((q) => distance(p, q) < tol));

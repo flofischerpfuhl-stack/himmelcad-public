@@ -217,7 +217,10 @@ function healingPatch(
 
   if (id.type === 'cylinder') {
     const axis: Line3 = { point: id.point, dir: id.axis };
-    const samples = sampleEdges(edges.map((e) => topology.edges[e]!));
+    const samples = sampleEdges(
+      kit,
+      edges.map((e) => topology.edges[e]!),
+    );
     const along = samples.map((p) => alongLine(axis, p));
     const t0 = Math.min(...along);
     const t1 = Math.max(...along);
@@ -272,7 +275,7 @@ function healingPatch(
         if (Math.abs(Math.abs(dot(pa.normal, pb.normal)) - 1) < 1e-6) continue; // parallel neighbours
         const dir = normalize(ga.direction);
         const axis: Line3 = { point: ga.midpoint, dir };
-        const samples = sampleEdges([topology.edges[lines[a]!]!, topology.edges[lines[b]!]!]);
+        const samples = sampleEdges(kit, [topology.edges[lines[a]!]!, topology.edges[lines[b]!]!]);
         const along = samples.map((p) => alongLine(axis, p));
         const wedge = cornerWedge(
           kit,

@@ -118,7 +118,7 @@ interface ShapeRecord {
 export interface CheckpointCacheOptions {
   /** Estimated B-rep bytes the cache may hold before evicting (default 256 MiB). */
   budgetBytes?: number;
-  /** Hard cap on the number of checkpoints (default 4000). */
+  /** Cap on the number of checkpoints (default 1000: ~16 versions of a 60-feature part). */
   maxEntries?: number;
   /** Estimated heap bytes of a shape (called once per shape). */
   estimateBytes: (shape: Shape3D, faces: readonly KeyedFace[]) => number;
@@ -148,7 +148,7 @@ export class CheckpointCache {
 
   constructor(private readonly options: CheckpointCacheOptions) {
     this.budgetBytes = options.budgetBytes ?? 256 * 1024 * 1024;
-    this.maxEntries = options.maxEntries ?? 4000;
+    this.maxEntries = options.maxEntries ?? 1000;
   }
 
   /** The checkpoint for `hash` (marks it recently used). */

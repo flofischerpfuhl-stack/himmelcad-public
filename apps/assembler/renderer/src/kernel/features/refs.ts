@@ -14,7 +14,7 @@ import {
 } from '../../model/features.js';
 import { entityMap, pointPos } from '../../sketch/types.js';
 import { assignEdgeKeys } from '../naming.js';
-import { takeList, type RawShape } from '../occt.js';
+import { edgePointAt, takeList, type RawShape } from '../occt.js';
 import { rebindRegion } from '../regionRebind.js';
 import { regionFace, regionPieceName } from '../sketchGeometry.js';
 import type { SketchRegion } from '../../sketch/regions.js';
@@ -67,7 +67,7 @@ export function profileSections(
     const clone = face.clone();
     const cloneEdges = kit.edgesOf(clone);
     const segments = cloneEdges.map((edge) => {
-      const midpoint = pointOf(edge.pointAt(0.5));
+      const midpoint = edgePointAt(kit.oc, edge, 0.5);
       let best = 0;
       let bestDistance = Infinity;
       own.forEach((e, s) => {
@@ -86,7 +86,7 @@ export function profileSections(
         segments,
         normal: geom.normal,
         center: geom.centroid,
-        outline: sampleEdges(cloneEdges),
+        outline: sampleEdges(kit, cloneEdges),
       },
     ];
   }
@@ -122,7 +122,7 @@ export function profileSections(
     }
     const faceEdges = kit.edgesOf(face);
     const segments = faceEdges.map((edge) => {
-      const midpoint = pointOf(edge.pointAt(0.5));
+      const midpoint = edgePointAt(kit.oc, edge, 0.5);
       return { edge, segment: regionPieceName(sketch.frame, region, midpoint), midpoint };
     });
     const evaluated = sketch.profiles.find((p) => p.key === region.key);
@@ -132,7 +132,7 @@ export function profileSections(
       segments,
       normal: sketch.frame.normal,
       center: evaluated?.center ?? framePoint(sketch.frame, region.sample[0], region.sample[1]),
-      outline: evaluated?.outline ?? sampleEdges(faceEdges),
+      outline: evaluated?.outline ?? sampleEdges(kit, faceEdges),
     };
   });
 }
@@ -221,10 +221,10 @@ export function listShapes(kit: FeatureKit, list: { delete(): void }): RawShape[
 }
 
 /** A few points along each edge, both ends included (world). */
-export function sampleEdges(edges: readonly R.Edge[], perEdge = 9): Vec3[] {
+export function sampleEdges(kit: FeatureKit, edges: readonly R.Edge[], perEdge = 9): Vec3[] {
   const out: Vec3[] = [];
   for (const edge of edges) {
-    for (let i = 0; i < perEdge; i += 1) out.push(pointOf(edge.pointAt(i / (perEdge - 1))));
+    for (let i = 0; i < perEdge; i += 1) out.push(edgePointAt(kit.oc, edge, i / (perEdge - 1)));
   }
   return out;
 }

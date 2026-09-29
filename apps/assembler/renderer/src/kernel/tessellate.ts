@@ -49,6 +49,7 @@ const BULK_FRACTION = 0.5;
 export class FaceMeshCache {
   private readonly entries = new Map<number, FaceMesh[]>();
   private bytes = 0;
+  private count = 0;
   private clock = 0;
 
   constructor(
@@ -57,9 +58,7 @@ export class FaceMeshCache {
   ) {}
 
   get size(): number {
-    let n = 0;
-    for (const list of this.entries.values()) n += list.length;
-    return n;
+    return this.count;
   }
 
   get byteSize(): number {
@@ -121,6 +120,7 @@ export class FaceMeshCache {
     if (list) list.push(entry);
     else this.entries.set(hash, [entry]);
     this.bytes += entry.bytes;
+    this.count += 1;
     return entry;
   }
 
@@ -132,6 +132,7 @@ export class FaceMeshCache {
     list.splice(index, 1);
     if (list.length === 0) this.entries.delete(hash);
     this.bytes -= entry.bytes;
+    this.count -= 1;
     entry.face.delete();
   }
 
