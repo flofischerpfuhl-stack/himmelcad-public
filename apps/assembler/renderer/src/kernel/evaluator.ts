@@ -858,17 +858,27 @@ export function createEvaluator(oc: OpenCascade, options: EvaluatorOptions = {})
 
   function describeError(error: unknown): string {
     if (error instanceof Error) return error.message;
-    if (typeof error === 'number') {
+    // OCCT throws C++ exceptions: a pointer (number) or, with native wasm
+    // exceptions, a `WebAssembly.Exception` object — never show those raw.
+    const wasmException =
+      typeof WebAssembly !== 'undefined' &&
+      'Exception' in WebAssembly &&
+      error instanceof (WebAssembly as unknown as { Exception: new () => object }).Exception;
+    if (typeof error === 'number' || wasmException) {
       try {
         const message = (
-          oc as unknown as { getExceptionMessage?: (e: number) => unknown }
+          oc as unknown as { getExceptionMessage?: (e: unknown) => unknown }
         ).getExceptionMessage?.(error);
-        if (Array.isArray(message)) return `OCCT ${message.filter(Boolean).join(': ')}`;
-        if (typeof message === 'string' && message) return `OCCT ${message}`;
+        const text = Array.isArray(message)
+          ? message.filter((m) => typeof m === 'string' && m).join(': ')
+          : typeof message === 'string'
+            ? message
+            : '';
+        if (text) return `the kernel could not build this geometry (OCCT ${text})`;
       } catch {
         // fall through
       }
-      return 'OCCT raised an exception';
+      return 'the kernel could not build this geometry';
     }
     return String(error);
   }

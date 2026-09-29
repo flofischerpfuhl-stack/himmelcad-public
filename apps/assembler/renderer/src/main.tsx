@@ -7,22 +7,13 @@ import '@himmelcad/theme/reset.css';
 import './assembler.css';
 
 import { App } from './App.js';
+import { installAutomationHook } from './devtools/automationHook.js';
 import { WorkerKernelAdapter } from './kernel/workerAdapter.js';
 import { useAssemblerStore } from './model/store.js';
 
-declare global {
-  interface Window {
-    /**
-     * Dev-only automation hook for screen-recording orchestration. Never
-     * present in production builds — guarded by `import.meta.env.DEV`.
-     */
-    __assembler?: { store: typeof useAssemblerStore };
-  }
-}
-
-if (import.meta.env.DEV) {
-  window.__assembler = { store: useAssemblerStore };
-}
+// Dev-only automation hook for screen recordings (`window.__assembler`, see
+// `devtools/automationHook.ts`). Never present in production builds.
+if (import.meta.env.DEV) installAutomationHook(useAssemblerStore);
 
 // OCCT (WebAssembly) runs in its own worker; the UI stays responsive while it loads.
 useAssemblerStore

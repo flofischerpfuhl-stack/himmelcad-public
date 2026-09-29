@@ -1,0 +1,86 @@
+.root {
+  position: absolute;
+  /* Next to the Section/Isolate/Measure mode group (LeftDock: left 12px, 108px buttons). */
+  left: 144px;
+  bottom: 64px;
+  display: flex;
+  align-items: flex-end;
+  gap: var(--hc-space-2);
+  padding: var(--hc-space-2) var(--hc-space-3);
+  background: var(--hc-bg-island);
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-lg);
+  box-shadow: var(--hc-shadow-island);
+  pointer-events: auto;
+}
+
+.title {
+  align-self: center;
+  font-family: var(--hc-font-ui);
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--hc-fg-strong);
+}
+
+.segmented {
+  display: flex;
+  gap: 2px;
+  padding: 2px 3px;
+  border-radius: var(--hc-radius-sm);
+  background: var(--hc-bg-chip);
+}
+
+.segment {
+  min-width: 26px;
+  padding: 4px 6px;
+  border: none;
+  border-radius: var(--hc-radius-sm);
+  background: transparent;
+  color: var(--hc-fg-muted);
+  font-family: var(--hc-font-mono);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.segment:hover {
+  background: var(--hc-hover-bg);
+}
+
+.segmentActive,
+.segmentActive:hover {
+  background: var(--hc-accent-base);
+  color: var(--hc-fg-on-accent);
+}
+
+.segment:focus-visible,
+.iconButton:focus-visible {
+  outline: 2px solid var(--hc-focus-ring);
+  outline-offset: 1px;
+}
+
+.iconButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: var(--hc-radius-md);
+  background: transparent;
+  color: var(--hc-fg-default);
+  cursor: pointer;
+}
+
+.iconButton:hover {
+  background: var(--hc-hover-bg);
+}
+
+.iconButtonActive,
+.iconButtonActive:hover {
+  background: var(--hc-accent-base);
+  color: var(--hc-fg-on-accent);
+}
+
+.offset {
+  width: 112px;
+}

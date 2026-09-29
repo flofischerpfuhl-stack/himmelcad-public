@@ -15,7 +15,11 @@ export type PickTarget =
   | { kind: 'edge'; bodyId: string; edgeKey: string }
   | { kind: 'sketchProfile'; featureId: string }
   | { kind: 'extrudeHandle' }
-  | { kind: 'moveHandle'; axis: 0 | 1 | 2 };
+  | { kind: 'moveHandle'; axis: 0 | 1 | 2 }
+  /** Drag handle of the fillet/chamfer, shell tool or the section plane. */
+  | { kind: 'toolHandle'; handle: ToolHandleKind };
+
+export type ToolHandleKind = 'blend' | 'shell' | 'section';
 
 export const NO_PICK_ID = 0;
 
@@ -51,6 +55,15 @@ export class PickTable {
   resolve(id: number): PickTarget | null {
     if (id <= 0 || id > this.targets.length) return null;
     return this.targets[id - 1] ?? null;
+  }
+
+  /** Ids of all targets matching `predicate` (dev automation: anchor lookup). */
+  findIds(predicate: (target: PickTarget) => boolean): number[] {
+    const ids: number[] = [];
+    this.targets.forEach((target, index) => {
+      if (predicate(target)) ids.push(index + 1);
+    });
+    return ids;
   }
 
   clear(): void {

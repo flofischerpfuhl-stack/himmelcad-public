@@ -19,6 +19,12 @@
   border-color: var(--hc-border-accent);
 }
 
+.invalid,
+.invalid:hover {
+  border-color: var(--hc-error);
+  color: var(--hc-error-fg);
+}
+
 .input {
   position: absolute;
   transform: translate(-50%, -50%);

@@ -136,6 +136,63 @@ export function buildPolylineRibbon(
   return out;
 }
 
+/**
+ * Camera-facing ribbons of a constant **screen** width for a line-segment
+ * list (selection/hover edges drawn ≈3 px wide — WebGL line width is
+ * clamped to 1 px on most drivers). `worldPerPixel(distance)` converts a
+ * pixel width at an eye distance into world units. Every vertex is pulled
+ * `nudgePx` pixels' worth towards the eye along its view ray: the ribbon
+ * keeps its screen position but wins the depth test against the two faces
+ * that meet at the edge.
+ */
+export function buildScreenRibbon(
+  segments: Float32Array,
+  eye: readonly [number, number, number],
+  widthPx: number,
+  worldPerPixel: (distance: number) => number,
+  nudgePx = 3,
+): Float32Array {
+  const count = Math.floor(segments.length / 6);
+  const out = new Float32Array(count * 18);
+  const a = [0, 0, 0];
+  const b = [0, 0, 0];
+  for (let s = 0; s < count; s += 1) {
+    const o = s * 6;
+    for (let k = 0; k < 3; k += 1) {
+      a[k] = segments[o + k]!;
+      b[k] = segments[o + 3 + k]!;
+    }
+    const mid = [(a[0]! + b[0]!) / 2, (a[1]! + b[1]!) / 2, (a[2]! + b[2]!) / 2];
+    const distance = Math.hypot(eye[0] - mid[0]!, eye[1] - mid[1]!, eye[2] - mid[2]!) || 1;
+    const perPx = worldPerPixel(distance);
+    // Pull both ends towards the eye (along their own view rays).
+    for (const p of [a, b]) {
+      const dx = eye[0] - p[0]!;
+      const dy = eye[1] - p[1]!;
+      const dz = eye[2] - p[2]!;
+      const len = Math.hypot(dx, dy, dz) || 1;
+      const pull = Math.min(len * 0.5, perPx * nudgePx);
+      p[0] = p[0]! + (dx / len) * pull;
+      p[1] = p[1]! + (dy / len) * pull;
+      p[2] = p[2]! + (dz / len) * pull;
+    }
+    // Extend each end by half a width so consecutive segments overlap at joints.
+    const sx = b[0]! - a[0]!;
+    const sy = b[1]! - a[1]!;
+    const sz = b[2]! - a[2]!;
+    const sl = Math.hypot(sx, sy, sz) || 1;
+    const ext = (perPx * widthPx) / 2;
+    const ax = a[0]! - (sx / sl) * ext;
+    const ay = a[1]! - (sy / sl) * ext;
+    const az = a[2]! - (sz / sl) * ext;
+    const bx = b[0]! + (sx / sl) * ext;
+    const by = b[1]! + (sy / sl) * ext;
+    const bz = b[2]! + (sz / sl) * ext;
+    writeRibbon(out, s * 18, ax, ay, az, bx, by, bz, eye, perPx * widthPx);
+  }
+  return out;
+}
+
 function writeRibbon(
   out: Float32Array,
   offset: number,

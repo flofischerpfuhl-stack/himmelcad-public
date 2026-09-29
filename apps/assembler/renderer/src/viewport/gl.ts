@@ -34,12 +34,16 @@ export interface FlatBatch {
   colors: Float32Array;
   mode: 'lines' | 'triangles';
   depthTest: boolean;
+  /** Ignore the section clip (grid, axes, tool handles, the section plane itself). */
+  noClip?: boolean;
 }
 
 export interface IdBatch {
   positions: Float32Array;
   id: number;
   mode: 'triangles' | 'lines';
+  /** Drawn without depth test and without the section clip (tool handles win every pick). */
+  onTop?: boolean;
 }
 
 export interface SceneFrame {
@@ -117,8 +121,17 @@ in float vClip;
 uniform vec3 uColor;
 uniform float uAlpha;
 out vec4 outColor;
+uniform bool uClipEnabled;
 void main() {
   if (vClip > 0.0) discard;
+  // Section caps: with the clip on, a back face can only be seen through the
+  // cut, i.e. it lies inside the solid. Paint it flat and hatched in shades of
+  // the body colour so the cut reads as a filled cap (closed solids).
+  if (uClipEnabled && !gl_FrontFacing) {
+    float hatch = step(0.5, fract((gl_FragCoord.x + gl_FragCoord.y) / 9.0));
+    outColor = vec4(uColor * mix(0.5, 0.68, hatch) + vec3(0.03), uAlpha);
+    return;
+  }
   vec3 lightDir = normalize(vec3(0.45, 0.35, 0.82));
   float diff = max(dot(normalize(vNormal), lightDir), 0.0);
   float shade = 0.42 + diff * 0.58;
@@ -309,7 +322,13 @@ export class ViewportRenderer {
     gl.useProgram(this.flat.program);
     gl.uniformMatrix4fv(this.flat.uniforms.uViewProj!, false, frame.viewProj);
     this.setClipUniforms(this.flat, frame.clip);
+    let clipOn = frame.clip.enabled;
     for (const batch of frame.flat) {
+      const wantClip = frame.clip.enabled && !batch.noClip;
+      if (wantClip !== clipOn) {
+        gl.uniform1i(this.flat.uniforms.uClipEnabled!, wantClip ? 1 : 0);
+        clipOn = wantClip;
+      }
       if (batch.depthTest) gl.enable(gl.DEPTH_TEST);
       else gl.disable(gl.DEPTH_TEST);
       gl.enable(gl.BLEND);
@@ -374,9 +393,16 @@ export class ViewportRenderer {
     gl.useProgram(this.idProgram.program);
     gl.uniformMatrix4fv(this.idProgram.uniforms.uViewProj!, false, viewProj);
     this.setClipUniforms(this.idProgram, clip);
+    let onTop = false;
     for (const batch of batches) {
       const vertexCount = batch.positions.length / 3;
       if (vertexCount === 0) continue;
+      if ((batch.onTop ?? false) !== onTop) {
+        onTop = batch.onTop ?? false;
+        if (onTop) gl.disable(gl.DEPTH_TEST);
+        else gl.enable(gl.DEPTH_TEST);
+        gl.uniform1i(this.idProgram.uniforms.uClipEnabled!, clip.enabled && !onTop ? 1 : 0);
+      }
       const r = batch.id & 0xff;
       const g = (batch.id >>> 8) & 0xff;
       const b = (batch.id >>> 16) & 0xff;
@@ -388,7 +414,22 @@ export class ViewportRenderer {
       gl.vertexAttribPointer(this.idProgram.attribs.aPosition!, 3, gl.FLOAT, false, 0, 0);
       gl.drawArrays(batch.mode === 'lines' ? gl.LINES : gl.TRIANGLES, 0, vertexCount);
     }
+    gl.enable(gl.DEPTH_TEST);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  }
+
+  /**
+   * Reads the whole id framebuffer (bottom-left origin rows, RGBA bytes).
+   * Dev automation only (anchor lookup) — too slow for per-frame use.
+   */
+  readPickBuffer(): { width: number; height: number; pixels: Uint8Array } | null {
+    const gl = this.gl;
+    if (!this.idFbo) return null;
+    const pixels = new Uint8Array(this.idWidth * this.idHeight * 4);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.idFbo);
+    gl.readPixels(0, 0, this.idWidth, this.idHeight, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    return { width: this.idWidth, height: this.idHeight, pixels };
   }
 
   /** Reads back one pixel from the id framebuffer (in framebuffer pixel coordinates, top-left origin flipped to bottom-left internally). */

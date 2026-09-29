@@ -1,13 +1,26 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { Body, EvaluatedSketch } from '../kernel/types.js';
-import { framePoint, frameUv, type SketchFrame } from '../model/document.js';
+import { framePoint, frameUv, MIN_FEATURE_SIZE_MM, type SketchFrame } from '../model/document.js';
+import {
+  consumedSketchIds,
+  isSketchVisible,
+  sectionRange,
+  visibleBounds,
+  type Bounds3,
+} from '../model/modeling.js';
 import {
   findFace,
+  isPlanarFace,
+  isPreviewTool,
+  PREVIEW_FEATURE_ID,
   useAssemblerStore,
+  type AssemblerState,
   type SelectionItem,
   type ToolSession,
 } from '../model/store.js';
+import { setViewportProbe } from './automation.js';
+import { findAnchorPixel } from './automation.js';
 import {
   DEFAULT_POSE,
   fitPose,
@@ -29,9 +42,16 @@ import {
   unprojectRay,
   type Vec3,
 } from './math.js';
-import type { PickTarget } from './picking.js';
+import type { PickTarget, ToolHandleKind } from './picking.js';
 import { buildScene, type BuiltScene } from './scene.js';
 import { readViewportColors, type ViewportColors } from './theme.js';
+import {
+  blendHandle,
+  handleTip,
+  sectionHandle,
+  shellHandle,
+  type AxisHandle,
+} from './toolAnchors.js';
 import { ViewCube } from './ViewCube.js';
 import styles from './Viewport.module.css';
 
@@ -43,16 +63,9 @@ const CLICK_DRAG_THRESHOLD_PX = 4;
 const DOUBLE_CLICK_MS = 400;
 /** Matches `scene.ts`'s `MOVE_HANDLE_LENGTH_MM`. */
 const HANDLE_LENGTH_MM = 40;
-
-type PlaneEmbedding = SketchFrame;
-
-function toPlaneUv(point: Vec3, plane: PlaneEmbedding): { u: number; v: number } {
-  return frameUv(plane, point);
-}
-
-function fromPlaneUv(u: number, v: number, plane: PlaneEmbedding): Vec3 {
-  return framePoint(plane, u, v);
-}
+/** Drag values (fillet radius, shell thickness, section offset) snap to this step, mm. */
+const HANDLE_STEP_MM = 0.1;
+const CIRCLE_SEGMENTS = 96;
 
 function snap(value: number, step: number): number {
   return Math.round(value / step) * step;
@@ -106,6 +119,93 @@ function computeMoveAnchor(tool: ToolSession | null, bodies: readonly Body[]): V
   ];
 }
 
+/** What the viewport shows for a store snapshot (committed model or the active tool's preview). */
+interface SceneModel {
+  bodies: readonly Body[];
+  sketches: readonly EvaluatedSketch[];
+  extrudePreviewBodyId: string | null;
+  previewAccentBodyIds: string[];
+  previewFaceKeyPrefix: string | null;
+  ghostBodies: Body[];
+  bounds: Bounds3 | null;
+  handles: AxisHandle[];
+}
+
+function sceneModel(s: AssemblerState): SceneModel {
+  const tool = s.activeTool;
+  const previewTool = isPreviewTool(tool) ? tool : null;
+  const preview = previewTool?.previewEvaluation ?? null;
+  const bodies = preview?.bodies ?? s.evaluation.bodies;
+  const allSketches = preview?.sketches ?? s.evaluation.sketches;
+  const consumed = consumedSketchIds(s.features);
+  const extruding =
+    tool?.kind === 'extrude' && tool.profile.kind === 'sketch' ? tool.profile.featureId : null;
+  const sketches = allSketches.filter(
+    (sketch) =>
+      sketch.featureId === extruding ||
+      isSketchVisible(sketch.featureId, consumed, s.sketchVisibility) ||
+      s.selection.some((i) => i.kind === 'sketchProfile' && i.featureId === sketch.featureId) ||
+      (s.hover?.kind === 'sketchProfile' && s.hover.featureId === sketch.featureId),
+  );
+
+  let extrudePreviewBodyId: string | null = null;
+  if (tool?.kind === 'extrude' && preview) {
+    const before = new Set(s.evaluation.bodies.map((b) => b.id));
+    const created = preview.bodies.find((b) => !before.has(b.id));
+    extrudePreviewBodyId =
+      created?.id ??
+      (tool.profile.kind === 'face' ? tool.profile.face.bodyId : (tool.targetBodyId ?? null));
+  }
+  const previewAccentBodyIds: string[] = [];
+  let previewFaceKeyPrefix: string | null = null;
+  let ghostBodies: Body[] = [];
+  if (preview && (tool?.kind === 'edgeBlend' || tool?.kind === 'shell')) {
+    previewAccentBodyIds.push(tool.bodyId);
+    previewFaceKeyPrefix = `${PREVIEW_FEATURE_ID}:`;
+  } else if (preview && tool?.kind === 'boolean') {
+    previewAccentBodyIds.push(tool.targetBodyId);
+    ghostBodies = s.evaluation.bodies.filter((b) => tool.toolBodyIds.includes(b.id));
+  }
+
+  const bounds = visibleBounds(s.evaluation.bodies, s.hiddenBodyIds, s.isolatedBodyIds);
+  const handles: AxisHandle[] = [];
+  if (tool?.kind === 'edgeBlend') {
+    const handle = blendHandle(tool, s.evaluation.bodies);
+    if (handle) handles.push(handle);
+  } else if (tool?.kind === 'shell') {
+    const handle = shellHandle(tool, s.evaluation.bodies);
+    if (handle) handles.push(handle);
+  }
+  if (s.viewState.sectionEnabled) {
+    handles.push(
+      sectionHandle(
+        {
+          axis: s.viewState.sectionAxis,
+          offset: s.viewState.sectionOffset,
+          flipped: s.viewState.sectionFlipped,
+        },
+        bounds,
+      ),
+    );
+  }
+  return {
+    bodies,
+    sketches,
+    extrudePreviewBodyId,
+    previewAccentBodyIds,
+    previewFaceKeyPrefix,
+    ghostBodies,
+    bounds,
+    handles,
+  };
+}
+
+/** The sketch frame of the active rectangle/circle tool, read fresh from the store. */
+function activeSketchFrame(): SketchFrame | null {
+  const tool = useAssemblerStore.getState().activeTool;
+  return tool?.kind === 'sketchRectangle' || tool?.kind === 'sketchCircle' ? tool.frame : null;
+}
+
 type DragMode =
   | { kind: 'none' }
   | { kind: 'orbit' }
@@ -116,6 +216,14 @@ type DragMode =
       origin: Vec3;
       axis: 0 | 1 | 2;
       startDelta: { dx: number; dy: number; dz: number };
+    }
+  | {
+      kind: 'axisHandle';
+      handle: ToolHandleKind;
+      origin: Vec3;
+      dir: Vec3;
+      t0: number;
+      start: number;
     };
 
 interface PointerGesture {
@@ -127,20 +235,39 @@ interface PointerGesture {
   moved: boolean;
   mode: DragMode;
   /**
-   * Set when pointerdown already fully handled this click (the rectangle
-   * tool's first/second corner clicks). The matching pointerup must not
-   * fall through to selection/context-menu handling — by then `commit()`
-   * may already have cleared `activeTool` and set a fresh selection that a
-   * generic "click picked nothing, clear selection" would wipe out.
+   * Set when pointerdown already fully handled this click (the sketch
+   * tools' point clicks). The matching pointerup must not fall through to
+   * selection/context-menu handling — by then `commit()` may already have
+   * cleared `activeTool` and set a fresh selection that a generic "click
+   * picked nothing, clear selection" would wipe out.
    */
   handledOnDown: boolean;
+}
+
+type HandleHover =
+  | { kind: 'extrudeHandle' }
+  | { kind: 'moveHandle'; axis: 0 | 1 | 2 }
+  | { kind: 'toolHandle'; handle: ToolHandleKind };
+
+/** Applies a dragged/typed handle value to the store (clamped, snapped). */
+function applyHandleValue(handle: ToolHandleKind, raw: number): void {
+  const s = useAssemblerStore.getState();
+  if (handle === 'blend') s.setBlendSize(Math.max(HANDLE_STEP_MM, snap(raw, HANDLE_STEP_MM)));
+  else if (handle === 'shell')
+    s.setShellThickness(Math.max(MIN_FEATURE_SIZE_MM, snap(raw, HANDLE_STEP_MM)));
+  else {
+    const bounds = visibleBounds(s.evaluation.bodies, s.hiddenBodyIds, s.isolatedBodyIds);
+    const [lo, hi] = sectionRange(bounds, s.viewState.sectionAxis);
+    s.setSectionOffset(Math.min(hi, Math.max(lo, snap(raw, HANDLE_STEP_MM))));
+  }
 }
 
 /**
  * The Assembler 3D viewport: WebGL2 scene (grid/axes/bodies/sketches),
  * Shapr3D-style orbit camera, click/hover picking, the view cube, and the
- * interactive tools' live previews. Fills its parent (`position: relative`
- * host); the chrome places it full-bleed under the floating islands.
+ * interactive tools' live previews and drag handles. Fills its parent
+ * (`position: relative` host); the chrome places it full-bleed under the
+ * floating islands.
  */
 export function Viewport(props: ViewportProps): JSX.Element {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -163,13 +290,14 @@ export function Viewport(props: ViewportProps): JSX.Element {
   const pendingHoverRef = useRef<{ x: number; y: number } | null>(null);
   const lastPickTableRef = useRef<BuiltScene['pickTable'] | null>(null);
   const didInitialFitRef = useRef(false);
-  /** Arrow-handle hover state, set from the same hover-pick loop as body/face/edge hover but kept
+  const frameWaitersRef = useRef<(() => void)[]>([]);
+  /** Handle hover state, set from the same hover-pick loop as body/face/edge hover but kept
    * out of the store (it's transient tool chrome, not a document selection concept). */
-  const handleHoverRef = useRef<
-    { kind: 'extrudeHandle' } | { kind: 'moveHandle'; axis: 0 | 1 | 2 } | null
-  >(null);
+  const handleHoverRef = useRef<HandleHover | null>(null);
   /** World-space cursor position on the active sketch plane (snapped to grid), for the snap-indicator dot. */
   const sketchCursorRef = useRef<Vec3 | null>(null);
+  /** Opens the active tool's value chip when the user starts typing a number. */
+  const [editRequest, setEditRequest] = useState<{ nonce: number; text: string } | null>(null);
 
   const state = useAssemblerStore();
   const stateRef = useRef(state);
@@ -268,37 +396,11 @@ export function Viewport(props: ViewportProps): JSX.Element {
     dirtyRef.current = true;
   }, [state.viewState.cameraRequest, state.evaluation.bodies]);
 
-  const sectionState = useMemo(
-    () => ({
-      enabled: state.viewState.sectionEnabled,
-      axis: state.viewState.sectionAxis,
-      offset: state.viewState.sectionOffset,
-    }),
-    [state.viewState.sectionEnabled, state.viewState.sectionAxis, state.viewState.sectionOffset],
-  );
-
   const activeTool = state.activeTool;
-  const previewEvaluation =
-    activeTool?.kind === 'extrude' && activeTool.distance !== 0
-      ? activeTool.previewEvaluation
-      : null;
-  const displayedBodies = previewEvaluation?.bodies ?? state.evaluation.bodies;
-  const displayedSketches = previewEvaluation?.sketches ?? state.evaluation.sketches;
-  const extrudePreviewBodyId = useMemo(() => {
-    if (activeTool?.kind !== 'extrude' || !previewEvaluation) return null;
-    const before = new Set(state.evaluation.bodies.map((b) => b.id));
-    const created = previewEvaluation.bodies.find((b) => !before.has(b.id));
-    if (created) return created.id;
-    if (activeTool.profile.kind === 'face') return activeTool.profile.face.bodyId;
-    return activeTool.targetBodyId ?? null;
-  }, [activeTool, previewEvaluation, state.evaluation.bodies]);
-  const movePreview = useMemo(
-    () =>
-      activeTool?.kind === 'move' ? { bodyId: activeTool.bodyId, delta: activeTool.delta } : null,
-    [activeTool],
-  );
+  const model = useMemo(() => sceneModel(state), [state]);
 
   // ---- Render loop ----------------------------------------------------------
+  // Reads the store fresh on every dirty frame (no stale closures).
   useEffect(() => {
     let handle = 0;
     const loop = (now: number) => {
@@ -317,9 +419,10 @@ export function Viewport(props: ViewportProps): JSX.Element {
       const host = hostRef.current;
       const colors = colorsRef.current;
       if (!renderer || !host || !colors) return;
-      const { width, height } = sizeRef.current;
+      const { width, height, dpr } = sizeRef.current;
       const aspect = width / Math.max(1, height);
-      const current = stateRef.current;
+      const current = useAssemblerStore.getState();
+      const scene = sceneModel(current);
       const currentTool = current.activeTool;
       const handleHover = handleHoverRef.current;
       const extrudeAnchorNow = computeExtrudeAnchor(
@@ -348,6 +451,8 @@ export function Viewport(props: ViewportProps): JSX.Element {
       let sketchPreview: {
         corners: [Vec3, Vec3, Vec3, Vec3] | null;
         cursorPoint: Vec3 | null;
+        outline: Vec3[] | null;
+        center: Vec3 | null;
       } | null = null;
       if (currentTool?.kind === 'sketchRectangle') {
         let corners: [Vec3, Vec3, Vec3, Vec3] | null = null;
@@ -355,43 +460,87 @@ export function Viewport(props: ViewportProps): JSX.Element {
           const plane = currentTool.frame;
           const p = currentTool.preview;
           corners = [
-            fromPlaneUv(p.x, p.y, plane),
-            fromPlaneUv(p.x + p.width, p.y, plane),
-            fromPlaneUv(p.x + p.width, p.y + p.height, plane),
-            fromPlaneUv(p.x, p.y + p.height, plane),
+            framePoint(plane, p.x, p.y),
+            framePoint(plane, p.x + p.width, p.y),
+            framePoint(plane, p.x + p.width, p.y + p.height),
+            framePoint(plane, p.x, p.y + p.height),
           ];
         }
-        sketchPreview = { corners, cursorPoint: sketchCursorRef.current };
+        sketchPreview = {
+          corners,
+          cursorPoint: sketchCursorRef.current,
+          outline: null,
+          center: null,
+        };
+      } else if (currentTool?.kind === 'sketchCircle') {
+        const { frame, center, radius } = currentTool;
+        let outline: Vec3[] | null = null;
+        if (center && radius) {
+          outline = [];
+          for (let i = 0; i < CIRCLE_SEGMENTS; i += 1) {
+            const a = (i / CIRCLE_SEGMENTS) * Math.PI * 2;
+            outline.push(
+              framePoint(frame, center.u + Math.cos(a) * radius, center.v + Math.sin(a) * radius),
+            );
+          }
+        }
+        sketchPreview = {
+          corners: null,
+          cursorPoint: sketchCursorRef.current,
+          outline,
+          center: center ? framePoint(frame, center.u, center.v) : null,
+        };
       }
+      const movePreview =
+        currentTool?.kind === 'move'
+          ? { bodyId: currentTool.bodyId, delta: currentTool.delta }
+          : null;
       const built = buildScene({
         colors,
         pose: poseRef.current,
         aspect,
         viewportHeightPx: height,
-        bodies: displayedBodies,
-        sketches: displayedSketches,
+        dpr,
+        bodies: scene.bodies,
+        sketches: scene.sketches,
         hiddenBodyIds: current.hiddenBodyIds,
         isolatedBodyIds: current.isolatedBodyIds,
         displayMode: current.viewState.displayMode,
-        section: sectionState,
+        section: {
+          enabled: current.viewState.sectionEnabled,
+          axis: current.viewState.sectionAxis,
+          offset: current.viewState.sectionOffset,
+          flipped: current.viewState.sectionFlipped,
+          bounds: scene.bounds,
+        },
         gridVisible: current.viewState.gridVisible,
         gridStep: current.viewState.gridStep,
         selection: current.selection,
         hover: current.hover,
         movePreview,
-        extrudePreviewBodyId,
+        extrudePreviewBodyId: scene.extrudePreviewBodyId,
+        previewAccentBodyIds: scene.previewAccentBodyIds,
+        previewFaceKeyPrefix: scene.previewFaceKeyPrefix,
+        ghostBodies: scene.ghostBodies,
         extrudeHandle,
         moveHandle,
+        axisHandles: scene.handles.map((h) => ({
+          ...h,
+          hovered: handleHover?.kind === 'toolHandle' && handleHover.handle === h.handle,
+        })),
         sketchPreview,
       });
       renderer.render(built.frame);
       renderer.renderPicking(built.frame.viewProj, built.idBatches, built.frame.clip);
       lastPickTableRef.current = built.pickTable;
       setTick((v) => (v + 1) % 1_000_000);
+      const waiters = frameWaitersRef.current;
+      frameWaitersRef.current = [];
+      for (const resolve of waiters) resolve();
     };
     handle = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(handle);
-  }, [displayedBodies, displayedSketches, sectionState, movePreview, extrudePreviewBodyId]);
+  }, []);
 
   // ---- Picking helpers ------------------------------------------------------
   const pickAt = useCallback((clientX: number, clientY: number): PickTarget | null => {
@@ -411,7 +560,8 @@ export function Viewport(props: ViewportProps): JSX.Element {
   const selectionFromPick = useCallback(
     (pick: PickTarget | null, wholeBody: boolean): SelectionItem | null => {
       if (!pick) return null;
-      if (pick.kind === 'extrudeHandle' || pick.kind === 'moveHandle') return null;
+      if (pick.kind === 'extrudeHandle' || pick.kind === 'moveHandle' || pick.kind === 'toolHandle')
+        return null;
       if (pick.kind === 'sketchProfile')
         return { kind: 'sketchProfile', featureId: pick.featureId };
       if (wholeBody) return { kind: 'body', bodyId: pick.bodyId };
@@ -429,10 +579,26 @@ export function Viewport(props: ViewportProps): JSX.Element {
     return unprojectRay(vp, clientX - rect.left, clientY - rect.top, rect.width, rect.height);
   }, []);
 
-  const rectanglePlane = useMemo(() => {
-    if (activeTool?.kind !== 'sketchRectangle') return null;
-    return activeTool.frame;
-  }, [activeTool]);
+  /** Sketch (u, v) of the pointer on the active sketch plane, grid-snapped when snapping is on. */
+  const sketchUvAt = useCallback(
+    (
+      clientX: number,
+      clientY: number,
+    ): { raw: { u: number; v: number }; snapped: { u: number; v: number } } | null => {
+      const frame = activeSketchFrame();
+      const ray = rayAtClient(clientX, clientY);
+      if (!frame || !ray) return null;
+      const hit = rayPlaneIntersect(ray.origin, ray.direction, frame.origin, frame.normal);
+      if (!hit) return null;
+      const raw = frameUv(frame, hit);
+      const view = useAssemblerStore.getState().viewState;
+      const snapped = view.snapToGrid
+        ? { u: snap(raw.u, view.gridStep), v: snap(raw.v, view.gridStep) }
+        : raw;
+      return { raw, snapped };
+    },
+    [rayAtClient],
+  );
 
   const extrudeAnchor = useMemo(
     () => computeExtrudeAnchor(activeTool, state.evaluation.bodies, state.evaluation.sketches),
@@ -452,7 +618,8 @@ export function Viewport(props: ViewportProps): JSX.Element {
    */
   const findHandleHit = useCallback(
     (clientX: number, clientY: number): DragMode | null => {
-      const tool = stateRef.current.activeTool;
+      const current = useAssemblerStore.getState();
+      const tool = current.activeTool;
       const pick = pickAt(clientX, clientY);
       if (!pick) return null;
       if (pick.kind === 'extrudeHandle' && tool?.kind === 'extrude' && extrudeAnchor) {
@@ -465,9 +632,23 @@ export function Viewport(props: ViewportProps): JSX.Element {
       if (pick.kind === 'moveHandle' && tool?.kind === 'move' && moveAnchor) {
         return { kind: 'moveAxis', origin: moveAnchor, axis: pick.axis, startDelta: tool.delta };
       }
+      if (pick.kind === 'toolHandle') {
+        const handle = sceneModel(current).handles.find((h) => h.handle === pick.handle);
+        const ray = rayAtClient(clientX, clientY);
+        if (!handle || !ray) return null;
+        const t0 = closestPointOnLineToRay(handle.base, handle.dragDir, ray.origin, ray.direction);
+        return {
+          kind: 'axisHandle',
+          handle: handle.handle,
+          origin: handle.base,
+          dir: handle.dragDir,
+          t0,
+          start: handle.value,
+        };
+      }
       return null;
     },
-    [extrudeAnchor, moveAnchor, pickAt],
+    [extrudeAnchor, moveAnchor, pickAt, rayAtClient],
   );
 
   // ---- Pointer handlers -----------------------------------------------------
@@ -478,38 +659,45 @@ export function Viewport(props: ViewportProps): JSX.Element {
       host.setPointerCapture(event.pointerId);
       animRef.current = null;
 
-      const tool = stateRef.current.activeTool;
+      const store = useAssemblerStore.getState();
+      const tool = store.activeTool;
+      const sketching = tool?.kind === 'sketchRectangle' || tool?.kind === 'sketchCircle';
 
-      if (tool?.kind === 'sketchRectangle' && event.button === 0 && rectanglePlane) {
-        const ray = rayAtClient(event.clientX, event.clientY);
-        const hit =
-          ray &&
-          rayPlaneIntersect(
-            ray.origin,
-            ray.direction,
-            rectanglePlane.origin,
-            rectanglePlane.normal,
-          );
-        if (hit) {
-          const uv = toPlaneUv(hit, rectanglePlane);
-          const snapped = stateRef.current.viewState.snapToGrid
-            ? {
-                u: snap(uv.u, stateRef.current.viewState.gridStep),
-                v: snap(uv.v, stateRef.current.viewState.gridStep),
-              }
-            : uv;
-          if (!rectCornerRef.current) {
-            rectCornerRef.current = snapped;
-          } else {
-            const corner = rectCornerRef.current;
-            stateRef.current.setPreviewRect(
-              corner.u,
-              corner.v,
-              snapped.u - corner.u,
-              snapped.v - corner.v,
-            );
-            stateRef.current.commit();
-            rectCornerRef.current = null;
+      if (sketching && event.button === 0) {
+        const firstPoint =
+          (tool.kind === 'sketchRectangle' && !rectCornerRef.current) ||
+          (tool.kind === 'sketchCircle' && !tool.center);
+        if (firstPoint) {
+          // Shapr3D: the first click on a planar body face picks the sketch plane.
+          const pick = pickAt(event.clientX, event.clientY);
+          if (pick?.kind === 'face' && isPlanarFace(store.evaluation, pick.bodyId, pick.faceKey)) {
+            store.setSketchPlaneFace(pick.bodyId, pick.faceKey);
+          }
+        }
+        const uv = sketchUvAt(event.clientX, event.clientY);
+        if (uv) {
+          const s = useAssemblerStore.getState();
+          const current = s.activeTool;
+          if (current?.kind === 'sketchRectangle') {
+            if (!rectCornerRef.current) {
+              rectCornerRef.current = uv.snapped;
+            } else {
+              const corner = rectCornerRef.current;
+              s.setPreviewRect(
+                corner.u,
+                corner.v,
+                uv.snapped.u - corner.u,
+                uv.snapped.v - corner.v,
+              );
+              s.commit();
+              rectCornerRef.current = null;
+            }
+          } else if (current?.kind === 'sketchCircle') {
+            if (!current.center) {
+              s.setCircleCenter(uv.snapped.u, uv.snapped.v);
+            } else if (current.radius !== null && current.radius >= MIN_FEATURE_SIZE_MM / 2) {
+              s.commit();
+            }
           }
           dirtyRef.current = true;
         }
@@ -544,40 +732,40 @@ export function Viewport(props: ViewportProps): JSX.Element {
         handledOnDown: false,
       };
     },
-    [rectanglePlane, rayAtClient, findHandleHit],
+    [findHandleHit, pickAt, sketchUvAt],
   );
 
   const onPointerMove = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
-      const tool = stateRef.current.activeTool;
-      if (tool?.kind === 'sketchRectangle' && rectanglePlane) {
-        const ray = rayAtClient(event.clientX, event.clientY);
-        const hit =
-          ray &&
-          rayPlaneIntersect(
-            ray.origin,
-            ray.direction,
-            rectanglePlane.origin,
-            rectanglePlane.normal,
-          );
-        if (hit) {
-          const uv = toPlaneUv(hit, rectanglePlane);
-          const snapped = stateRef.current.viewState.snapToGrid
-            ? {
-                u: snap(uv.u, stateRef.current.viewState.gridStep),
-                v: snap(uv.v, stateRef.current.viewState.gridStep),
-              }
-            : uv;
+      const store = useAssemblerStore.getState();
+      const tool = store.activeTool;
+      if (tool?.kind === 'sketchRectangle' || tool?.kind === 'sketchCircle') {
+        const uv = sketchUvAt(event.clientX, event.clientY);
+        if (uv) {
+          const frame = tool.frame;
           // Snap indicator dot follows the cursor on the grid whether or not
-          // the first corner has been placed yet.
-          sketchCursorRef.current = fromPlaneUv(snapped.u, snapped.v, rectanglePlane);
-          const corner = rectCornerRef.current;
-          if (corner) {
-            stateRef.current.setPreviewRect(
-              corner.u,
-              corner.v,
-              snapped.u - corner.u,
-              snapped.v - corner.v,
+          // the first point has been placed yet.
+          sketchCursorRef.current = framePoint(frame, uv.snapped.u, uv.snapped.v);
+          if (tool.kind === 'sketchRectangle') {
+            const corner = rectCornerRef.current;
+            if (corner) {
+              store.setPreviewRect(
+                corner.u,
+                corner.v,
+                uv.snapped.u - corner.u,
+                uv.snapped.v - corner.v,
+              );
+            }
+          } else if (tool.center && tool.phase !== 'numericEditing') {
+            const distance = Math.hypot(uv.raw.u - tool.center.u, uv.raw.v - tool.center.v);
+            const step = store.viewState.snapToGrid ? store.viewState.gridStep / 2 : 0;
+            const radius = step > 0 ? Math.max(step, snap(distance, step)) : distance;
+            store.setCircleRadius(radius);
+            const a = Math.atan2(uv.raw.v - tool.center.v, uv.raw.u - tool.center.u);
+            sketchCursorRef.current = framePoint(
+              frame,
+              tool.center.u + Math.cos(a) * radius,
+              tool.center.v + Math.sin(a) * radius,
             );
           }
           dirtyRef.current = true;
@@ -593,9 +781,13 @@ export function Viewport(props: ViewportProps): JSX.Element {
             const pending = pendingHoverRef.current;
             if (!pending) return;
             const pick = pickAt(pending.x, pending.y);
-            if (pick?.kind === 'extrudeHandle' || pick?.kind === 'moveHandle') {
-              const nextHover =
-                pick.kind === 'extrudeHandle' ? { kind: 'extrudeHandle' as const } : pick;
+            if (
+              pick?.kind === 'extrudeHandle' ||
+              pick?.kind === 'moveHandle' ||
+              pick?.kind === 'toolHandle'
+            ) {
+              const nextHover: HandleHover =
+                pick.kind === 'extrudeHandle' ? { kind: 'extrudeHandle' } : pick;
               if (JSON.stringify(handleHoverRef.current) !== JSON.stringify(nextHover)) {
                 handleHoverRef.current = nextHover;
                 dirtyRef.current = true;
@@ -635,39 +827,42 @@ export function Viewport(props: ViewportProps): JSX.Element {
 
       const host = hostRef.current;
       const height = host?.clientHeight ?? 800;
-      if (gesture.mode.kind === 'orbit') {
+      const mode = gesture.mode;
+      if (mode.kind === 'orbit') {
         poseRef.current = orbitPose(poseRef.current, dx, dy);
         dirtyRef.current = true;
-      } else if (gesture.mode.kind === 'pan') {
+      } else if (mode.kind === 'pan') {
         poseRef.current = panPose(poseRef.current, dx, dy, height);
         dirtyRef.current = true;
-      } else if (gesture.mode.kind === 'extrudeHandle') {
+      } else if (mode.kind === 'extrudeHandle') {
         const ray = rayAtClient(event.clientX, event.clientY);
         if (ray) {
-          const t = closestPointOnLineToRay(
-            gesture.mode.origin,
-            gesture.mode.normal,
-            ray.origin,
-            ray.direction,
-          );
-          stateRef.current.setDistance(t);
+          const t = closestPointOnLineToRay(mode.origin, mode.normal, ray.origin, ray.direction);
+          store.setDistance(t);
           dirtyRef.current = true;
         }
-      } else if (gesture.mode.kind === 'moveAxis') {
+      } else if (mode.kind === 'moveAxis') {
         const ray = rayAtClient(event.clientX, event.clientY);
         if (ray) {
-          const unit = AXIS_UNIT[gesture.mode.axis];
-          const t = closestPointOnLineToRay(gesture.mode.origin, unit, ray.origin, ray.direction);
-          const next = { ...gesture.mode.startDelta };
-          if (gesture.mode.axis === 0) next.dx = t;
-          else if (gesture.mode.axis === 1) next.dy = t;
+          const unit = AXIS_UNIT[mode.axis];
+          const t = closestPointOnLineToRay(mode.origin, unit, ray.origin, ray.direction);
+          const next = { ...mode.startDelta };
+          if (mode.axis === 0) next.dx = t;
+          else if (mode.axis === 1) next.dy = t;
           else next.dz = t;
-          stateRef.current.setDelta(next.dx, next.dy, next.dz);
+          store.setDelta(next.dx, next.dy, next.dz);
+          dirtyRef.current = true;
+        }
+      } else if (mode.kind === 'axisHandle') {
+        const ray = rayAtClient(event.clientX, event.clientY);
+        if (ray) {
+          const t = closestPointOnLineToRay(mode.origin, mode.dir, ray.origin, ray.direction);
+          applyHandleValue(mode.handle, mode.start + (t - mode.t0));
           dirtyRef.current = true;
         }
       }
     },
-    [pickAt, rayAtClient, rectanglePlane, selectionFromPick],
+    [pickAt, rayAtClient, selectionFromPick, sketchUvAt],
   );
 
   const onPointerUp = useCallback(
@@ -675,7 +870,7 @@ export function Viewport(props: ViewportProps): JSX.Element {
       const gesture = gestureRef.current;
       gestureRef.current = null;
       if (!gesture) return;
-      if (gesture.handledOnDown) return; // e.g. the rectangle tool's click already committed
+      if (gesture.handledOnDown) return; // e.g. a sketch tool's click already committed
 
       if (gesture.moved) return; // a real drag never selects/opens the context menu
 
@@ -689,6 +884,7 @@ export function Viewport(props: ViewportProps): JSX.Element {
         return;
       }
       if (gesture.button !== 0) return;
+      if (gesture.mode.kind !== 'none') return; // a handle click without a drag
 
       const now = performance.now();
       const last = lastClickRef.current;
@@ -698,14 +894,24 @@ export function Viewport(props: ViewportProps): JSX.Element {
         Math.hypot(event.clientX - last.x, event.clientY - last.y) < 8;
       lastClickRef.current = { time: now, x: event.clientX, y: event.clientY };
 
+      const store = useAssemblerStore.getState();
+      const tool = store.activeTool;
       const pick = pickAt(event.clientX, event.clientY);
+      if (tool?.kind === 'edgeBlend' || tool?.kind === 'shell' || tool?.kind === 'boolean') {
+        // Adaptive tools: clicking empty space finishes (Shapr3D); edges add/remove.
+        if (!pick) store.commit();
+        else if (pick.kind === 'edge' && tool.kind === 'edgeBlend') {
+          store.toggleBlendEdge(pick.bodyId, pick.edgeKey);
+        }
+        return;
+      }
       if (!pick) {
-        stateRef.current.clearSelection();
+        store.clearSelection();
         return;
       }
       const item = selectionFromPick(pick, isDouble);
       if (!item) return;
-      stateRef.current.select(item, { additive: event.shiftKey });
+      store.select(item, { additive: event.shiftKey });
     },
     [pickAt, props, selectionFromPick],
   );
@@ -734,40 +940,120 @@ export function Viewport(props: ViewportProps): JSX.Element {
     dirtyRef.current = true;
   }, []);
 
-  // ---- Dimension label overlay data (recomputed every drawn frame via `tick`) ----
+  // Clear the transient sketch state when a sketch tool ends.
+  useEffect(() => {
+    if (activeTool?.kind !== 'sketchRectangle') rectCornerRef.current = null;
+    if (activeTool?.kind !== 'sketchRectangle' && activeTool?.kind !== 'sketchCircle') {
+      sketchCursorRef.current = null;
+    }
+  }, [activeTool]);
+
+  // Typing a number while a tool waits for a value opens its dimension chip.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      const target = event.target;
+      if (
+        target instanceof HTMLElement &&
+        (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))
+      ) {
+        return;
+      }
+      if (event.ctrlKey || event.metaKey || event.altKey || !/^[0-9.-]$/.test(event.key)) return;
+      const tool = useAssemblerStore.getState().activeTool;
+      if (event.key === '-' && tool?.kind !== 'extrude') return; // only extrude takes negatives
+      const accepts =
+        (tool?.kind === 'sketchCircle' && tool.center !== null) ||
+        tool?.kind === 'edgeBlend' ||
+        tool?.kind === 'shell' ||
+        tool?.kind === 'extrude';
+      if (!accepts || tool.phase === 'numericEditing') return;
+      event.preventDefault();
+      setEditRequest((previous) => ({ nonce: (previous?.nonce ?? 0) + 1, text: event.key }));
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
+
+  // ---- Dev automation probe (see devtools/automationHook.ts) ------------------
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    setViewportProbe({
+      project: (point) => {
+        const host = hostRef.current;
+        if (!host) return null;
+        const rect = host.getBoundingClientRect();
+        const vp = viewProjectionMatrix(poseRef.current, rect.width / Math.max(1, rect.height));
+        const screen = projectToScreen(vp, point, rect.width, rect.height);
+        return screen ? { x: rect.left + screen[0], y: rect.top + screen[1] } : null;
+      },
+      anchor: (predicate) => {
+        const renderer = rendererRef.current;
+        const host = hostRef.current;
+        const table = lastPickTableRef.current;
+        if (!renderer || !host || !table) return null;
+        const ids = new Set(table.findIds(predicate));
+        if (ids.size === 0) return null;
+        const buffer = renderer.readPickBuffer();
+        const pixel = buffer ? findAnchorPixel(buffer, ids) : null;
+        if (!pixel) return null;
+        const rect = host.getBoundingClientRect();
+        const { dpr } = sizeRef.current;
+        return { x: rect.left + (pixel.x + 0.5) / dpr, y: rect.top + (pixel.y + 0.5) / dpr };
+      },
+      nextFrame: () =>
+        new Promise<void>((resolve) => {
+          frameWaitersRef.current.push(resolve);
+          dirtyRef.current = true;
+        }),
+    });
+    return () => setViewportProbe(null);
+  }, []);
+
+  // ---- Dimension chips (screen positions recomputed every drawn frame via `tick`) ----
   const overlay = useMemo(() => {
     void tick;
     const host = hostRef.current;
-    if (!host || !activeTool) return null;
+    if (!host) return null;
     const rect = { width: host.clientWidth, height: host.clientHeight };
     if (rect.width === 0 || rect.height === 0) return null;
     const aspect = rect.width / Math.max(1, rect.height);
     const vp = viewProjectionMatrix(poseRef.current, aspect);
+    const project = (p: Vec3) => projectToScreen(vp, p, rect.width, rect.height);
 
-    if (activeTool.kind === 'sketchRectangle' && activeTool.preview && rectanglePlane) {
+    const handleChips = model.handles.map((h) => ({ handle: h, screen: project(handleTip(h)) }));
+
+    if (activeTool?.kind === 'sketchRectangle' && activeTool.preview) {
+      const frame = activeTool.frame;
       const p = activeTool.preview;
-      const widthMidWorld = fromPlaneUv(p.x + p.width / 2, p.y, rectanglePlane);
-      const heightMidWorld = fromPlaneUv(p.x, p.y + p.height / 2, rectanglePlane);
-      const widthScreen = projectToScreen(vp, widthMidWorld, rect.width, rect.height);
-      const heightScreen = projectToScreen(vp, heightMidWorld, rect.width, rect.height);
       return {
         kind: 'rectangle' as const,
-        widthScreen,
-        heightScreen,
+        handleChips,
+        widthScreen: project(framePoint(frame, p.x + p.width / 2, p.y)),
+        heightScreen: project(framePoint(frame, p.x, p.y + p.height / 2)),
         width: Math.abs(p.width),
         height: Math.abs(p.height),
       };
     }
-    if (activeTool.kind === 'extrude' && extrudeAnchor) {
+    if (activeTool?.kind === 'sketchCircle' && activeTool.center) {
+      const { frame, center, radius } = activeTool;
+      const r = radius ?? 0;
+      const at = framePoint(frame, center.u + r * Math.SQRT1_2, center.v + r * Math.SQRT1_2);
+      return { kind: 'circle' as const, handleChips, screen: project(at), radius: r };
+    }
+    if (activeTool?.kind === 'extrude' && extrudeAnchor) {
       const tip: Vec3 = [
         extrudeAnchor.origin[0] + extrudeAnchor.normal[0] * activeTool.distance,
         extrudeAnchor.origin[1] + extrudeAnchor.normal[1] * activeTool.distance,
         extrudeAnchor.origin[2] + extrudeAnchor.normal[2] * activeTool.distance,
       ];
-      const screen = projectToScreen(vp, tip, rect.width, rect.height);
-      return { kind: 'extrude' as const, screen, distance: activeTool.distance };
+      return {
+        kind: 'extrude' as const,
+        handleChips,
+        screen: project(tip),
+        distance: activeTool.distance,
+      };
     }
-    if (activeTool.kind === 'move' && moveAnchor) {
+    if (activeTool?.kind === 'move' && moveAnchor) {
       const centre: Vec3 = [
         moveAnchor[0] + activeTool.delta.dx,
         moveAnchor[1] + activeTool.delta.dy,
@@ -788,16 +1074,23 @@ export function Viewport(props: ViewportProps): JSX.Element {
               : axisIndex === 1
                 ? activeTool.delta.dy
                 : activeTool.delta.dz,
-          screen: projectToScreen(vp, tip, rect.width, rect.height),
+          screen: project(tip),
         };
       });
-      return { kind: 'move' as const, axisLabels };
+      return { kind: 'move' as const, handleChips, axisLabels };
     }
-    return null;
-  }, [tick, activeTool, rectanglePlane, extrudeAnchor, moveAnchor]);
+    return { kind: 'handles' as const, handleChips };
+  }, [tick, activeTool, extrudeAnchor, moveAnchor, model.handles]);
 
-  const beginNumericEditing = useCallback(() => stateRef.current.beginNumericEditing(), []);
-  const endNumericEditing = useCallback(() => stateRef.current.endNumericEditing(), []);
+  const beginNumericEditing = useCallback(
+    () => useAssemblerStore.getState().beginNumericEditing(),
+    [],
+  );
+  const endNumericEditing = useCallback(() => useAssemblerStore.getState().endNumericEditing(), []);
+
+  const previewError = isPreviewTool(activeTool) ? activeTool.previewError : null;
+  const chipRequest = (kind: ToolSession['kind']) =>
+    activeTool?.kind === kind ? editRequest : null;
 
   return (
     <div
@@ -824,6 +1117,46 @@ export function Viewport(props: ViewportProps): JSX.Element {
         onPreset={onCubePreset}
         onOrbitDrag={onCubeOrbitDrag}
       />
+      {overlay?.handleChips.map(({ handle, screen }) => {
+        if (!screen) return null;
+        const label =
+          handle.handle === 'section'
+            ? 'Section offset'
+            : handle.handle === 'shell'
+              ? 'Wall thickness'
+              : activeTool?.kind === 'edgeBlend' && activeTool.blend === 'chamfer'
+                ? 'Chamfer distance'
+                : 'Fillet radius';
+        const prefix =
+          handle.handle === 'section'
+            ? `${state.viewState.sectionAxis} =`
+            : handle.handle === 'blend' && activeTool?.kind === 'edgeBlend'
+              ? activeTool.blend === 'fillet'
+                ? 'R'
+                : 'D'
+              : 'T';
+        return (
+          <DimensionLabel
+            key={handle.handle}
+            label={label}
+            prefix={prefix}
+            value={handle.value}
+            x={screen[0]}
+            y={screen[1] - 18}
+            invalid={handle.handle !== 'section' && previewError !== null}
+            editRequest={
+              handle.handle === 'blend'
+                ? chipRequest('edgeBlend')
+                : handle.handle === 'shell'
+                  ? chipRequest('shell')
+                  : null
+            }
+            onBeginEdit={beginNumericEditing}
+            onCancelEdit={endNumericEditing}
+            onCommit={(value) => applyHandleValue(handle.handle, value)}
+          />
+        );
+      })}
       {overlay?.kind === 'rectangle' && overlay.widthScreen && (
         <DimensionLabel
           label="Width"
@@ -833,10 +1166,11 @@ export function Viewport(props: ViewportProps): JSX.Element {
           onBeginEdit={beginNumericEditing}
           onCancelEdit={endNumericEditing}
           onCommit={(value) => {
-            if (activeTool?.kind === 'sketchRectangle' && activeTool.preview) {
-              const p = activeTool.preview;
+            const tool = useAssemblerStore.getState().activeTool;
+            if (tool?.kind === 'sketchRectangle' && tool.preview) {
+              const p = tool.preview;
               const sign = p.width < 0 ? -1 : 1;
-              stateRef.current.setPreviewRect(p.x, p.y, value * sign, p.height);
+              useAssemblerStore.getState().setPreviewRect(p.x, p.y, value * sign, p.height);
             }
           }}
         />
@@ -850,11 +1184,34 @@ export function Viewport(props: ViewportProps): JSX.Element {
           onBeginEdit={beginNumericEditing}
           onCancelEdit={endNumericEditing}
           onCommit={(value) => {
-            if (activeTool?.kind === 'sketchRectangle' && activeTool.preview) {
-              const p = activeTool.preview;
+            const tool = useAssemblerStore.getState().activeTool;
+            if (tool?.kind === 'sketchRectangle' && tool.preview) {
+              const p = tool.preview;
               const sign = p.height < 0 ? -1 : 1;
-              stateRef.current.setPreviewRect(p.x, p.y, p.width, value * sign);
+              useAssemblerStore.getState().setPreviewRect(p.x, p.y, p.width, value * sign);
             }
+          }}
+        />
+      )}
+      {overlay?.kind === 'circle' && overlay.screen && activeTool?.kind === 'sketchCircle' && (
+        <DimensionLabel
+          label={activeTool.dimension === 'diameter' ? 'Circle diameter' : 'Circle radius'}
+          prefix={activeTool.dimension === 'diameter' ? 'Ø' : 'R'}
+          value={activeTool.dimension === 'diameter' ? overlay.radius * 2 : overlay.radius}
+          x={overlay.screen[0] + 22}
+          y={overlay.screen[1] - 22}
+          editRequest={chipRequest('sketchCircle')}
+          onBeginEdit={beginNumericEditing}
+          onCancelEdit={endNumericEditing}
+          onCommit={(value) => {
+            const s = useAssemblerStore.getState();
+            const tool = s.activeTool;
+            if (tool?.kind !== 'sketchCircle') return;
+            const radius = tool.dimension === 'diameter' ? value / 2 : value;
+            if (!(radius >= MIN_FEATURE_SIZE_MM / 2)) return;
+            // A typed value completes the circle, like a second click.
+            s.setCircleRadius(radius);
+            s.commit();
           }}
         />
       )}
@@ -864,9 +1221,11 @@ export function Viewport(props: ViewportProps): JSX.Element {
           value={overlay.distance}
           x={overlay.screen[0]}
           y={overlay.screen[1] - 18}
+          invalid={previewError !== null}
+          editRequest={chipRequest('extrude')}
           onBeginEdit={beginNumericEditing}
           onCancelEdit={endNumericEditing}
-          onCommit={(value) => stateRef.current.setDistance(value)}
+          onCommit={(value) => useAssemblerStore.getState().setDistance(value)}
         />
       )}
       {overlay?.kind === 'move' &&
@@ -882,13 +1241,14 @@ export function Viewport(props: ViewportProps): JSX.Element {
                 onBeginEdit={beginNumericEditing}
                 onCancelEdit={endNumericEditing}
                 onCommit={(value) => {
-                  const tool = stateRef.current.activeTool;
+                  const s = useAssemblerStore.getState();
+                  const tool = s.activeTool;
                   if (tool?.kind !== 'move') return;
                   const next = { ...tool.delta };
                   if (a.axis === 0) next.dx = value;
                   else if (a.axis === 1) next.dy = value;
                   else next.dz = value;
-                  stateRef.current.setDelta(next.dx, next.dy, next.dz);
+                  s.setDelta(next.dx, next.dy, next.dz);
                 }}
               />
             ),

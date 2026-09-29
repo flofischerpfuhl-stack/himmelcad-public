@@ -6,6 +6,7 @@ import { HistoryPanel } from './chrome/HistoryPanel.js';
 import { ItemsPanel } from './chrome/ItemsPanel.js';
 import { LeftDock } from './chrome/LeftDock.js';
 import { RightDock } from './chrome/RightDock.js';
+import { SectionControls } from './chrome/SectionControls.js';
 import { StatusStrip } from './chrome/StatusStrip.js';
 import { ToolSession } from './chrome/ToolSession.js';
 import { TopBar } from './chrome/TopBar.js';
@@ -61,6 +62,7 @@ export function App(): JSX.Element {
         <HistoryPanel state={state} onContextMenu={openContextMenuAt} />
       ) : null}
       <ToolSession state={state} />
+      {state.viewState.sectionEnabled ? <SectionControls state={state} /> : null}
       <StatusStrip state={state} />
 
       {commandSearchOpen ? (

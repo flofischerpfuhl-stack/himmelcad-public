@@ -1173,7 +1173,8 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
           id,
           name: nextFeatureName('Extrude', state.features),
         };
-        commitFeatures([...state.features, feature]);
+        // The consumed profile is deselected (and so hidden again), like Shapr3D.
+        commitFeatures([...state.features, feature], []);
         return;
       }
 

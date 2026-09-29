@@ -6,14 +6,17 @@
  * into WebGL) but written as pure data-in/data-out.
  */
 import type { Body, EvaluatedSketch } from '../kernel/types.js';
+import type { Bounds3 } from '../model/modeling.js';
 import type { DisplayMode, SectionAxis, SelectionItem } from '../model/store.js';
-import { eyeOf, viewProjectionMatrix, type CameraPose } from './camera.js';
+import { FOV_Y_RADIANS, eyeOf, viewProjectionMatrix, type CameraPose } from './camera.js';
 import {
   buildEdgeRibbon,
   buildPolylineRibbon,
+  buildScreenRibbon,
   expandBody,
   translatePositions,
 } from './geometry.js';
+import { sectionNormal, sectionOutline, type AxisHandle } from './toolAnchors.js';
 import { PickTable, type PickTarget } from './picking.js';
 import type { FlatBatch, IdBatch, SceneFrame, TriBatch } from './gl.js';
 import type { ViewportColors } from './theme.js';
@@ -23,6 +26,14 @@ export interface SectionState {
   enabled: boolean;
   axis: SectionAxis;
   offset: number;
+  flipped: boolean;
+  /** Visible model bounds: the plane outline is limited to them (+ margin). */
+  bounds: Bounds3 | null;
+}
+
+/** A tool drag handle (fillet/chamfer size, shell thickness, section offset). */
+export interface AxisHandleState extends AxisHandle {
+  hovered: boolean;
 }
 
 export interface MovePreviewState {
@@ -45,10 +56,14 @@ export interface MoveHandleState {
   hoveredAxis: 0 | 1 | 2 | null;
 }
 
-/** In-progress sketch-rectangle outline/fill + the grid snap indicator dot, drawn on top of everything. */
+/** In-progress sketch outline/fill (rectangle corners or a closed circle outline) + the snap indicator dot, drawn on top of everything. */
 export interface SketchPreviewState {
   corners: readonly [Vec3, Vec3, Vec3, Vec3] | null;
   cursorPoint: Vec3 | null;
+  /** Closed outline (first point not repeated) filled as a fan around `center`. */
+  outline?: readonly Vec3[] | null;
+  /** Placed circle centre (drawn as a dot, with a radius line to the cursor). */
+  center?: Vec3 | null;
 }
 
 export interface SceneInput {
@@ -75,6 +90,16 @@ export interface SceneInput {
   moveHandle: MoveHandleState | null;
   /** In-progress sketch-rectangle outline + snap dot for the active sketch tool, if any. */
   sketchPreview: SketchPreviewState | null;
+  /** Device pixel ratio (`viewportHeightPx` is in device pixels); selection lines are ≈3 CSS px wide. */
+  dpr?: number;
+  /** Bodies of a fillet/chamfer/shell/boolean preview: opaque, edges in the preview accent. */
+  previewAccentBodyIds?: readonly string[];
+  /** Faces whose key starts with this prefix (created by the provisional feature) get an accent tint. */
+  previewFaceKeyPrefix?: string | null;
+  /** Committed bodies drawn only as faint accent outlines (e.g. boolean tool bodies being consumed). */
+  ghostBodies?: readonly Body[];
+  /** Drag handles of the active tool / the section plane. */
+  axisHandles?: readonly AxisHandleState[];
 }
 
 export interface BuiltScene {
@@ -83,7 +108,8 @@ export interface BuiltScene {
   pickTable: PickTable;
 }
 
-const AXIS_VECTORS: Record<SectionAxis, Vec3> = { X: [1, 0, 0], Y: [0, 1, 0], Z: [0, 0, 1] };
+/** Width of selected/hovered edges, CSS pixels. */
+const HIGHLIGHT_EDGE_PX = 3;
 
 function isSelected(selection: readonly SelectionItem[], item: SelectionItem): boolean {
   return selection.some((s) => selectionEquals(s, item));
@@ -159,6 +185,36 @@ export function buildScene(input: SceneInput): BuiltScene {
   const lit: TriBatch[] = [];
   const flat: FlatBatch[] = [];
   const idBatches: IdBatch[] = [];
+  /** Highlights drawn after all bodies, so no later body pass paints over them. */
+  const overlays: FlatBatch[] = [];
+
+  const dpr = input.dpr ?? 1;
+  const cssHeight = Math.max(1, input.viewportHeightPx / dpr);
+  const worldPerPixel = (distance: number): number =>
+    (2 * distance * Math.tan(FOV_Y_RADIANS / 2)) / cssHeight;
+  const thickEdges = (
+    segments: Float32Array,
+    color: readonly [number, number, number],
+    widthPx = HIGHLIGHT_EDGE_PX,
+  ): void => {
+    if (segments.length === 0) return;
+    const ribbon = buildScreenRibbon(segments, eye, widthPx, worldPerPixel);
+    const vertexCount = ribbon.length / 3;
+    overlays.push({
+      positions: ribbon,
+      colors: lineColors(vertexCount, color, 1),
+      mode: 'triangles',
+      depthTest: true,
+    });
+    // "On top" ghost: the hidden part of a selected edge stays readable.
+    overlays.push({
+      positions: ribbon,
+      colors: lineColors(vertexCount, color, 0.4),
+      mode: 'triangles',
+      depthTest: false,
+    });
+  };
+  const accentBodies = new Set(input.previewAccentBodyIds ?? []);
 
   const hiddenSet = new Set(input.hiddenBodyIds);
   const isolatedSet = input.isolatedBodyIds ? new Set(input.isolatedBodyIds) : null;
@@ -215,6 +271,7 @@ export function buildScene(input: SceneInput): BuiltScene {
         colors: new Float32Array(minor.colors),
         mode: 'lines',
         depthTest: true,
+        noClip: true,
       });
     }
     if (major.positions.length > 0) {
@@ -223,6 +280,7 @@ export function buildScene(input: SceneInput): BuiltScene {
         colors: new Float32Array(major.colors),
         mode: 'lines',
         depthTest: true,
+        noClip: true,
       });
     }
   }
@@ -255,50 +313,47 @@ export function buildScene(input: SceneInput): BuiltScene {
       colors: new Float32Array(colors),
       mode: 'lines',
       depthTest: true,
+      noClip: true,
     });
   }
 
   // ---- Section clip -----------------------------------------------------
+  // Material on the positive side of `normal` (offset along it) is cut away;
+  // Flip reverses the normal. The plane's outline covers the visible model's
+  // extent plus a margin, not the whole screen.
+  const clipNormal = sectionNormal(input.section);
+  const flipSign = input.section.flipped ? -1 : 1;
   const clip = {
     enabled: input.section.enabled,
-    normal: AXIS_VECTORS[input.section.axis],
-    offset: input.section.offset,
+    normal: clipNormal,
+    offset: input.section.offset * flipSign,
   };
+  const sectionPlaneBatches: FlatBatch[] = [];
   if (input.section.enabled) {
-    const size = Math.max(100, input.pose.distance);
-    const n = clip.normal;
-    const u: Vec3 = Math.abs(n[2]) < 0.9 ? [0, 0, 1] : [1, 0, 0];
-    const right: Vec3 = normalize3([
-      u[1] * n[2] - u[2] * n[1],
-      u[2] * n[0] - u[0] * n[2],
-      u[0] * n[1] - u[1] * n[0],
-    ]);
-    const up: Vec3 = [
-      n[1] * right[2] - n[2] * right[1],
-      n[2] * right[0] - n[0] * right[2],
-      n[0] * right[1] - n[1] * right[0],
-    ];
-    const center: Vec3 = [
-      n[0] * input.section.offset,
-      n[1] * input.section.offset,
-      n[2] * input.section.offset,
-    ];
-    const corners: Vec3[] = [
-      addScaled(center, right, -size, up, -size),
-      addScaled(center, right, size, up, -size),
-      addScaled(center, right, size, up, size),
-      addScaled(center, right, -size, up, size),
-    ];
+    const corners = sectionOutline(input.section, input.section.bounds);
     const outline = { positions: [] as number[], colors: [] as number[] };
     for (let i = 0; i < 4; i += 1) {
-      pushFlatLine(outline, corners[i]!, corners[(i + 1) % 4]!, input.colors.sketchOutline, 0.5);
+      pushFlatLine(outline, corners[i]!, corners[(i + 1) % 4]!, input.colors.sketchOutline, 0.85);
     }
-    flat.push({
-      positions: new Float32Array(outline.positions),
-      colors: new Float32Array(outline.colors),
-      mode: 'lines',
-      depthTest: false,
-    });
+    const fill = { positions: [] as number[], colors: [] as number[] };
+    pushFlatQuad(fill, corners, input.colors.sketchOutline, 0.07);
+    // Drawn after the bodies (depth-tested) so the model shows through the tint.
+    sectionPlaneBatches.push(
+      {
+        positions: new Float32Array(fill.positions),
+        colors: new Float32Array(fill.colors),
+        mode: 'triangles',
+        depthTest: true,
+        noClip: true,
+      },
+      {
+        positions: new Float32Array(outline.positions),
+        colors: new Float32Array(outline.colors),
+        mode: 'lines',
+        depthTest: false,
+        noClip: true,
+      },
+    );
   }
 
   // ---- Bodies ---------------------------------------------------------------
@@ -344,7 +399,30 @@ export function buildScene(input: SceneInput): BuiltScene {
       idBatches.push({ positions: facePositions(faceIndex), id, mode: 'triangles' });
     });
 
+    const isAccentPreview = accentBodies.has(body.id);
     const edgeColor = isExtrudePreview ? input.colors.activePreview : input.colors.bodyEdge;
+    // Faces the provisional feature created (fillet round, chamfer, shell walls)
+    // get an accent tint and accent borders; the rest of the body stays as is.
+    const prefix = input.previewFaceKeyPrefix;
+    if (prefix && isAccentPreview) {
+      body.faces.forEach((face, faceIndex) => {
+        if (!face.key.startsWith(prefix)) return;
+        const tris = facePositions(faceIndex);
+        overlays.push({
+          positions: tris,
+          colors: lineColors(tris.length / 3, input.colors.activePreview, 0.42),
+          mode: 'triangles',
+          depthTest: true,
+        });
+        const border = concatSegments(face.edgeIndices.map(edgeSegments), null);
+        overlays.push({
+          positions: border,
+          colors: lineColors(border.length / 3, input.colors.activePreview, 0.95),
+          mode: 'lines',
+          depthTest: true,
+        });
+      });
+    }
     const allEdges = concatSegments(
       body.edges.map((edge) => edge.segments),
       delta,
@@ -412,21 +490,25 @@ export function buildScene(input: SceneInput): BuiltScene {
         input.hover.edgeKey === edge.key;
       if (!selected && !hovered) return;
       const color = selected ? input.colors.selection : input.colors.hover;
-      const segments = edgeSegments(edgeIndex);
-      flat.push({
-        positions: segments,
-        colors: lineColors(segments.length / 3, color, 1),
-        mode: 'lines',
-        depthTest: true,
-      });
-      flat.push({
-        positions: segments,
-        colors: lineColors(segments.length / 3, color, 0.3),
-        mode: 'lines',
-        depthTest: false,
-      });
+      thickEdges(edgeSegments(edgeIndex), color);
     });
   }
+
+  // ---- Ghosts (e.g. boolean tool bodies being consumed) ------------------
+  for (const ghost of input.ghostBodies ?? []) {
+    const segments = concatSegments(
+      ghost.edges.map((edge) => edge.segments),
+      null,
+    );
+    overlays.push({
+      positions: segments,
+      colors: lineColors(segments.length / 3, input.colors.support, 0.55),
+      mode: 'lines',
+      depthTest: false,
+    });
+  }
+
+  flat.push(...overlays, ...sectionPlaneBatches);
 
   // ---- Sketches ---------------------------------------------------------
   for (const sketch of input.sketches) {
@@ -544,17 +626,76 @@ export function buildScene(input: SceneInput): BuiltScene {
         depthTest: false,
       });
     }
-    if (cursorPoint) {
-      const dotRadius = Math.max(1.5, input.pose.distance * 0.006);
+    const { outline: ring, center } = input.sketchPreview;
+    if (ring && ring.length > 2 && center) {
+      const lines = new Float32Array(ring.length * 6);
+      const fill = { positions: [] as number[], colors: [] as number[] };
+      ring.forEach((a, i) => {
+        const b = ring[(i + 1) % ring.length]!;
+        lines.set([a[0], a[1], a[2], b[0], b[1], b[2]], i * 6);
+        pushFlatTri(fill, center, a, b, input.colors.sketchOutline, 0.16);
+      });
+      flat.push({
+        positions: new Float32Array(fill.positions),
+        colors: new Float32Array(fill.colors),
+        mode: 'triangles',
+        depthTest: false,
+        noClip: true,
+      });
+      const ribbon = buildScreenRibbon(lines, eye, 2, worldPerPixel, 0);
+      flat.push({
+        positions: ribbon,
+        colors: lineColors(ribbon.length / 3, input.colors.sketchOutline, 0.95),
+        mode: 'triangles',
+        depthTest: false,
+        noClip: true,
+      });
+    }
+    const dots = [cursorPoint, center ?? null].filter((p): p is Vec3 => p !== null);
+    if (center && cursorPoint) {
+      const radius = { positions: [] as number[], colors: [] as number[] };
+      pushFlatLine(radius, center, cursorPoint, input.colors.sketchOutline, 0.7);
+      flat.push({
+        positions: new Float32Array(radius.positions),
+        colors: new Float32Array(radius.colors),
+        mode: 'lines',
+        depthTest: false,
+        noClip: true,
+      });
+    }
+    for (const point of dots) {
+      const dotRadius = worldPerPixel(Math.hypot(...sub3(eye, point))) * 3.5;
       const dot = { positions: [] as number[], colors: [] as number[] };
-      pushBillboardQuad(dot, eye, cursorPoint, dotRadius, input.colors.sketchOutline, 0.9);
+      pushBillboardQuad(dot, eye, point, dotRadius, input.colors.sketchOutline, 0.95);
       flat.push({
         positions: new Float32Array(dot.positions),
         colors: new Float32Array(dot.colors),
         mode: 'triangles',
         depthTest: false,
+        noClip: true,
       });
     }
+  }
+
+  // ---- Tool / section drag handles (on top; picked before anything else) ---
+  for (const handle of input.axisHandles ?? []) {
+    const color = handle.hovered
+      ? input.colors.hover
+      : handle.handle === 'section'
+        ? input.colors.sketchOutline
+        : input.colors.selection;
+    pushArrow(
+      flat,
+      idBatches,
+      pickTable,
+      { kind: 'toolHandle', handle: handle.handle },
+      handle.base,
+      handle.dir,
+      handle.length,
+      color,
+      eye,
+      worldPerPixel(Math.hypot(...sub3(eye, handle.base))) * 14,
+    );
   }
 
   const frame: SceneFrame = {
@@ -658,13 +799,15 @@ function pushArrow(
   const baseCenter = addScaled(origin, dir, length - headLength, dir, 0);
   const { u, v } = arrowBasis(dir);
 
-  const shaft = { positions: [] as number[], colors: [] as number[] };
-  pushFlatLine(shaft, origin, baseCenter, color, 0.95);
+  // The shaft is a thin camera-facing quad (a fraction of the hit width) so
+  // it reads at every zoom level, unlike a 1 px GL line.
+  const shaftRibbon = buildEdgeRibbon(origin, baseCenter, eye, hitWidthWorld * 0.14);
   flat.push({
-    positions: new Float32Array(shaft.positions),
-    colors: new Float32Array(shaft.colors),
-    mode: 'lines',
+    positions: shaftRibbon.positions,
+    colors: lineColors(6, color, 0.95),
+    mode: 'triangles',
     depthTest: false,
+    noClip: true,
   });
 
   const headCorners: Vec3[] = [0, 1, 2, 3].map((i) => {
@@ -682,11 +825,12 @@ function pushArrow(
     colors: new Float32Array(head.colors),
     mode: 'triangles',
     depthTest: false,
+    noClip: true,
   });
 
   const id = pickTable.add(pickTarget);
   const ribbon = buildEdgeRibbon(origin, tip, eye, hitWidthWorld);
-  idBatches.push({ positions: ribbon.positions, id, mode: 'triangles' });
+  idBatches.push({ positions: ribbon.positions, id, mode: 'triangles', onTop: true });
 }
 
 /** Camera-facing quad centered on `center`, used for the sketch snap indicator dot. */
