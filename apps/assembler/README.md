@@ -42,7 +42,37 @@ valid preview, shows the error under the tool pill and disables Done.
 Circle (`C`) and Rectangle (`R`) take their plane from the first click on
 a planar face; Extrude picks New/Join/Cut from face contact (out of a face
 joins, into a body cuts, free-standing is new) until the badge overrides it.
+A closed profile lying inside a body face starts as a through-cut preview
+(Cut, the material's depth under the profile) instead of "Join, 0 mm".
 Escape order: dimension field, placed circle centre, tool, selection.
+
+Modelling features (`model/features.ts`, kernel in `kernel/features/`,
+tools in `model/featureTools.ts`, commands in
+`model/commands/featureCommands.ts`) run as one generic `feature` tool
+session with the same preview/commit/cancel contract. Each starts from the
+selection (a disabled command says what is missing), and clicks while it
+runs edit its references; clicking empty space finishes:
+
+| Tool                         | Start from                                           | Handles / badges                                                                                |
+| ---------------------------- | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| Revolve `V`                  | one sketch profile or planar face (+ axis edge)      | angle arc (15° snap, Shift free), New/Join/Cut, axis X/Y/Z; default 360° about an in-plane axis |
+| Sweep `W`                    | profile + path edges (chain), or a straight line     | New/Join/Cut; line-path length arrow; click edges/a sketch outline for the path                 |
+| Loft                         | two or more profiles, in selection order             | New/Join/Cut, Smooth/Straight                                                                   |
+| Mirror                       | bodies (+ a planar face as plane)                    | plane YZ/XZ/XY/face with offset arrow, Keep original / Mirror in place                          |
+| Pattern                      | bodies (+ an edge as direction/axis)                 | Linear/Circular, X/Y/Z, spacing arrow or angle arc, count chip                                  |
+| Split Body                   | one body (+ a planar face)                           | plane YZ/XZ/XY/face with offset arrow                                                           |
+| Align                        | a face on the moving body, then a face on the target | Face to face / Same direction, Centred / Keep position, gap arrow                               |
+| Offset Face                  | faces of one body (recommended for curved faces)     | distance arrow (negative removes material, e.g. enlarges a hole)                                |
+| Delete Face (`Del` on faces) | faces of one body                                    | — (holes, fillets and chamfers between planar faces)                                            |
+
+New/Join/Cut is chosen automatically: a profile mostly inside a body cuts
+it, one touching a body (or lying on its face) joins, a free-standing one
+makes a new body; the badge overrides it. The Move/Rotate gizmo (`M`) has
+X/Y/Z arrows, X/Y/Z rotation rings (15° snap, Shift free), a centre that
+can be dragged onto a face centroid, an edge midpoint or a circle centre
+(the rotation pivot), and a Move/Copy badge; a pure translation commits a
+`move` feature, anything else a `transform` feature. Every new feature has
+a History card with editable parameters.
 
 ## Dev automation hook (DEV only)
 
@@ -54,16 +84,16 @@ of the product contract** (agents use the command registry / the future
 automation API). Screen positions are CSS pixels relative to the page
 viewport, directly usable with `page.mouse`.
 
-| Member                            | Returns                                                                                                                                 |
-| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| `store`                           | The zustand store (`getState()`, actions).                                                                                              |
-| `project([x, y, z])`              | `{ x, y }` of a world point (mm), or `null` behind the camera.                                                                          |
-| `faceAnchor({ bodyId, faceKey })` | A visible, unoccluded pixel of the face, found in the picking id buffer (largest clearance to other ids), or `null` if hidden/occluded. |
-| `edgeAnchor({ bodyId, edgeKey })` | Same for an edge (its pick ribbon).                                                                                                     |
-| `handleAnchor(kind)`              | Same for a drag handle: `'extrude' \| 'blend' \| 'shell' \| 'section'`.                                                                 |
-| `bodies()`                        | Displayed bodies (the active tool's preview if any): `id`, `name`, `volume`, `min`, `max`.                                              |
-| `faces(bodyId)` / `edges(bodyId)` | Stable references (`faceKey`/`edgeKey`) with readable names (`"Extrude 1 end · plane +Z at …"`, `"Circle Ø6 at …"`) plus geometry.      |
-| `waitForKernelIdle()`             | Resolves when no document/preview evaluation is outstanding and that state has been drawn (so anchors are current).                     |
+| Member                            | Returns                                                                                                                                                                                                                              |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `store`                           | The zustand store (`getState()`, actions).                                                                                                                                                                                           |
+| `project([x, y, z])`              | `{ x, y }` of a world point (mm), or `null` behind the camera.                                                                                                                                                                       |
+| `faceAnchor({ bodyId, faceKey })` | A visible, unoccluded pixel of the face, found in the picking id buffer (largest clearance to other ids), or `null` if hidden/occluded.                                                                                              |
+| `edgeAnchor({ bodyId, edgeKey })` | Same for an edge (its pick ribbon).                                                                                                                                                                                                  |
+| `handleAnchor(kind)`              | Same for a drag handle: `'extrude' \| 'blend' \| 'shell' \| 'section'`, a feature-tool handle `'feature:<id>'` (`angle`, `offset`, `spacing`, `distance`, `length`), a Move/Rotate ring `'ring:0..2'` or the gizmo centre `'pivot'`. |
+| `bodies()`                        | Displayed bodies (the active tool's preview if any): `id`, `name`, `volume`, `min`, `max`.                                                                                                                                           |
+| `faces(bodyId)` / `edges(bodyId)` | Stable references (`faceKey`/`edgeKey`) with readable names (`"Extrude 1 end · plane +Z at …"`, `"Circle Ø6 at …"`) plus geometry.                                                                                                   |
+| `waitForKernelIdle()`             | Resolves when no document/preview evaluation is outstanding and that state has been drawn (so anchors are current).                                                                                                                  |
 
 Example (see `D:\AgentWork\HimmelCAD-Assembler\shots\tool-shots.mjs` on the
 Windows host for a full script):

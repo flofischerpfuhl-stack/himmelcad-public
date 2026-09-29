@@ -153,6 +153,72 @@ Limits (known, not solved by the spike):
   available in the bindings and is the next step if surface identity proves
   too weak (e.g. for variable fillets or drafts).
 
+## Modelling features (2026-09-29)
+
+Added on top of the slice, as real kernel features (`model/features.ts`,
+`kernel/features/*`, hooked into `evaluator.ts` through a small
+`FeatureKit` — the evaluator stays the owner of body state, profile
+construction and reference resolution):
+
+| Feature                                                                | OCCT route                                                                                                                                        | Naming                                                                                                                                                                                                                          |
+| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Revolve (profile + world/edge/sketch-line axis)                        | `BRepPrimAPI_MakeRevol` per profile, New/Join/Cut via the extrude booleans                                                                        | from OCCT history: `Generated(edge)` → `:side:<p>:<segment>`, `FirstShape/LastShape` → `:start/:end`; faces OCCT does not report (planar annuli of a full revolve) fall back to the profile segment lying on the face's surface |
+| Sweep (edge chain, sketch outline or straight line path)               | `BRepOffsetAPI_MakePipeShell` (corrected Frenet), `MakeSolid`                                                                                     | same scheme (`Generated`, first/last shape)                                                                                                                                                                                     |
+| Loft (≥ 2 profiles, smooth or ruled)                                   | `BRepOffsetAPI_ThruSections` with compatibility check                                                                                             | `GeneratedFace(edge of the first section)`, first/last shape                                                                                                                                                                    |
+| Mirror, Pattern (linear/circular), Transform (move/rotate/copy), Align | `gp_Trsf` (`SetMirror/SetRotation/SetTranslation`) + `BRepBuilderAPI_Transform`                                                                   | the face descriptors are transformed with the same affine map (`rigid.ts`), so in-place motions keep every key; copies are new bodies (`body:<feature>:<n>`) carrying the source keys                                           |
+| Split Body (world plane or planar face)                                | `intersect`/`cut` with a half-space prism                                                                                                         | inherited by surface identity; the new cut faces are `<feature>:cut`; the positive side becomes `body:<feature>`                                                                                                                |
+| Offset Face (planar, cylindrical, other smooth faces)                  | `BRepOffsetAPI_MakeThickSolid::MakeThickSolidBySimple` slab, joined (outward) or cut (inward)                                                     | the offset surface keeps the face's key (like push/pull)                                                                                                                                                                        |
+| Delete Face (holes; fillets/chamfers between two planar faces)         | hole: fuse a cylinder over the face's axial extent; fillet/chamfer: fuse/cut the corner prism between the face and its extended planar neighbours | neighbours re-grow on their own surfaces and keep their keys                                                                                                                                                                    |
+
+Measured (same host; Node test `features.test.ts` and the browser worker
+via `feature-measure.mjs`): a part with shaft, revolved groove (cut),
+lug, circular pattern ×4, mirror copy and split (9 features, 7 bodies,
+2 388 triangles) evaluates in Node in 115–157 ms (model 57–81, tessellation
+58–76), re-evaluates after the shaft height edit in 117–138 ms; in the
+browser worker 230 ms round trip cold (model 106, tessellation 86), then
+152–160 ms (model 65–67, tessellation 55–64); a History-card edit of the
+revolve angle (one undo step) re-evaluates in 166 ms.
+
+Verified by real-kernel tests (volumes and boxes against hand
+calculations, `BRepCheck_Analyzer` validity): full/quarter/negative
+revolves, axes from a sketch line and a body edge, groove cut and collar
+join, rod/torus/edge-path sweeps (Pappus), ruled frustum and three-section
+loft, mirror copy/in place/across a face, linear and circular (full and
+partial) patterns, split, rotate+translate+copy, align with gap, hole
+enlarge/shrink and planar push by Offset Face, hole/fillet/chamfer removal
+by Delete Face. Stable references after an earlier parameter edit: a
+fillet on a revolved edge survives the profile-width edit, a fillet after a
+transform survives a sketch edit, an Offset Face follows its hole when the
+hole moves — all resolved by key, no geometric re-bind.
+
+Limits (with the OCCT reason):
+
+- **Offset Face does not re-extend neighbours.** OCCT's per-face offset
+  (`BRepOffset_MakeOffset::SetOffsetOnFace`) is excluded from this
+  opencascade.js build (`MakeOffset` is dropped from the bindings), so the
+  face is thickened into a slab and booleaned: exact for faces whose
+  neighbours are perpendicular or tangent-free (walls, caps, holes, bosses);
+  a face between inclined neighbours gets a step instead of longer
+  neighbours. `MakeThickSolidBySimple` also returns an inside-out solid for
+  outward offsets, so the offset surface is built first and thickened back.
+- **Delete Face covers holes and fillets/chamfers between two planar
+  faces only.** `BRepAlgoAPI_Defeaturing` is not in this build; other faces
+  (a planar face of a box, variable fillets, torus corners of multi-edge
+  fillets, conical hole bottoms) fail with "Delete Face can remove holes,
+  and fillets or chamfers between two planar faces. …".
+- **Sweep** keeps the profile where it is (no automatic move to the path
+  start or twist/scale laws); sharp path corners may make OCCT self-intersect
+  and fail; profiles with holes are rejected.
+- **Loft** has no guide curves or start/end tangency; profiles with holes
+  are rejected; a single-profile sketch per section.
+- Revolve rejects profiles that cross an in-plane axis; helix/elevation is
+  not implemented.
+- Mirror/Pattern copies are independent bodies; the Delete command on a copy
+  deletes the whole Mirror/Pattern step (it is the copy's creating feature).
+- The Move/Rotate preview is transformed client-side (instant), the commit
+  is re-evaluated by the kernel; the pivot snaps to face centroids, edge
+  midpoints and circle centres of the committed geometry.
+
 ## Open risks
 
 - **Full replay per change.** Each edit/preview re-runs the whole history

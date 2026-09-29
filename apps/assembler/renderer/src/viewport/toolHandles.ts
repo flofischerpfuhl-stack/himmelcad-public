@@ -151,7 +151,7 @@ function ringHandles(tool: MoveTool, colors: [Vec3, Vec3, Vec3] | null): ToolHan
     unit: 'deg',
     value: a.value,
     // In the quadrant between the negative arrows, so ring chips never sit on an arrow chip.
-    at: angleAt({ ...a, radius: a.radius * 1.22 }, -45),
+    at: angleAt({ ...a, radius: a.radius * 1.5 }, -45),
   }));
   return { axis: [], angles, chips, guides: null, pivot: center };
 }
