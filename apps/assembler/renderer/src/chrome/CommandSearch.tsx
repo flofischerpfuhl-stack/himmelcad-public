@@ -15,10 +15,12 @@ import styles from './CommandSearch.module.css';
 export interface CommandSearchProps {
   state: AssemblerState;
   onClose: () => void;
+  /** Text typed before the search opened (single-key hotkeys off: typing starts the search). */
+  initialQuery?: string;
 }
 
-export function CommandSearch({ state, onClose }: CommandSearchProps): JSX.Element {
-  const [query, setQuery] = useState('');
+export function CommandSearch({ state, onClose, initialQuery }: CommandSearchProps): JSX.Element {
+  const [query, setQuery] = useState(initialQuery ?? '');
   const [activeIndex, setActiveIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const overlayRef = useRef<HTMLDivElement | null>(null);

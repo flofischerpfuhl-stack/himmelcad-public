@@ -1,13 +1,17 @@
 import { useCallback, useState } from 'react';
 
 import { AgentAccessIndicator } from './chrome/AgentAccessIndicator.js';
+import { ColourDialog } from './chrome/ColourDialog.js';
 import { CommandContextMenu } from './chrome/ContextMenu.js';
 import { CommandSearch } from './chrome/CommandSearch.js';
 import { HistoryPanel } from './chrome/HistoryPanel.js';
 import { ItemsPanel } from './chrome/ItemsPanel.js';
 import { LeftDock } from './chrome/LeftDock.js';
+import { NoticeToast } from './chrome/NoticeToast.js';
 import { RightDock } from './chrome/RightDock.js';
 import { SectionControls } from './chrome/SectionControls.js';
+import { SettingsDialog } from './chrome/SettingsDialog.js';
+import { ShortcutOverlay } from './chrome/ShortcutOverlay.js';
 import { StatusStrip } from './chrome/StatusStrip.js';
 import { ToolSession } from './chrome/ToolSession.js';
 import { TopBar } from './chrome/TopBar.js';
@@ -27,15 +31,20 @@ interface ContextMenuState {
  * agent — see `renderer/src/viewport/Viewport.tsx`) with the top bar, left
  * and right docks, Items/History panels, the adaptive toolbar, tool-session
  * pill, status strip, command search and context menu floating above it as
- * rounded islands (docs/DESIGN-SYSTEM.md "Visual language").
+ * rounded islands (docs/DESIGN-SYSTEM.md "Visual language"), plus the
+ * Settings dialog, shortcut overlay and colour dialog.
  */
 export function App(): JSX.Element {
   const state = useAssemblerStore((s) => s);
-  const [commandSearchOpen, setCommandSearchOpen] = useState(false);
+  const [commandSearch, setCommandSearch] = useState<{ initialQuery?: string } | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
 
   const getState = useCallback(() => useAssemblerStore.getState(), []);
-  useGlobalKeyboard(getState, () => setCommandSearchOpen(true));
+  const openSearch = useCallback(
+    (initialQuery?: string) => setCommandSearch(initialQuery ? { initialQuery } : {}),
+    [],
+  );
+  useGlobalKeyboard(getState, openSearch);
 
   const openContextMenuAt = useCallback((x: number, y: number) => {
     setContextMenu({ x, y });
@@ -43,11 +52,16 @@ export function App(): JSX.Element {
 
   const handleViewportContextMenu = useCallback(
     (event: { clientX: number; clientY: number; target: SelectionItem | null }) => {
-      if (event.target) state.select(event.target);
-      else state.clearSelection();
+      const current = useAssemblerStore.getState();
+      // Right-clicking something already selected keeps a multi-selection.
+      const alreadySelected =
+        event.target !== null &&
+        current.selection.some((item) => JSON.stringify(item) === JSON.stringify(event.target));
+      if (event.target && !alreadySelected) current.select(event.target);
+      else if (!event.target) current.clearSelection();
       openContextMenuAt(event.clientX, event.clientY);
     },
-    [state, openContextMenuAt],
+    [openContextMenuAt],
   );
 
   return (
@@ -57,7 +71,7 @@ export function App(): JSX.Element {
       </div>
 
       <TopBar state={state} />
-      <LeftDock state={state} onOpenSearch={() => setCommandSearchOpen(true)} />
+      <LeftDock state={state} onOpenSearch={() => openSearch()} />
       <RightDock state={state} />
       {state.panels.items ? <ItemsPanel state={state} onContextMenu={openContextMenuAt} /> : null}
       {state.panels.history ? (
@@ -68,9 +82,14 @@ export function App(): JSX.Element {
       {state.viewState.sectionEnabled ? <SectionControls state={state} /> : null}
       <StatusStrip state={state} />
       <AgentAccessIndicator />
+      <NoticeToast />
 
-      {commandSearchOpen ? (
-        <CommandSearch state={state} onClose={() => setCommandSearchOpen(false)} />
+      {commandSearch ? (
+        <CommandSearch
+          state={state}
+          {...(commandSearch.initialQuery ? { initialQuery: commandSearch.initialQuery } : {})}
+          onClose={() => setCommandSearch(null)}
+        />
       ) : null}
       {contextMenu ? (
         <CommandContextMenu
@@ -80,6 +99,9 @@ export function App(): JSX.Element {
           onClose={() => setContextMenu(null)}
         />
       ) : null}
+      <SettingsDialog />
+      <ColourDialog />
+      <ShortcutOverlay />
     </div>
   );
 }

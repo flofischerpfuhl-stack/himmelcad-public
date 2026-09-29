@@ -1,0 +1,9 @@
+.host {
+  position: absolute;
+  left: 50%;
+  bottom: 56px;
+  transform: translateX(-50%);
+  z-index: var(--hc-z-toast);
+  max-width: min(560px, calc(100vw - 48px));
+  pointer-events: auto;
+}

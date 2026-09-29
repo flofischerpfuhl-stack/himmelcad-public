@@ -13,6 +13,7 @@ import { useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { Menu, MenuItem, Tooltip } from '@himmelcad/ui';
 
 import { resolveAdaptive, type Command } from '../model/commands/registry.js';
+import { usePreferences } from '../model/preferences.js';
 import { commandIcon } from './icons.js';
 import type { AssemblerState } from '../model/store.js';
 import styles from './AdaptiveToolbar.module.css';
@@ -20,6 +21,7 @@ import styles from './AdaptiveToolbar.module.css';
 const MAX_VISIBLE = 4;
 
 export function AdaptiveToolbar({ state }: { state: AssemblerState }): JSX.Element {
+  const labels = usePreferences((p) => p.labels);
   const commands = resolveAdaptive(state);
   const visible = commands.slice(0, MAX_VISIBLE);
   const overflow = commands.slice(MAX_VISIBLE);
@@ -43,6 +45,20 @@ export function AdaptiveToolbar({ state }: { state: AssemblerState }): JSX.Eleme
       {visible.map((command, index) => {
         const Icon = commandIcon(command);
         const recommended = index === 0;
+        const button = (
+          <button
+            key={command.id}
+            type="button"
+            className={`${styles.button} ${recommended ? styles.recommended : ''} ${labels === 'always' ? styles.labelled : ''}`}
+            aria-label={command.label}
+            onClick={() => run(command)}
+          >
+            <Icon size={16} />
+            {labels === 'always' ? <span className={styles.caption}>{command.label}</span> : null}
+          </button>
+        );
+        // Settings › Toolbar labels: icons only, tooltip on hover, or always captioned.
+        if (labels !== 'hover') return button;
         return (
           <Tooltip
             key={command.id}
@@ -52,14 +68,7 @@ export function AdaptiveToolbar({ state }: { state: AssemblerState }): JSX.Eleme
             // action for the current selection.
             {...(recommended ? { delay: 0 } : {})}
           >
-            <button
-              type="button"
-              className={`${styles.button} ${recommended ? styles.recommended : ''}`}
-              aria-label={command.label}
-              onClick={() => run(command)}
-            >
-              <Icon size={16} />
-            </button>
+            {button}
           </Tooltip>
         );
       })}

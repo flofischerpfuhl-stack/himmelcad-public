@@ -6,12 +6,16 @@
  * diameter, face area, distance of two parallel planar faces). Hidden while
  * a tool is active — the tool pill and prompt take over that space.
  */
+import { withDisplayNames, useItemsStore } from '../model/items.js';
 import { measureSelection } from '../model/modeling.js';
+import { usePreferences } from '../model/preferences.js';
 import { selectionSummary } from './format.js';
 import type { AssemblerState } from '../model/store.js';
 import styles from './StatusStrip.module.css';
 
 export function StatusStrip({ state }: { state: AssemblerState }): JSX.Element | null {
+  const units = usePreferences((p) => p.units);
+  const meta = useItemsStore();
   if (state.kernelStatus !== 'ready') {
     const progress = state.kernelProgress;
     return (
@@ -40,7 +44,11 @@ export function StatusStrip({ state }: { state: AssemblerState }): JSX.Element |
   if (state.activeTool) return null;
 
   if (state.viewState.measureEnabled) {
-    const measured = measureSelection(state.evaluation, state.selection);
+    const measured = measureSelection(
+      { ...state.evaluation, bodies: withDisplayNames(state.evaluation.bodies, meta) },
+      state.selection,
+      units,
+    );
     return (
       <div className={styles.root} role="status" aria-live="polite">
         {measured ?? 'Measure: select a body, an edge, a face or two parallel faces (Shift adds).'}

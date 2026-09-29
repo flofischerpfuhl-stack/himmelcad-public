@@ -6,7 +6,7 @@
  * search, shortcuts and context menu never drift apart (interaction
  * research §1/§7).
  */
-import { useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { useRef, useState, type CSSProperties, type ReactNode } from 'react';
 
 import { Menu, MenuItem, Tooltip } from '@himmelcad/ui';
 
@@ -41,8 +41,10 @@ export function CommandGroupMenu({
   const buttonRef = useRef<HTMLButtonElement | null>(null);
   const [menuStyle, setMenuStyle] = useState<CSSProperties>();
 
-  useLayoutEffect(() => {
-    if (!open || !buttonRef.current) return;
+  // Measured when opening, before the menu is rendered: an unpositioned menu in the
+  // trigger's flex host would shift the trigger and skew the measurement.
+  const placeMenu = (): void => {
+    if (!buttonRef.current) return;
     const rect = buttonRef.current.getBoundingClientRect();
     setMenuStyle({
       position: 'fixed',
@@ -50,7 +52,7 @@ export function CommandGroupMenu({
       [align === 'left' ? 'left' : 'right']:
         align === 'left' ? rect.left : window.innerWidth - rect.right,
     });
-  }, [open, align]);
+  };
 
   const state = open ? getState() : null;
   const commands = COMMANDS.filter((c) => c.group === group);
@@ -62,7 +64,10 @@ export function CommandGroupMenu({
       className={triggerClassName ? `${styles.trigger} ${triggerClassName}` : styles.trigger}
       aria-haspopup="menu"
       aria-expanded={open}
-      onClick={() => setOpen((v) => !v)}
+      onClick={() => {
+        if (!open) placeMenu();
+        setOpen((v) => !v);
+      }}
     >
       {trigger}
     </button>
