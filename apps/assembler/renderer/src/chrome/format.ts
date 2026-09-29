@@ -5,6 +5,7 @@
  */
 import type { Body } from '../kernel/types.js';
 import type { Feature } from '../model/document.js';
+import { MODELING_FEATURE_LABEL } from '../model/features.js';
 import type { SelectionItem } from '../model/store.js';
 
 const KIND_LABELS: Record<SelectionItem['kind'], [string, string]> = {
@@ -59,5 +60,7 @@ export function featureKindLabel(kind: Feature['kind']): string {
       return 'Appearance';
     case 'importStep':
       return 'Import';
+    default:
+      return MODELING_FEATURE_LABEL[kind];
   }
 }

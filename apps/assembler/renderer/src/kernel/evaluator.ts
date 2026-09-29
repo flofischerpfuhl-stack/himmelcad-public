@@ -54,6 +54,7 @@ import {
   type SurfaceId,
 } from './naming.js';
 import type { Body, EdgeInfo, EvaluatedSketch, EvaluationResult, FaceInfo } from './types.js';
+import { applyModelingFeature, type FeatureKit } from './features/index.js';
 
 type OpenCascade = ReturnType<typeof R.getOC>;
 type Shape3D = R.Shape3D;
@@ -688,6 +689,35 @@ export function createEvaluator(oc: OpenCascade, options: EvaluatorOptions = {})
     ctx.order.push(id);
   }
 
+  /** What the modelling-feature modules (`./features/`) may use of this evaluator. */
+  const kit: FeatureKit = {
+    oc,
+    fail: (message) => {
+      throw new FeatureError(message);
+    },
+    isFailure: (error) => error instanceof FeatureError,
+    describeError: (error) => describeError(error),
+    describeFace,
+    topologyOf,
+    resolveFace,
+    resolveEdges,
+    combine,
+    withKeys,
+    diagonalOf,
+    profileFace,
+    addBody: (ctx, body, color) => {
+      const created = ctx.createdCount;
+      const state: BodyState = {
+        ...body,
+        color: color ?? COLOR_PALETTE[created % COLOR_PALETTE.length]!,
+      };
+      ctx.bodies.set(state.id, state);
+      ctx.createdCount += 1;
+      ctx.order.push(state.id);
+      return state;
+    },
+  };
+
   // ---- output ------------------------------------------------------------------
 
   function toBody(state: BodyState): { body: Body; triangles: number } {
@@ -870,6 +900,8 @@ export function createEvaluator(oc: OpenCascade, options: EvaluatorOptions = {})
           case 'importStep':
             await applyImportStep(feature, ctx);
             break;
+          default:
+            applyModelingFeature(feature, ctx, kit);
         }
       } catch (error) {
         errors[feature.id] = error instanceof FeatureError ? error.message : describeError(error);

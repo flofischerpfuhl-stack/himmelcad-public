@@ -6,6 +6,7 @@
  */
 import type { Body, EvaluationResult } from '../kernel/types.js';
 import type { ExtrudeOperation, Feature, Vec3 } from './document.js';
+import { isModelingFeature, sketchIdsUsedBy } from './features.js';
 import type { SelectionItem } from './store.js';
 
 // ---- Automatic extrude operation --------------------------------------------------
@@ -115,6 +116,7 @@ export function consumedSketchIds(features: readonly Feature[]): Set<string> {
     if (f.kind === 'extrude' && !f.suppressed && f.profile.kind === 'sketch') {
       out.add(f.profile.featureId);
     }
+    if (!f.suppressed && isModelingFeature(f)) for (const id of sketchIdsUsedBy(f)) out.add(id);
   }
   return out;
 }

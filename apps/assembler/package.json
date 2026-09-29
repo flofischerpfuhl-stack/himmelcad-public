@@ -2,7 +2,7 @@
   "name": "@himmelcad/assembler",
   "version": "0.0.0",
   "private": true,
-  "description": "HimmelCAD Assembler — desktop CAD for 3D printing (Phase 0 skeleton)",
+  "description": "HimmelCAD Assembler â€” desktop CAD for 3D printing (Phase 0 skeleton)",
   "author": {
     "name": "HimmelCAD",
     "email": "noreply@himmelcad.local"
@@ -20,7 +20,7 @@
     "build:electron": "tsc -p tsconfig.electron.json && node scripts/postbuild-electron.mjs",
     "build": "vite build && pnpm build:electron",
     "typecheck": "tsc -b tsconfig.json tsconfig.typecheck-electron.json",
-    "test": "tsc -p tsconfig.test.json && node --test .build/tests/apps/assembler/test/windowOptions.test.js .build/tests/apps/assembler/test/model/store.test.js .build/tests/apps/assembler/test/model/commands.test.js .build/tests/apps/assembler/test/model/tools.test.js .build/tests/apps/assembler/test/model/modeling.test.js .build/tests/apps/assembler/test/model/project/format.test.js .build/tests/apps/assembler/test/model/project/projectStore.test.js .build/tests/apps/assembler/test/kernel/adapter.test.js .build/tests/apps/assembler/test/kernel/naming.test.js .build/tests/apps/assembler/test/kernel/evaluator.test.js .build/tests/apps/assembler/test/kernel/stlExport.test.js .build/tests/apps/assembler/test/kernel/threeMf.test.js .build/tests/apps/assembler/test/kernel/stepRoundTrip.test.js .build/tests/apps/assembler/test/viewport/math.test.js .build/tests/apps/assembler/test/viewport/camera.test.js .build/tests/apps/assembler/test/viewport/expr.test.js .build/tests/apps/assembler/test/viewport/picking.test.js .build/tests/apps/assembler/test/viewport/toolAnchors.test.js",
+    "test": "tsc -p tsconfig.test.json && node --test .build/tests/apps/assembler/test/windowOptions.test.js .build/tests/apps/assembler/test/model/store.test.js .build/tests/apps/assembler/test/model/commands.test.js .build/tests/apps/assembler/test/model/tools.test.js .build/tests/apps/assembler/test/model/modeling.test.js .build/tests/apps/assembler/test/model/project/format.test.js .build/tests/apps/assembler/test/model/project/projectStore.test.js .build/tests/apps/assembler/test/kernel/adapter.test.js .build/tests/apps/assembler/test/kernel/naming.test.js .build/tests/apps/assembler/test/kernel/evaluator.test.js .build/tests/apps/assembler/test/kernel/features.test.js .build/tests/apps/assembler/test/kernel/stlExport.test.js .build/tests/apps/assembler/test/kernel/threeMf.test.js .build/tests/apps/assembler/test/kernel/stepRoundTrip.test.js .build/tests/apps/assembler/test/viewport/math.test.js .build/tests/apps/assembler/test/viewport/camera.test.js .build/tests/apps/assembler/test/viewport/expr.test.js .build/tests/apps/assembler/test/viewport/picking.test.js .build/tests/apps/assembler/test/viewport/toolAnchors.test.js",
     "test:electron": "pnpm build && tsc -p tsconfig.test.json && node --test .build/tests/apps/assembler/test/electron/production.test.js"
   },
   "dependencies": {
