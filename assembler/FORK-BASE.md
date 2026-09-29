@@ -9,10 +9,12 @@ perform the fork. No `assembler-render` (or similarly named) crate exists yet.
 - **Fork base (full repository HEAD at time of writing):**
   `ac076a1d29bf1ab3be646074f8bc2fc8f2ac5258` — matches the expected
   `ac076a1…`.
-- **Last commit touching the four candidate crates**
-  (`git log -1 --format=%H -- crates/himmelcad-render crates/himmelcad-model
-  crates/himmelcad-hardware-profile crates/himmelcad-prepared`):
-  `0a30d7deabe5b6088e79933135863cc26788eeeb` (2026-09-24).
+- **Last commit touching the four candidate crates:**
+  `0a30d7deabe5b6088e79933135863cc26788eeeb` (2026-09-24), from
+
+  ```sh
+  git log -1 --format=%H -- crates/himmelcad-render crates/himmelcad-model crates/himmelcad-hardware-profile crates/himmelcad-prepared
+  ```
 
 Both hashes are recorded because the repository HEAD moves independently of
 these four crates; the second hash is the actual content the fork would copy.
@@ -41,12 +43,12 @@ dependency graph relative to the research base.
 
 ## Candidate crates and their direct workspace dependencies
 
-| Crate                       | Direct workspace (`path = ...`) dependencies                        | Notable external dependencies                                                                  |
-| ---------------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `himmelcad-model`            | none                                                                   | `glam`, `serde`, `serde_json`, `thiserror`, `sha2`, `hex`, optional `ts-rs` (feature `ts-bindings`) |
-| `himmelcad-hardware-profile` | none                                                                   | `serde`, `thiserror`                                                                              |
-| `himmelcad-prepared`         | `himmelcad-model`                                                      | `brotli-decompressor`, `glam`, `serde`, `serde_json`, `thiserror`                                  |
-| `himmelcad-render`           | `himmelcad-model`, `himmelcad-hardware-profile`, `himmelcad-prepared`  | `wgpu` 30.0.0, `gltf`, `gltf-v1`, `draco-gltf`, `meshopt-rs`, `image`, `bevy_basisu_loader_sys`, `earcut`, `indexmap`, `bincode`, `bytemuck`, `glam`, `serde`/`serde_json`, `sha2`, `thiserror`, plus `js-sys` (wasm32 target) |
+| Crate                        | Direct workspace (`path = ...`) dependencies                          | Notable external dependencies                                                                                                                                                                                                  |
+| ---------------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `himmelcad-model`            | none                                                                  | `glam`, `serde`, `serde_json`, `thiserror`, `sha2`, `hex`, optional `ts-rs` (feature `ts-bindings`)                                                                                                                            |
+| `himmelcad-hardware-profile` | none                                                                  | `serde`, `thiserror`                                                                                                                                                                                                           |
+| `himmelcad-prepared`         | `himmelcad-model`                                                     | `brotli-decompressor`, `glam`, `serde`, `serde_json`, `thiserror`                                                                                                                                                              |
+| `himmelcad-render`           | `himmelcad-model`, `himmelcad-hardware-profile`, `himmelcad-prepared` | `wgpu` 30.0.0, `gltf`, `gltf-v1`, `draco-gltf`, `meshopt-rs`, `image`, `bevy_basisu_loader_sys`, `earcut`, `indexmap`, `bincode`, `bytemuck`, `glam`, `serde`/`serde_json`, `sha2`, `thiserror`, plus `js-sys` (wasm32 target) |
 
 `himmelcad-render` is the widest dependency graph of the four: it pulls in
 `himmelcad-model`, `himmelcad-hardware-profile` and `himmelcad-prepared`
