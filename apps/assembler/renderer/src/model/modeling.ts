@@ -336,7 +336,12 @@ export type MeasureTarget =
 export function measureSelection(
   evaluation: EvaluationResult,
   selection: readonly SelectionItem[],
+  /** Display unit of the read-out (documents are always millimetres). */
+  unit: 'mm' | 'in' = 'mm',
 ): string | null {
+  const u = unit === 'in' ? 'in' : 'mm';
+  const fmt = (mm: number) => fmtLength(mm, unit);
+  const fmtVolume = (mm3: number) => fmtVolumeIn(mm3, unit);
   const targets = selection.filter(
     (s): s is MeasureTarget => s.kind === 'body' || s.kind === 'face' || s.kind === 'edge',
   );
@@ -348,7 +353,7 @@ export function measureSelection(
     if (!body) return null;
     if (t.kind === 'body') {
       const [w, d, h] = [0, 1, 2].map((i) => fmt(body.max[i]! - body.min[i]!));
-      return `${body.name}: ${w} × ${d} × ${h} mm · ${fmtVolume(body.volume)} mm³`;
+      return `${body.name}: ${w} × ${d} × ${h} ${u} · ${fmtVolume(body.volume)} ${u}³`;
     }
     if (t.kind === 'edge') {
       const edge = body.edges.find((e) => e.key === t.edgeKey);
@@ -356,14 +361,14 @@ export function measureSelection(
       if (edge.curve === 'circle' && edge.radius) {
         const full = Math.abs(edge.length - 2 * Math.PI * edge.radius) < 1e-6 * edge.length + 1e-6;
         return full
-          ? `Circle: Ø ${fmt(edge.radius * 2)} mm · length ${fmt(edge.length)} mm`
-          : `Arc: R ${fmt(edge.radius)} mm · length ${fmt(edge.length)} mm`;
+          ? `Circle: Ø ${fmt(edge.radius * 2)} ${u} · length ${fmt(edge.length)} ${u}`
+          : `Arc: R ${fmt(edge.radius)} ${u} · length ${fmt(edge.length)} ${u}`;
       }
-      return `Edge length: ${fmt(edge.length)} mm`;
+      return `Edge length: ${fmt(edge.length)} ${u}`;
     }
     const face = body.faces.find((f) => f.key === t.faceKey);
     if (!face) return null;
-    return `Face area: ${fmt(face.area)} mm²`;
+    return `Face area: ${fmtArea(face.area, unit)} ${u}²`;
   }
   if (targets.length === 2 && targets.every((t) => t.kind === 'face')) {
     const [a, b] = targets.map((t) => {
@@ -379,18 +384,25 @@ export function measureSelection(
       return 'Distance: faces are not parallel';
     }
     const distance = Math.abs(dot(a.normal, sub(b.centroid, a.centroid)));
-    return `Distance: ${fmt(distance)} mm`;
+    return `Distance: ${fmt(distance)} ${u}`;
   }
   return null;
 }
 
-function fmt(value: number): string {
-  const rounded = Math.round(Math.abs(value) * 100) / 100;
-  return rounded.toLocaleString('en-US', { maximumFractionDigits: 2 });
+function fmtLength(mm: number, unit: 'mm' | 'in'): string {
+  const value = Math.abs(unit === 'in' ? mm / 25.4 : mm);
+  const digits = unit === 'in' ? 3 : 2;
+  return value.toLocaleString('en-US', { maximumFractionDigits: digits });
 }
 
-function fmtVolume(value: number): string {
-  return (Math.round(value * 10) / 10).toLocaleString('en-US', { maximumFractionDigits: 1 });
+function fmtArea(mm2: number, unit: 'mm' | 'in'): string {
+  const value = unit === 'in' ? mm2 / (25.4 * 25.4) : mm2;
+  return value.toLocaleString('en-US', { maximumFractionDigits: unit === 'in' ? 4 : 2 });
+}
+
+function fmtVolumeIn(mm3: number, unit: 'mm' | 'in'): string {
+  const value = unit === 'in' ? mm3 / 25.4 ** 3 : mm3;
+  return value.toLocaleString('en-US', { maximumFractionDigits: unit === 'in' ? 4 : 1 });
 }
 
 // ---- vector helpers -----------------------------------------------------------

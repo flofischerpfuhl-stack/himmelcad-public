@@ -1,0 +1,158 @@
+/**
+ * User preferences: device/user-wide settings that are **not** part of a
+ * document (interaction research §7: `userPreferences` vs.
+ * `workspaceViewState` vs. `documentModel`). Persisted in the renderer's
+ * `localStorage` (the Electron profile), never in `.hcasm` files, never in
+ * the undo history. Edited in the Settings dialog (`chrome/SettingsDialog.tsx`).
+ */
+import { create } from 'zustand';
+
+import { NAVIGATION_PRESETS, type NavigationPresetId } from '../viewport/navigation.js';
+
+export type LengthUnit = 'mm' | 'in';
+export type ToolbarLabels = 'icons' | 'hover' | 'always';
+export type ThemeName = 'dark' | 'light';
+export type Projection = 'perspective' | 'orthographic';
+
+export interface Preferences {
+  /** Display unit for read-outs (measurements, dimension chips). Documents stay in millimetres. */
+  units: LengthUnit;
+  /** Grid shown in new sessions. */
+  gridVisible: boolean;
+  /** Grid step in new sessions, mm. */
+  gridStep: number;
+  /** Toolbar labels: icons only, on hover (tooltips), or always next to the icon. */
+  labels: ToolbarLabels;
+  /** Single-letter shortcuts (E = Extrude, …). Off: typing a letter opens command search. */
+  singleKeyHotkeys: boolean;
+  navigationPreset: NavigationPresetId;
+  theme: ThemeName;
+  projection: Projection;
+  /** Perspective field of view, degrees. */
+  fov: number;
+  /** Animated camera transitions (also off when the OS asks for reduced motion). */
+  animateCamera: boolean;
+}
+
+export const DEFAULT_PREFERENCES: Preferences = {
+  units: 'mm',
+  gridVisible: true,
+  gridStep: 5,
+  labels: 'hover',
+  singleKeyHotkeys: true,
+  navigationPreset: 'shapr3d',
+  theme: 'dark',
+  projection: 'perspective',
+  fov: 45,
+  animateCamera: true,
+};
+
+const STORAGE_KEY = 'himmelcad.assembler.preferences.v1';
+
+function storage(): Storage | null {
+  try {
+    return typeof localStorage === 'undefined' ? null : localStorage;
+  } catch {
+    return null;
+  }
+}
+
+/** Parses stored preferences, keeping only known keys with valid values (unknown/invalid → default). */
+export function parsePreferences(text: string | null): Preferences {
+  if (!text) return { ...DEFAULT_PREFERENCES };
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    return { ...DEFAULT_PREFERENCES };
+  }
+  if (typeof raw !== 'object' || raw === null) return { ...DEFAULT_PREFERENCES };
+  const r = raw as Record<string, unknown>;
+  const pick = <K extends keyof Preferences>(
+    key: K,
+    valid: (v: unknown) => boolean,
+  ): Preferences[K] => (valid(r[key]) ? (r[key] as Preferences[K]) : DEFAULT_PREFERENCES[key]);
+  const oneOf = (values: readonly unknown[]) => (v: unknown) => values.includes(v);
+  const bool = (v: unknown) => typeof v === 'boolean';
+  const number = (lo: number, hi: number) => (v: unknown) =>
+    typeof v === 'number' && Number.isFinite(v) && v >= lo && v <= hi;
+  return {
+    units: pick('units', oneOf(['mm', 'in'])),
+    gridVisible: pick('gridVisible', bool),
+    gridStep: pick('gridStep', number(0.01, 1000)),
+    labels: pick('labels', oneOf(['icons', 'hover', 'always'])),
+    singleKeyHotkeys: pick('singleKeyHotkeys', bool),
+    navigationPreset: pick('navigationPreset', oneOf(NAVIGATION_PRESETS.map((p) => p.id))),
+    theme: pick('theme', oneOf(['dark', 'light'])),
+    projection: pick('projection', oneOf(['perspective', 'orthographic'])),
+    fov: pick('fov', number(10, 90)),
+    animateCamera: pick('animateCamera', bool),
+  };
+}
+
+export interface PreferencesState extends Preferences {
+  setPreference: <K extends keyof Preferences>(key: K, value: Preferences[K]) => void;
+  resetPreferences: () => void;
+}
+
+function persist(prefs: Preferences): void {
+  try {
+    storage()?.setItem(STORAGE_KEY, JSON.stringify(prefs));
+  } catch {
+    // Storage full or unavailable: the setting still applies for this session.
+  }
+}
+
+function snapshot(state: PreferencesState): Preferences {
+  const { setPreference: _set, resetPreferences: _reset, ...prefs } = state;
+  return prefs;
+}
+
+export const usePreferences = create<PreferencesState>((set, get) => ({
+  ...parsePreferences(storage()?.getItem(STORAGE_KEY) ?? null),
+  setPreference: (key, value) => {
+    set({ [key]: value } as Partial<PreferencesState>);
+    persist(snapshot(get()));
+  },
+  resetPreferences: () => {
+    set({ ...DEFAULT_PREFERENCES });
+    persist(snapshot(get()));
+  },
+}));
+
+// ---- display units ---------------------------------------------------------------------------
+
+const MM_PER_INCH = 25.4;
+
+/** Converts millimetres to the display unit. */
+export function toDisplayUnit(mm: number, unit: LengthUnit): number {
+  return unit === 'in' ? mm / MM_PER_INCH : mm;
+}
+
+/** Converts a value typed in the display unit back to millimetres. */
+export function fromDisplayUnit(value: number, unit: LengthUnit): number {
+  return unit === 'in' ? value * MM_PER_INCH : value;
+}
+
+export function unitSuffix(unit: LengthUnit): string {
+  return unit === 'in' ? 'in' : 'mm';
+}
+
+/** "12.5 mm" / "0.492 in" — trims trailing zeros, 2 decimals for mm, 3 for inches. */
+export function formatLength(mm: number, unit: LengthUnit): string {
+  const value = toDisplayUnit(mm, unit);
+  const digits = unit === 'in' ? 3 : 2;
+  return `${Number(value.toFixed(digits))} ${unitSuffix(unit)}`;
+}
+
+/** Area in the display unit ("mm²" / "in²"). */
+export function formatArea(mm2: number, unit: LengthUnit): string {
+  const value = unit === 'in' ? mm2 / (MM_PER_INCH * MM_PER_INCH) : mm2;
+  return `${Number(value.toFixed(unit === 'in' ? 4 : 2))} ${unitSuffix(unit)}²`;
+}
+
+/** Volume in the display unit ("mm³" / "in³"). */
+export function formatVolume(mm3: number, unit: LengthUnit): string {
+  const value = unit === 'in' ? mm3 / MM_PER_INCH ** 3 : mm3;
+  return `${Number(value.toFixed(unit === 'in' ? 4 : 1))} ${unitSuffix(unit)}³`;
+}

@@ -13,12 +13,21 @@ import type { KernelAdapter } from '../../kernel/adapter.js';
 import { exportAllBodiesStl, exportBodyStl } from '../../kernel/stlExport.js';
 import { buildThreeMf } from '../../kernel/threeMf.js';
 import type { Feature } from '../document.js';
+import {
+  EMPTY_ITEMS_META,
+  isEmptyItemsMeta,
+  itemsMetaSnapshot,
+  useItemsStore,
+  withDisplayNames,
+} from '../items.js';
 import { useAssemblerStore } from '../store.js';
+import { parseSavedViews, useWorkspaceStore } from '../workspace.js';
 import {
   CURRENT_SCHEMA_VERSION,
   ProjectFormatError,
   loadProjectFile,
   saveProjectFile,
+  type ProjectFileV1,
 } from './format.js';
 import * as io from './persistence.js';
 
@@ -88,16 +97,37 @@ let autosaveTimer: ReturnType<typeof setInterval> | null = null;
 let recoveryDebounce: ReturnType<typeof setTimeout> | null = null;
 let baselineFeatures: Feature[] | null = null;
 let subscribed = false;
+/** Set while New/Open/Recover replace item names and saved views (not a user edit). */
+let restoringExtras = false;
+
+function restoreExtras(project: ProjectFileV1 | null): void {
+  restoringExtras = true;
+  try {
+    applyProjectExtras(project);
+  } finally {
+    restoringExtras = false;
+  }
+}
 
 function currentProjectPayload(): string {
   const doc = useAssemblerStore.getState();
   const project = useProjectStore.getState();
+  const items = itemsMetaSnapshot(useItemsStore.getState());
+  const savedViews = useWorkspaceStore.getState().savedViews;
   return saveProjectFile({
     projectName: doc.projectName,
     features: doc.features,
     appVersion: APP_VERSION,
     createdAt: project.createdAt,
+    ...(isEmptyItemsMeta(items) ? {} : { items }),
+    ...(savedViews.length > 0 ? { viewState: { savedViews } } : {}),
   });
+}
+
+/** Restores the non-feature parts of a project (item names/folders, saved views). */
+function applyProjectExtras(project: ProjectFileV1 | null): void {
+  useItemsStore.getState().setItemsMeta(project?.items ?? EMPTY_ITEMS_META);
+  useWorkspaceStore.getState().setSavedViews(parseSavedViews(project?.viewState?.savedViews));
 }
 
 /** Node's `Timeout` (unlike the browser's numeric handle) exposes `unref()` so it never keeps a test process alive. */
@@ -131,6 +161,24 @@ function ensureSubscription(): void {
       useProjectStore.setState({ dirty: true });
       writeRecoverySoon();
     }
+  });
+  // Item names/folders and saved views are saved with the project too.
+  const markDirty = () => {
+    if (restoringExtras) return;
+    useProjectStore.setState({ dirty: true });
+    writeRecoverySoon();
+  };
+  useItemsStore.subscribe((state, prev) => {
+    if (
+      state.names !== prev.names ||
+      state.folders !== prev.folders ||
+      state.parent !== prev.parent
+    ) {
+      markDirty();
+    }
+  });
+  useWorkspaceStore.subscribe((state, prev) => {
+    if (state.savedViews !== prev.savedViews) markDirty();
   });
   ensureAutosave();
 }
@@ -200,6 +248,7 @@ export const useProjectStore = create<ProjectFileState>((set, get) => ({
     const features: Feature[] = []; // a blank document, not the demo.
     baselineFeatures = features;
     useAssemblerStore.getState().loadDocument(features, { projectName: 'Untitled' });
+    restoreExtras(null);
     set({
       filePath: null,
       dirty: false,
@@ -220,6 +269,7 @@ export const useProjectStore = create<ProjectFileState>((set, get) => ({
       useAssemblerStore
         .getState()
         .loadDocument(project.features, { projectName: project.projectName });
+      restoreExtras(project);
       set({
         filePath: opened.path,
         dirty: false,
@@ -288,7 +338,9 @@ export const useProjectStore = create<ProjectFileState>((set, get) => ({
     if (doc.evaluation.bodies.length === 0) return;
     set({ busyMessage: 'Exporting STL…' });
     try {
-      const bytes = new Uint8Array(exportAllBodiesStl(doc.evaluation.bodies));
+      const bytes = new Uint8Array(
+        exportAllBodiesStl(withDisplayNames(doc.evaluation.bodies, useItemsStore.getState())),
+      );
       await io.exportBinary(
         bytes,
         `${sanitizeFileName(doc.projectName)}.stl`,
@@ -301,7 +353,9 @@ export const useProjectStore = create<ProjectFileState>((set, get) => ({
   },
   exportStlBody: async (bodyId) => {
     const doc = useAssemblerStore.getState();
-    const body = doc.evaluation.bodies.find((b) => b.id === bodyId);
+    const body = withDisplayNames(doc.evaluation.bodies, useItemsStore.getState()).find(
+      (b) => b.id === bodyId,
+    );
     if (!body) return;
     set({ busyMessage: 'Exporting STL…' });
     try {
@@ -322,7 +376,8 @@ export const useProjectStore = create<ProjectFileState>((set, get) => ({
     if (doc.evaluation.bodies.length === 0) return;
     set({ busyMessage: 'Exporting 3MF…' });
     try {
-      const bytes = buildThreeMf(doc.evaluation.bodies);
+      // 3MF objects carry the user's body names and `setAppearance` colours (`Body.color`).
+      const bytes = buildThreeMf(withDisplayNames(doc.evaluation.bodies, useItemsStore.getState()));
       await io.exportBinary(
         bytes,
         `${sanitizeFileName(doc.projectName)}.3mf`,
@@ -381,6 +436,7 @@ export const useProjectStore = create<ProjectFileState>((set, get) => ({
     useAssemblerStore
       .getState()
       .loadDocument(project.features, { projectName: project.projectName });
+    restoreExtras(project);
     set({
       recoveryOffer: null,
       dirty: true,
