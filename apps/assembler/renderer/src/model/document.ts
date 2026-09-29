@@ -14,6 +14,7 @@
  */
 
 import type { ModelingFeature } from './features.js';
+import type { ChamferMode, EdgeRule, ShellDirection, ShellFaceThickness } from './blendOptions.js';
 
 import { addCircle, addRectangle } from '../sketch/builders.js';
 import { EMPTY_SKETCH, type SketchData } from '../sketch/types.js';
@@ -133,14 +134,28 @@ export interface ExtrudeFeature extends FeatureBase {
 
 export interface FilletFeature extends FeatureBase {
   kind: 'fillet';
+  /** Picked edges; may be empty when `rules` pick the edges. */
   edges: EdgeRef[];
   radius: Millimeters;
+  /** Variable radius: `radius` at the start of each edge chain, `radius2` at its end. */
+  radius2?: Millimeters;
+  /** Edges chosen by rule (all edges of a face, all concave/convex edges), added to `edges`. */
+  rules?: EdgeRule[];
 }
 
 export interface ChamferFeature extends FeatureBase {
   kind: 'chamfer';
+  /** Picked edges; may be empty when `rules` pick the edges. */
   edges: EdgeRef[];
   distance: Millimeters;
+  /** `equal` (default): `distance` on both faces; `twoDistances`: `distance` and `distance2`; `distanceAngle`: `distance` and `angle`. */
+  mode?: ChamferMode;
+  distance2?: Millimeters;
+  /** Degrees, measured from the face `distance` lies on (distanceAngle). */
+  angle?: number;
+  /** Measure `distance` on the other face of each edge (twoDistances/distanceAngle). */
+  flip?: boolean;
+  rules?: EdgeRule[];
 }
 
 /** Hollows a body, opening the given faces, keeping walls of `thickness`. */
@@ -149,14 +164,20 @@ export interface ShellFeature extends FeatureBase {
   bodyId: string;
   faces: FaceRef[];
   thickness: Millimeters;
+  /** `inside` (default): walls grow into the body; `outside`: the body becomes the cavity. */
+  direction?: ShellDirection;
+  /** Walls with their own thickness (the wall that grows from each face). */
+  faceThickness?: ShellFaceThickness[];
 }
 
-/** Body boolean; tool bodies are consumed. */
+/** Body boolean; tool bodies are consumed unless `keepTools`. */
 export interface BooleanFeature extends FeatureBase {
   kind: 'boolean';
   operation: 'union' | 'subtract' | 'intersect';
   targetBodyId: string;
   toolBodyIds: string[];
+  /** Keep the tool bodies (e.g. a cutter used again, or a lid subtracted from its box). */
+  keepTools?: boolean;
 }
 
 /** Translates a body by a fixed delta, in millimetres. */

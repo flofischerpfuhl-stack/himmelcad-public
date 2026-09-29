@@ -417,13 +417,27 @@ export function booleanWithHistory(
   }
 }
 
-/** Constant-radius fillet (or symmetric chamfer) of `edges` with history. */
+/**
+ * Variants of {@link blendWithHistory}: a linear radius law (fillet from
+ * `size` to `size2`), or an asymmetric chamfer (`size` measured on
+ * `faces[i]`, the other leg `size2` or given by `angle` in radians).
+ */
+export interface BlendOptions {
+  size2?: number;
+  chamfer?: 'twoDistances' | 'distanceAngle';
+  angle?: number;
+  /** Per edge: the face the first distance is measured on (asymmetric chamfers). */
+  faces?: readonly R.Face[];
+}
+
+/** Fillet (constant or linear radius) or chamfer (symmetric or asymmetric) of `edges` with history. */
 export function blendWithHistory(
   oc: OpenCascade,
   kind: 'fillet' | 'chamfer',
   shape: Shape3D,
   edges: readonly R.Edge[],
   size: number,
+  options: BlendOptions = {},
 ): HistoryResult {
   const builder =
     kind === 'fillet'
@@ -433,8 +447,30 @@ export function blendWithHistory(
         )
       : new oc.BRepFilletAPI_MakeChamfer(shape.wrapped as never);
   try {
-    for (const edge of edges)
-      (builder as { Add(r: number, e: never): void }).Add(size, edge.wrapped as never);
+    edges.forEach((edge, i) => {
+      const raw = edge.wrapped as never;
+      if (kind === 'fillet') {
+        const fillet = builder as {
+          Add(r: number, e: never): void;
+          Add(r1: number, r2: number, e: never): void;
+        };
+        if (options.size2 !== undefined && options.size2 !== size) {
+          fillet.Add(size, options.size2, raw);
+        } else fillet.Add(size, raw);
+        return;
+      }
+      const chamfer = builder as {
+        Add(d: number, e: never): void;
+        Add(d1: number, d2: number, e: never, f: never): void;
+        AddDA(d: number, angle: number, e: never, f: never): void;
+      };
+      const face = options.faces?.[i]?.wrapped as never | undefined;
+      if (options.chamfer === 'twoDistances' && face && options.size2 !== undefined) {
+        chamfer.Add(size, options.size2, raw, face);
+      } else if (options.chamfer === 'distanceAngle' && face && options.angle !== undefined) {
+        chamfer.AddDA(size, options.angle, raw, face);
+      } else chamfer.Add(size, raw);
+    });
     builder.Build();
     if (!builder.IsDone())
       throw new Error(`${kind === 'fillet' ? 'Fillet' : 'Chamfer'} could not be built`);
@@ -450,12 +486,16 @@ export function blendWithHistory(
   }
 }
 
-/** Hollows `shape` (walls of `thickness` inside), removing `openFaces`, with history. */
+/**
+ * Hollows `shape` (walls of `thickness` inside, or outside with `outward`),
+ * removing `openFaces`, with history.
+ */
 export function shellWithHistory(
   oc: OpenCascade,
   shape: Shape3D,
   openFaces: readonly R.Face[],
   thickness: number,
+  outward = false,
 ): HistoryResult {
   const builder = new oc.BRepOffsetAPI_MakeThickSolid();
   const faces = new oc.NCollection_List_TopoDS_Shape();
@@ -464,12 +504,15 @@ export function shellWithHistory(
     builder.MakeThickSolidByJoin(
       shape.wrapped as never,
       faces,
-      -thickness,
+      outward ? thickness : -thickness,
       1e-3,
       oc.BRepOffset_Mode.BRepOffset_Skin as never,
       false,
       false,
-      oc.GeomAbs_JoinType.GeomAbs_Arc as never,
+      // Outward, `Arc` would round every convex edge; `Intersection` keeps them sharp like the inside.
+      (outward
+        ? oc.GeomAbs_JoinType.GeomAbs_Intersection
+        : oc.GeomAbs_JoinType.GeomAbs_Arc) as never,
       false,
     );
     const raw = builder.Shape() as RawShape;

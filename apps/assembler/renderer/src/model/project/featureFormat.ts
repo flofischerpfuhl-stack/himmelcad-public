@@ -5,6 +5,7 @@
  */
 import type { EdgeRef, FaceRef, Feature } from '../document.js';
 import { MODELING_FEATURE_KINDS, type ModelingFeature } from '../features.js';
+import { isPrintFeatureKind, validatePrintFeature } from './printFeatureFormat.js';
 
 export interface FormatHelpers {
   fail: (path: string, message: string) => never;
@@ -180,6 +181,7 @@ export function validateModelingFeature(r: Rec, path: string, h: FormatHelpers):
       faceList('faces');
       break;
     default:
+      if (isPrintFeatureKind(r.kind)) return validatePrintFeature(r, path, h);
       h.fail(`${path}.kind`, `unknown feature kind "${String(r.kind)}"`);
   }
   return r as unknown as Feature;

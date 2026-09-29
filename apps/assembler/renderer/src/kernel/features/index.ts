@@ -6,6 +6,10 @@ import type { Feature } from '../../model/document.js';
 import { isModelingFeature } from '../../model/features.js';
 import { applyAlign, applyMirror, applyPattern, applySplit, applyTransform } from './bodyOps.js';
 import { applyDeleteFace, applyOffsetFace } from './faceOps.js';
+import { applyDraft } from './draft.js';
+import { applyEmboss } from './emboss.js';
+import { applyHole } from './holes.js';
+import { applyRib, applyThicken } from './ribThicken.js';
 import type { FeatureKit, ReplayContextLike } from './kit.js';
 import { applyLoft, applyRevolve, applySweep } from './profileSolids.js';
 
@@ -38,5 +42,15 @@ export function applyModelingFeature(
       return applyOffsetFace(feature, ctx, kit);
     case 'deleteFace':
       return applyDeleteFace(feature, ctx, kit);
+    case 'hole':
+      return applyHole(feature, ctx, kit);
+    case 'emboss':
+      return applyEmboss(feature, ctx, kit);
+    case 'draft':
+      return applyDraft(feature, ctx, kit);
+    case 'rib':
+      return applyRib(feature, ctx, kit);
+    case 'thicken':
+      return applyThicken(feature, ctx, kit);
   }
 }

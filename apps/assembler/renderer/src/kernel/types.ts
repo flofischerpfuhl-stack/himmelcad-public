@@ -159,6 +159,17 @@ export interface EvaluationProgress {
   featureName: string | null;
 }
 
+/**
+ * The geometry a feature error points at, by naming key on the body as it
+ * was before the failing feature (e.g. the edge a fillet could not round),
+ * so the viewport can highlight it.
+ */
+export interface FeatureErrorRefs {
+  bodyId: string;
+  edgeKeys?: string[];
+  faceKeys?: string[];
+}
+
 /** Result of replaying a feature list. */
 export interface EvaluationResult {
   /** Bodies in creation order. */
@@ -167,6 +178,8 @@ export interface EvaluationResult {
   sketches: EvaluatedSketch[];
   /** Per-feature error message, keyed by feature id. Absent = no error. */
   errors: Record<string, string>;
+  /** Per-feature geometry an error points at (absent for most errors). */
+  errorRefs?: Record<string, FeatureErrorRefs>;
   /** Per-feature warnings (e.g. a reference re-bound by geometry). */
   warnings: Record<string, string>;
   stats: EvaluationStats;
