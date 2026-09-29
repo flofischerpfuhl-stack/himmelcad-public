@@ -1,0 +1,252 @@
+{
+  "format": "himmelcad-assembler",
+  "schemaVersion": 1,
+  "appVersion": "0.1.0-phase1",
+  "units": "mm",
+  "projectName": "phone-stand",
+  "features": [
+    {
+      "id": "feature-sketch-6",
+      "name": "Sketch 1",
+      "suppressed": false,
+      "kind": "sketch",
+      "plane": {
+        "offset": 0,
+        "kind": "plane",
+        "plane": "XY"
+      },
+      "profiles": [
+        {
+          "kind": "rectangle",
+          "x": 0,
+          "y": 0,
+          "width": 80,
+          "height": 70
+        }
+      ]
+    },
+    {
+      "id": "feature-extrude-7",
+      "name": "Extrude 1",
+      "suppressed": false,
+      "kind": "extrude",
+      "symmetric": false,
+      "operation": "new",
+      "profile": {
+        "kind": "sketch",
+        "featureId": "feature-sketch-6"
+      },
+      "distance": 6,
+      "resultBodyName": "Phone stand"
+    },
+    {
+      "id": "feature-sketch-8",
+      "name": "Sketch 2",
+      "suppressed": false,
+      "kind": "sketch",
+      "plane": {
+        "kind": "face",
+        "face": {
+          "bodyId": "body:feature-extrude-7",
+          "key": "feature-extrude-7:end:0",
+          "signature": {
+            "surface": "plane",
+            "normal": [
+              0,
+              0,
+              1
+            ],
+            "centroid": [
+              40,
+              35,
+              6
+            ],
+            "area": 5599.999999999999,
+            "adjacentFaces": 4
+          }
+        }
+      },
+      "profiles": [
+        {
+          "kind": "rectangle",
+          "x": 0,
+          "y": 50,
+          "width": 80,
+          "height": 8
+        }
+      ]
+    },
+    {
+      "id": "feature-extrude-9",
+      "name": "Extrude 2",
+      "suppressed": false,
+      "kind": "extrude",
+      "symmetric": false,
+      "operation": "join",
+      "profile": {
+        "kind": "sketch",
+        "featureId": "feature-sketch-8"
+      },
+      "distance": 80,
+      "targetBodyId": "body:feature-extrude-7"
+    },
+    {
+      "id": "feature-sketch-10",
+      "name": "Sketch 3",
+      "suppressed": false,
+      "kind": "sketch",
+      "plane": {
+        "kind": "face",
+        "face": {
+          "bodyId": "body:feature-extrude-7",
+          "key": "feature-extrude-7:end:0#1",
+          "signature": {
+            "surface": "plane",
+            "normal": [
+              0,
+              0,
+              1
+            ],
+            "centroid": [
+              40,
+              25,
+              5.999999999999999
+            ],
+            "area": 3999.999999999999,
+            "adjacentFaces": 4
+          }
+        }
+      },
+      "profiles": [
+        {
+          "kind": "rectangle",
+          "x": 0,
+          "y": 0,
+          "width": 80,
+          "height": 6
+        }
+      ]
+    },
+    {
+      "id": "feature-extrude-11",
+      "name": "Extrude 3",
+      "suppressed": false,
+      "kind": "extrude",
+      "symmetric": false,
+      "operation": "join",
+      "profile": {
+        "kind": "sketch",
+        "featureId": "feature-sketch-10"
+      },
+      "distance": 14,
+      "targetBodyId": "body:feature-extrude-7"
+    },
+    {
+      "id": "feature-fillet-12",
+      "name": "Fillet 1",
+      "suppressed": false,
+      "kind": "fillet",
+      "edges": [
+        {
+          "bodyId": "body:feature-extrude-7",
+          "key": "feature-extrude-7:end:0#1|feature-extrude-9:side:0:0",
+          "signature": {
+            "curve": "line",
+            "midpoint": [
+              40,
+              50,
+              6
+            ],
+            "length": 80,
+            "direction": [
+              1,
+              0,
+              0
+            ]
+          }
+        }
+      ],
+      "radius": 5
+    },
+    {
+      "id": "feature-fillet-13",
+      "name": "Fillet 2",
+      "suppressed": false,
+      "kind": "fillet",
+      "edges": [
+        {
+          "bodyId": "body:feature-extrude-7",
+          "key": "feature-extrude-11:side:0:2|feature-extrude-7:end:0#1",
+          "signature": {
+            "curve": "line",
+            "midpoint": [
+              40,
+              6,
+              5.999999999999999
+            ],
+            "length": 80,
+            "direction": [
+              -1,
+              0,
+              0
+            ]
+          }
+        }
+      ],
+      "radius": 3
+    },
+    {
+      "id": "feature-sketch-14",
+      "name": "Sketch 4",
+      "suppressed": false,
+      "kind": "sketch",
+      "plane": {
+        "kind": "face",
+        "face": {
+          "bodyId": "body:feature-extrude-7",
+          "key": "feature-extrude-7:side:0:0",
+          "signature": {
+            "surface": "plane",
+            "normal": [
+              0,
+              -1,
+              0
+            ],
+            "centroid": [
+              40,
+              0,
+              10
+            ],
+            "area": 1599.9999999999998,
+            "adjacentFaces": 4
+          }
+        }
+      },
+      "profiles": [
+        {
+          "kind": "rectangle",
+          "x": 32,
+          "y": 10,
+          "width": 16,
+          "height": 11
+        }
+      ]
+    },
+    {
+      "id": "feature-extrude-15",
+      "name": "Extrude 4",
+      "suppressed": false,
+      "kind": "extrude",
+      "symmetric": false,
+      "operation": "cut",
+      "profile": {
+        "kind": "sketch",
+        "featureId": "feature-sketch-14"
+      },
+      "distance": -6,
+      "targetBodyId": "body:feature-extrude-7"
+    }
+  ],
+  "createdAt": "2026-09-29T17:24:30.297Z",
+  "modifiedAt": "2026-09-29T17:24:30.298Z"
+}

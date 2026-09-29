@@ -223,8 +223,9 @@ no feature errors). "Edit + undo" = a size dimension of an early sketch is chang
 with `sketch.setDimension` (the whole later history must still evaluate and the
 bbox must follow) and then undone. The Electron test (`test/electron/agentAccess.test.ts`)
 additionally opens all five files in the **production app** through Agent
-access (the default directory holds the schema-1 files of the first run, so this
-also exercises the v1 → v2 migration in the app), checks the History panel lists
+access (the schema-1 `.hcasm` files of the first run are checked in as
+`apps/assembler/test/fixtures/`, so this also exercises the v1 → v2 migration in
+the app; `ASSEMBLER_BENCH_DIR` points it at a fresh run), checks the History panel lists
 them, changes a size dimension of the first sketch and reverts it with the
 app's Ctrl+Z.
 

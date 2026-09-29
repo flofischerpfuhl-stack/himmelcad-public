@@ -6,9 +6,11 @@
  * evaluate, render in the History panel and stay editable — an agent edit is
  * undone with the app's own Ctrl+Z (one shared undo stack).
  *
- * The benchmark files come from `apps/assembler/bench/run_bench.py`
- * (default `D:\AgentWork\HimmelCAD-Asm-agentapi\bench`, override with
- * `ASSEMBLER_BENCH_DIR`); without them only the endpoint checks run.
+ * The projects are the agent benchmark's results (`apps/assembler/bench/
+ * run_bench.py`), checked in under `test/fixtures/` (schema-1 files, so the
+ * 1 → 2 migration runs in the real app too); `ASSEMBLER_BENCH_DIR` points
+ * the test at a fresh benchmark run instead. Screenshots go to
+ * `ASSEMBLER_SHOTS_DIR` (default: a temp directory).
  */
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
@@ -19,10 +21,8 @@ import test from 'node:test';
 import { _electron as electron } from 'playwright-core';
 
 const APP_DIR = process.cwd();
-const BENCH_DIR =
-  process.env.ASSEMBLER_BENCH_DIR ?? join('D:', 'AgentWork', 'HimmelCAD-Asm-agentapi', 'bench');
-const SHOTS_DIR =
-  process.env.ASSEMBLER_SHOTS_DIR ?? join('D:', 'AgentWork', 'HimmelCAD-Asm-agentapi', 'shots');
+const BENCH_DIR = process.env.ASSEMBLER_BENCH_DIR ?? join(APP_DIR, 'test', 'fixtures');
+const SHOTS_DIR = process.env.ASSEMBLER_SHOTS_DIR ?? join(tmpdir(), 'assembler-agent-shots');
 
 interface Status {
   enabled: boolean;
@@ -95,7 +95,8 @@ void test('agent access: off by default, UI toggle + indicator, bench projects o
   const files = existsSync(BENCH_DIR)
     ? readdirSync(BENCH_DIR).filter((f) => f.endsWith('.hcasm'))
     : [];
-  t.diagnostic(`bench projects: ${files.length ? files.join(', ') : 'none found'}`);
+  t.diagnostic(`bench projects: ${files.join(', ')}`);
+  assert.ok(files.length > 0, `no .hcasm projects in ${BENCH_DIR}`);
   for (const file of files) {
     const text = readFileSync(join(BENCH_DIR, file), 'utf8');
     const opened = await rpc(status, 'project.open', { text });

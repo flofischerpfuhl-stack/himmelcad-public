@@ -1,0 +1,287 @@
+{
+  "format": "himmelcad-assembler",
+  "schemaVersion": 1,
+  "appVersion": "0.1.0-phase1",
+  "units": "mm",
+  "projectName": "bracket-with-slot",
+  "features": [
+    {
+      "id": "feature-sketch-6",
+      "name": "Sketch 1",
+      "suppressed": false,
+      "kind": "sketch",
+      "plane": {
+        "offset": 0,
+        "kind": "plane",
+        "plane": "XY"
+      },
+      "profiles": [
+        {
+          "kind": "rectangle",
+          "x": 0,
+          "y": 0,
+          "width": 60,
+          "height": 30
+        }
+      ]
+    },
+    {
+      "id": "feature-extrude-7",
+      "name": "Extrude 1",
+      "suppressed": false,
+      "kind": "extrude",
+      "symmetric": false,
+      "operation": "new",
+      "profile": {
+        "kind": "sketch",
+        "featureId": "feature-sketch-6"
+      },
+      "distance": 5,
+      "resultBodyName": "Bracket"
+    },
+    {
+      "id": "feature-sketch-8",
+      "name": "Sketch 2",
+      "suppressed": false,
+      "kind": "sketch",
+      "plane": {
+        "kind": "face",
+        "face": {
+          "bodyId": "body:feature-extrude-7",
+          "key": "feature-extrude-7:end:0",
+          "signature": {
+            "surface": "plane",
+            "normal": [
+              0,
+              0,
+              1
+            ],
+            "centroid": [
+              30,
+              15,
+              5
+            ],
+            "area": 1800,
+            "adjacentFaces": 4
+          }
+        }
+      },
+      "profiles": [
+        {
+          "kind": "rectangle",
+          "x": 0,
+          "y": 25,
+          "width": 60,
+          "height": 5
+        }
+      ]
+    },
+    {
+      "id": "feature-extrude-9",
+      "name": "Extrude 2",
+      "suppressed": false,
+      "kind": "extrude",
+      "symmetric": false,
+      "operation": "join",
+      "profile": {
+        "kind": "sketch",
+        "featureId": "feature-sketch-8"
+      },
+      "distance": 40,
+      "targetBodyId": "body:feature-extrude-7"
+    },
+    {
+      "id": "feature-fillet-10",
+      "name": "Fillet 1",
+      "suppressed": false,
+      "kind": "fillet",
+      "edges": [
+        {
+          "bodyId": "body:feature-extrude-7",
+          "key": "feature-extrude-7:end:0|feature-extrude-9:side:0:0",
+          "signature": {
+            "curve": "line",
+            "midpoint": [
+              30,
+              25,
+              5
+            ],
+            "length": 60,
+            "direction": [
+              1,
+              0,
+              0
+            ]
+          }
+        }
+      ],
+      "radius": 4
+    },
+    {
+      "id": "feature-sketch-11",
+      "name": "Sketch 3",
+      "suppressed": false,
+      "kind": "sketch",
+      "plane": {
+        "kind": "face",
+        "face": {
+          "bodyId": "body:feature-extrude-7",
+          "key": "feature-extrude-7:end:0",
+          "signature": {
+            "surface": "plane",
+            "normal": [
+              0,
+              0,
+              1
+            ],
+            "centroid": [
+              30,
+              10.5,
+              5
+            ],
+            "area": 1260,
+            "adjacentFaces": 4
+          }
+        }
+      },
+      "profiles": [
+        {
+          "kind": "rectangle",
+          "x": 23,
+          "y": 9,
+          "width": 14,
+          "height": 6
+        },
+        {
+          "kind": "circle",
+          "cx": 23,
+          "cy": 12,
+          "radius": 3
+        },
+        {
+          "kind": "circle",
+          "cx": 37,
+          "cy": 12,
+          "radius": 3
+        }
+      ]
+    },
+    {
+      "id": "feature-extrude-12",
+      "name": "Extrude 3",
+      "suppressed": false,
+      "kind": "extrude",
+      "symmetric": false,
+      "operation": "cut",
+      "profile": {
+        "kind": "sketch",
+        "featureId": "feature-sketch-11"
+      },
+      "distance": -5,
+      "targetBodyId": "body:feature-extrude-7"
+    },
+    {
+      "id": "feature-sketch-13",
+      "name": "Sketch 4",
+      "suppressed": false,
+      "kind": "sketch",
+      "plane": {
+        "kind": "face",
+        "face": {
+          "bodyId": "body:feature-extrude-7",
+          "key": "feature-extrude-9:side:0:0",
+          "signature": {
+            "surface": "plane",
+            "normal": [
+              0,
+              -1,
+              0
+            ],
+            "centroid": [
+              30,
+              25,
+              27
+            ],
+            "area": 2160,
+            "adjacentFaces": 4
+          }
+        }
+      },
+      "profiles": [
+        {
+          "kind": "circle",
+          "cx": 15,
+          "cy": 30,
+          "radius": 2.5
+        },
+        {
+          "kind": "circle",
+          "cx": 45,
+          "cy": 30,
+          "radius": 2.5
+        }
+      ]
+    },
+    {
+      "id": "feature-extrude-14",
+      "name": "Extrude 4",
+      "suppressed": false,
+      "kind": "extrude",
+      "symmetric": false,
+      "operation": "cut",
+      "profile": {
+        "kind": "sketch",
+        "featureId": "feature-sketch-13"
+      },
+      "distance": -5,
+      "targetBodyId": "body:feature-extrude-7"
+    },
+    {
+      "id": "feature-fillet-15",
+      "name": "Fillet 2",
+      "suppressed": false,
+      "kind": "fillet",
+      "edges": [
+        {
+          "bodyId": "body:feature-extrude-7",
+          "key": "feature-extrude-7:side:0:0|feature-extrude-7:side:0:3",
+          "signature": {
+            "curve": "line",
+            "midpoint": [
+              0,
+              0,
+              2.5
+            ],
+            "length": 5,
+            "direction": [
+              0,
+              0,
+              1
+            ]
+          }
+        },
+        {
+          "bodyId": "body:feature-extrude-7",
+          "key": "feature-extrude-7:side:0:0|feature-extrude-7:side:0:1",
+          "signature": {
+            "curve": "line",
+            "midpoint": [
+              60,
+              0,
+              2.5
+            ],
+            "length": 5,
+            "direction": [
+              0,
+              0,
+              1
+            ]
+          }
+        }
+      ],
+      "radius": 3
+    }
+  ],
+  "createdAt": "2026-09-29T17:24:23.810Z",
+  "modifiedAt": "2026-09-29T17:24:23.812Z"
+}
