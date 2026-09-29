@@ -14,12 +14,14 @@
  * readiness is read from the real status-strip DOM the user sees.
  */
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
 import { _electron as electron } from 'playwright-core';
+
+import { closeApp } from './closeApp.js';
 
 // Run via `pnpm --filter @himmelcad/assembler test:electron` (cwd =
 // `apps/assembler`, where `dist/electron/main.js` and `package.json`'s
@@ -37,7 +39,7 @@ void test('production build: kernel reaches ready, the demo part renders, Save/R
     timeout: 60_000,
   });
   t.after(async () => {
-    await app.close().catch(() => undefined);
+    await closeApp(app);
     rmSync(userDataDir, { recursive: true, force: true });
   });
 
@@ -218,4 +220,57 @@ void test('production build: kernel reaches ready, the demo part renders, Save/R
     return opened.text;
   });
   assert.equal(reopenedText, projectText);
+
+  // Close guard: the sketch above made the project dirty, so closing the window
+  // asks first (in-app dialog, not a native one); Discard lets it close.
+  const closed = new Promise<void>((resolve) => app.once('close', () => resolve()));
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.close());
+  const discard = window.getByRole('button', { name: 'Discard changes' });
+  await discard.waitFor({ timeout: 10_000 });
+  await window.screenshot({ path: join(SHOTS_DIR, 'f-electron-production-close-guard.png') });
+  // The window (and the app) closes during the click itself.
+  await discard.click({ noWaitAfter: true }).catch(() => undefined);
+  await closed;
+});
+
+void test('production build: a .hcasm on the command line (file association) opens on launch', async (t) => {
+  const userDataDir = mkdtempSync(join(tmpdir(), 'assembler-open-arg-'));
+  const fixture = join(APP_DIR, 'test', 'fixtures', 'phone-stand.hcasm');
+  const app = await electron.launch({
+    args: [APP_DIR, `--user-data-dir=${userDataDir}`, fixture],
+    env: { ...process.env, ASSEMBLER_FORCE_PRODUCTION: '1' },
+    timeout: 60_000,
+  });
+  t.after(async () => {
+    await closeApp(app);
+    rmSync(userDataDir, { recursive: true, force: true });
+  });
+  const window = await app.firstWindow();
+  // The project name in the top bar, and its last History step, once evaluated.
+  await window.getByRole('button', { name: /^phone-stand/ }).waitFor({ timeout: 60_000 });
+  const lastStep = (
+    JSON.parse(readFileSync(fixture, 'utf8')) as { features: { name: string }[] }
+  ).features.at(-1)!.name;
+  await window
+    .locator('[aria-label="History panel"]')
+    .getByText(lastStep, { exact: true })
+    .first()
+    .waitFor({ timeout: 60_000 });
+  await window.waitForFunction(() => !document.body.innerText.includes('No items yet'), {
+    timeout: 60_000,
+  });
+  const recent = await window.evaluate(() =>
+    (
+      globalThis as unknown as {
+        assembler: { recentFiles: { list(): Promise<{ path: string }[]> } };
+      }
+    ).assembler.recentFiles.list(),
+  );
+  assert.deepEqual(
+    recent.map((r) => r.path),
+    [fixture],
+    'a file opened from the command line is remembered in Open Recent',
+  );
+  mkdirSync(SHOTS_DIR, { recursive: true });
+  await window.screenshot({ path: join(SHOTS_DIR, 'f-electron-open-argument.png') });
 });

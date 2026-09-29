@@ -7,10 +7,10 @@
 import { create } from 'zustand';
 
 import type { KernelAdapter } from '../../kernel/adapter.js';
-import { useProjectStore } from '../../model/project/projectStore.js';
+import { currentProjectText, useProjectStore } from '../../model/project/projectStore.js';
 import { useAssemblerStore } from '../../model/store.js';
 import { handleJsonRpcText } from '../jsonRpc.js';
-import { APP_CAPABILITIES, AgentSession } from '../session.js';
+import { APP_CAPABILITIES, AgentSession, type SessionHost } from '../session.js';
 
 export interface AutomationState {
   /** `true` in the desktop app (the endpoint needs the Electron main process). */
@@ -68,6 +68,28 @@ function methodOf(body: string): string | null {
   }
 }
 
+/** The app's side of an agent session: unsaved-work guard and project open/new/save. */
+export function appSessionHost(): SessionHost {
+  return {
+    server: 'app',
+    capabilities: APP_CAPABILITIES,
+    // The project store's dirty flag (features, Items, saved views, reference meshes
+    // since the last New/Open/Save; tracked from startup).
+    hasUnsavedChanges: () => useProjectStore.getState().dirty,
+    // Open/New/Save go through the app's project handling, like the File menu.
+    project: {
+      open: async (text) => {
+        const ok = await useProjectStore.getState().openFromResult({ path: null, text });
+        if (!ok) {
+          throw new Error(useProjectStore.getState().loadError ?? 'Could not open the project');
+        }
+      },
+      newProject: (name) => useProjectStore.getState().newProject(name),
+      text: (projectName) => currentProjectText(projectName),
+    },
+  };
+}
+
 /**
  * Connects forwarded endpoint requests to one {@link AgentSession} on the
  * app's store and kernel. Safe to call when not in Electron (no-op).
@@ -78,14 +100,7 @@ export function installAutomationBridge(kernel: KernelAdapter): () => void {
   const session = new AgentSession({
     store: useAssemblerStore,
     kernel,
-    host: {
-      server: 'app',
-      capabilities: APP_CAPABILITIES,
-      // Conservative: any undoable change since the last load/new counts as unsaved work
-      // (the project store's dirty flag only starts tracking after the first file action).
-      hasUnsavedChanges: () =>
-        useProjectStore.getState().dirty || useAssemblerStore.getState().history.canUndo,
-    },
+    host: appSessionHost(),
   });
   void automation.status().then((status) =>
     useAutomationStore.setState({

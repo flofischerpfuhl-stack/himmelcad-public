@@ -98,7 +98,8 @@ export interface ProjectFileState {
   /** Saves (prompting if there is no file yet), then proceeds with `pendingAction` if it succeeded. */
   saveThenProceed: () => Promise<void>;
 
-  newProject: () => void;
+  /** Replaces the document with a blank project (`name` defaults to `Untitled`). */
+  newProject: (name?: string) => void;
   openProject: () => Promise<void>;
   /**
    * Applies an already-read `.hcasm` (path + text) as the current document —
@@ -106,7 +107,7 @@ export interface ProjectFileState {
    * opening a file via double-click/command-line argument or a second app
    * instance forwarding its argv (`electron/main.ts`).
    */
-  openFromResult: (opened: io.OpenResult) => Promise<void>;
+  openFromResult: (opened: io.OpenResult) => Promise<boolean>;
   save: () => Promise<void>;
   saveAs: () => Promise<void>;
   exportStlAll: () => Promise<void>;
@@ -128,6 +129,8 @@ let kernelAdapter: KernelAdapter | null = null;
 let autosaveTimer: ReturnType<typeof setInterval> | null = null;
 let recoveryDebounce: ReturnType<typeof setTimeout> | null = null;
 let baselineFeatures: Feature[] | null = null;
+/** Items, saved views or reference meshes changed since the last New/Open/Save. */
+let extrasDirty = false;
 let subscribed = false;
 /** Set while New/Open/Recover replace item names and saved views (not a user edit). */
 let restoringExtras = false;
@@ -217,6 +220,20 @@ async function decodeReferenceMeshes(
   );
 }
 
+/**
+ * The project file text Save would write now: features, view state, saved
+ * views, Items names/folders and reference meshes. Also what an agent's
+ * `project.save` returns in the app (`api/app/automationStore.ts`), so an
+ * agent save never drops the user's non-feature data.
+ */
+export async function currentProjectText(projectName?: string): Promise<string> {
+  const text = await currentProjectPayload();
+  if (projectName === undefined) return text;
+  const file = JSON.parse(text) as { projectName: string };
+  file.projectName = projectName;
+  return JSON.stringify(file, null, 2);
+}
+
 async function currentProjectPayload(): Promise<string> {
   const doc = useAssemblerStore.getState();
   const project = useProjectStore.getState();
@@ -269,6 +286,7 @@ function ensureSubscription(): void {
   // Item names/folders, saved views and reference meshes are saved with the project too.
   const markDirty = () => {
     if (restoringExtras) return;
+    extrasDirty = true;
     useProjectStore.setState({ dirty: true });
     writeRecoverySoon();
   };
@@ -277,10 +295,11 @@ function ensureSubscription(): void {
     // covered by the feature baseline below).
     if (state.referenceMeshes !== prev.referenceMeshes) markDirty();
     if (state.features === prev.features) return;
-    if (state.features !== baselineFeatures) {
-      useProjectStore.setState({ dirty: true });
-      writeRecoverySoon();
-    }
+    // Undo back to the saved feature list makes the project clean again
+    // (unless items, saved views or meshes changed meanwhile).
+    const dirty = extrasDirty || state.features !== baselineFeatures;
+    if (dirty !== useProjectStore.getState().dirty) useProjectStore.setState({ dirty });
+    if (dirty) writeRecoverySoon();
   });
   useItemsStore.subscribe((state, prev) => {
     if (
@@ -376,12 +395,13 @@ export const useProjectStore = create<ProjectFileState>((set, get) => ({
     else if (action === 'close') void io.respondClose(true);
   },
 
-  newProject: () => {
+  newProject: (name) => {
     ensureSubscription();
     const features: Feature[] = []; // a blank document, not the demo.
     baselineFeatures = features;
+    extrasDirty = false;
     loadWithoutDirty(() =>
-      useAssemblerStore.getState().loadDocument(features, { projectName: 'Untitled' }),
+      useAssemblerStore.getState().loadDocument(features, { projectName: name ?? 'Untitled' }),
     );
     restoreExtras(null);
     set({
@@ -407,6 +427,7 @@ export const useProjectStore = create<ProjectFileState>((set, get) => ({
       const project = loadProjectFile(opened.text);
       const referenceMeshes = await decodeReferenceMeshes(project.referenceMeshes ?? []);
       baselineFeatures = project.features;
+      extrasDirty = false;
       loadWithoutDirty(() =>
         useAssemblerStore
           .getState()
@@ -422,6 +443,7 @@ export const useProjectStore = create<ProjectFileState>((set, get) => ({
         loadError: null,
       });
       void io.clearRecovery();
+      return true;
     } catch (error) {
       set({
         loadError:
@@ -429,6 +451,7 @@ export const useProjectStore = create<ProjectFileState>((set, get) => ({
             ? error.message
             : `Could not open this project: ${error instanceof Error ? error.message : String(error)}`,
       });
+      return false;
     }
   },
 
@@ -444,6 +467,7 @@ export const useProjectStore = create<ProjectFileState>((set, get) => ({
       });
       if (!result) return; // cancelled
       baselineFeatures = doc.features;
+      extrasDirty = false;
       set({
         filePath: result.path ?? get().filePath,
         dirty: false,
@@ -466,6 +490,7 @@ export const useProjectStore = create<ProjectFileState>((set, get) => ({
       });
       if (!result) return;
       baselineFeatures = doc.features;
+      extrasDirty = false;
       set({
         filePath: result.path ?? get().filePath,
         dirty: false,

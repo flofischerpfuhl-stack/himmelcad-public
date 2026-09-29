@@ -159,7 +159,7 @@ registry / command search). `electron/automationServer.ts`,
 | No browser/CSRF/DNS rebinding    | Requests with an `Origin` header are refused; `Host` must be the loopback address; only `POST /rpc`; body ≤ 96 MB.                                                                                                                                |
 | No harness gets store authority  | The main process forwards bodies only; the renderer's `AgentSession` validates and commits through the store's actions.                                                                                                                           |
 | Capabilities                     | App sessions: `document.read`, `document.write`, `view.write` — **no filesystem**: `path` params are `permissionDenied`; exports come back as base64 and the client writes them; imports/opens send data. Headless: plus `filesystem.read/write`. |
-| Destructive commands need a user | `project.new`/`project.open` in the app return `confirmationRequired` if unsaved work would be lost (project dirty flag, or any undoable change since the last load); agents cannot bypass it.                                                    |
+| Destructive commands need a user | `project.new`/`project.open` in the app return `confirmationRequired` if unsaved work would be lost (the project's dirty flag); agents cannot bypass it.                                                                                          |
 | Concurrency                      | Serialized per session; `busy` while a UI tool runs; `conflict` on `expectedRevision` mismatch or when the user edited during an open transaction.                                                                                                |
 
 Not (yet) implemented from ADR 0024: bulk-data leases (exports are inline
@@ -299,15 +299,17 @@ the 3MF files.
   (final) evaluation to fill signatures of _changed_ reference fields; keys
   are what bind, signatures are only the fallback, but a signature taken from
   a later state is less useful for re-binding.
-- **Unsaved-work detection in the app** is conservative (any undoable change
-  counts) because the project store's dirty flag only starts tracking after
-  the first file action (`projectStore.ensureSubscription`) — a pre-existing
-  gap worth fixing in the project store.
-- **Feature ids** come from the store's shared counter
-  (`feature-<kind>-<n>`); `loadDocument` does not reseed it, so after opening
-  a file with high ids the UI path could in principle collide (the API path
-  skips taken ids).
-- **Agent `project.open` in the app** does not refit the camera.
+- **Unsaved-work detection in the app** is the project store's dirty flag,
+  tracked from startup: feature changes (undo back to the saved list is clean
+  again), Items names/folders, saved views and reference meshes.
+- **In the app, `project.open`/`project.new`/`project.save` go through the
+  project store** (`api/app/automationStore.ts` `appSessionHost`), like the
+  File menu: an agent open restores Items, saved views, view state and
+  reference meshes and leaves the project clean (no file path: Save asks
+  where); an agent save returns the complete file, so it never drops the
+  user's non-feature data. Headless sessions work on the features alone.
+- **Agent `project.open` in the app** does not refit the camera (a saved
+  camera preset in the file is applied).
 - **Kernel busy**: API validation evaluations use the kernel's preview
   channel; a user dragging a tool preview supersedes them (retried up to 20
   times, then `busy`).

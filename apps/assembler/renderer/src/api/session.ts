@@ -97,6 +97,19 @@ export interface SessionHost {
   writeFile?: (path: string, bytes: Uint8Array) => Promise<string>;
   /** App only: `true` if replacing the document would discard unsaved user work. */
   hasUnsavedChanges?: () => boolean;
+  /**
+   * App only: the app's own project handling, so an agent's open/new/save
+   * behave like File > Open/New/Save (Items names and folders, saved views,
+   * view state and reference meshes are restored or written, the unsaved
+   * state is reset). Without them the session works on the features alone.
+   */
+  project?: {
+    /** Opens an already validated project text; throws with the app's message on failure. */
+    open(text: string): Promise<void>;
+    newProject(name: string): void;
+    /** The text File > Save would write (optionally under another project name). */
+    text(projectName?: string): Promise<string>;
+  };
 }
 
 export const HEADLESS_CAPABILITIES: ReadonlySet<Capability> = new Set<Capability>([
@@ -996,7 +1009,8 @@ export class AgentSession {
     this.ensureWritable();
     this.guardDiscard('Starting a new project');
     const name = typeof p.name === 'string' ? p.name : 'Untitled';
-    this.store.getState().loadDocument([], { projectName: name });
+    if (this.host.project) this.host.project.newProject(name);
+    else this.store.getState().loadDocument([], { projectName: name });
     await this.store.getState().whenSettled();
     return { projectName: name, revision: this.revision };
   }
@@ -1021,7 +1035,8 @@ export class AgentSession {
       throw error;
     }
     this.guardDiscard('Opening a project');
-    this.store.getState().loadDocument(project.features, { projectName: project.projectName });
+    if (this.host.project) await this.host.project.open(text);
+    else this.store.getState().loadDocument(project.features, { projectName: project.projectName });
     await this.store.getState().whenSettled();
     const evaluation = this.store.getState().evaluation;
     return {
@@ -1035,12 +1050,14 @@ export class AgentSession {
   private async saveProject(p: Json): Promise<Json> {
     this.ensureNoTx('project.save');
     const state = this.store.getState();
-    const text = saveProjectFile({
-      projectName: typeof p.name === 'string' ? p.name : state.projectName,
-      features: state.features,
-      appVersion: APP_VERSION,
-      createdAt: new Date().toISOString(),
-    });
+    const text = this.host.project
+      ? await this.host.project.text(typeof p.name === 'string' ? p.name : undefined)
+      : saveProjectFile({
+          projectName: typeof p.name === 'string' ? p.name : state.projectName,
+          features: state.features,
+          appVersion: APP_VERSION,
+          createdAt: new Date().toISOString(),
+        });
     const bytes = new TextEncoder().encode(text);
     if (typeof p.path === 'string') {
       this.requireCapability('filesystem.write', 'Writing a file');

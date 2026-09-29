@@ -15,6 +15,8 @@ import test from 'node:test';
 
 import { _electron as electron } from 'playwright-core';
 
+import { closeApp } from './closeApp.js';
+
 import { describeBody, describeEdge, describeFace } from '../../renderer/src/api/describe.js';
 import { loadProjectFile, saveProjectFile } from '../../renderer/src/model/project/format.js';
 import { BENCH_PARTS, sixtyPartBench } from '../bench/parts.js';
@@ -51,7 +53,7 @@ void test('the app (browser worker) and Node name every body, face and edge iden
     timeout: 60_000,
   });
   t.after(async () => {
-    await app.close().catch(() => undefined);
+    await closeApp(app);
     rmSync(userDataDir, { recursive: true, force: true });
   });
   const window = await app.firstWindow();

@@ -20,6 +20,8 @@ import test from 'node:test';
 
 import { _electron as electron } from 'playwright-core';
 
+import { closeApp } from './closeApp.js';
+
 const APP_DIR = process.cwd();
 const BENCH_DIR = process.env.ASSEMBLER_BENCH_DIR ?? join(APP_DIR, 'test', 'fixtures');
 const SHOTS_DIR = process.env.ASSEMBLER_SHOTS_DIR ?? join(tmpdir(), 'assembler-agent-shots');
@@ -55,7 +57,7 @@ void test('agent access: off by default, UI toggle + indicator, bench projects o
     timeout: 60_000,
   });
   t.after(async () => {
-    await app.close().catch(() => undefined);
+    await closeApp(app);
     rmSync(userDataDir, { recursive: true, force: true });
   });
   const window = await app.firstWindow();

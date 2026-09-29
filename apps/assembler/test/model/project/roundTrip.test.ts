@@ -8,12 +8,16 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { appSessionHost } from '../../../renderer/src/api/app/automationStore.js';
+import { ApiError } from '../../../renderer/src/api/errors.js';
+import { AgentSession } from '../../../renderer/src/api/session.js';
 import { createDemoDocument } from '../../../renderer/src/model/document.js';
 import { bodyRowKey, meshRowKey, useItemsStore } from '../../../renderer/src/model/items.js';
 import { loadProjectFile } from '../../../renderer/src/model/project/format.js';
 import { useProjectStore } from '../../../renderer/src/model/project/projectStore.js';
 import { useAssemblerStore } from '../../../renderer/src/model/store.js';
 import { useWorkspaceStore } from '../../../renderer/src/model/workspace.js';
+import { createNodeKernelAdapter } from '../../kernel/nodeKernel.js';
 
 let savedText: string | null = null;
 (globalThis as unknown as { window: unknown }).window = {
@@ -98,4 +102,53 @@ void test('save and reopen keep item names, folders, saved views, view state and
   assert.equal(items.folders.find((f) => f.id === folderId)?.name, 'Parts');
   assert.equal(items.parent[meshRowKey('scan-1')], folderId);
   assert.deepEqual(useWorkspaceStore.getState().savedViews, [{ name: 'Detail', pose }]);
+});
+
+void test('undo back to the saved state makes the project clean again', () => {
+  useProjectStore.getState().newProject();
+  const doc = useAssemblerStore.getState();
+  doc.addFeature({
+    id: 'a1',
+    name: 'Appearance',
+    suppressed: false,
+    kind: 'setAppearance',
+    bodyId: 'body:none',
+    color: '#FF0000',
+  });
+  assert.equal(useProjectStore.getState().dirty, true);
+  useAssemblerStore.getState().undo();
+  assert.equal(useProjectStore.getState().dirty, false);
+  // Item edits keep it dirty even when the features are back.
+  useAssemblerStore.getState().redo();
+  useItemsStore.getState().createFolder({ name: 'F' });
+  useAssemblerStore.getState().undo();
+  assert.equal(useProjectStore.getState().dirty, true);
+});
+
+void test('agent open/save in the app use the project store (items, meshes, clean state)', async () => {
+  const kernel = createNodeKernelAdapter();
+  useAssemblerStore.getState().attachKernel(kernel);
+  const session = new AgentSession({ store: useAssemblerStore, kernel, host: appSessionHost() });
+  const call = (method: string, params: Record<string, unknown> = {}) =>
+    session.handle(method, params) as Promise<Record<string, unknown>>;
+  useProjectStore.getState().newProject();
+  assert.ok(savedText, 'the first test saved a project');
+  await call('project.open', { text: savedText });
+  assert.equal(useProjectStore.getState().dirty, false, 'an agent open leaves the app clean');
+  assert.equal(useAssemblerStore.getState().referenceMeshes.length, 1, 'meshes restored');
+  assert.equal(useItemsStore.getState().folders[0]?.name, 'Parts', 'folders restored');
+  // An agent save returns the full project, not only the features.
+  const saved = (await call('project.save', { name: 'Agent copy' })) as { text: string };
+  const file = loadProjectFile(saved.text);
+  assert.equal(file.projectName, 'Agent copy');
+  assert.equal(file.referenceMeshes?.length, 1);
+  assert.equal(file.items?.folders[0]?.name, 'Parts');
+  // A second open right away is allowed (nothing unsaved) …
+  await call('project.open', { text: savedText });
+  // … but not after the user changed something.
+  useItemsStore.getState().renameFolder(useItemsStore.getState().folders[0]!.id, 'Changed');
+  await assert.rejects(
+    call('project.open', { text: savedText }),
+    (error: unknown) => error instanceof ApiError && error.code === 'confirmationRequired',
+  );
 });
