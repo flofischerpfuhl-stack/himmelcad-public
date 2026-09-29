@@ -81,18 +81,19 @@ export function installAutomationBridge(kernel: KernelAdapter): () => void {
     host: {
       server: 'app',
       capabilities: APP_CAPABILITIES,
-      hasUnsavedChanges: () => useProjectStore.getState().dirty,
+      // Conservative: any undoable change since the last load/new counts as unsaved work
+      // (the project store's dirty flag only starts tracking after the first file action).
+      hasUnsavedChanges: () =>
+        useProjectStore.getState().dirty || useAssemblerStore.getState().history.canUndo,
     },
   });
-  void automation
-    .status()
-    .then((status) =>
-      useAutomationStore.setState({
-        enabled: status.enabled,
-        url: status.url,
-        token: status.token,
-      }),
-    );
+  void automation.status().then((status) =>
+    useAutomationStore.setState({
+      enabled: status.enabled,
+      url: status.url,
+      token: status.token,
+    }),
+  );
   const off = automation.onRequest((id, body) => {
     useAutomationStore.setState((s) => ({
       requestCount: s.requestCount + 1,

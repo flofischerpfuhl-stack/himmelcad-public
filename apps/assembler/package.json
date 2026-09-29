@@ -2,7 +2,7 @@
   "name": "@himmelcad/assembler",
   "version": "0.0.0",
   "private": true,
-  "description": "HimmelCAD Assembler ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â desktop CAD for 3D printing (Phase 0 skeleton)",
+  "description": "HimmelCAD Assembler ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â desktop CAD for 3D printing (Phase 0 skeleton)",
   "author": {
     "name": "HimmelCAD",
     "email": "noreply@himmelcad.local"
@@ -26,7 +26,7 @@
     "build": "vite build && pnpm build:electron && pnpm build:headless",
     "typecheck": "tsc -b tsconfig.json tsconfig.typecheck-electron.json && tsc -p tsconfig.headless.json --noEmit",
     "test": "tsc -p tsconfig.test.json && pnpm build:headless && node --test .build/tests/apps/assembler/test/windowOptions.test.js .build/tests/apps/assembler/test/model/store.test.js .build/tests/apps/assembler/test/model/commands.test.js .build/tests/apps/assembler/test/model/tools.test.js .build/tests/apps/assembler/test/model/modeling.test.js .build/tests/apps/assembler/test/model/project/format.test.js .build/tests/apps/assembler/test/model/project/projectStore.test.js .build/tests/apps/assembler/test/kernel/adapter.test.js .build/tests/apps/assembler/test/kernel/naming.test.js .build/tests/apps/assembler/test/kernel/evaluator.test.js .build/tests/apps/assembler/test/kernel/stlExport.test.js .build/tests/apps/assembler/test/kernel/threeMf.test.js .build/tests/apps/assembler/test/kernel/stepRoundTrip.test.js .build/tests/apps/assembler/test/viewport/math.test.js .build/tests/apps/assembler/test/viewport/camera.test.js .build/tests/apps/assembler/test/viewport/expr.test.js .build/tests/apps/assembler/test/viewport/picking.test.js .build/tests/apps/assembler/test/viewport/toolAnchors.test.js .build/tests/apps/assembler/test/api/contract.test.js .build/tests/apps/assembler/test/api/session.test.js .build/tests/apps/assembler/test/api/automationServer.test.js .build/tests/apps/assembler/test/api/headless.test.js",
-    "test:electron": "pnpm build && tsc -p tsconfig.test.json && node --test .build/tests/apps/assembler/test/electron/production.test.js"
+    "test:electron": "pnpm build && tsc -p tsconfig.test.json && node --test --test-concurrency=1 .build/tests/apps/assembler/test/electron/production.test.js .build/tests/apps/assembler/test/electron/agentAccess.test.js"
   },
   "dependencies": {
     "@himmelcad/theme": "workspace:*",
