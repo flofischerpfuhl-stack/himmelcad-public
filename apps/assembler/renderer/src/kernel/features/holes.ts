@@ -190,9 +190,21 @@ export function applyHole(feature: HoleFeature, ctx: ReplayContextLike, kit: Fea
   const tools = centres.map((centre, i) =>
     holeTool(kit, feature.id, i, centre, into, radial, section),
   );
+  // Holes that do not touch each other are cut in one boolean with a compound tool (a
+  // fuse per hole costs a boolean each); overlapping holes are fused first.
+  const outer = Math.max(...section.points.map(([r]) => r));
+  const apart = centres.every((c, i) =>
+    centres.slice(0, i).every((d) => Math.hypot(...sub(c, d)) > 2 * outer + 1e-3),
+  );
   const holder = { id: '', name: '', color: '', createdBy: '', ...tools[0]! };
-  for (const next of tools.slice(1))
-    kit.combine(holder, next, 'join', feature.id, ctx.featureOrder);
+  if (apart && tools.length > 1) {
+    // replicad's makeCompound deletes its inputs: hand it clones (same B-rep, new wrappers).
+    holder.shape = R.makeCompound(tools.map((t) => t.shape.clone())) as Shape3D;
+    holder.faces = tools.flatMap((t) => t.faces);
+  } else {
+    for (const next of tools.slice(1))
+      kit.combine(holder, next, 'join', feature.id, ctx.featureOrder);
+  }
 
   // A hole whose centre is off the face is almost always a mistake: say which.
   const outside = centres
