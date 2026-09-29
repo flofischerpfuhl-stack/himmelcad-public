@@ -293,7 +293,8 @@ void test('circle -> extrude: into the body cuts a hole, outward joins, free-sta
   const sketchId = store.getState().features.at(-1)!.id;
 
   findCommand('tools.extrude')!.run(store.getState());
-  assert.equal(tool('extrude').operation, 'join', 'on a face, before any drag');
+  assert.equal(tool('extrude').operation, 'cut', 'inside a face: starts as a through-cut');
+  assert.equal(tool('extrude').distance, -10);
   store.getState().setDistance(5);
   assert.equal(tool('extrude').operation, 'join', 'out of the face');
   store.getState().setDistance(-10);

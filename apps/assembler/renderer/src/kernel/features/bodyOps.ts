@@ -25,6 +25,7 @@ import {
 } from '../../model/features.js';
 import { assignFaceKeys } from '../naming.js';
 import type { BodyStateLike, FeatureKit, ReplayContextLike, Shape3D } from './kit.js';
+import { transformShape } from './occRigid.js';
 import { bodyOrFail, resolveAxis, resolvePlane } from './refs.js';
 import {
   add,
@@ -36,7 +37,7 @@ import {
   scale,
   sub,
   transformGeom,
-  transformShape,
+  transformOps,
   type RigidOp,
 } from './rigid.js';
 
@@ -217,32 +218,6 @@ export function applySplit(feature: SplitFeature, ctx: ReplayContextLike, kit: F
 }
 
 // ---- Transform (Move/Rotate gizmo) ---------------------------------------------------
-
-export function transformOps(feature: {
-  dx: number;
-  dy: number;
-  dz: number;
-  rx: number;
-  ry: number;
-  rz: number;
-  pivot: Vec3;
-}): RigidOp[] {
-  const ops: RigidOp[] = [];
-  const axes: [number, Vec3][] = [
-    [feature.rx, [1, 0, 0]],
-    [feature.ry, [0, 1, 0]],
-    [feature.rz, [0, 0, 1]],
-  ];
-  for (const [degrees, axis] of axes) {
-    if (degrees !== 0) {
-      ops.push({ kind: 'rotate', point: feature.pivot, axis, angle: (degrees * Math.PI) / 180 });
-    }
-  }
-  if (feature.dx !== 0 || feature.dy !== 0 || feature.dz !== 0) {
-    ops.push({ kind: 'translate', vector: [feature.dx, feature.dy, feature.dz] });
-  }
-  return ops;
-}
 
 export function applyTransform(
   feature: TransformFeature,

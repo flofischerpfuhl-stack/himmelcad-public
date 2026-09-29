@@ -2,13 +2,10 @@
  * Rigid motions (rotation, mirror, translation) applied consistently to
  * OCCT shapes and to the naming layer's face descriptors, so a moved,
  * rotated or mirrored body keeps its face keys (see `../naming.ts`).
- * Pure TypeScript except {@link toTrsf}/{@link transformShape}.
+ * Pure TypeScript (no OCCT, safe for the UI bundle); `occRigid.ts` applies the same ops to shapes.
  */
-import * as R from 'replicad';
-
 import type { Vec3 } from '../../model/document.js';
 import { cylinderId, type FaceGeom, type SurfaceId } from '../naming.js';
-import type { OpenCascade, Shape3D } from './kit.js';
 
 export type RigidOp =
   | { kind: 'rotate'; point: Vec3; axis: Vec3; angle: number /* radians */ }
@@ -106,44 +103,31 @@ export function transformGeom<T extends FaceGeom>(face: T, a: Affine): T {
   };
 }
 
-/** OCCT transformation of `ops` (applied in order). */
-function toTrsf(oc: OpenCascade, ops: readonly RigidOp[]) {
-  const total = new oc.gp_Trsf();
-  for (const op of ops) {
-    const step = new oc.gp_Trsf();
-    if (op.kind === 'translate') {
-      const v = new oc.gp_Vec(op.vector[0], op.vector[1], op.vector[2]);
-      step.SetTranslation(v);
-      v.delete();
-    } else if (op.kind === 'rotate') {
-      const p = new oc.gp_Pnt(op.point[0], op.point[1], op.point[2]);
-      const n = normalize(op.axis);
-      const d = new oc.gp_Dir(n[0], n[1], n[2]);
-      const ax = new oc.gp_Ax1(p, d);
-      step.SetRotation(ax, op.angle);
-      for (const o of [ax, d, p]) o.delete();
-    } else {
-      const p = new oc.gp_Pnt(op.point[0], op.point[1], op.point[2]);
-      const n = normalize(op.normal);
-      const d = new oc.gp_Dir(n[0], n[1], n[2]);
-      const ax = new oc.gp_Ax2(p, d);
-      step.SetMirror(ax);
-      for (const o of [ax, d, p]) o.delete();
+/** Ops of a Move/Rotate transform: rotate about X, Y, Z (degrees) through `pivot`, then translate. */
+export function transformOps(feature: {
+  dx: number;
+  dy: number;
+  dz: number;
+  rx: number;
+  ry: number;
+  rz: number;
+  pivot: Vec3;
+}): RigidOp[] {
+  const ops: RigidOp[] = [];
+  const axes: [number, Vec3][] = [
+    [feature.rx, [1, 0, 0]],
+    [feature.ry, [0, 1, 0]],
+    [feature.rz, [0, 0, 1]],
+  ];
+  for (const [degrees, axis] of axes) {
+    if (degrees !== 0) {
+      ops.push({ kind: 'rotate', point: feature.pivot, axis, angle: (degrees * Math.PI) / 180 });
     }
-    total.PreMultiply(step);
-    step.delete();
   }
-  return total;
-}
-
-/** A transformed copy of `shape` (the input is never modified). */
-export function transformShape(oc: OpenCascade, shape: Shape3D, ops: readonly RigidOp[]): Shape3D {
-  const trsf = toTrsf(oc, ops);
-  const builder = new oc.BRepBuilderAPI_Transform(shape.wrapped, trsf, true);
-  const out = R.cast(builder.Shape());
-  builder.delete();
-  trsf.delete();
-  return out as Shape3D;
+  if (feature.dx !== 0 || feature.dy !== 0 || feature.dz !== 0) {
+    ops.push({ kind: 'translate', vector: [feature.dx, feature.dy, feature.dz] });
+  }
+  return ops;
 }
 
 // ---- vector helpers -------------------------------------------------------------
