@@ -19,22 +19,19 @@ const WORKER_CSP =
   "style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; " +
   "connect-src 'self' ws: http://localhost:5175;";
 
-// The sketch solver worker (planeGCS) instantiates WebAssembly but never evals.
-const SOLVER_CSP =
-  "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; " +
-  "style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; " +
-  "connect-src 'self' ws: http://localhost:5175;";
-
 function kernelWorkerCsp(): Plugin {
   return {
     name: 'assembler-kernel-worker-csp',
     configureServer(server) {
       server.middlewares.use((req, res, next) => {
         const url = req.url ?? '';
-        if (/kernel\.worker|replicad[-_]opencascadejs|replicad_single/i.test(url)) {
+        // The sketch-solver worker and its planeGCS embind glue (`new Function`) need the same.
+        if (
+          /kernel\.worker|replicad[-_]opencascadejs|replicad_single|solver\.worker|planegcs/i.test(
+            url,
+          )
+        ) {
           res.setHeader('Content-Security-Policy', WORKER_CSP);
-        } else if (/solver\.worker|planegcs/i.test(url)) {
-          res.setHeader('Content-Security-Policy', SOLVER_CSP);
         }
         next();
       });

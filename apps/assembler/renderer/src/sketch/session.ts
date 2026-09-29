@@ -179,7 +179,12 @@ function labelOf(sketch: SketchData, id: string): string {
 export function describeProblem(result: SolveResult, attempted: SketchData): SketchProblem {
   const ids = [...new Set([...result.conflicting, ...result.redundant])];
   if (result.status === 'overconstrained') {
-    const names = ids.map((id) => labelOf(attempted, id));
+    const counts = new Map<string, number>();
+    for (const id of ids) {
+      const name = labelOf(attempted, id);
+      counts.set(name, (counts.get(name) ?? 0) + 1);
+    }
+    const names = [...counts].map(([name, n]) => (n > 1 ? `${name} ×${n}` : name));
     const list = names.length > 0 ? `: ${names.join(', ')}` : '';
     return {
       message:

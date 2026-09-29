@@ -35,13 +35,16 @@ export function poseLookingAlong(
   direction: readonly number[],
   center: readonly [number, number, number],
   distance: number,
+  /** World direction that should point up on screen for straight up/down views (e.g. the sketch v axis). */
+  up: readonly number[] = [0, 1, 0],
 ): CameraPose {
   const [x, y, z] = direction as [number, number, number];
   if (Math.abs(z) > 0.999) {
+    // Near the poles the orbit camera's screen-up is (cos yaw, sin yaw, 0).
     return {
       target: [...center],
       distance,
-      yaw: -Math.PI / 2,
+      yaw: Math.atan2(up[1]!, up[0]!),
       pitch: Math.sign(z) * NEAR_POLE_PITCH,
     };
   }

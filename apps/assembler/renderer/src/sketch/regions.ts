@@ -48,6 +48,13 @@ export interface RegionPiece {
   entityId: string;
   /** Oriented in traversal order (arcs: negative sweep = clockwise). */
   curve: Curve2;
+  /**
+   * Exact shared vertex positions of the piece ends (identical for
+   * consecutive pieces), so a wire built from them closes without gaps.
+   * Absent for a full circle.
+   */
+  start?: Vec2;
+  end?: Vec2;
 }
 
 export interface RegionLoop {
@@ -260,6 +267,8 @@ export function detectRegions(sketch: Pick<SketchData, 'entities'>): SketchRegio
       return {
         entityId: he.piece.entityId,
         curve: he.forward ? he.piece.curve : reverseCurve(he.piece.curve),
+        start: vertices[he.from]!,
+        end: vertices[he.to]!,
       };
     });
     const area = regionPieces.reduce((sum, p) => sum + areaTerm(p.curve), 0);

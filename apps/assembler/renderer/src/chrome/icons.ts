@@ -10,7 +10,6 @@ import {
   Box,
   BoxSelect,
   Boxes,
-  CircleDot,
   Combine,
   CopyMinus,
   CopyPlus,
@@ -29,9 +28,7 @@ import {
   PanelLeft,
   PanelRight,
   PanelTop,
-  PenLine,
   PenSquare,
-  RectangleHorizontal,
   Redo2,
   RotateCw,
   Ruler,
@@ -50,6 +47,7 @@ import {
 import type { Command, CommandGroup } from '../model/commands/registry.js';
 import type { Feature } from '../model/document.js';
 import type { SelectionItem } from '../model/store.js';
+import { SKETCH_COMMAND_ICONS } from '../sketch/ui/sketchIcons.js';
 
 export const GROUP_ICON: Record<CommandGroup, LucideIcon> = {
   sketch: PenSquare,
@@ -71,9 +69,7 @@ export const GROUP_ICON: Record<CommandGroup, LucideIcon> = {
  * are never visually interchangeable in the same surface.
  */
 export const COMMAND_ICON: Partial<Record<string, LucideIcon>> = {
-  'sketch.rectangle': RectangleHorizontal,
-  'sketch.line': PenLine,
-  'sketch.circle': CircleDot,
+  ...SKETCH_COMMAND_ICONS,
   'tools.extrude': ArrowUpFromLine,
   'tools.filletChamfer': Spline,
   'tools.chamfer': Triangle,

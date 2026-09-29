@@ -29,21 +29,31 @@ import {
 } from '../sketch/regions.js';
 import type { EvaluatedSketch } from './types.js';
 
-function edgeOf(frame: SketchFrame, piece: RegionLoop['pieces'][number]): R.Edge {
+function edgesOf(frame: SketchFrame, piece: RegionLoop['pieces'][number]): R.Edge[] {
   const curve = piece.curve;
   const p = (t: number): Vec3 => {
     const [u, v] = pointAt(curve, t);
     return framePoint(frame, u, v);
   };
-  if (curve.kind === 'line') return R.makeLine(p(0), p(1));
+  // Ends at the shared region vertices (not re-evaluated per curve), so wires close exactly.
+  const start = piece.start ? framePoint(frame, piece.start[0], piece.start[1]) : p(0);
+  const end = piece.end ? framePoint(frame, piece.end[0], piece.end[1]) : p(1);
+  if (curve.kind === 'line') return [R.makeLine(start, end)];
   if (isFullCircle(curve)) {
-    return R.makeCircle(curve.r, framePoint(frame, curve.c[0], curve.c[1]), frame.normal);
+    // A whole circle touching the rest of the loop at one vertex: two halves through it.
+    if (piece.start) {
+      return [
+        R.makeThreePointArc(start, p(0.25), p(0.5)),
+        R.makeThreePointArc(p(0.5), p(0.75), end),
+      ];
+    }
+    return [R.makeCircle(curve.r, framePoint(frame, curve.c[0], curve.c[1]), frame.normal)];
   }
-  return R.makeThreePointArc(p(0), p(0.5), p(1));
+  return [R.makeThreePointArc(start, p(0.5), end)];
 }
 
 function wireOf(frame: SketchFrame, loop: RegionLoop): R.Wire {
-  return R.assembleWire(loop.pieces.map((piece) => edgeOf(frame, piece)));
+  return R.assembleWire(loop.pieces.flatMap((piece) => edgesOf(frame, piece)));
 }
 
 /** Planar OCCT face of a region (outer loop with its holes) in world coordinates. */
@@ -61,12 +71,26 @@ export function regionFace(frame: SketchFrame, region: SketchRegion): R.Face {
 export function evaluateSketchGeometry(
   feature: SketchFeature,
   frame: SketchFrame,
-): { evaluated: EvaluatedSketch; regions: SketchRegion[] } {
-  const regions = detectRegions(feature);
+): { evaluated: EvaluatedSketch; regions: SketchRegion[]; warnings: string[] } {
+  const detected = detectRegions(feature);
   const toWorld = (points: readonly [number, number][]): Vec3[] =>
     points.map(([u, v]) => framePoint(frame, u, v));
-  const profiles = regions.map((region) => {
-    const face = regionFace(frame, region);
+  // A region the kernel cannot turn into a face is skipped (with a warning), not the whole sketch.
+  const warnings: string[] = [];
+  const regions: SketchRegion[] = [];
+  const faces: R.Face[] = [];
+  for (const region of detected) {
+    try {
+      faces.push(regionFace(frame, region));
+      regions.push(region);
+    } catch (error) {
+      warnings.push(
+        `Profile ${region.key} could not be built (${error instanceof Error ? error.message : 'kernel error'})`,
+      );
+    }
+  }
+  const profiles = regions.map((region, i) => {
+    const face = faces[i]!;
     const mesh = face.mesh({ tolerance: 0.02, angularTolerance: 0.1 });
     const triangles: number[] = [];
     for (const index of mesh.triangles) {
@@ -91,7 +115,7 @@ export function evaluateSketchGeometry(
     construction: c.entity.construction === true,
     points: toWorld(sampleCurve(c.curve)),
   }));
-  return { evaluated: { featureId: feature.id, frame, profiles, curves }, regions };
+  return { evaluated: { featureId: feature.id, frame, profiles, curves }, regions, warnings };
 }
 
 /**

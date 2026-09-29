@@ -58,6 +58,17 @@ const HINT_TEXT: Record<InferenceHint, string> = {
   grid: '',
 };
 
+/** Constraint glyphs drawn even when their geometry is not selected. */
+const ALWAYS_SHOWN = new Set<string>([
+  'horizontal',
+  'vertical',
+  'parallel',
+  'perpendicular',
+  'tangent',
+  'fixed',
+  'midpoint',
+]);
+
 const FIELD_LABEL: Record<ValueField, string> = {
   length: 'Length',
   radius: 'Radius',
@@ -366,17 +377,35 @@ export function SketchOverlay({
 
   // Constraint glyphs, stacked when several share an anchor.
   const slots = new Map<string, number>();
+  // Line-type constraints are always shown; the rest (equal, point-on, symmetric, …) only
+  // for selected/hovered geometry, the selected constraint or a reported problem — like
+  // Shapr3D, which keeps a busy sketch readable.
   const glyphs = display.constraints.flatMap((c) => {
     if (c.kind === 'coincident') return [];
-    const anchor = constraintAnchor(display, c);
-    const s = anchor ? api.toScreen(anchor) : null;
-    if (!s) return [];
-    const slotKey = `${Math.round(s[0] / 8)}:${Math.round(s[1] / 8)}`;
-    const slot = slots.get(slotKey) ?? 0;
-    slots.set(slotKey, slot + 1);
-    return [
-      { id: c.id, text: constraintInfo(c.kind).glyph, x: s[0] + 12 + slot * 18, y: s[1] - 12 },
-    ];
+    const related =
+      selection.has(c.id) ||
+      problemIds.has(c.id) ||
+      c.refs.some((r) => selection.has(r) || r === hoverId);
+    if (!ALWAYS_SHOWN.has(c.kind) && !related) return [];
+    // "Equal" marks each of its two curves.
+    const parts = c.kind === 'equal' ? c.refs.map((ref) => ({ ...c, refs: [ref] })) : [c];
+    return parts.flatMap((part) => {
+      const anchor = constraintAnchor(display, part);
+      const s = anchor ? api.toScreen(anchor) : null;
+      if (!s) return [];
+      const slotKey = `${Math.round(s[0] / 8)}:${Math.round(s[1] / 8)}`;
+      const slot = slots.get(slotKey) ?? 0;
+      slots.set(slotKey, slot + 1);
+      return [
+        {
+          key: `${c.id}:${part.refs[0]}`,
+          id: c.id,
+          text: constraintInfo(c.kind).glyph,
+          x: s[0] + 12 + slot * 18,
+          y: s[1] - 12,
+        },
+      ];
+    });
   });
 
   const offsetMm = 22 * mmPerPxAt(api, [0, 0]);
@@ -499,7 +528,7 @@ export function SketchOverlay({
         ))}
         {glyphs.map((g) => (
           <g
-            key={g.id}
+            key={g.key}
             className={`${styles.glyph} ${selection.has(g.id) ? styles.glyphSelected : ''} ${problemIds.has(g.id) ? styles.glyphConflict : ''}`}
             transform={`translate(${g.x.toFixed(1)} ${g.y.toFixed(1)})`}
             data-constraint={g.id}

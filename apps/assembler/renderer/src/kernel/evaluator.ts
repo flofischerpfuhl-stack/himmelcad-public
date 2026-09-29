@@ -303,7 +303,9 @@ export function createEvaluator(oc: OpenCascade, options: EvaluatorOptions = {})
   ): { evaluated: EvaluatedSketch; regions: SketchRegion[] } {
     const frame = sketchFrame(feature, bodies, warn);
     try {
-      return evaluateSketchGeometry(feature, frame);
+      const { evaluated, regions, warnings } = evaluateSketchGeometry(feature, frame);
+      for (const message of warnings) warn(message);
+      return { evaluated, regions };
     } catch (error) {
       throw new FeatureError(`Sketch profiles could not be built: ${describeError(error)}`);
     }
