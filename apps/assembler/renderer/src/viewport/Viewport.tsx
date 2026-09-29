@@ -13,6 +13,12 @@ import {
   type Bounds3,
 } from '../model/modeling.js';
 import {
+  isReferenceMeshBodyId,
+  REFERENCE_MESH_ID_PREFIX,
+  referenceMeshIdOf,
+  referenceMeshToBody,
+} from '../model/referenceMesh.js';
+import {
   findFace,
   isPreviewTool,
   PREVIEW_FEATURE_ID,
@@ -182,6 +188,14 @@ function sceneModel(s: AssemblerState): SceneModel {
   const previewTool = isPreviewTool(tool) ? tool : null;
   const preview = previewTool?.previewEvaluation ?? null;
   let bodies = preview?.bodies ?? s.evaluation.bodies;
+  // Reference meshes (imported STL) are never a kernel input — they are
+  // appended straight onto the rendered body list here so the existing
+  // draw/pick/hide pipeline (which operates generically on `Body[]`) shows
+  // them, flat-shaded (their normals are per-triangle, not smoothed) and in
+  // a visually distinct slate colour (`referenceMeshToBody`) — without
+  // reaching into `gl.ts`'s shader.
+  const visibleMeshBodies = s.referenceMeshes.filter((m) => !m.hidden).map(referenceMeshToBody);
+  if (visibleMeshBodies.length > 0) bodies = [...bodies, ...visibleMeshBodies];
   let previewNewBodyIds: string[] = [];
   let moveGhosts: Body[] = [];
   if (tool?.kind === 'move') {
@@ -811,6 +825,13 @@ export function Viewport(props: ViewportProps): JSX.Element {
           ...(pick.regionKey !== undefined && !wholeBody ? { regionKey: pick.regionKey } : {}),
         };
       }
+      // A reference mesh is always selected as a whole — never per-face
+      // (it has exactly one synthetic whole-mesh "face" for picking, see
+      // `referenceMeshToBody`, but that must never surface as a face
+      // selection).
+      if ('bodyId' in pick && isReferenceMeshBodyId(pick.bodyId)) {
+        return { kind: 'mesh', meshId: pick.bodyId.slice(REFERENCE_MESH_ID_PREFIX.length) };
+      }
       if (wholeBody) return { kind: 'body', bodyId: pick.bodyId };
       return pick;
     },
@@ -923,6 +944,8 @@ export function Viewport(props: ViewportProps): JSX.Element {
     const meta = useItemsStore.getState();
     return {
       bodyName: (bodyId: string) => {
+        const meshId = referenceMeshIdOf(bodyId);
+        if (meshId !== null) return s.referenceMeshes.find((m) => m.id === meshId)?.name ?? 'Mesh';
         const body = s.evaluation.bodies.find((b) => b.id === bodyId);
         return body ? displayBodyName(body, meta) : bodyId;
       },
@@ -966,7 +989,10 @@ export function Viewport(props: ViewportProps): JSX.Element {
           return;
         }
         const item = selectionFromPick(pick, isDouble);
-        if (item && item.kind !== 'feature') {
+        // A reference mesh is never a valid feature-tool reference (it has
+        // no B-rep faces/edges for OCCT to consume — `apps/assembler/README.md`
+        // "STL import": excluded from kernel operations).
+        if (item && item.kind !== 'feature' && item.kind !== 'mesh') {
           store.updateFeatureDraft((draft, evaluation) => acceptPick(draft, item, evaluation));
         }
         return;

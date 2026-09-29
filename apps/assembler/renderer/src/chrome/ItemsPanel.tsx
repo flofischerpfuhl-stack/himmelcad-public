@@ -1,7 +1,8 @@
 /**
  * Items panel (left): the scene-item tree (interaction research §3) —
- * bodies and sketches, organised in folders. Rows show a type icon (bodies:
- * their colour), the name (double-click or F2 renames a body or folder),
+ * bodies, STL reference meshes and sketches, organised in folders. Rows show
+ * a type icon (bodies: their colour), the name (double-click or F2 renames a
+ * body, reference mesh or folder),
  * isolate and visibility. Folders collapse, their eye toggles every child,
  * rows are dragged onto a folder (or the panel background for the top
  * level). Click selects (Ctrl/Cmd adds, Shift range), hover highlights the
@@ -11,6 +12,7 @@
  */
 import {
   Box,
+  Boxes,
   ChevronDown,
   ChevronRight,
   Eye,
@@ -41,6 +43,7 @@ import {
   displayBodyName,
   folderRowKey,
   leafKeys,
+  meshRowKey,
   sketchRowKey,
   useItemsStore,
   visibleLeafOrder,
@@ -61,7 +64,7 @@ const DRAG_MIME = 'application/x-hcasm-items';
 
 interface RowInfo {
   key: string;
-  kind: 'body' | 'sketch';
+  kind: 'body' | 'sketch' | 'mesh';
   item: SelectionItem;
   name: string;
   color?: string;
@@ -76,6 +79,7 @@ function selectionEquals(a: SelectionItem, b: SelectionItem): boolean {
   if (a.kind !== b.kind) return false;
   if (a.kind === 'body' && b.kind === 'body') return a.bodyId === b.bodyId;
   if (a.kind === 'sketchProfile' && b.kind === 'sketchProfile') return a.featureId === b.featureId;
+  if (a.kind === 'mesh' && b.kind === 'mesh') return a.meshId === b.meshId;
   return false;
 }
 
@@ -103,6 +107,16 @@ export function ItemsPanel({ state, onContextMenu }: ItemsPanelProps): JSX.Eleme
         color: body.color,
       });
     }
+    // Imported STL reference meshes: shown, hidden, renamed and filed like bodies,
+    // never kernel inputs (`model/referenceMesh.ts`).
+    for (const mesh of state.referenceMeshes) {
+      map.set(meshRowKey(mesh.id), {
+        key: meshRowKey(mesh.id),
+        kind: 'mesh',
+        item: { kind: 'mesh', meshId: mesh.id },
+        name: mesh.name,
+      });
+    }
     for (const sketch of state.evaluation.sketches) {
       const feature = state.features.find((f) => f.id === sketch.featureId);
       map.set(sketchRowKey(sketch.featureId), {
@@ -113,16 +127,18 @@ export function ItemsPanel({ state, onContextMenu }: ItemsPanelProps): JSX.Eleme
       });
     }
     return map;
-  }, [state.evaluation, state.features, meta]);
+  }, [state.evaluation, state.features, state.referenceMeshes, meta]);
 
+  // "Bodies" lists solids and reference meshes; "Sketches" only sketches.
   const leaves: LeafRow[] = [...rows.values()]
-    .filter((r) => filter === 'all' || (filter === 'bodies') === (r.kind === 'body'))
+    .filter((r) => filter === 'all' || (filter === 'sketches') === (r.kind === 'sketch'))
     .map((r) => ({ key: r.key, kind: r.kind }));
   let tree = buildItemTree(leaves, meta);
   if (filter !== 'all') tree = pruneEmptyFolders(tree);
   const order = visibleLeafOrder(tree);
   const bodyCount = [...rows.values()].filter((r) => r.kind === 'body').length;
-  const sketchCount = rows.size - bodyCount;
+  const meshCount = [...rows.values()].filter((r) => r.kind === 'mesh').length;
+  const sketchCount = rows.size - bodyCount - meshCount;
 
   const isSelected = (item: SelectionItem): boolean =>
     state.selection.some((existing) => selectionEquals(existing, item));
@@ -210,6 +226,10 @@ export function ItemsPanel({ state, onContextMenu }: ItemsPanelProps): JSX.Eleme
       ) {
         anyVisible = true;
       }
+      const meshId = row.item.kind === 'mesh' ? row.item.meshId : null;
+      if (meshId && state.referenceMeshes.some((m) => m.id === meshId && !m.hidden)) {
+        anyVisible = true;
+      }
     }
     return { anyVisible };
   };
@@ -220,6 +240,7 @@ export function ItemsPanel({ state, onContextMenu }: ItemsPanelProps): JSX.Eleme
       const row = rows.get(key);
       if (row?.item.kind === 'body') bodies.push(row.item.bodyId);
       if (row?.item.kind === 'sketchProfile') state.setSketchVisible(row.item.featureId, visible);
+      if (row?.item.kind === 'mesh') state.setReferenceMeshHidden(row.item.meshId, !visible);
     }
     if (visible) state.showBodies(bodies);
     else state.hideBodies(bodies);
@@ -337,9 +358,12 @@ export function ItemsPanel({ state, onContextMenu }: ItemsPanelProps): JSX.Eleme
           if (value !== null && row.item.kind === 'body') {
             useItemsStore.getState().renameBody(row.item.bodyId, value);
           }
+          if (value !== null && row.item.kind === 'mesh') {
+            state.renameReferenceMesh(row.item.meshId, value);
+          }
         }}
         onStartRename={() => {
-          if (row.kind === 'body') setRenamingKey(row.key);
+          if (row.kind === 'body' || row.kind === 'mesh') setRenamingKey(row.key);
         }}
         onSelect={(event) => selectRow(row.key, event)}
         onDragStart={(event) => {
@@ -359,8 +383,9 @@ export function ItemsPanel({ state, onContextMenu }: ItemsPanelProps): JSX.Eleme
       <div className={panelStyles.header}>
         <span className={panelStyles.title}>Items</span>
         <span className={panelStyles.count}>
-          {bodyCount} {bodyCount === 1 ? 'body' : 'bodies'} · {sketchCount}{' '}
-          {sketchCount === 1 ? 'sketch' : 'sketches'}
+          {bodyCount} {bodyCount === 1 ? 'body' : 'bodies'}
+          {meshCount > 0 ? ` · ${meshCount} ${meshCount === 1 ? 'mesh' : 'meshes'}` : ''} ·{' '}
+          {sketchCount} {sketchCount === 1 ? 'sketch' : 'sketches'}
         </span>
         <span className={panelStyles.headerSpacer} />
         <Tooltip content="New folder (holds the selected items)">
@@ -577,6 +602,9 @@ function LeafRowView(props: LeafRowProps): JSX.Element {
   } else if (row.item.kind === 'sketchProfile') {
     visible = isSketchVisible(row.item.featureId, consumed, state.sketchVisibility);
     hint = consumed.has(row.item.featureId) ? ' (used by an extrude)' : '';
+  } else if (row.item.kind === 'mesh') {
+    const meshId = row.item.meshId;
+    visible = !state.referenceMeshes.some((m) => m.id === meshId && m.hidden);
   } else {
     visible = true;
   }
@@ -589,6 +617,8 @@ function LeafRowView(props: LeafRowProps): JSX.Element {
       else state.showBodies([row.item.bodyId]);
     } else if (row.item.kind === 'sketchProfile') {
       state.setSketchVisible(row.item.featureId, !visible);
+    } else if (row.item.kind === 'mesh') {
+      state.setReferenceMeshHidden(row.item.meshId, visible);
     }
   };
   return (
@@ -614,6 +644,11 @@ function LeafRowView(props: LeafRowProps): JSX.Element {
         event.preventDefault();
         props.onContextMenu(event.clientX, event.clientY);
       }}
+      title={
+        row.kind === 'mesh'
+          ? 'Reference mesh (imported STL): not a solid, never used by modelling operations'
+          : undefined
+      }
       onKeyDown={(event) => {
         if (event.target !== event.currentTarget) return;
         if (event.key === 'Enter') props.onSelect(event);
@@ -634,7 +669,13 @@ function LeafRowView(props: LeafRowProps): JSX.Element {
         />
       ) : (
         <span className={styles.icon}>
-          {row.kind === 'sketch' ? <PenSquare size={13} /> : <Box size={13} />}
+          {row.kind === 'sketch' ? (
+            <PenSquare size={13} />
+          ) : row.kind === 'mesh' ? (
+            <Boxes size={13} />
+          ) : (
+            <Box size={13} />
+          )}
         </span>
       )}
       <NameField name={row.name} editing={props.renaming} onDone={props.onRenameDone} />

@@ -12,8 +12,18 @@ import { isAbsolute } from 'node:path';
 
 import { type BrowserWindow, app, dialog, ipcMain } from 'electron';
 
+import {
+  addRecentFile,
+  emptyRecentFilesState,
+  parseRecentFilesState,
+  relocateRecentFile,
+  removeRecentFile as removeRecentFileEntry,
+  type RecentFilesStateV1,
+} from './recentFiles';
+
 const HCASM_FILTERS = [{ name: 'HimmelCAD Assembler project', extensions: ['hcasm'] }];
 const RECOVERY_FILE = 'assembler-recovery.json';
+const RECENT_FILES_FILE = 'assembler-recent-files.json';
 
 /** Paths the renderer may write to: only ones this module handed back from a dialog. */
 const authorizedPaths = new Set<string>();
@@ -82,6 +92,50 @@ function sanitizeFilters(filters: unknown): ExportFilter[] {
     .map((f) => ({ name: f.name, extensions: f.extensions }));
 }
 
+const recentFilesPath = () => `${app.getPath('userData')}/${RECENT_FILES_FILE}`;
+
+async function readRecentFilesState(): Promise<RecentFilesStateV1> {
+  try {
+    const text = await fs.readFile(recentFilesPath(), 'utf8');
+    return parseRecentFilesState(JSON.parse(text));
+  } catch {
+    return emptyRecentFilesState();
+  }
+}
+
+async function writeRecentFilesState(state: RecentFilesStateV1): Promise<void> {
+  try {
+    const tmp = `${recentFilesPath()}.tmp-${process.pid}`;
+    await fs.writeFile(tmp, JSON.stringify(state, null, 2), 'utf8');
+    await fs.rename(tmp, recentFilesPath());
+  } catch {
+    // Best-effort: a recent-files write failure never blocks Open/Save.
+  }
+}
+
+async function rememberRecentFile(path: string): Promise<void> {
+  await writeRecentFilesState(addRecentFile(await readRecentFilesState(), path));
+}
+
+/**
+ * Reads a `.hcasm` at `path` (double-click file association, a CLI
+ * argument, or a second app instance's forwarded argv — `main.ts`),
+ * authorizing it the same way a dialog-obtained path is (so a subsequent
+ * Ctrl+S onto it works) and recording it in Recent Files. `null` if the
+ * path doesn't exist/isn't readable, or isn't absolute.
+ */
+export async function readHcasmFile(path: string): Promise<{ path: string; text: string } | null> {
+  if (!isAbsolute(path) || !path.toLowerCase().endsWith('.hcasm')) return null;
+  try {
+    const text = await fs.readFile(path, 'utf8');
+    authorize(path);
+    await rememberRecentFile(path);
+    return { path, text };
+  } catch {
+    return null;
+  }
+}
+
 /** Registers the `assembler:project:*` IPC handlers used by `preload.ts`. Call once per app instance. */
 export function registerFileApi(getWindow: () => BrowserWindow | null): void {
   ipcMain.handle('assembler:project:openDialog', async () => {
@@ -92,6 +146,7 @@ export function registerFileApi(getWindow: () => BrowserWindow | null): void {
     if (result.canceled || !result.filePaths[0]) return null;
     const path = authorize(result.filePaths[0]);
     const text = await fs.readFile(path, 'utf8');
+    await rememberRecentFile(path);
     return { path, text };
   });
 
@@ -112,6 +167,53 @@ export function registerFileApi(getWindow: () => BrowserWindow | null): void {
     const validPath = requireAuthorized(path);
     if (typeof text !== 'string') throw new Error('Invalid project text');
     await atomicWrite(validPath, text);
+    await rememberRecentFile(validPath);
+  });
+
+  ipcMain.handle('assembler:recentFiles:list', async () => {
+    const state = await readRecentFilesState();
+    return Promise.all(
+      state.entries.map(async (entry) => ({
+        path: entry.path,
+        name: entry.name,
+        missing: !(await pathExists(entry.path)),
+      })),
+    );
+  });
+
+  ipcMain.handle('assembler:recentFiles:remove', async (_event, path: unknown) => {
+    if (typeof path !== 'string') throw new Error('Invalid path');
+    await writeRecentFilesState(removeRecentFileEntry(await readRecentFilesState(), path));
+  });
+
+  /**
+   * Opens a path from the Recent Files list. Only paths that are on the list
+   * (recorded by this module from a dialog, a save or a launch argument) are
+   * accepted — a renderer-invented path is refused, like everywhere else here.
+   */
+  ipcMain.handle('assembler:recentFiles:openPath', async (_event, path: unknown) => {
+    if (typeof path !== 'string') throw new Error('Invalid path');
+    const listed = (await readRecentFilesState()).entries.some((entry) => entry.path === path);
+    if (!listed) throw new Error('Not a recent file');
+    return readHcasmFile(path); // null if missing/unreadable: the renderer offers Locate…/Remove instead.
+  });
+
+  /** "Locate…" for a missing recent entry: lets the user pick its new location and relinks the list entry. */
+  ipcMain.handle('assembler:recentFiles:locate', async (_event, oldPath: unknown) => {
+    if (typeof oldPath !== 'string') throw new Error('Invalid path');
+    const win = getWindow();
+    const options: Electron.OpenDialogOptions = {
+      filters: HCASM_FILTERS,
+      properties: ['openFile'],
+    };
+    const result = win
+      ? await dialog.showOpenDialog(win, options)
+      : await dialog.showOpenDialog(options);
+    if (result.canceled || !result.filePaths[0]) return null;
+    const path = authorize(result.filePaths[0]);
+    const text = await fs.readFile(path, 'utf8');
+    await writeRecentFilesState(relocateRecentFile(await readRecentFilesState(), oldPath, path));
+    return { path, text };
   });
 
   ipcMain.handle(

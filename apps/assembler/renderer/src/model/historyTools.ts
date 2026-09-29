@@ -113,7 +113,7 @@ export function relevantFeatureIds(
   const seeds = new Set<string>();
   for (const item of selection) {
     if (item.kind === 'feature' || item.kind === 'sketchProfile') seeds.add(item.featureId);
-    else bodyIds.add(item.bodyId);
+    else if (item.kind !== 'mesh') bodyIds.add(item.bodyId); // reference meshes have no steps
   }
   for (const bodyId of bodyIds) {
     const body = evaluation.bodies.find((b) => b.id === bodyId);

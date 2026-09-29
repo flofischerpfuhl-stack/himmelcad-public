@@ -33,6 +33,8 @@ import { create } from 'zustand';
 
 import type { KernelActivity, KernelAdapter, KernelJob } from '../kernel/adapter.js';
 import { baseEdgeKey, baseFaceKey, edgeSignatureOf, faceSignatureOf } from '../kernel/naming.js';
+import type { ProjectViewState } from './project/format.js';
+import type { ReferenceMesh, ReferenceMeshTransform } from './referenceMesh.js';
 import {
   EMPTY_EVALUATION,
   type Body,
@@ -75,7 +77,9 @@ export type SelectionItem =
   | { kind: 'edge'; bodyId: string; edgeKey: string }
   /** A sketch's profiles: one region (`regionKey`) or, without it, every region. */
   | { kind: 'sketchProfile'; featureId: string; regionKey?: string }
-  | { kind: 'feature'; featureId: string };
+  | { kind: 'feature'; featureId: string }
+  /** A reference mesh (imported STL) — always selected as a whole, never per-triangle/per-face. */
+  | { kind: 'mesh'; meshId: string };
 
 /** Explicit lifecycle every tool session moves through. `cancel()` is valid from any of these except after commit. */
 export type ToolPhase = 'collectingReferences' | 'preview' | 'numericEditing' | 'committing';
@@ -371,6 +375,22 @@ export interface AssemblerState {
   /** Moves the rollback marker (`null` = roll forward to the end). Ignored while a tool runs. */
   setRollback: (featureId: string | null) => void;
 
+  /**
+   * Imported STL reference meshes: shown, measured, hidden and moved like a
+   * body, but never a kernel/OCCT input (`apps/assembler/README.md` "STL
+   * import"). Outside `features` / the undo-tracked history — import,
+   * remove, hide and move are document-level edits, not modelling steps.
+   */
+  referenceMeshes: ReferenceMesh[];
+  /** Adds an already-parsed reference mesh (one per STL import) and selects it. */
+  importReferenceMesh: (mesh: ReferenceMesh) => void;
+  removeReferenceMesh: (id: string) => void;
+  /** Renames a reference mesh (blank names are ignored). */
+  renameReferenceMesh: (id: string, name: string) => void;
+  setReferenceMeshHidden: (id: string, hidden: boolean) => void;
+  /** Absolute document-level translation (mm) applied on top of the mesh's own coordinates — the Move gizmo's reference-mesh path. */
+  moveReferenceMesh: (id: string, transform: ReferenceMeshTransform) => void;
+
   editFeatureParams: (featureId: string, patch: FeaturePatch) => void;
   setSuppressed: (featureId: string, suppressed: boolean) => void;
   renameFeature: (featureId: string, name: string) => void;
@@ -398,6 +418,14 @@ export interface AssemblerState {
   togglePanel: (panel: keyof PanelsState) => void;
   setPanelVisible: (panel: keyof PanelsState, visible: boolean) => void;
 
+  /**
+   * Applies a project file's persisted view state (display mode, section,
+   * grid, panels, last camera preset) on Open/recovery-restore. Never
+   * undo-tracked; unspecified fields keep their current value so an older
+   * or partial `viewState` still applies cleanly.
+   */
+  applyViewState: (view: ProjectViewState) => void;
+
   recentCommandIds: string[];
   pushRecentCommand: (commandId: string) => void;
 
@@ -405,7 +433,10 @@ export interface AssemblerState {
    * Replaces the whole document (features + project name), resetting undo
    * history, selection, hover and visibility state.
    */
-  loadDocument: (features: Feature[], options?: { projectName?: string }) => void;
+  loadDocument: (
+    features: Feature[],
+    options?: { projectName?: string; referenceMeshes?: ReferenceMesh[] },
+  ) => void;
 
   /**
    * Commits a complete next feature list as exactly one undo step, through
@@ -502,6 +533,8 @@ function selectionKeysEqual(a: SelectionItem, b: SelectionItem): boolean {
       );
     case 'feature':
       return b.kind === 'feature' && a.featureId === b.featureId;
+    case 'mesh':
+      return b.kind === 'mesh' && a.meshId === b.meshId;
   }
 }
 
@@ -536,6 +569,11 @@ function remapSelectionItem(
         : null;
     case 'feature':
       return featureIds.has(item.featureId) ? item : null;
+    // Reference meshes live outside kernel evaluation entirely (never
+    // consumed as a kernel input), so their selection is never remapped by
+    // a re-evaluation; removal is handled explicitly by `removeReferenceMesh`.
+    case 'mesh':
+      return item;
   }
 }
 
@@ -1533,6 +1571,35 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
       notifySettled();
     },
 
+    referenceMeshes: [],
+    importReferenceMesh: (mesh) => {
+      set((s) => ({ referenceMeshes: [...s.referenceMeshes, mesh] }));
+      get().select({ kind: 'mesh', meshId: mesh.id });
+    },
+    removeReferenceMesh: (id) => {
+      set((s) => ({
+        referenceMeshes: s.referenceMeshes.filter((m) => m.id !== id),
+        selection: s.selection.filter((item) => !(item.kind === 'mesh' && item.meshId === id)),
+      }));
+    },
+    renameReferenceMesh: (id, name) => {
+      const trimmed = name.trim();
+      if (!trimmed) return;
+      set((s) => ({
+        referenceMeshes: s.referenceMeshes.map((m) => (m.id === id ? { ...m, name: trimmed } : m)),
+      }));
+    },
+    setReferenceMeshHidden: (id, hidden) => {
+      set((s) => ({
+        referenceMeshes: s.referenceMeshes.map((m) => (m.id === id ? { ...m, hidden } : m)),
+      }));
+    },
+    moveReferenceMesh: (id, transform) => {
+      set((s) => ({
+        referenceMeshes: s.referenceMeshes.map((m) => (m.id === id ? { ...m, transform } : m)),
+      }));
+    },
+
     editFeatureParams: (featureId, patch) => {
       const state = get();
       const next = state.features.map((f) =>
@@ -1612,6 +1679,51 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
     setPanelVisible: (panel, visible) =>
       set((s) => ({ panels: { ...s.panels, [panel]: visible } })),
 
+    applyViewState: (view) => {
+      const validPresets: readonly CameraPreset[] = [
+        'iso',
+        'front',
+        'back',
+        'top',
+        'bottom',
+        'left',
+        'right',
+        'fit',
+      ];
+      const validAxes: readonly SectionAxis[] = ['X', 'Y', 'Z'];
+      set((s) => {
+        const next: ViewState = {
+          ...s.viewState,
+          ...(view.displayMode ? { displayMode: view.displayMode } : {}),
+          ...(view.section?.enabled !== undefined ? { sectionEnabled: view.section.enabled } : {}),
+          ...(view.section?.axis && validAxes.includes(view.section.axis)
+            ? { sectionAxis: view.section.axis }
+            : {}),
+          ...(typeof view.section?.offset === 'number'
+            ? { sectionOffset: view.section.offset }
+            : {}),
+          ...(view.section?.flipped !== undefined ? { sectionFlipped: view.section.flipped } : {}),
+          ...(view.grid?.visible !== undefined ? { gridVisible: view.grid.visible } : {}),
+          ...(view.grid?.snap !== undefined ? { snapToGrid: view.grid.snap } : {}),
+          ...(typeof view.grid?.step === 'number' ? { gridStep: view.grid.step } : {}),
+        };
+        const preset = view.camera?.preset;
+        if (preset && (validPresets as readonly string[]).includes(preset)) {
+          next.cameraRequest = {
+            preset: preset as CameraPreset,
+            nonce: (s.viewState.cameraRequest?.nonce ?? 0) + 1,
+          };
+        }
+        return {
+          viewState: next,
+          panels: {
+            items: view.panels?.items ?? s.panels.items,
+            history: view.panels?.history ?? s.panels.history,
+          },
+        };
+      });
+    },
+
     recentCommandIds: [],
     pushRecentCommand: (commandId) =>
       set((s) => ({
@@ -1626,6 +1738,13 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
       future = [];
       endPreview();
       const previous = get();
+      // Reseed the module-level id counter from the loaded document rather
+      // than leaving it at whatever it reached in the previous session (or
+      // the demo document's count): otherwise a freshly created feature can
+      // collide with an id already present in the file just opened, since
+      // most call sites mint ids via `createFeatureId` directly rather than
+      // through `allocateFeatureId`'s collision-checked loop.
+      featureIdCounter = highestFeatureIdSuffix(features);
       set({
         projectName: options?.projectName ?? previous.projectName,
         history: { canUndo: false, canRedo: false },
@@ -1637,6 +1756,7 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
         sketchVisibility: {},
         evaluation: EMPTY_EVALUATION,
         rollbackBefore: null,
+        referenceMeshes: options?.referenceMeshes ?? [],
       });
       setFeatures(features);
     },

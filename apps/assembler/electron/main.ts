@@ -1,15 +1,31 @@
 import { promises as fs } from 'node:fs';
 import { extname, join, normalize, resolve } from 'node:path';
 
-import { BrowserWindow, app, protocol } from 'electron';
+import { BrowserWindow, app, ipcMain, nativeImage, protocol } from 'electron';
 
 import { registerAutomation, stopAutomation } from './automationIpc';
-import { attachCloseGuard, registerFileApi } from './fileApi';
-import { ASSEMBLER_PRODUCT_NAME, createMainWindowOptions } from './windowOptions';
+import { attachCloseGuard, readHcasmFile, registerFileApi } from './fileApi';
+import { ASSEMBLER_APP_NAME, createMainWindowOptions } from './windowOptions';
 
-// `app.isPackaged` is only `true` from a real installer build (electron-
-// builder, not yet wired up — see `apps/assembler/README.md` "Packaged
-// build" open item). `ASSEMBLER_FORCE_PRODUCTION=1` lets the production
+/**
+ * Picks the `.hcasm` path out of a process's `argv`, if any — used both for
+ * this instance's own launch args (double-click file association, or a
+ * plain CLI path) and for a second instance's forwarded argv
+ * (`requestSingleInstanceLock`/`second-instance` below). Skips flag-shaped
+ * args (`--foo`) and, in dev, the `electron .` script path.
+ */
+function hcasmPathFromArgv(argv: readonly string[]): string | null {
+  const match = argv.find((arg) => !arg.startsWith('-') && arg.toLowerCase().endsWith('.hcasm'));
+  return match ? resolve(match) : null;
+}
+
+async function openPathInWindow(win: BrowserWindow, path: string): Promise<void> {
+  const opened = await readHcasmFile(path);
+  if (opened) win.webContents.send('assembler:project:open-requested', opened.path, opened.text);
+}
+
+// `app.isPackaged` is only `true` from an installed build (electron-builder,
+// `pnpm package:win`, `electron-builder.win.yml`). `ASSEMBLER_FORCE_PRODUCTION=1` lets the production
 // smoke test (`test/electron/production.test.ts`, playwright-core
 // `_electron`) exercise the packaged code path — the `app://` protocol,
 // strict CSP and `dist/renderer` loading — from a plain `electron dist/electron/main.js`
@@ -127,15 +143,61 @@ function registerAppProtocol(rendererDir: string): void {
   });
 }
 
-app.setName(ASSEMBLER_PRODUCT_NAME);
+app.setName(ASSEMBLER_APP_NAME);
+
+// `build/icon.png` (see `apps/assembler/scripts/generate-icon.mjs`) — a
+// documented placeholder mark; same file electron-builder derives the
+// installer/taskbar `.ico` from (`electron-builder.win.yml`). `__dirname`
+// is `dist/electron` at runtime, so `../../build` reaches `apps/assembler/build`.
+const applicationIcon = nativeImage.createFromPath(resolve(__dirname, '../../build/icon.png'));
 
 let mainWindow: BrowserWindow | null = null;
+
+/**
+ * Per-user NSIS install with no admin prompt (`electron-builder.win.yml`
+ * `nsis.perMachine: false`) still allows more than one Explorer/CLI launch
+ * to race for the lock — take it before any window/IPC state exists so a
+ * losing instance never partially initializes.
+ */
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+} else {
+  // A second instance (e.g. double-clicking another .hcasm while the app is
+  // already running) forwards its argv here instead of opening its own
+  // window — the existing window opens the file and comes to the front.
+  app.on('second-instance', (_event, argv) => {
+    const path = hcasmPathFromArgv(argv);
+    const win = mainWindow;
+    if (!win) return;
+    if (win.isMinimized()) win.restore();
+    win.focus();
+    if (path) void openPathInWindow(win, path);
+  });
+
+  // The `.hcasm` this instance was launched with (double-click association or
+  // a command-line path). The renderer asks for it once its open listener is
+  // mounted (`preload.ts` `onOpenRequested`) — a push on `did-finish-load`
+  // could arrive before React mounted that listener.
+  let pendingOpenPath = hcasmPathFromArgv(process.argv);
+  ipcMain.handle('assembler:project:takePendingOpen', async () => {
+    const path = pendingOpenPath;
+    pendingOpenPath = null;
+    return path ? readHcasmFile(path) : null;
+  });
+
+  void app.whenReady().then(createWindow);
+}
 
 async function createWindow(): Promise<void> {
   if (!isDev) registerAppProtocol(resolve(__dirname, '../renderer'));
 
-  const win = new BrowserWindow(createMainWindowOptions(__dirname));
+  const win = new BrowserWindow({
+    ...createMainWindowOptions(__dirname),
+    ...(applicationIcon.isEmpty() ? {} : { icon: applicationIcon }),
+  });
   mainWindow = win;
+  if (!applicationIcon.isEmpty()) win.setIcon(applicationIcon);
 
   // Secure defaults: no window.open()-spawned windows, no in-place navigation
   // away from the packaged renderer or the dev server.
@@ -155,8 +217,6 @@ async function createWindow(): Promise<void> {
   if (isDev) win.webContents.openDevTools({ mode: 'detach' });
   await win.loadURL(RENDERER_URL);
 }
-
-void app.whenReady().then(createWindow);
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();

@@ -27,7 +27,7 @@ export interface ItemsMeta {
   /** Body id → display name chosen by the user. */
   names: Record<string, string>;
   folders: ItemFolder[];
-  /** Row key (`body:<bodyId>`, `sketch:<featureId>`, `folder:<id>`) → containing folder id. */
+  /** Row key (`body:<bodyId>`, `sketch:<featureId>`, `mesh:<referenceMeshId>`, `folder:<id>`) → containing folder id. */
   parent: Record<string, string>;
 }
 
@@ -38,6 +38,10 @@ export function bodyRowKey(bodyId: string): string {
 }
 export function sketchRowKey(featureId: string): string {
   return `sketch:${featureId}`;
+}
+/** An imported STL reference mesh (`model/referenceMesh.ts`; its name lives on the mesh itself). */
+export function meshRowKey(meshId: string): string {
+  return `mesh:${meshId}`;
 }
 export function folderRowKey(folderId: string): string {
   return `folder:${folderId}`;
@@ -59,7 +63,7 @@ export function withDisplayNames<T extends Pick<Body, 'id' | 'name'>>(
 
 export interface LeafRow {
   key: string;
-  kind: 'body' | 'sketch';
+  kind: 'body' | 'sketch' | 'mesh';
 }
 
 export type ItemNode =

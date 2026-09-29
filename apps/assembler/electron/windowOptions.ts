@@ -2,8 +2,18 @@ import { resolve } from 'node:path';
 
 import type { BrowserWindowConstructorOptions } from 'electron';
 
-/** Product name as used in the OS window title and app identity. */
+/** Product name as used in the OS window title. */
 export const ASSEMBLER_PRODUCT_NAME = 'Himmel:CAD Assembler';
+
+/**
+ * Filesystem-safe app name for `app.setName()` (main.ts) — this drives
+ * `app.getPath('userData')` (`%APPDATA%\<name>\` on Windows), and `:` is not
+ * a valid Windows path character, so it cannot be `ASSEMBLER_PRODUCT_NAME`
+ * as-is. Matches Builder's equivalent choice (`app.setName('HimmelCAD
+ * Builder')` vs. its own colon-bearing wordmark) and electron-builder's
+ * `productName` in `electron-builder.win.yml`.
+ */
+export const ASSEMBLER_APP_NAME = 'HimmelCAD Assembler';
 
 /**
  * Pure builder for the main window's constructor options, kept free of any

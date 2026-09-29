@@ -10,6 +10,7 @@
  * pointer at any depth). Without Select Through only visible geometry is a
  * candidate; with Select Through everything along the ray is.
  */
+import { referenceMeshIdOf } from '../model/referenceMesh.js';
 import type { Body, EdgeInfo, EvaluatedSketch, FaceInfo } from '../kernel/types.js';
 import type { SelectionItem } from '../model/store.js';
 import { targetKey, type Projector, type ScreenPoint } from './boxSelect.js';
@@ -19,7 +20,8 @@ import type { PickTarget } from './picking.js';
 export type CandidateKind = 'face' | 'edge' | 'sketchProfile';
 
 export interface PickCandidate {
-  item: Extract<SelectionItem, { kind: CandidateKind }>;
+  /** A reference mesh (imported STL) is offered as a whole (`kind` `face` for priority). */
+  item: Extract<SelectionItem, { kind: CandidateKind | 'mesh' }>;
   kind: CandidateKind;
   /** Short type + name line for the pop-up, e.g. "Edge · Line 80 mm". */
   label: string;
@@ -199,6 +201,17 @@ function toCandidate(
   ctx: CandidateContext,
 ): PickCandidate | null {
   if (target.kind === 'face') {
+    const meshId = referenceMeshIdOf(target.bodyId);
+    if (meshId !== null) {
+      // An imported STL is one whole-mesh pick target (`referenceMeshToBody`).
+      return {
+        item: { kind: 'mesh', meshId },
+        kind: 'face',
+        label: 'Reference mesh',
+        owner: ctx.bodyName(target.bodyId),
+        occluded,
+      };
+    }
     const body = ctx.bodies.find((b) => b.id === target.bodyId);
     return {
       item: { kind: 'face', bodyId: target.bodyId, faceKey: target.faceKey },

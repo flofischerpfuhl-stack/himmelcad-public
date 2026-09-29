@@ -44,6 +44,34 @@ export interface AssemblerProjectApi {
   onCloseRequested(listener: () => void): () => void;
   /** Answers a pending close request; `true` lets the window close. */
   respondClose(allow: boolean): Promise<void>;
+  /**
+   * Fired when the main process wants a `.hcasm` opened outside the normal
+   * Open dialog: launched with a file argument (double-click association,
+   * or a CLI path) or forwarded from a second app instance. Returns an
+   * unsubscribe function.
+   */
+  onOpenRequested(listener: (path: string, text: string) => void): () => void;
+}
+
+export interface RecentFileInfo {
+  path: string;
+  /** Display name (file name without directory). */
+  name: string;
+  /** `true` if the file no longer exists at this path — render greyed out with Locate…/Remove. */
+  missing: boolean;
+}
+
+/**
+ * File menu "Open Recent": up to 8 most-recently-opened/saved `.hcasm`
+ * paths, persisted in `userData` (`electron/recentFiles.ts`).
+ */
+export interface AssemblerRecentFilesApi {
+  list(): Promise<RecentFileInfo[]>;
+  remove(path: string): Promise<void>;
+  /** Reads and opens `path` directly (no dialog); `null` if it no longer exists. */
+  openPath(path: string): Promise<{ path: string; text: string } | null>;
+  /** Lets the user pick a replacement for a missing entry; relinks the list entry to the new path. */
+  locate(oldPath: string): Promise<{ path: string; text: string } | null>;
 }
 
 /** State of the opt-in local agent endpoint (`electron/automationServer.ts`). */
@@ -76,4 +104,5 @@ export interface AssemblerApi {
   };
   readonly project: AssemblerProjectApi;
   readonly automation: AssemblerAutomationApi;
+  readonly recentFiles: AssemblerRecentFilesApi;
 }

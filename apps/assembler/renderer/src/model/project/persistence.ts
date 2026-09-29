@@ -87,6 +87,45 @@ export async function openStepDialog(): Promise<{ fileName: string; base64: stri
   return openBinaryViaFileInput('.step,.stp');
 }
 
+/**
+ * Opens a native/browser file picker for an STL file (`.stl`) and returns
+ * its raw bytes, ready for `kernel/stlImport.ts#parseStl`. Binary and ASCII
+ * STL are both plain bytes here; format detection happens in the parser.
+ */
+export async function openStlDialog(): Promise<{ fileName: string; bytes: Uint8Array } | null> {
+  return openBinaryBytesViaFileInput('.stl');
+}
+
+function openBinaryBytesViaFileInput(
+  accept: string,
+): Promise<{ fileName: string; bytes: Uint8Array } | null> {
+  return new Promise((resolve) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = accept;
+    input.style.display = 'none';
+    let settled = false;
+    const finish = (value: { fileName: string; bytes: Uint8Array } | null) => {
+      if (settled) return;
+      settled = true;
+      input.remove();
+      resolve(value);
+    };
+    input.addEventListener('change', () => {
+      const file = input.files?.[0];
+      if (!file) {
+        finish(null);
+        return;
+      }
+      void file
+        .arrayBuffer()
+        .then((buffer) => finish({ fileName: file.name, bytes: new Uint8Array(buffer) }));
+    });
+    document.body.appendChild(input);
+    input.click();
+  });
+}
+
 function openBinaryViaFileInput(
   accept: string,
 ): Promise<{ fileName: string; base64: string } | null> {
@@ -223,6 +262,51 @@ export function onCloseRequested(listener: () => void): () => void {
   return () => undefined;
 }
 
+/**
+ * Fires when the main process wants a `.hcasm` opened outside the normal
+ * Open dialog: the app was launched with a file argument (double-click on a
+ * `.hcasm`, or a command-line path) or a second app instance forwarded its
+ * argv (`electron/main.ts`, single-instance lock). No-op on the web (there
+ * is no OS file association or process argv there).
+ */
+export function onOpenRequested(listener: (opened: OpenResult) => void): () => void {
+  if (isElectron()) {
+    return window.assembler!.project.onOpenRequested((path, text) => listener({ path, text }));
+  }
+  return () => undefined;
+}
+
 export async function respondClose(allow: boolean): Promise<void> {
   if (isElectron()) await window.assembler!.project.respondClose(allow);
+}
+
+export interface RecentFileInfo {
+  path: string;
+  name: string;
+  missing: boolean;
+}
+
+export interface RecentOpenResult {
+  path: string;
+  text: string;
+}
+
+/** `[]` on the web (no filesystem paths to remember there — the browser Open flow has no path). */
+export async function listRecentFiles(): Promise<RecentFileInfo[]> {
+  if (isElectron()) return window.assembler!.recentFiles.list();
+  return [];
+}
+
+export async function removeRecentFile(path: string): Promise<void> {
+  if (isElectron()) await window.assembler!.recentFiles.remove(path);
+}
+
+export async function openRecentFile(path: string): Promise<RecentOpenResult | null> {
+  if (isElectron()) return window.assembler!.recentFiles.openPath(path);
+  return null;
+}
+
+export async function locateRecentFile(oldPath: string): Promise<RecentOpenResult | null> {
+  if (isElectron()) return window.assembler!.recentFiles.locate(oldPath);
+  return null;
 }

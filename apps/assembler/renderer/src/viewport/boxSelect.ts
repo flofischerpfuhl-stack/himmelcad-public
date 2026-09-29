@@ -12,6 +12,7 @@
  * (`visibleKeys` anywhere on screen, `touchedKeys` inside the rectangle);
  * with Select Through the test is purely geometric (hidden geometry too).
  */
+import { referenceMeshIdOf } from '../model/referenceMesh.js';
 import type { Body, EvaluatedSketch } from '../kernel/types.js';
 import type { SelectionItem } from '../model/store.js';
 import type { Vec3 } from './math.js';
@@ -143,6 +144,8 @@ export function targetKey(t: PickTarget | SelectionItem): string {
   switch (t.kind) {
     case 'body':
       return `body|${t.bodyId}`;
+    case 'mesh':
+      return `mesh|${t.meshId}`;
     case 'face':
       return `face|${t.bodyId}|${t.faceKey}`;
     case 'edge':
@@ -239,6 +242,10 @@ export function boxSelect(input: BoxSelectInput): SelectionItem[] {
   const visible = (key: string) => selectThrough || input.visibleKeys.has(key);
 
   for (const body of input.bodies) {
+    // A reference mesh (imported STL) is only ever selected whole: it takes part
+    // in body boxes, never in face/edge boxes (it has no B-rep faces or edges).
+    const meshId = referenceMeshIdOf(body.id);
+    if (meshId !== null && filter !== 'all' && filter !== 'bodies') continue;
     const bodyVisible =
       selectThrough ||
       body.faces.some((f) =>
@@ -263,7 +270,8 @@ export function boxSelect(input: BoxSelectInput): SelectionItem[] {
             input.touchedKeys.has(targetKey({ kind: 'edge', bodyId: body.id, edgeKey: e.key })),
           );
       }
-      if (hit) out.push({ kind: 'body', bodyId: body.id });
+      if (hit)
+        out.push(meshId !== null ? { kind: 'mesh', meshId } : { kind: 'body', bodyId: body.id });
       continue;
     }
 

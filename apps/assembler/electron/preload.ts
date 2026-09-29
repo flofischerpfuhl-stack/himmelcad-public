@@ -27,6 +27,23 @@ const api: AssemblerApi = {
       return () => ipcRenderer.removeListener('assembler:project:close-requested', handler);
     },
     respondClose: (allow: boolean) => ipcRenderer.invoke('assembler:project:respondClose', allow),
+    onOpenRequested: (listener: (path: string, text: string) => void) => {
+      const handler = (_event: unknown, path: string, text: string) => listener(path, text);
+      ipcRenderer.on('assembler:project:open-requested', handler);
+      // The file this instance was launched with, delivered once a listener exists.
+      void ipcRenderer
+        .invoke('assembler:project:takePendingOpen')
+        .then((opened: { path: string; text: string } | null) => {
+          if (opened) listener(opened.path, opened.text);
+        });
+      return () => ipcRenderer.removeListener('assembler:project:open-requested', handler);
+    },
+  },
+  recentFiles: {
+    list: () => ipcRenderer.invoke('assembler:recentFiles:list'),
+    remove: (path: string) => ipcRenderer.invoke('assembler:recentFiles:remove', path),
+    openPath: (path: string) => ipcRenderer.invoke('assembler:recentFiles:openPath', path),
+    locate: (oldPath: string) => ipcRenderer.invoke('assembler:recentFiles:locate', oldPath),
   },
   automation: {
     status: () => ipcRenderer.invoke('assembler:automation:status'),

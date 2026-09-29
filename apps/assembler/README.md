@@ -31,6 +31,12 @@ stable-reference scheme and open risks: `assembler/KERNEL-SPIKE.md`.
 - `pnpm typecheck` — renderer and main-process TypeScript projects.
 - `pnpm test` — Node test runner; kernel tests load the real OCCT wasm in
   Node (once per test file).
+- `pnpm test:electron` — production build, then Playwright-driven Electron
+  checks (packaged code path, agent access, kernel determinism).
+- `pnpm bench:kernel` — kernel performance table (`assembler/KERNEL-SPIKE.md`).
+- `pnpm package:win` — Windows installer (NSIS, per-user, no admin prompt)
+  into `release/` via `electron-builder.win.yml`; `pnpm icon` regenerates the
+  placeholder app icon (`scripts/generate-icon.mjs`).
 
 ## Modelling tools
 
@@ -109,6 +115,32 @@ validated reordering, the shortcut sheet (hold Ctrl or `?`), Settings
 (`Ctrl+,`) and touch/pen gestures. Decisions (e.g. names/folders are item
 properties, colour is a `setAppearance` step) and limits:
 `assembler/SELECTION-NAVIGATION.md`.
+
+## Files, reference meshes and the Windows installer
+
+- `.hcasm` projects (schema 2, `model/project/format.ts`) also carry the
+  view state (display mode, section, grid, panels, last camera preset, saved
+  views), Items names/folders (`items`) and STL reference meshes
+  (`referenceMeshes`, gzip+base64 via `meshCodec.ts`); all three are
+  optional and additive, so no schema bump. Dirty tracking covers features,
+  Items, saved views and reference meshes; the feature-id counter is reseeded
+  from each loaded document.
+- STL import (File > Import STL…, binary or ASCII, `kernel/stlImport.ts`):
+  a reference mesh is shown, measured (bounding box), hidden, renamed,
+  filed in folders, deleted and exported (STL/3MF) like a body, but it is
+  never a kernel input — modelling tools refuse it as a reference. A bounding
+  box that looks like metres or inches offers a one-time rescale to mm; it is
+  never applied silently.
+- File > Open Recent (Electron): up to 8 files, missing ones greyed with
+  Locate…/Remove (`electron/recentFiles.ts`, stored in `userData`). The main
+  process only opens paths that are on that list.
+- Windows installer (`pnpm package:win`): NSIS, per-user install into
+  `%LOCALAPPDATA%\Programs\HimmelCAD Assembler`, `.hcasm` file association
+  (a double-click or a command-line path opens the project; a second launch
+  forwards it to the running window). The OCCT and planeGCS `.wasm` files,
+  their Emscripten loader chunks and the licence texts are unpacked next to
+  `app.asar` (`resources/app.asar.unpacked/dist/renderer/`) so the LGPL
+  components stay replaceable files. Unsigned; the icon is a placeholder.
 
 ## Agent API (UI, Python and agents share one command layer)
 

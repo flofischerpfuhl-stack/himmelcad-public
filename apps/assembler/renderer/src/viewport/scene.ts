@@ -7,6 +7,7 @@
  */
 import type { Body, EvaluatedSketch } from '../kernel/types.js';
 import type { Bounds3 } from '../model/modeling.js';
+import { referenceMeshIdOf } from '../model/referenceMesh.js';
 import type { DisplayMode, SectionAxis, SelectionItem } from '../model/store.js';
 import {
   billboardEye,
@@ -164,6 +165,10 @@ function selectionEquals(a: SelectionItem, b: SelectionItem): boolean {
         b.kind === 'sketchProfile' && a.featureId === b.featureId && a.regionKey === b.regionKey
       );
     case 'feature':
+      return false;
+    case 'mesh':
+      return b.kind === 'mesh' && a.meshId === b.meshId;
+    default:
       return false;
   }
 }
@@ -493,14 +498,22 @@ export function buildScene(input: SceneInput): BuiltScene {
     } else if (input.hover?.kind === 'body' && input.hover.bodyId === body.id) {
       addHighlightEdges(flat, allEdges, input.colors.hover);
     }
+    // A reference mesh is selected/hovered as a whole (`{ kind: 'mesh' }`); its one
+    // whole-mesh face carries the highlight.
+    const meshId = referenceMeshIdOf(body.id);
     body.faces.forEach((face, faceIndex) => {
-      const faceItem: SelectionItem = { kind: 'face', bodyId: body.id, faceKey: face.key };
+      const faceItem: SelectionItem =
+        meshId !== null
+          ? { kind: 'mesh', meshId }
+          : { kind: 'face', bodyId: body.id, faceKey: face.key };
       const selected = isSelected(input.selection, faceItem);
       const hovered =
         !selected &&
-        input.hover?.kind === 'face' &&
-        input.hover.bodyId === body.id &&
-        input.hover.faceKey === face.key;
+        (meshId !== null
+          ? input.hover?.kind === 'mesh' && input.hover.meshId === meshId
+          : input.hover?.kind === 'face' &&
+            input.hover.bodyId === body.id &&
+            input.hover.faceKey === face.key);
       if (!selected && !hovered) return;
       const tris = facePositions(faceIndex);
       // Selected faces get a strong tint (always the selection-orange

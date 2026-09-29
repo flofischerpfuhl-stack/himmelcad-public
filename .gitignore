@@ -15,6 +15,9 @@ build/
 !apps/photolab/build/
 !apps/photolab/build/icon.png
 !apps/photolab/build/icon.ico
+!apps/assembler/build/
+!apps/assembler/build/icon.png
+!apps/assembler/build/icon.ico
 out/
 .vite/
 .turbo/

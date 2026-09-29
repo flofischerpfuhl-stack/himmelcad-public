@@ -8,7 +8,7 @@
 import { isPlanarFace, type AssemblerState, type SelectionItem } from '../store.js';
 import { usePreferences } from '../preferences.js';
 import { MAX_SAVED_VIEWS, useWorkspaceStore } from '../workspace.js';
-import { bodyRowKey, sketchRowKey, useItemsStore } from '../items.js';
+import { bodyRowKey, meshRowKey, sketchRowKey, useItemsStore } from '../items.js';
 import type { Command, CommandAvailability } from './registry.js';
 
 const enabled: CommandAvailability = { enabled: true };
@@ -28,6 +28,8 @@ export function itemsRowKeyFor(item: SelectionItem): string | null {
       return bodyRowKey(item.bodyId);
     case 'sketchProfile':
       return sketchRowKey(item.featureId);
+    case 'mesh':
+      return meshRowKey(item.meshId);
     case 'feature':
       return null;
   }

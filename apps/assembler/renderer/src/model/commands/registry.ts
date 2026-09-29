@@ -284,6 +284,9 @@ export const COMMANDS: readonly Command[] = [
         } else if (item.kind === 'body') {
           const body = ctx.evaluation.bodies.find((b) => b.id === item.bodyId);
           if (body) ctx.deleteFeature(body.createdBy);
+        } else if (item.kind === 'mesh') {
+          // An imported STL reference mesh is not a step: it is removed from the project.
+          ctx.removeReferenceMesh(item.meshId);
         }
       }
       ctx.clearSelection();
@@ -401,12 +404,13 @@ export const COMMANDS: readonly Command[] = [
     group: 'edit',
     keywords: ['visibility', 'invisible'],
     availability: (ctx) => {
-      const bodies = selected(ctx, 'body');
-      return bodies.length > 0
-        ? alwaysEnabled
-        : { enabled: false, reason: 'Select a body to hide.' };
+      const count = selected(ctx, 'body').length + selected(ctx, 'mesh').length;
+      return count > 0 ? alwaysEnabled : { enabled: false, reason: 'Select a body to hide.' };
     },
-    run: (ctx) => ctx.hideBodies(selected(ctx, 'body').map((b) => b.bodyId)),
+    run: (ctx) => {
+      ctx.hideBodies(selected(ctx, 'body').map((b) => b.bodyId));
+      for (const mesh of selected(ctx, 'mesh')) ctx.setReferenceMeshHidden(mesh.meshId, true);
+    },
   },
   {
     id: 'edit.showAll',
@@ -414,8 +418,15 @@ export const COMMANDS: readonly Command[] = [
     group: 'edit',
     keywords: ['visibility', 'unhide'],
     availability: (ctx) =>
-      ctx.hiddenBodyIds.length > 0 ? alwaysEnabled : { enabled: false, reason: 'Nothing hidden.' },
-    run: (ctx) => ctx.showAllBodies(),
+      ctx.hiddenBodyIds.length > 0 || ctx.referenceMeshes.some((m) => m.hidden)
+        ? alwaysEnabled
+        : { enabled: false, reason: 'Nothing hidden.' },
+    run: (ctx) => {
+      ctx.showAllBodies();
+      for (const mesh of ctx.referenceMeshes) {
+        if (mesh.hidden) ctx.setReferenceMeshHidden(mesh.id, false);
+      }
+    },
   },
   {
     id: 'edit.selectAllBodies',
@@ -531,6 +542,17 @@ export const COMMANDS: readonly Command[] = [
     requiresKernel: true,
     availability: (ctx) => kernelNotReady(ctx) ?? alwaysEnabled,
     run: () => void useProjectStore.getState().importStep(),
+  },
+  {
+    id: 'file.importStl',
+    label: 'Import STL…',
+    group: 'file',
+    keywords: ['import', 'stl', 'mesh', 'scan', 'reference'],
+    // Never a kernel input (`apps/assembler/README.md` "STL import"): the
+    // reference mesh is stored and rendered outside OCCT entirely, so this
+    // works even while the kernel is still loading or unavailable.
+    availability: () => alwaysEnabled,
+    run: () => void useProjectStore.getState().importStl(),
   },
   {
     id: 'file.agentAccess',

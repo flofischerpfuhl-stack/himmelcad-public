@@ -10,7 +10,8 @@
 import { create } from 'zustand';
 
 import type { KernelAdapter } from '../../kernel/adapter.js';
-import { exportAllBodiesStl, exportBodyStl } from '../../kernel/stlExport.js';
+import { parseStl, suggestStlUnitHint, type StlUnitHint } from '../../kernel/stlImport.js';
+import { exportBodyStl, stlBufferForMeshes } from '../../kernel/stlExport.js';
 import { buildThreeMf } from '../../kernel/threeMf.js';
 import type { Feature } from '../document.js';
 import {
@@ -20,6 +21,11 @@ import {
   useItemsStore,
   withDisplayNames,
 } from '../items.js';
+import {
+  referenceMeshFromParsedStl,
+  referenceMeshToBody,
+  type ReferenceMesh,
+} from '../referenceMesh.js';
 import { useAssemblerStore } from '../store.js';
 import { parseSavedViews, useWorkspaceStore } from '../workspace.js';
 import {
@@ -28,7 +34,10 @@ import {
   loadProjectFile,
   saveProjectFile,
   type ProjectFileV1,
+  type ProjectViewState,
+  type ReferenceMeshRecordV1,
 } from './format.js';
+import { decodeMeshPayload, encodeMeshPayload, MeshPayloadTooLargeError } from './meshCodec.js';
 import * as io from './persistence.js';
 
 /** Bumped by hand alongside `package.json` `version`; written into saved files for diagnostics only (never read back for behaviour). */
@@ -37,7 +46,11 @@ const AUTOSAVE_INTERVAL_MS = 60_000;
 /** Debounce after a feature-history change before writing a recovery copy ("on important commits"). */
 const RECOVERY_DEBOUNCE_MS = 2_000;
 
-export type PendingAction = 'new' | 'open' | 'close' | null;
+/** `openFile`: open a specific file (Open Recent, file association, second instance). */
+export type PendingAction = 'new' | 'open' | 'openFile' | 'close' | null;
+
+/** The file an `openFile` pending action opens (read lazily for Open Recent). */
+let pendingOpen: (() => Promise<io.OpenResult | null>) | null = null;
 
 function sanitizeFileName(name: string): string {
   const cleaned = name.trim().replace(/[\\/:*?"<>|]+/g, '_');
@@ -60,6 +73,8 @@ export interface ProjectFileState {
   loadError: string | null;
   pendingAction: PendingAction;
   recoveryOffer: RecoveryOffer | null;
+  /** A just-imported STL whose bounding box suggests it may not be in millimetres; the user must confirm/rescale or keep as-is (never applied silently). */
+  unitHintOffer: { meshId: string; hint: StlUnitHint; scaleToMm: number } | null;
 
   attachKernelAdapter: (adapter: KernelAdapter) => void;
   clearLoadError: () => void;
@@ -68,6 +83,12 @@ export interface ProjectFileState {
   isDirty: () => boolean;
   requestNew: () => void;
   requestOpen: () => void;
+  /**
+   * Opens a specific file (Open Recent, a double-clicked `.hcasm`, a second
+   * app instance): asks about unsaved changes first through the same dialog
+   * as New/Open. `load` reads the file; `null` = nothing to open.
+   */
+  requestOpenFile: (load: () => Promise<io.OpenResult | null>) => void;
   /** Called by the Electron main process (via `onCloseRequested`) when the window is about to close. */
   requestCloseWindow: () => void;
   /** Discards unsaved changes and proceeds with `pendingAction`. */
@@ -79,6 +100,13 @@ export interface ProjectFileState {
 
   newProject: () => void;
   openProject: () => Promise<void>;
+  /**
+   * Applies an already-read `.hcasm` (path + text) as the current document —
+   * the common tail of `openProject` (OS dialog), the Recent Files list and
+   * opening a file via double-click/command-line argument or a second app
+   * instance forwarding its argv (`electron/main.ts`).
+   */
+  openFromResult: (opened: io.OpenResult) => Promise<void>;
   save: () => Promise<void>;
   saveAs: () => Promise<void>;
   exportStlAll: () => Promise<void>;
@@ -86,6 +114,10 @@ export interface ProjectFileState {
   export3mf: () => Promise<void>;
   exportStep: () => Promise<void>;
   importStep: () => Promise<void>;
+  /** File > Import > STL…: reads, parses (binary or ASCII) and adds a reference mesh; offers a unit-rescale confirmation when the bbox suggests metres/inches. */
+  importStl: () => Promise<void>;
+  /** Applies the offered unit rescale (uniform `scaleToMm`) to the mesh's own coordinates, or keeps it as-is; either way clears the offer. Never applied without this explicit call. */
+  resolveUnitHint: (apply: boolean) => void;
 
   checkRecovery: () => Promise<void>;
   restoreRecovery: () => void;
@@ -100,6 +132,16 @@ let subscribed = false;
 /** Set while New/Open/Recover replace item names and saved views (not a user edit). */
 let restoringExtras = false;
 
+/** Runs a document replacement (New/Open/Recover) without it counting as a user edit. */
+function loadWithoutDirty(load: () => void): void {
+  restoringExtras = true;
+  try {
+    load();
+  } finally {
+    restoringExtras = false;
+  }
+}
+
 function restoreExtras(project: ProjectFileV1 | null): void {
   restoringExtras = true;
   try {
@@ -109,18 +151,87 @@ function restoreExtras(project: ProjectFileV1 | null): void {
   }
 }
 
-function currentProjectPayload(): string {
+/** Captures the current view-only state for persistence; never affects geometry or undo history. */
+function currentViewState(): ProjectViewState {
+  const doc = useAssemblerStore.getState();
+  return {
+    displayMode: doc.viewState.displayMode,
+    camera: doc.viewState.cameraRequest ? { preset: doc.viewState.cameraRequest.preset } : {},
+    section: {
+      enabled: doc.viewState.sectionEnabled,
+      axis: doc.viewState.sectionAxis,
+      offset: doc.viewState.sectionOffset,
+      flipped: doc.viewState.sectionFlipped,
+    },
+    grid: {
+      visible: doc.viewState.gridVisible,
+      snap: doc.viewState.snapToGrid,
+      step: doc.viewState.gridStep,
+    },
+    panels: { items: doc.panels.items, history: doc.panels.history },
+  };
+}
+
+/** Encodes every reference mesh's triangle data (gzip+base64, `meshCodec.ts`) for the `.hcasm` file. */
+async function encodeReferenceMeshes(
+  meshes: readonly ReferenceMesh[],
+): Promise<ReferenceMeshRecordV1[]> {
+  return Promise.all(
+    meshes.map(async (m) => ({
+      id: m.id,
+      name: m.name,
+      fileName: m.fileName,
+      data: await encodeMeshPayload({
+        positions: m.positions,
+        normals: m.normals,
+        indices: m.indices,
+      }),
+      min: m.min,
+      max: m.max,
+      transform: { ...m.transform },
+      hidden: m.hidden,
+    })),
+  );
+}
+
+/** Inverse of {@link encodeReferenceMeshes}; propagates {@link MeshPayloadTooLargeError} so a load that exceeds the size limit is rejected with a clear message, never a silent partial load. */
+async function decodeReferenceMeshes(
+  records: readonly ReferenceMeshRecordV1[],
+): Promise<ReferenceMesh[]> {
+  return Promise.all(
+    records.map(async (r) => {
+      const buffers = await decodeMeshPayload(r.data);
+      return {
+        id: r.id,
+        name: r.name,
+        fileName: r.fileName,
+        positions: buffers.positions,
+        normals: buffers.normals,
+        indices: buffers.indices,
+        min: r.min,
+        max: r.max,
+        transform: { ...r.transform },
+        hidden: r.hidden,
+      } satisfies ReferenceMesh;
+    }),
+  );
+}
+
+async function currentProjectPayload(): Promise<string> {
   const doc = useAssemblerStore.getState();
   const project = useProjectStore.getState();
   const items = itemsMetaSnapshot(useItemsStore.getState());
   const savedViews = useWorkspaceStore.getState().savedViews;
+  const referenceMeshes = await encodeReferenceMeshes(doc.referenceMeshes);
   return saveProjectFile({
     projectName: doc.projectName,
     features: doc.features,
     appVersion: APP_VERSION,
+    referenceMeshes,
+    // One view-state object: display/section/grid/panels/camera plus the saved views.
+    viewState: { ...currentViewState(), ...(savedViews.length > 0 ? { savedViews } : {}) },
     createdAt: project.createdAt,
     ...(isEmptyItemsMeta(items) ? {} : { items }),
-    ...(savedViews.length > 0 ? { viewState: { savedViews } } : {}),
   });
 }
 
@@ -138,7 +249,7 @@ function unref(handle: unknown): void {
 function writeRecoverySoon(): void {
   if (recoveryDebounce) clearTimeout(recoveryDebounce);
   recoveryDebounce = setTimeout(() => {
-    void io.writeRecovery(currentProjectPayload());
+    void currentProjectPayload().then((text) => io.writeRecovery(text));
   }, RECOVERY_DEBOUNCE_MS);
   unref(recoveryDebounce);
 }
@@ -146,7 +257,7 @@ function writeRecoverySoon(): void {
 function ensureAutosave(): void {
   if (autosaveTimer) return;
   autosaveTimer = setInterval(() => {
-    void io.writeRecovery(currentProjectPayload());
+    void currentProjectPayload().then((text) => io.writeRecovery(text));
   }, AUTOSAVE_INTERVAL_MS);
   unref(autosaveTimer);
 }
@@ -155,19 +266,22 @@ function ensureSubscription(): void {
   if (subscribed) return;
   subscribed = true;
   baselineFeatures = useAssemblerStore.getState().features;
+  // Item names/folders, saved views and reference meshes are saved with the project too.
+  const markDirty = () => {
+    if (restoringExtras) return;
+    useProjectStore.setState({ dirty: true });
+    writeRecoverySoon();
+  };
   useAssemblerStore.subscribe((state, prev) => {
+    // Import/remove/hide/move of an STL reference mesh (not a feature, so not
+    // covered by the feature baseline below).
+    if (state.referenceMeshes !== prev.referenceMeshes) markDirty();
     if (state.features === prev.features) return;
     if (state.features !== baselineFeatures) {
       useProjectStore.setState({ dirty: true });
       writeRecoverySoon();
     }
   });
-  // Item names/folders and saved views are saved with the project too.
-  const markDirty = () => {
-    if (restoringExtras) return;
-    useProjectStore.setState({ dirty: true });
-    writeRecoverySoon();
-  };
   useItemsStore.subscribe((state, prev) => {
     if (
       state.names !== prev.names ||
@@ -193,6 +307,7 @@ export const useProjectStore = create<ProjectFileState>((set, get) => ({
   loadError: null,
   pendingAction: null,
   recoveryOffer: null,
+  unitHintOffer: null,
 
   attachKernelAdapter: (adapter) => {
     kernelAdapter = adapter;
@@ -217,6 +332,19 @@ export const useProjectStore = create<ProjectFileState>((set, get) => ({
     }
     set({ pendingAction: 'open' });
   },
+  requestOpenFile: (load) => {
+    ensureSubscription();
+    const proceed = async () => {
+      const opened = await load();
+      if (opened) await get().openFromResult(opened);
+    };
+    if (!get().dirty) {
+      void proceed();
+      return;
+    }
+    pendingOpen = load;
+    set({ pendingAction: 'openFile' });
+  },
   requestCloseWindow: () => {
     ensureSubscription();
     if (!get().dirty) {
@@ -230,9 +358,13 @@ export const useProjectStore = create<ProjectFileState>((set, get) => ({
     set({ pendingAction: null });
     if (action === 'new') get().newProject();
     else if (action === 'open') void get().openProject();
+    else if (action === 'openFile') void openPendingFile();
     else if (action === 'close') void io.respondClose(true);
   },
-  cancelPending: () => set({ pendingAction: null }),
+  cancelPending: () => {
+    pendingOpen = null;
+    set({ pendingAction: null });
+  },
   saveThenProceed: async () => {
     const action = get().pendingAction;
     set({ pendingAction: null });
@@ -240,6 +372,7 @@ export const useProjectStore = create<ProjectFileState>((set, get) => ({
     if (get().dirty) return; // save was cancelled (Save As dialog dismissed) — stay put
     if (action === 'new') get().newProject();
     else if (action === 'open') void get().openProject();
+    else if (action === 'openFile') void openPendingFile();
     else if (action === 'close') void io.respondClose(true);
   },
 
@@ -247,7 +380,9 @@ export const useProjectStore = create<ProjectFileState>((set, get) => ({
     ensureSubscription();
     const features: Feature[] = []; // a blank document, not the demo.
     baselineFeatures = features;
-    useAssemblerStore.getState().loadDocument(features, { projectName: 'Untitled' });
+    loadWithoutDirty(() =>
+      useAssemblerStore.getState().loadDocument(features, { projectName: 'Untitled' }),
+    );
     restoreExtras(null);
     set({
       filePath: null,
@@ -263,12 +398,21 @@ export const useProjectStore = create<ProjectFileState>((set, get) => ({
     ensureSubscription();
     const opened = await io.openProjectDialog();
     if (!opened) return;
+    await get().openFromResult(opened);
+  },
+
+  openFromResult: async (opened) => {
+    ensureSubscription();
     try {
       const project = loadProjectFile(opened.text);
+      const referenceMeshes = await decodeReferenceMeshes(project.referenceMeshes ?? []);
       baselineFeatures = project.features;
-      useAssemblerStore
-        .getState()
-        .loadDocument(project.features, { projectName: project.projectName });
+      loadWithoutDirty(() =>
+        useAssemblerStore
+          .getState()
+          .loadDocument(project.features, { projectName: project.projectName, referenceMeshes }),
+      );
+      useAssemblerStore.getState().applyViewState(project.viewState ?? {});
       restoreExtras(project);
       set({
         filePath: opened.path,
@@ -281,7 +425,7 @@ export const useProjectStore = create<ProjectFileState>((set, get) => ({
     } catch (error) {
       set({
         loadError:
-          error instanceof ProjectFormatError
+          error instanceof ProjectFormatError || error instanceof MeshPayloadTooLargeError
             ? error.message
             : `Could not open this project: ${error instanceof Error ? error.message : String(error)}`,
       });
@@ -293,7 +437,7 @@ export const useProjectStore = create<ProjectFileState>((set, get) => ({
     const doc = useAssemblerStore.getState();
     set({ saving: true, busyMessage: 'Saving…' });
     try {
-      const text = currentProjectPayload();
+      const text = await currentProjectPayload();
       const result = await io.saveProjectText(text, {
         path: get().filePath,
         suggestedName: `${sanitizeFileName(doc.projectName)}.hcasm`,
@@ -315,7 +459,7 @@ export const useProjectStore = create<ProjectFileState>((set, get) => ({
     const doc = useAssemblerStore.getState();
     set({ saving: true, busyMessage: 'Saving…' });
     try {
-      const text = currentProjectPayload();
+      const text = await currentProjectPayload();
       const result = await io.saveProjectText(text, {
         suggestedName: `${sanitizeFileName(doc.projectName)}.hcasm`,
         forceDialog: true,
@@ -335,11 +479,13 @@ export const useProjectStore = create<ProjectFileState>((set, get) => ({
 
   exportStlAll: async () => {
     const doc = useAssemblerStore.getState();
-    if (doc.evaluation.bodies.length === 0) return;
+    const visibleMeshes = doc.referenceMeshes.filter((m) => !m.hidden);
+    if (doc.evaluation.bodies.length === 0 && visibleMeshes.length === 0) return;
     set({ busyMessage: 'Exporting STL…' });
     try {
+      const meshBodies = visibleMeshes.map(referenceMeshToBody);
       const bytes = new Uint8Array(
-        exportAllBodiesStl(withDisplayNames(doc.evaluation.bodies, useItemsStore.getState())),
+        stlBufferForMeshes([...doc.evaluation.bodies, ...meshBodies].map((b) => b.mesh)),
       );
       await io.exportBinary(
         bytes,
@@ -373,11 +519,15 @@ export const useProjectStore = create<ProjectFileState>((set, get) => ({
   },
   export3mf: async () => {
     const doc = useAssemblerStore.getState();
-    if (doc.evaluation.bodies.length === 0) return;
+    const visibleMeshes = doc.referenceMeshes.filter((m) => !m.hidden);
+    if (doc.evaluation.bodies.length === 0 && visibleMeshes.length === 0) return;
     set({ busyMessage: 'Exporting 3MF…' });
     try {
       // 3MF objects carry the user's body names and `setAppearance` colours (`Body.color`).
-      const bytes = buildThreeMf(withDisplayNames(doc.evaluation.bodies, useItemsStore.getState()));
+      const bytes = buildThreeMf([
+        ...withDisplayNames(doc.evaluation.bodies, useItemsStore.getState()),
+        ...visibleMeshes.map(referenceMeshToBody),
+      ]);
       await io.exportBinary(
         bytes,
         `${sanitizeFileName(doc.projectName)}.3mf`,
@@ -415,6 +565,63 @@ export const useProjectStore = create<ProjectFileState>((set, get) => ({
       .getState()
       .addImportedBody({ data: opened.base64, fileName: opened.fileName });
   },
+  importStl: async () => {
+    const opened = await io.openStlDialog();
+    if (!opened) return;
+    try {
+      const parsed = parseStl(opened.bytes);
+      if (parsed.triangleCount === 0) {
+        set({ loadError: `"${opened.fileName}" has no usable triangles.` });
+        return;
+      }
+      const id = `refmesh-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+      const mesh = referenceMeshFromParsedStl({
+        id,
+        name: opened.fileName.replace(/\.stl$/i, '') || 'Reference mesh',
+        fileName: opened.fileName,
+        parsed,
+      });
+      useAssemblerStore.getState().importReferenceMesh(mesh);
+      const suggestion = suggestStlUnitHint(parsed.min, parsed.max);
+      if (suggestion) {
+        set({
+          unitHintOffer: { meshId: id, hint: suggestion.hint, scaleToMm: suggestion.scaleToMm },
+        });
+      }
+    } catch (error) {
+      set({
+        loadError: `Could not import "${opened.fileName}": ${error instanceof Error ? error.message : String(error)}`,
+      });
+    }
+  },
+  resolveUnitHint: (apply) => {
+    const offer = get().unitHintOffer;
+    set({ unitHintOffer: null });
+    if (!offer || !apply) return;
+    const mesh = useAssemblerStore.getState().referenceMeshes.find((m) => m.id === offer.meshId);
+    if (!mesh) return;
+    // Rescales the mesh's own coordinates uniformly around its own origin
+    // (not the document-level `transform`, which stays an independent
+    // translation applied on top) — an explicit, one-time, user-confirmed
+    // edit, never automatic.
+    const scale = offer.scaleToMm;
+    const positions = new Float32Array(mesh.positions.length);
+    for (let i = 0; i < positions.length; i += 1) positions[i] = mesh.positions[i]! * scale;
+    const min: [number, number, number] = [
+      mesh.min[0] * scale,
+      mesh.min[1] * scale,
+      mesh.min[2] * scale,
+    ];
+    const max: [number, number, number] = [
+      mesh.max[0] * scale,
+      mesh.max[1] * scale,
+      mesh.max[2] * scale,
+    ];
+    useAssemblerStore.getState().removeReferenceMesh(mesh.id);
+    useAssemblerStore
+      .getState()
+      .importReferenceMesh({ ...mesh, positions, normals: mesh.normals, min, max });
+  },
 
   checkRecovery: async () => {
     const offer = await io.readRecovery();
@@ -431,19 +638,35 @@ export const useProjectStore = create<ProjectFileState>((set, get) => ({
   restoreRecovery: () => {
     const offer = get().recoveryOffer;
     if (!offer) return;
-    const project = loadProjectFile(offer.text);
-    baselineFeatures = null; // force dirty: a restored-but-unsaved recovery is not yet "saved"
-    useAssemblerStore
-      .getState()
-      .loadDocument(project.features, { projectName: project.projectName });
-    restoreExtras(project);
-    set({
-      recoveryOffer: null,
-      dirty: true,
-      filePath: null,
-      createdAt: project.createdAt,
-      lastSavedAt: null,
-    });
+    void (async () => {
+      try {
+        const project = loadProjectFile(offer.text);
+        const referenceMeshes = await decodeReferenceMeshes(project.referenceMeshes ?? []);
+        baselineFeatures = null; // force dirty: a restored-but-unsaved recovery is not yet "saved"
+        loadWithoutDirty(() =>
+          useAssemblerStore
+            .getState()
+            .loadDocument(project.features, { projectName: project.projectName, referenceMeshes }),
+        );
+        useAssemblerStore.getState().applyViewState(project.viewState ?? {});
+        restoreExtras(project);
+        set({
+          recoveryOffer: null,
+          dirty: true,
+          filePath: null,
+          createdAt: project.createdAt,
+          lastSavedAt: null,
+        });
+      } catch (error) {
+        set({
+          recoveryOffer: null,
+          loadError:
+            error instanceof ProjectFormatError || error instanceof MeshPayloadTooLargeError
+              ? error.message
+              : `Could not recover the autosaved copy: ${error instanceof Error ? error.message : String(error)}`,
+        });
+      }
+    })();
   },
   dismissRecovery: () => {
     set({ recoveryOffer: null });
@@ -451,4 +674,21 @@ export const useProjectStore = create<ProjectFileState>((set, get) => ({
   },
 }));
 
+// Subscribe to the document store immediately at module load, not lazily on
+// the first Save/Open/New. Previously `ensureSubscription()` only ran inside
+// those actions, so a user who edited the (implicit, unsaved) startup
+// document without ever touching the File menu first never had `dirty` set
+// to `true` — the subscription, and its `baselineFeatures` snapshot, simply
+// didn't exist yet. Subscribing here means `dirty` is correct from the very
+// first change after app startup.
+ensureSubscription();
+
 export { CURRENT_SCHEMA_VERSION };
+
+async function openPendingFile(): Promise<void> {
+  const load = pendingOpen;
+  pendingOpen = null;
+  if (!load) return;
+  const opened = await load();
+  if (opened) await useProjectStore.getState().openFromResult(opened);
+}
