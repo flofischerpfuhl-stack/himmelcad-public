@@ -193,7 +193,8 @@ const BOSSES = 10;
  * Plate 200 × 120 × 20 with rounded vertical edges, shelled open at the
  * bottom (2 mm walls), 40 holes (5 rows × linear pattern of 8 pins,
  * subtracted), 10 bosses on top, each with a filleted top edge, a chamfered
- * plate edge and a final boss fillet as the last feature. 61 features.
+ * top outline, a move, a colour and a final boss fillet as the last feature.
+ * 60 features.
  */
 function sixtyPart(p: { plateHeight: number; lastRadius: number }): Feature[] {
   const out: Feature[] = [];
@@ -262,6 +263,22 @@ function sixtyPart(p: { plateHeight: number; lastRadius: number }): Feature[] {
     edges: [edge(body, 'plate:end:0', side('l1'), [PLATE.w / 2, 0, p.plateHeight])],
     distance: 1,
   });
+  // The front chamfer runs around the whole top outline (a tangent chain through the corner
+  // rounds), so the next feature moves the plate instead: keys survive rigid motions.
+  out.push({
+    ...base('shift'),
+    kind: 'transform',
+    bodyId: body,
+    dx: 5,
+    dy: 0,
+    dz: 0,
+    rx: 0,
+    ry: 0,
+    rz: 0,
+    pivot: [0, 0, 0],
+    copy: false,
+  });
+  out.push({ ...base('colour'), kind: 'setAppearance', bodyId: body, color: '#9AAE9B' });
   const last = BOSSES - 1;
   out.push(
     fillet(
@@ -274,7 +291,7 @@ function sixtyPart(p: { plateHeight: number; lastRadius: number }): Feature[] {
 }
 
 export const sixtyPartBench: BenchPart = {
-  name: 'synthetic plate (61 features)',
+  name: 'synthetic plate (60 features)',
   document: () => sixtyPart({ plateHeight: 20, lastRadius: 1 }),
   editSecond: (v) => sixtyPart({ plateHeight: 20 + 0.05 * (v + 1), lastRadius: 1 }),
   editLast: (v) => sixtyPart({ plateHeight: 20, lastRadius: 1 + 0.05 * (v + 1) }),

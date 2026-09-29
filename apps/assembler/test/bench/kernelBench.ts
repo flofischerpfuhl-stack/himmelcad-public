@@ -28,6 +28,10 @@ interface Row {
   triangles: number;
   bodies: number;
   errors: number;
+  /** Tessellation: full (cold) and for the last-feature edit, ms; preview-quality triangles. */
+  fullTessMs: number;
+  lastTessMs: number;
+  previewTriangles: number;
 }
 
 type Evaluate = (
@@ -61,10 +65,12 @@ function heapMb(oc: OpenCascade): number {
 async function benchPart(oc: OpenCascade, part: BenchPart, repeats: number): Promise<Row> {
   // Full evaluation: a fresh evaluator (empty caches) per repetition.
   const full: number[] = [];
+  const fullTess: number[] = [];
   let baseline: EvaluationResult | null = null;
   for (let i = 0; i < 3; i += 1) {
     const { ms, result } = await timed(() => evaluateOf(createEvaluator(oc))(part.document()));
     full.push(ms);
+    fullTess.push(result.stats.tessellateMs);
     baseline = result;
   }
   const evaluator = createEvaluator(oc);
@@ -72,16 +78,20 @@ async function benchPart(oc: OpenCascade, part: BenchPart, repeats: number): Pro
   await evaluate(part.document());
   const editSecond: number[] = [];
   const editLast: number[] = [];
+  const lastTess: number[] = [];
   for (let v = 0; v < repeats; v += 1) {
     editSecond.push((await timed(() => evaluate(part.editSecond(v)))).ms);
   }
   await evaluate(part.document());
   for (let v = 0; v < repeats; v += 1) {
-    editLast.push((await timed(() => evaluate(part.editLast(v)))).ms);
+    const { ms, result } = await timed(() => evaluate(part.editLast(v)));
+    editLast.push(ms);
+    lastTess.push(result.stats.tessellateMs);
   }
   // Preview: the committed document stays, a provisional feature is dragged.
   await evaluate(part.document());
   const preview: number[] = [];
+  let previewTriangles = 0;
   for (let v = 0; v < repeats + 1; v += 1) {
     const features = [...part.document(), part.preview(v)];
     const { ms, result } = await timed(() => evaluate(features, { quality: 'preview' }));
@@ -89,6 +99,10 @@ async function benchPart(oc: OpenCascade, part: BenchPart, repeats: number): Pro
     if (error) throw new Error(`${part.name}: preview failed: ${error}`);
     if (v > 0) preview.push(ms); // the first preview starts the drag
   }
+  // The whole document at preview quality (a fresh evaluator: nothing reused).
+  previewTriangles = (
+    await evaluateOf(createEvaluator(oc))(part.document(), { quality: 'preview' })
+  ).stats.triangles;
   const result = baseline!;
   return {
     part: part.name,
@@ -99,6 +113,9 @@ async function benchPart(oc: OpenCascade, part: BenchPart, repeats: number): Pro
     triangles: result.stats.triangles,
     bodies: result.bodies.length,
     errors: Object.keys(result.errors).length,
+    fullTessMs: median(fullTess),
+    lastTessMs: median(lastTess),
+    previewTriangles,
   };
 }
 
@@ -110,13 +127,24 @@ async function benchPart(oc: OpenCascade, part: BenchPart, repeats: number): Pro
 async function leakSession(
   oc: OpenCascade,
   edits: number,
-): Promise<{ edit: number; heapMb: number; ms: number }[]> {
-  const evaluate = evaluateOf(createEvaluator(oc));
-  const samples: { edit: number; heapMb: number; ms: number }[] = [];
+  budgetMb?: number,
+): Promise<{ edit: number; heapMb: number; cacheMb: number; ms: number }[]> {
+  const evaluator = createEvaluator(
+    oc,
+    budgetMb === undefined ? {} : ({ cacheBudgetBytes: budgetMb * 1048576 } as never),
+  );
+  const evaluate = evaluateOf(evaluator);
+  const cacheMb = () => {
+    const info = (
+      evaluator as { cacheInfo?: () => { bytes: number; meshBytes: number } }
+    ).cacheInfo?.();
+    return info ? (info.bytes + info.meshBytes) / 1048576 : NaN;
+  };
+  const samples: { edit: number; heapMb: number; cacheMb: number; ms: number }[] = [];
   let window: number[] = [];
   // No forced GC: the session shows what a real worker sees.
   for (let i = 0; i <= edits; i += 1) {
-    const v = i % 37;
+    const v = i; // every document is new: the caches fill up to their budgets and evict
     const features =
       i % 3 === 0
         ? demoBracket.editSecond(v)
@@ -129,7 +157,7 @@ async function leakSession(
       await evaluate([...features, demoBracket.preview((i % 11) + p)], { quality: 'preview' });
     }
     if (i % 50 === 0) {
-      samples.push({ edit: i, heapMb: heapMb(oc), ms: median(window) });
+      samples.push({ edit: i, heapMb: heapMb(oc), cacheMb: cacheMb(), ms: median(window) });
       window = [];
     }
   }
@@ -143,8 +171,11 @@ function fmt(ms: number): string {
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
   const json = args.includes('--json');
-  const leakIndex = args.indexOf('--leak');
+  const leakIndex = Math.max(args.indexOf('--leak'), args.indexOf('--leak-only'));
   const leakEdits = leakIndex >= 0 ? Number(args[leakIndex + 1]) || 500 : 0;
+  const tableToo = !args.includes('--leak-only');
+  const budgetIndex = args.indexOf('--budget');
+  const budgetMb = budgetIndex >= 0 ? Number(args[budgetIndex + 1]) : undefined;
   const repeats = 5;
 
   const require = createRequire(import.meta.url);
@@ -152,39 +183,50 @@ async function main(): Promise<void> {
   const t0 = performance.now();
   const oc = await init({ locateFile: () => wasmPath });
   const loadMs = performance.now() - t0;
-  // JIT warm-up so the first part is not charged for it.
-  await evaluateOf(createEvaluator(oc))(demoBracket.document());
+  if (tableToo) {
+    // JIT warm-up so the first part is not charged for it.
+    await evaluateOf(createEvaluator(oc))(demoBracket.document());
 
-  const rows: Row[] = [];
-  for (const part of BENCH_PARTS) rows.push(await benchPart(oc, part, repeats));
+    const rows: Row[] = [];
+    for (const part of BENCH_PARTS) rows.push(await benchPart(oc, part, repeats));
 
-  if (json) {
-    process.stdout.write(`${JSON.stringify({ loadMs, rows, heapMb: heapMb(oc) }, null, 2)}\n`);
-  } else {
-    const lines = [
-      `Kernel bench — Node ${process.version}, wasm load ${fmt(loadMs)} ms, medians of ${repeats} (full: 3)`,
-      '',
-      '| Part | Full eval (ms) | Edit feature #2 (ms) | Edit last feature (ms) | Preview (ms) | Triangles | Bodies |',
-      '| --- | ---: | ---: | ---: | ---: | ---: | ---: |',
-      ...rows.map(
-        (r) =>
-          `| ${r.part}${r.errors ? ` (${r.errors} errors!)` : ''} | ${fmt(r.fullMs)} | ${fmt(r.editSecondMs)} | ${fmt(r.editLastMs)} | ${fmt(r.previewMs)} | ${r.triangles} | ${r.bodies} |`,
-      ),
-      '',
-      `wasm heap after the table: ${heapMb(oc).toFixed(1)} MB`,
-    ];
-    process.stdout.write(`${lines.join('\n')}\n`);
+    if (json) {
+      process.stdout.write(`${JSON.stringify({ loadMs, rows, heapMb: heapMb(oc) }, null, 2)}\n`);
+    } else {
+      const lines = [
+        `Kernel bench — Node ${process.version}, wasm load ${fmt(loadMs)} ms, medians of ${repeats} (full: 3)`,
+        '',
+        '| Part | Full eval (ms) | Edit feature #2 (ms) | Edit last feature (ms) | Preview (ms) | Triangles | Bodies |',
+        '| --- | ---: | ---: | ---: | ---: | ---: | ---: |',
+        ...rows.map(
+          (r) =>
+            `| ${r.part}${r.errors ? ` (${r.errors} errors!)` : ''} | ${fmt(r.fullMs)} | ${fmt(r.editSecondMs)} | ${fmt(r.editLastMs)} | ${fmt(r.previewMs)} | ${r.triangles} | ${r.bodies} |`,
+        ),
+        '',
+        '| Part | Tessellation, full (ms) | Tessellation, last-feature edit (ms) | Triangles, final | Triangles, preview quality |',
+        '| --- | ---: | ---: | ---: | ---: |',
+        ...rows.map(
+          (r) =>
+            `| ${r.part} | ${fmt(r.fullTessMs)} | ${fmt(r.lastTessMs)} | ${r.triangles} | ${r.previewTriangles} |`,
+        ),
+        '',
+        `wasm heap after the table: ${heapMb(oc).toFixed(1)} MB`,
+      ];
+      process.stdout.write(`${lines.join('\n')}\n`);
+    }
   }
 
   if (leakEdits > 0) {
-    const samples = await leakSession(oc, leakEdits);
+    const samples = await leakSession(oc, leakEdits, budgetMb);
     const lines = [
       '',
-      `Leak session: ${leakEdits} edits of the demo bracket (+ 2 previews each)`,
+      `Leak session: ${leakEdits} edits of the demo bracket (+ 2 previews each), every document new${budgetMb === undefined ? '' : `, checkpoint budget ${budgetMb} MB`}`,
       '',
-      '| Edit | wasm heap (MB) | median edit (ms) |',
-      '| ---: | ---: | ---: |',
-      ...samples.map((s) => `| ${s.edit} | ${s.heapMb.toFixed(1)} | ${fmt(s.ms)} |`),
+      '| Edit | wasm heap (MB) | kernel caches (MB, estimated) | median edit (ms) |',
+      '| ---: | ---: | ---: | ---: |',
+      ...samples.map(
+        (s) => `| ${s.edit} | ${s.heapMb.toFixed(1)} | ${s.cacheMb.toFixed(1)} | ${fmt(s.ms)} |`,
+      ),
     ];
     process.stdout.write(`${lines.join('\n')}\n`);
   }
