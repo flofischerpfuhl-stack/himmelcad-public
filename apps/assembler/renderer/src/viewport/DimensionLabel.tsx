@@ -12,6 +12,8 @@ export interface DimensionLabelProps {
   label: string;
   /** Short symbol shown before the value, e.g. `"R"` or `"Ø"`. */
   prefix?: string;
+  /** Unit shown after the value: millimetres (default), degrees, or none (a count). */
+  unit?: 'mm' | '°' | '';
   /** Marks the value as rejected by the kernel (red outline). */
   invalid?: boolean;
   /**
@@ -40,6 +42,7 @@ export function DimensionLabel(props: DimensionLabelProps): JSX.Element {
   const inputRef = useRef<HTMLInputElement>(null);
   const lastRequest = useRef<number | null>(props.editRequest?.nonce ?? null);
   const { onBeginEdit } = props;
+  const unit = props.unit ?? 'mm';
 
   useEffect(() => {
     const request = props.editRequest;
@@ -60,14 +63,14 @@ export function DimensionLabel(props: DimensionLabelProps): JSX.Element {
   }, [editing, selectAll]);
 
   const beginEdit = () => {
-    setText(formatMm(props.value));
+    setText(formatValue(props.value, unit));
     setSelectAll(true);
     setEditing(true);
     props.onBeginEdit();
   };
 
   const applyAndClose = () => {
-    const parsed = parseExpression(text.replace(/\s*mm\s*$/i, ''));
+    const parsed = parseExpression(text.replace(/\s*(mm|°|deg)\s*$/i, ''));
     if (parsed !== null && Number.isFinite(parsed)) props.onCommit(parsed);
     setEditing(false);
     props.onCancelEdit();
@@ -83,6 +86,7 @@ export function DimensionLabel(props: DimensionLabelProps): JSX.Element {
   // click meant for the label/input.
   const stopPointer = (event: React.PointerEvent | React.MouseEvent) => event.stopPropagation();
   const prefix = props.prefix ? `${props.prefix} ` : '';
+  const unitName = unit === '°' ? 'degrees' : unit === '' ? '' : 'millimeters';
 
   if (!editing) {
     return (
@@ -92,10 +96,10 @@ export function DimensionLabel(props: DimensionLabelProps): JSX.Element {
         style={{ left: props.x, top: props.y }}
         onClick={beginEdit}
         onPointerDown={stopPointer}
-        aria-label={`${props.label}: ${formatMm(props.value)} millimeters, click to edit`}
+        aria-label={`${props.label}: ${formatValue(props.value, '')}${unitName ? ` ${unitName}` : ''}, click to edit`}
       >
         {prefix}
-        {formatMm(props.value)}
+        {formatValue(props.value, unit)}
       </button>
     );
   }
@@ -136,7 +140,8 @@ export function DimensionLabel(props: DimensionLabelProps): JSX.Element {
   );
 }
 
-function formatMm(value: number): string {
+function formatValue(value: number, unit: 'mm' | '°' | ''): string {
   const rounded = Math.round(value * 100) / 100;
-  return `${rounded} mm`;
+  if (unit === '°') return `${rounded}°`;
+  return unit ? `${rounded} ${unit}` : String(rounded);
 }

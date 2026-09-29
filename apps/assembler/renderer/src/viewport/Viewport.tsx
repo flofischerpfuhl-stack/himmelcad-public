@@ -53,6 +53,18 @@ import {
   type AxisHandle,
 } from './toolAnchors.js';
 import { ViewCube } from './ViewCube.js';
+import {
+  ANGLE_SNAP_DEG,
+  applyToolHandleValue,
+  draftModifiedBodyIds,
+  movePreviewBodies,
+  pivotSnapPoint,
+  toolHandleSet,
+  type ToolChip,
+  type ToolHandleSet,
+} from './toolHandles.js';
+import { acceptPick } from '../model/featureTools.js';
+import type { AngleHandleState } from './scene.js';
 import styles from './Viewport.module.css';
 
 export interface ViewportProps {
@@ -66,6 +78,16 @@ const HANDLE_LENGTH_MM = 40;
 /** Drag values (fillet radius, shell thickness, section offset) snap to this step, mm. */
 const HANDLE_STEP_MM = 0.1;
 const CIRCLE_SEGMENTS = 96;
+/** Pixel offsets probed when the gizmo centre is dragged (edges win within ~6 px). */
+const PIVOT_PROBE: readonly [number, number][] = [
+  [0, 0],
+  ...[3, 6].flatMap((r) =>
+    [0, 1, 2, 3, 4, 5, 6, 7].map((k): [number, number] => [
+      Math.round(Math.cos((k * Math.PI) / 4) * r),
+      Math.round(Math.sin((k * Math.PI) / 4) * r),
+    ]),
+  ),
+];
 
 function snap(value: number, step: number): number {
   return Math.round(value / step) * step;
@@ -107,16 +129,11 @@ function computeExtrudeAnchor(
   return { origin, normal: sketch.frame.normal };
 }
 
-/** Pure (no React) move-anchor lookup; see {@link computeExtrudeAnchor}. */
+/** Pure (no React) move-anchor lookup (the gizmo centre before translation); see {@link computeExtrudeAnchor}. */
 function computeMoveAnchor(tool: ToolSession | null, bodies: readonly Body[]): Vec3 | null {
   if (!tool || tool.kind !== 'move') return null;
-  const body = bodies.find((b) => b.id === tool.bodyId);
-  if (!body) return null;
-  return [
-    (body.min[0] + body.max[0]) / 2,
-    (body.min[1] + body.max[1]) / 2,
-    (body.min[2] + body.max[2]) / 2,
-  ];
+  if (!bodies.some((b) => b.id === tool.bodyId)) return null;
+  return tool.pivot;
 }
 
 /** What the viewport shows for a store snapshot (committed model or the active tool's preview). */
@@ -129,13 +146,24 @@ interface SceneModel {
   ghostBodies: Body[];
   bounds: Bounds3 | null;
   handles: AxisHandle[];
+  /** Feature-tool / Move-Rotate handles beyond the arrows (arcs, rings, chips, guides, pivot). */
+  toolHandles: ToolHandleSet;
+  previewNewBodyIds: string[];
 }
 
 function sceneModel(s: AssemblerState): SceneModel {
   const tool = s.activeTool;
   const previewTool = isPreviewTool(tool) ? tool : null;
   const preview = previewTool?.previewEvaluation ?? null;
-  const bodies = preview?.bodies ?? s.evaluation.bodies;
+  let bodies = preview?.bodies ?? s.evaluation.bodies;
+  let previewNewBodyIds: string[] = [];
+  let moveGhosts: Body[] = [];
+  if (tool?.kind === 'move') {
+    const moved = movePreviewBodies(tool, bodies);
+    bodies = moved.bodies;
+    previewNewBodyIds = moved.newIds;
+    moveGhosts = moved.ghosts;
+  }
   const allSketches = preview?.sketches ?? s.evaluation.sketches;
   const consumed = consumedSketchIds(s.features);
   const extruding =
@@ -165,7 +193,18 @@ function sceneModel(s: AssemblerState): SceneModel {
   } else if (preview && tool?.kind === 'boolean') {
     previewAccentBodyIds.push(tool.targetBodyId);
     ghostBodies = s.evaluation.bodies.filter((b) => tool.toolBodyIds.includes(b.id));
+  } else if (preview && tool?.kind === 'feature') {
+    const before = new Set(s.evaluation.bodies.map((b) => b.id));
+    previewNewBodyIds = preview.bodies.filter((b) => !before.has(b.id)).map((b) => b.id);
+    const modified = draftModifiedBodyIds(tool.draft);
+    previewAccentBodyIds.push(...modified);
+    previewFaceKeyPrefix = `${PREVIEW_FEATURE_ID}:`;
+    // Bodies that move (align, mirror in place): their old place as a ghost.
+    if (tool.draft.kind === 'align' || (tool.draft.kind === 'mirror' && !tool.draft.keepOriginal)) {
+      ghostBodies = s.evaluation.bodies.filter((b) => modified.includes(b.id));
+    }
   }
+  if (moveGhosts.length > 0) ghostBodies = moveGhosts;
 
   const bounds = visibleBounds(s.evaluation.bodies, s.hiddenBodyIds, s.isolatedBodyIds);
   const handles: AxisHandle[] = [];
@@ -176,6 +215,8 @@ function sceneModel(s: AssemblerState): SceneModel {
     const handle = shellHandle(tool, s.evaluation.bodies);
     if (handle) handles.push(handle);
   }
+  const toolHandles = toolHandleSet(s);
+  handles.push(...toolHandles.axis);
   if (s.viewState.sectionEnabled) {
     handles.push(
       sectionHandle(
@@ -197,6 +238,8 @@ function sceneModel(s: AssemblerState): SceneModel {
     ghostBodies,
     bounds,
     handles,
+    toolHandles,
+    previewNewBodyIds,
   };
 }
 
@@ -224,7 +267,21 @@ type DragMode =
       dir: Vec3;
       t0: number;
       start: number;
-    };
+    }
+  | {
+      /** Rotation ring / revolve or pattern arc: the value follows the pointer's angle about `axis`. */
+      kind: 'angleHandle';
+      handle: ToolHandleKind;
+      center: Vec3;
+      axis: Vec3;
+      ref: Vec3;
+      /** Pointer angle at the previous move (degrees), for unwrapping past ±180°. */
+      last: number;
+      /** Accumulated pointer rotation since the drag started (degrees). */
+      turned: number;
+      start: number;
+    }
+  | { kind: 'pivot' };
 
 interface PointerGesture {
   button: number;
@@ -249,8 +306,29 @@ type HandleHover =
   | { kind: 'moveHandle'; axis: 0 | 1 | 2 }
   | { kind: 'toolHandle'; handle: ToolHandleKind };
 
+/** Angle (degrees) of the pointer ray's hit on the handle's plane, measured from `ref` about `axis`. */
+function pointerAngle(
+  h: { center: Vec3; axis: Vec3; ref: Vec3 },
+  ray: { origin: Vec3; direction: Vec3 },
+): number | null {
+  const hit = rayPlaneIntersect(ray.origin, ray.direction, h.center, h.axis);
+  if (!hit) return null;
+  const rel: Vec3 = [hit[0] - h.center[0], hit[1] - h.center[1], hit[2] - h.center[2]];
+  const u = h.ref;
+  const v: Vec3 = [
+    h.axis[1] * u[2] - h.axis[2] * u[1],
+    h.axis[2] * u[0] - h.axis[0] * u[2],
+    h.axis[0] * u[1] - h.axis[1] * u[0],
+  ];
+  const x = rel[0] * u[0] + rel[1] * u[1] + rel[2] * u[2];
+  const y = rel[0] * v[0] + rel[1] * v[1] + rel[2] * v[2];
+  if (Math.hypot(x, y) < 1e-9) return null;
+  return (Math.atan2(y, x) * 180) / Math.PI;
+}
+
 /** Applies a dragged/typed handle value to the store (clamped, snapped). */
-function applyHandleValue(handle: ToolHandleKind, raw: number): void {
+function applyHandleValue(handle: ToolHandleKind, raw: number, snapDrag = true): void {
+  if (applyToolHandleValue(handle, raw, snapDrag)) return;
   const s = useAssemblerStore.getState();
   if (handle === 'blend') s.setBlendSize(Math.max(HANDLE_STEP_MM, snap(raw, HANDLE_STEP_MM)));
   else if (handle === 'shell')
@@ -440,8 +518,10 @@ export function Viewport(props: ViewportProps): JSX.Element {
               hovered: handleHover?.kind === 'extrudeHandle',
             }
           : null;
+      // While the gizmo centre is dragged onto geometry, arrows/rings step aside (not pickable).
+      const pivotDragging = gestureRef.current?.mode.kind === 'pivot';
       const moveHandle =
-        currentTool?.kind === 'move' && moveAnchorNow
+        currentTool?.kind === 'move' && moveAnchorNow && !pivotDragging
           ? {
               origin: moveAnchorNow,
               delta: currentTool.delta,
@@ -491,10 +571,16 @@ export function Viewport(props: ViewportProps): JSX.Element {
           center: center ? framePoint(frame, center.u, center.v) : null,
         };
       }
-      const movePreview =
-        currentTool?.kind === 'move'
-          ? { bodyId: currentTool.bodyId, delta: currentTool.delta }
-          : null;
+      // The Move/Rotate preview body is already transformed in `sceneModel`.
+      const movePreview = null;
+      const ringColors = [colors.axisX, colors.axisY, colors.axisZ] as const;
+      const angleHandles: AngleHandleState[] = (pivotDragging ? [] : scene.toolHandles.angles).map(
+        (h) => ({
+          ...h,
+          color: h.handle.startsWith('ring:') ? ringColors[Number(h.handle.slice(5))]! : h.color,
+          hovered: handleHover?.kind === 'toolHandle' && handleHover.handle === h.handle,
+        }),
+      );
       const built = buildScene({
         colors,
         pose: poseRef.current,
@@ -529,6 +615,18 @@ export function Viewport(props: ViewportProps): JSX.Element {
           hovered: handleHover?.kind === 'toolHandle' && handleHover.handle === h.handle,
         })),
         sketchPreview,
+        previewNewBodyIds: scene.previewNewBodyIds,
+        angleHandles,
+        guides: scene.toolHandles.guides,
+        pivot: scene.toolHandles.pivot
+          ? {
+              point: scene.toolHandles.pivot,
+              hovered:
+                pivotDragging ||
+                (handleHover?.kind === 'toolHandle' && handleHover.handle === 'pivot'),
+              pickable: !pivotDragging,
+            }
+          : null,
       });
       renderer.render(built.frame);
       renderer.renderPicking(built.frame.viewProj, built.idBatches, built.frame.clip);
@@ -632,6 +730,26 @@ export function Viewport(props: ViewportProps): JSX.Element {
       if (pick.kind === 'moveHandle' && tool?.kind === 'move' && moveAnchor) {
         return { kind: 'moveAxis', origin: moveAnchor, axis: pick.axis, startDelta: tool.delta };
       }
+      if (pick.kind === 'toolHandle' && pick.handle === 'pivot') return { kind: 'pivot' };
+      const angle =
+        pick.kind === 'toolHandle'
+          ? sceneModel(current).toolHandles.angles.find((h) => h.handle === pick.handle)
+          : undefined;
+      if (angle) {
+        const ray = rayAtClient(clientX, clientY);
+        const at = ray ? pointerAngle(angle, ray) : null;
+        if (at === null) return null;
+        return {
+          kind: 'angleHandle',
+          handle: angle.handle,
+          center: angle.center,
+          axis: angle.axis,
+          ref: angle.ref,
+          last: at,
+          turned: 0,
+          start: angle.value,
+        };
+      }
       if (pick.kind === 'toolHandle') {
         const handle = sceneModel(current).handles.find((h) => h.handle === pick.handle);
         const ray = rayAtClient(clientX, clientY);
@@ -731,6 +849,7 @@ export function Viewport(props: ViewportProps): JSX.Element {
         mode,
         handledOnDown: false,
       };
+      if (mode.kind === 'pivot') dirtyRef.current = true;
     },
     [findHandleHit, pickAt, sketchUvAt],
   );
@@ -860,6 +979,42 @@ export function Viewport(props: ViewportProps): JSX.Element {
           applyHandleValue(mode.handle, mode.start + (t - mode.t0));
           dirtyRef.current = true;
         }
+      } else if (mode.kind === 'angleHandle') {
+        const ray = rayAtClient(event.clientX, event.clientY);
+        const at = ray ? pointerAngle(mode, ray) : null;
+        if (at !== null) {
+          let step = at - mode.last;
+          if (step > 180) step -= 360;
+          if (step < -180) step += 360;
+          mode.turned += step;
+          mode.last = at;
+          // 15° steps like Shapr3D's gizmo; Shift rotates freely (0.1°).
+          const snapStep = event.shiftKey ? 0.1 : ANGLE_SNAP_DEG;
+          const value = Math.round((mode.start + mode.turned) / snapStep) * snapStep;
+          applyHandleValue(mode.handle, value, false);
+          dirtyRef.current = true;
+        }
+      } else if (mode.kind === 'pivot') {
+        const tool = store.activeTool;
+        // Prefer an edge within a few pixels (circle centres, edge midpoints), else the face below.
+        let target: PickTarget | null = null;
+        for (const [ox, oy] of PIVOT_PROBE) {
+          const pick = pickAt(event.clientX + ox, event.clientY + oy);
+          if (pick?.kind === 'edge') {
+            target = pick;
+            break;
+          }
+          if (!target && pick?.kind === 'face') target = pick;
+        }
+        const point = pivotSnapPoint(target, store.evaluation.bodies);
+        if (tool?.kind === 'move' && point) {
+          store.setPivot([
+            point[0] - tool.delta.dx,
+            point[1] - tool.delta.dy,
+            point[2] - tool.delta.dz,
+          ]);
+          dirtyRef.current = true;
+        }
       }
     },
     [pickAt, rayAtClient, selectionFromPick, sketchUvAt],
@@ -870,6 +1025,7 @@ export function Viewport(props: ViewportProps): JSX.Element {
       const gesture = gestureRef.current;
       gestureRef.current = null;
       if (!gesture) return;
+      if (gesture.mode.kind === 'pivot') dirtyRef.current = true; // gizmo handles come back
       if (gesture.handledOnDown) return; // e.g. a sketch tool's click already committed
 
       if (gesture.moved) return; // a real drag never selects/opens the context menu
@@ -902,6 +1058,18 @@ export function Viewport(props: ViewportProps): JSX.Element {
         if (!pick) store.commit();
         else if (pick.kind === 'edge' && tool.kind === 'edgeBlend') {
           store.toggleBlendEdge(pick.bodyId, pick.edgeKey);
+        }
+        return;
+      }
+      if (tool?.kind === 'feature') {
+        // Clicking empty space finishes (once complete); clicks edit the tool's references.
+        if (!pick) {
+          store.commit();
+          return;
+        }
+        const item = selectionFromPick(pick, isDouble);
+        if (item && item.kind !== 'feature') {
+          store.updateFeatureDraft((draft, evaluation) => acceptPick(draft, item, evaluation));
         }
         return;
       }
@@ -960,13 +1128,18 @@ export function Viewport(props: ViewportProps): JSX.Element {
       }
       if (event.ctrlKey || event.metaKey || event.altKey || !/^[0-9.-]$/.test(event.key)) return;
       const tool = useAssemblerStore.getState().activeTool;
-      if (event.key === '-' && tool?.kind !== 'extrude') return; // only extrude takes negatives
+      // Only extrude and feature values (offsets, angles) take negatives.
+      if (event.key === '-' && tool?.kind !== 'extrude' && tool?.kind !== 'feature') return;
+      const handleSet =
+        tool?.kind === 'feature' ? toolHandleSet(useAssemblerStore.getState()) : null;
+      const featureValue = handleSet !== null && handleSet.axis.length + handleSet.chips.length > 0;
       const accepts =
         (tool?.kind === 'sketchCircle' && tool.center !== null) ||
         tool?.kind === 'edgeBlend' ||
         tool?.kind === 'shell' ||
-        tool?.kind === 'extrude';
-      if (!accepts || tool.phase === 'numericEditing') return;
+        tool?.kind === 'extrude' ||
+        featureValue;
+      if (!accepts || !tool || tool.phase === 'numericEditing') return;
       event.preventDefault();
       setEditRequest((previous) => ({ nonce: (previous?.nonce ?? 0) + 1, text: event.key }));
     };
@@ -1020,7 +1193,9 @@ export function Viewport(props: ViewportProps): JSX.Element {
     const vp = viewProjectionMatrix(poseRef.current, aspect);
     const project = (p: Vec3) => projectToScreen(vp, p, rect.width, rect.height);
 
-    const handleChips = model.handles.map((h) => ({ handle: h, screen: project(handleTip(h)) }));
+    const handleChips = model.handles
+      .filter((h) => !h.handle.startsWith('feature:'))
+      .map((h) => ({ handle: h, screen: project(handleTip(h)) }));
 
     if (activeTool?.kind === 'sketchRectangle' && activeTool.preview) {
       const frame = activeTool.frame;
@@ -1081,6 +1256,21 @@ export function Viewport(props: ViewportProps): JSX.Element {
     }
     return { kind: 'handles' as const, handleChips };
   }, [tick, activeTool, extrudeAnchor, moveAnchor, model.handles]);
+
+  // Feature-tool and rotation-ring chips (same per-frame screen projection).
+  const toolChips = useMemo(() => {
+    void tick;
+    const host = hostRef.current;
+    if (!host || host.clientWidth === 0 || host.clientHeight === 0) return [];
+    const vp = viewProjectionMatrix(
+      poseRef.current,
+      host.clientWidth / Math.max(1, host.clientHeight),
+    );
+    return model.toolHandles.chips.map((chip) => ({
+      chip,
+      screen: projectToScreen(vp, chip.at, host.clientWidth, host.clientHeight),
+    }));
+  }, [tick, model.toolHandles]);
 
   const beginNumericEditing = useCallback(
     () => useAssemblerStore.getState().beginNumericEditing(),
@@ -1253,6 +1443,26 @@ export function Viewport(props: ViewportProps): JSX.Element {
               />
             ),
         )}
+      {toolChips.map(({ chip, screen }, index) =>
+        screen ? (
+          <DimensionLabel
+            key={chip.handle}
+            label={chip.label}
+            {...(chip.prefix ? { prefix: chip.prefix } : {})}
+            unit={chip.unit === 'deg' ? '°' : chip.unit === 'count' ? '' : 'mm'}
+            value={chip.value}
+            x={screen[0]}
+            y={screen[1] - 18}
+            invalid={activeTool?.kind === 'feature' && previewError !== null}
+            editRequest={index === 0 && activeTool?.kind === 'feature' ? editRequest : null}
+            onBeginEdit={beginNumericEditing}
+            onCancelEdit={endNumericEditing}
+            onCommit={(value) => applyHandleValue(chip.handle, value, false)}
+          />
+        ) : null,
+      )}
     </div>
   );
 }
+
+export type { ToolChip };

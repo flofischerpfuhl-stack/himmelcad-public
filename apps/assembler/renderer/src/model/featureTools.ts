@@ -1313,6 +1313,74 @@ export function draftHandles(
   }
 }
 
+// ---- guides (axis lines, planes) -----------------------------------------------------------
+
+export interface DraftGuides {
+  /** Axis lines (world segments). */
+  lines: [Vec3, Vec3][];
+  /** Planes as closed quads. */
+  planes: [Vec3, Vec3, Vec3, Vec3][];
+}
+
+/** Reference geometry the tool shows while it runs: the revolve/pattern axis, the mirror/split plane. */
+export function draftGuides(draft: FeatureDraft, evaluation: EvaluationResult): DraftGuides {
+  const out: DraftGuides = { lines: [], planes: [] };
+  const axisSegment = (ref: AxisRef | null, around: Vec3 | null, reach: number) => {
+    const line = axisLine(evaluation, ref, []);
+    if (!line) return;
+    const k = around ? dot(sub(around, line.point), line.dir) : 0;
+    const c = add(line.point, scale(line.dir, k));
+    out.lines.push([add(c, scale(line.dir, -reach)), add(c, scale(line.dir, reach))]);
+  };
+  if (draft.kind === 'revolve') {
+    const samples = profileSamples(evaluation, draft.profile);
+    const reach = samples
+      ? Math.max(30, ...samples.outline.map((p) => Math.hypot(...sub(p, samples.center)))) * 1.5
+      : 40;
+    axisSegment(draft.axis, samples?.center ?? null, reach);
+  } else if (draft.kind === 'pattern' && draft.pattern.kind === 'circular') {
+    const centre = bodyCentre(evaluation, draft.bodyIds);
+    axisSegment(draft.pattern.axis, centre, 40);
+  } else if (draft.kind === 'mirror' || draft.kind === 'split') {
+    const plane = planeOf(evaluation, draft.plane);
+    const bounds = unionBounds(
+      evaluation.bodies.filter((b) =>
+        (draft.kind === 'mirror' ? draft.bodyIds : [draft.bodyId]).includes(b.id),
+      ),
+    );
+    if (plane && bounds) {
+      const centre = scale(add(bounds.min, bounds.max), 0.5);
+      const onPlane = sub(centre, scale(plane.normal, dot(sub(centre, plane.point), plane.normal)));
+      const frame = frameForFace(plane.normal, onPlane);
+      const half = Math.max(10, Math.hypot(...sub(bounds.max, bounds.min)) * 0.65);
+      const corner = (a: number, b: number): Vec3 =>
+        add(onPlane, add(scale(frame.u, a * half), scale(frame.v, b * half)));
+      out.planes.push([corner(-1, -1), corner(1, -1), corner(1, 1), corner(-1, 1)]);
+    }
+  }
+  return out;
+}
+
+/** Bodies the running tool modifies in place (shown with the preview accent). */
+export function draftModifiedBodyIds(draft: FeatureDraft): string[] {
+  switch (draft.kind) {
+    case 'revolve':
+    case 'sweep':
+    case 'loft':
+      return draft.operation !== 'new' && draft.targetBodyId ? [draft.targetBodyId] : [];
+    case 'mirror':
+      return draft.keepOriginal ? [] : draft.bodyIds;
+    case 'split':
+    case 'align':
+      return [draft.bodyId];
+    case 'offsetFace':
+    case 'deleteFace':
+      return draft.faces[0] ? [draft.faces[0].bodyId] : [];
+    default:
+      return [];
+  }
+}
+
 // ---- vector helpers -------------------------------------------------------------------
 
 function dot(a: Vec3, b: Vec3): number {
