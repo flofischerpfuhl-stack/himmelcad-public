@@ -15,11 +15,6 @@ import {
   bodyIdFor,
   frameForFace,
   frameForPlane,
-  framePoint,
-  frameUv,
-  profileCenterUv,
-  profileOutlineUv,
-  profileSizeError,
   type BooleanFeature,
   type ChamferFeature,
   type CurveKind,
@@ -34,10 +29,11 @@ import {
   type ShellFeature,
   type SketchFeature,
   type SketchFrame,
-  type SketchProfile,
   type SurfaceKind,
   type Vec3,
 } from '../model/document.js';
+import type { SketchRegion } from '../sketch/regions.js';
+import { evaluateSketchGeometry, regionFace, sideFaceKey } from './sketchGeometry.js';
 import {
   GEOMETRY_TOLERANCE,
   assignEdgeKeys,
@@ -305,44 +301,28 @@ export function createEvaluator(oc: OpenCascade, options: EvaluatorOptions = {})
     feature: SketchFeature,
     bodies: Map<string, BodyState>,
     warn: (message: string) => void,
-  ): EvaluatedSketch {
-    if (feature.profiles.length === 0) throw new FeatureError('Sketch has no profile');
-    for (const profile of feature.profiles) {
-      const error = profileSizeError(profile);
-      if (error) throw new FeatureError(error);
-    }
+  ): { evaluated: EvaluatedSketch; regions: SketchRegion[] } {
     const frame = sketchFrame(feature, bodies, warn);
-    return {
-      featureId: feature.id,
-      frame,
-      profiles: feature.profiles.map((profile) => {
-        const [cu, cv] = profileCenterUv(profile);
-        return {
-          kind: profile.kind,
-          outline: profileOutlineUv(profile).map(([u, v]) => framePoint(frame, u, v)),
-          center: framePoint(frame, cu, cv),
-        };
-      }),
-    };
-  }
-
-  function profileFace(frame: SketchFrame, profile: SketchProfile): R.Face {
-    if (profile.kind === 'rectangle') {
-      const points = profileOutlineUv(profile).map(([u, v]) => framePoint(frame, u, v));
-      return R.makePolygon(points);
+    try {
+      const { evaluated, regions, warnings } = evaluateSketchGeometry(feature, frame);
+      for (const message of warnings) warn(message);
+      return { evaluated, regions };
+    } catch (error) {
+      throw new FeatureError(`Sketch profiles could not be built: ${describeError(error)}`);
     }
-    const center = framePoint(frame, profile.cx, profile.cy);
-    return R.makeFace(R.assembleWire([R.makeCircle(profile.radius, center, frame.normal)]));
   }
 
-  /** Extrudes one sketch profile and names the prism's faces (caps by position, sides by profile segment). */
+  /** Extrudes one sketch region and names the prism's faces (caps by position, sides by sketch entity). */
   function extrudeProfile(
     feature: ExtrudeFeature,
     frame: SketchFrame,
-    profile: SketchProfile,
+    region: SketchRegion,
     profileIndex: number,
   ): { shape: Shape3D; faces: KeyedFace[] } {
-    const face = profileFace(frame, profile);
+    if (region.area < MIN_FEATURE_SIZE_MM * MIN_FEATURE_SIZE_MM) {
+      throw new FeatureError(`Sketch profile is too small (${region.area.toFixed(4)} mm²)`);
+    }
+    const face = regionFace(frame, region);
     const n = frame.normal;
     let base = face;
     let length = feature.distance;
@@ -359,23 +339,14 @@ export function createEvaluator(oc: OpenCascade, options: EvaluatorOptions = {})
       .map((g, i) => ({ g, i }))
       .filter(({ g }) => g.normal !== null && Math.abs(dot(g.normal, n)) > 1 - 1e-9)
       .sort((a, b) => dot(a.g.centroid, travel) - dot(b.g.centroid, travel));
-    const keys = geoms.map((g, i) => {
+    const shapeFaces = shape.faces;
+    const keys = geoms.map((_, i) => {
       if (caps.length === 2 && caps[0]!.i === i) return `${feature.id}:start:${profileIndex}`;
       if (caps.length === 2 && caps[1]!.i === i) return `${feature.id}:end:${profileIndex}`;
-      if (profile.kind === 'circle') return `${feature.id}:side:${profileIndex}:0`;
-      const uv = frameUv(frame, g.centroid);
-      const outline = profileOutlineUv(profile);
-      let best = 0;
-      let bestDistance = Infinity;
-      outline.forEach((p, s) => {
-        const q = outline[(s + 1) % outline.length]!;
-        const d = Math.hypot((p[0] + q[0]) / 2 - uv.u, (p[1] + q[1]) / 2 - uv.v);
-        if (d < bestDistance) {
-          bestDistance = d;
-          best = s;
-        }
-      });
-      return `${feature.id}:side:${profileIndex}:${best}`;
+      const mid = shapeFaces[i]!.pointOnSurface(0.5, 0.5);
+      const point: Vec3 = [mid.x, mid.y, mid.z];
+      mid.delete();
+      return sideFaceKey(feature.id, profileIndex, frame, region, point);
     });
     return { shape, faces: geoms.map((g, i) => ({ ...g, key: keys[i]!, aliases: [] })) };
   }
@@ -429,19 +400,21 @@ export function createEvaluator(oc: OpenCascade, options: EvaluatorOptions = {})
     }
     const sketchFeature = ctx.sketchFeatures.get(feature.profile.featureId);
     const sketch = ctx.sketches.get(feature.profile.featureId);
-    if (!sketchFeature || !sketch) {
+    const regions = ctx.sketchRegions.get(feature.profile.featureId);
+    if (!sketchFeature || !sketch || !regions) {
       throw new FeatureError(`Missing reference: sketch "${feature.profile.featureId}"`);
     }
-    const indices =
-      feature.profile.profileIndex !== undefined
-        ? [feature.profile.profileIndex]
-        : sketchFeature.profiles.map((_, i) => i);
+    if (regions.length === 0) {
+      throw new FeatureError(`"${sketchFeature.name}" has no closed profile`);
+    }
+    const keys = feature.profile.regions ?? regions.map((r) => r.key);
     let tool: { shape: Shape3D; faces: KeyedFace[] } | null = null;
-    for (const index of indices) {
-      const profile = sketchFeature.profiles[index];
-      if (!profile)
-        throw new FeatureError(`Missing reference: profile ${index} of "${sketchFeature.name}"`);
-      const prism = extrudeProfile(feature, sketch.frame, profile, index);
+    for (const [index, key] of keys.entries()) {
+      const region = regions.find((r) => r.key === key);
+      if (!region) {
+        throw new FeatureError(`Missing reference: profile "${key}" of "${sketchFeature.name}"`);
+      }
+      const prism = extrudeProfile(feature, sketch.frame, region, index);
       if (!tool) {
         tool = prism;
       } else {
@@ -704,7 +677,6 @@ export function createEvaluator(oc: OpenCascade, options: EvaluatorOptions = {})
     combine,
     withKeys,
     diagonalOf,
-    profileFace,
     addBody: (ctx, body, color) => {
       const created = ctx.createdCount;
       const state: BodyState = {
@@ -830,6 +802,8 @@ export function createEvaluator(oc: OpenCascade, options: EvaluatorOptions = {})
     order: string[];
     sketches: Map<string, EvaluatedSketch>;
     sketchFeatures: Map<string, SketchFeature>;
+    /** Detected regions (closed profiles) per sketch feature id. */
+    sketchRegions: Map<string, SketchRegion[]>;
     featureOrder: ReadonlyMap<string, number>;
     createdCount: number;
     warn: (message: string) => void;
@@ -852,6 +826,7 @@ export function createEvaluator(oc: OpenCascade, options: EvaluatorOptions = {})
       order: [],
       sketches: new Map(),
       sketchFeatures: new Map(),
+      sketchRegions: new Map(),
       featureOrder,
       createdCount: 0,
       warn: (message) => {
@@ -874,10 +849,13 @@ export function createEvaluator(oc: OpenCascade, options: EvaluatorOptions = {})
       const snapshot = snapshotBodies(ctx.bodies);
       try {
         switch (feature.kind) {
-          case 'sketch':
-            ctx.sketches.set(feature.id, evaluateSketch(feature, ctx.bodies, ctx.warn));
+          case 'sketch': {
+            const { evaluated, regions } = evaluateSketch(feature, ctx.bodies, ctx.warn);
+            ctx.sketches.set(feature.id, evaluated);
             ctx.sketchFeatures.set(feature.id, feature);
+            ctx.sketchRegions.set(feature.id, regions);
             break;
+          }
           case 'extrude':
             applyExtrude(feature, ctx);
             break;

@@ -9,7 +9,6 @@ import test from 'node:test';
 
 import type { KernelAdapter } from '../../renderer/src/kernel/adapter.js';
 import type { EvaluationRequest } from '../../renderer/src/kernel/types.js';
-import { handleEscape } from '../../renderer/src/model/commands/shortcuts.js';
 import { findCommand } from '../../renderer/src/model/commands/registry.js';
 import {
   createDemoDocument,
@@ -22,7 +21,12 @@ import {
   useAssemblerStore,
   type ToolSession,
 } from '../../renderer/src/model/store.js';
+import { addRectangle } from '../../renderer/src/sketch/builders.js';
+import { useSketchStore } from '../../renderer/src/sketch/session.js';
+import { setSketchSolverFactory } from '../../renderer/src/sketch/solverProvider.js';
+import { EMPTY_SKETCH, type Vec2 } from '../../renderer/src/sketch/types.js';
 import { createNodeKernelAdapter } from '../kernel/nodeKernel.js';
+import { loadNodeSolver } from '../sketch/nodeSolver.js';
 
 const store = useAssemblerStore;
 const requests: EvaluationRequest[] = [];
@@ -46,6 +50,9 @@ function recording(inner: KernelAdapter): KernelAdapter {
 }
 
 store.getState().attachKernel(recording(createNodeKernelAdapter()));
+setSketchSolverFactory(() => ({
+  solve: async (request) => (await loadNodeSolver()).solve(request),
+}));
 
 function box(
   id: string,
@@ -62,7 +69,8 @@ function box(
     suppressed: false,
     kind: 'sketch',
     plane: { kind: 'plane', plane: 'XY', offset: z },
-    profiles: [{ kind: 'rectangle', x, y, width, height }],
+    ...addRectangle(EMPTY_SKETCH, [x, y], [x + width, y + height], { position: true, size: true })
+      .sketch,
   };
   const extrude: ExtrudeFeature = {
     id: `${id}-extrude`,
@@ -250,47 +258,88 @@ void test('shell tool: removes the selected face, walls inward, preview then one
   assert.equal(bodyVolume(), 40 * 30 * 20);
 });
 
-void test('circle tool: centre + radius on a face; Escape layers; commit selects the profile', async () => {
+/** A plain click at sketch position `pos` (no snapping) for the active sketch tool. */
+function click(pos: Vec2): Promise<void> {
+  return useSketchStore
+    .getState()
+    .dispatch({ type: 'click', snap: { pos, hints: [], guides: [] }, hit: null, raw: pos });
+}
+
+/** Draws a circle in a new sketch (on a face or the XY plane) and finishes it; returns the sketch id. */
+async function circleSketch(
+  face: { bodyId: string; faceKey: string } | null,
+  c: Vec2,
+  r: number,
+): Promise<string> {
+  assert.ok(
+    useSketchStore.getState().begin({ ...(face ? { face } : { plane: 'XY' }), tool: 'circle' }),
+  );
+  await click(c);
+  await click([c[0] + r, c[1]]);
+  await useSketchStore.getState().finish();
+  await store.getState().whenSettled();
+  return store.getState().features.at(-1)!.id;
+}
+
+void test('circle tool (sketch mode): centre + radius on a face; Escape layers; finishing selects the profile', async () => {
   await load(box('a', 0, 0, 40, 30, 10));
   store.getState().select({ kind: 'face', ...topFace() });
   findCommand('sketch.circle')!.run(store.getState());
-  assert.equal(tool('sketchCircle').plane.kind, 'face');
-  assert.equal(tool('sketchCircle').frame.origin[2], 10);
+  const session = () => useSketchStore.getState().session!;
+  assert.equal(session().plane.kind, 'face');
+  assert.equal(session().frame.origin[2], 10);
+  assert.equal(session().tool.kind, 'circle');
 
-  store.getState().setCircleCenter(20, 15);
-  store.getState().setCircleRadius(4);
-  // First Escape drops the centre, the second leaves the tool.
-  handleEscape(store.getState());
-  assert.equal(tool('sketchCircle').center, null);
-  handleEscape(store.getState());
-  assert.equal(store.getState().activeTool, null);
-  assert.equal(store.getState().features.length, 2);
+  await click([20, 15]);
+  assert.deepEqual(session().tool.kind === 'circle' && session().tool, {
+    kind: 'circle',
+    center: { pos: [20, 15], hints: [], guides: [] },
+  });
+  // First Escape cancels the placed centre and the tool, the second leaves the (empty) sketch.
+  assert.ok(useSketchStore.getState().escape());
+  assert.equal(session().tool.kind, 'select');
+  assert.ok(useSketchStore.getState().escape());
+  await useSketchStore.getState().whenIdle();
+  assert.equal(useSketchStore.getState().session, null);
+  assert.equal(store.getState().features.length, 2, 'an empty sketch adds nothing');
 
-  store.getState().beginSketchCircle();
-  assert.equal(tool('sketchCircle').plane.kind, 'plane');
-  assert.ok(store.getState().setSketchPlaneFace(topFace().bodyId, topFace().faceKey));
-  store.getState().setCircleCenter(20, 15);
-  store.getState().setCircleRadius(4);
-  store.getState().commit();
+  // A new sketch on XY moves to the first clicked face while it is empty.
+  assert.ok(useSketchStore.getState().begin({ tool: 'circle' }));
+  assert.equal(session().plane.kind, 'plane');
+  assert.ok(useSketchStore.getState().rebaseOnFace(topFace().bodyId, topFace().faceKey));
+  await click([20, 15]);
+  await click([24, 15]);
+  // Undo/Redo act step by step inside the session while it is open.
+  assert.equal(store.getState().history.canUndo, true);
+  store.getState().undo();
+  await useSketchStore.getState().whenIdle();
+  assert.equal(session().sketch.entities.length, 0);
+  assert.equal(store.getState().features.length, 2, 'the document is untouched');
+  store.getState().redo();
+  await useSketchStore.getState().whenIdle();
+  assert.equal(session().sketch.entities.length, 2);
+  await useSketchStore.getState().finish();
   await store.getState().whenSettled();
   const sketch = store.getState().features.at(-1)!;
   assert.equal(sketch.kind, 'sketch');
-  assert.deepEqual(sketch.kind === 'sketch' ? sketch.profiles : [], [
-    { kind: 'circle', cx: 20, cy: 15, radius: 4 },
-  ]);
+  if (sketch.kind !== 'sketch') return;
+  assert.equal(sketch.plane.kind, 'face');
+  const circle = sketch.entities.find((e) => e.kind === 'circle');
+  assert.equal(circle?.kind === 'circle' && circle.radius, 4);
   assert.deepEqual(store.getState().selection, [{ kind: 'sketchProfile', featureId: sketch.id }]);
+  assert.equal(
+    store.getState().evaluation.sketches.find((s) => s.featureId === sketch.id)?.profiles.length,
+    1,
+  );
   assert.equal(store.getState().history.canUndo, true);
+  store.getState().undo();
+  assert.equal(store.getState().features.length, 2, 'the whole sketch session is one undo step');
 });
 
 void test('circle -> extrude: into the body cuts a hole, outward joins, free-standing makes a new body', async () => {
   await load(box('a', 0, 0, 40, 30, 10));
   const volume = 40 * 30 * 10;
-  store.getState().beginSketchCircle(topFace());
-  store.getState().setCircleCenter(20, 15);
-  store.getState().setCircleRadius(3);
-  store.getState().commit();
-  await store.getState().whenSettled();
-  const sketchId = store.getState().features.at(-1)!.id;
+  const sketchId = await circleSketch(topFace(), [20, 15], 3);
 
   findCommand('tools.extrude')!.run(store.getState());
   assert.equal(tool('extrude').operation, 'cut', 'inside a face: starts as a through-cut');
@@ -316,14 +365,8 @@ void test('circle -> extrude: into the body cuts a hole, outward joins, free-sta
   store.getState().cancel();
 
   // A circle on the XY plane under the body touches its bottom face: +Z goes into it.
-  store.getState().beginSketchCircle();
-  store.getState().setCircleCenter(10, 10);
-  store.getState().setCircleRadius(2);
-  store.getState().commit();
-  await store.getState().whenSettled();
-  store
-    .getState()
-    .beginExtrude({ kind: 'sketch', featureId: store.getState().features.at(-1)!.id });
+  const under = await circleSketch(null, [10, 10], 2);
+  store.getState().beginExtrude({ kind: 'sketch', featureId: under });
   store.getState().setDistance(4);
   assert.equal(tool('extrude').operation, 'cut');
   store.getState().setDistance(-4);
@@ -331,14 +374,8 @@ void test('circle -> extrude: into the body cuts a hole, outward joins, free-sta
   store.getState().cancel();
 
   // Free-standing circle away from any body: New.
-  store.getState().beginSketchCircle();
-  store.getState().setCircleCenter(100, 100);
-  store.getState().setCircleRadius(5);
-  store.getState().commit();
-  await store.getState().whenSettled();
-  store
-    .getState()
-    .beginExtrude({ kind: 'sketch', featureId: store.getState().features.at(-1)!.id });
+  const free = await circleSketch(null, [100, 100], 5);
+  store.getState().beginExtrude({ kind: 'sketch', featureId: free });
   store.getState().setDistance(8);
   assert.equal(tool('extrude').operation, 'new');
   store.getState().commit();

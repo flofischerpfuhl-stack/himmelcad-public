@@ -27,7 +27,9 @@ import { handleJsonRpcText } from '../renderer/src/api/jsonRpc.js';
 import { AGENT_API_SCHEMA, API_ID, API_VERSION } from '../renderer/src/api/schema.js';
 import { AgentSession, HEADLESS_CAPABILITIES } from '../renderer/src/api/session.js';
 import { useAssemblerStore } from '../renderer/src/model/store.js';
+import { setSketchSolverFactory } from '../renderer/src/sketch/solverProvider.js';
 import { createHeadlessKernel } from './nodeKernel.js';
+import { createHeadlessSketchSolver } from './nodeSolver.js';
 
 function writeLine(value: unknown): void {
   process.stdout.write(`${JSON.stringify(value)}\n`);
@@ -52,6 +54,8 @@ async function serve(): Promise<void> {
   store.getState().loadDocument([], { projectName: 'Untitled' });
   const kernel = createHeadlessKernel();
   store.getState().attachKernel(kernel);
+  // Sketch writes re-solve with planeGCS in-process (loaded on first use).
+  setSketchSolverFactory(createHeadlessSketchSolver);
 
   const session = new AgentSession({
     store,

@@ -13,6 +13,7 @@ import type { Feature } from '../model/document.js';
 import { isPreviewTool, useAssemblerStore } from '../model/store.js';
 import { getViewportProbe, type ScreenPoint } from '../viewport/automation.js';
 import type { ToolHandleKind } from '../viewport/picking.js';
+import { sketchAutomation, type SketchAutomation } from './sketchAutomation.js';
 
 export interface FaceListing {
   bodyId: string;
@@ -59,7 +60,7 @@ export interface AssemblerAutomation {
 declare global {
   interface Window {
     /** DEV-only automation hook; see `devtools/automationHook.ts`. */
-    __assembler?: AssemblerAutomation;
+    __assembler?: AssemblerAutomation & SketchAutomation;
   }
 }
 
@@ -120,6 +121,7 @@ function nextFrame(): Promise<void> {
 
 export function installAutomationHook(store: typeof useAssemblerStore): void {
   window.__assembler = {
+    ...sketchAutomation(),
     store,
     project: (point) => getViewportProbe()?.project(point) ?? null,
     faceAnchor: (ref) => {

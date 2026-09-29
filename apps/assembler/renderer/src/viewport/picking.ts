@@ -13,7 +13,10 @@ export type PickTarget =
   | { kind: 'body'; bodyId: string }
   | { kind: 'face'; bodyId: string; faceKey: string }
   | { kind: 'edge'; bodyId: string; edgeKey: string }
-  | { kind: 'sketchProfile'; featureId: string }
+  /** One closed region (profile) of a sketch, by its stable region key. */
+  | { kind: 'sketchProfile'; featureId: string; regionKey?: string }
+  /** A straight sketch line (construction included); pickable only while a tool takes an axis. */
+  | { kind: 'sketchLine'; featureId: string; entityId: string }
   | { kind: 'extrudeHandle' }
   | { kind: 'moveHandle'; axis: 0 | 1 | 2 }
   /** Drag handle of the fillet/chamfer, shell tool or the section plane. */

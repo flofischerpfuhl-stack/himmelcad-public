@@ -24,6 +24,12 @@ export const API_ERROR_CODES = [
   'referenceNotFound',
   /** The kernel rejected the resulting feature; nothing was committed. `details.featureError`. */
   'featureFailed',
+  /**
+   * The sketch solver rejected a sketch edit (conflicting/redundant constraints or dimensions,
+   * collapsing geometry, invalid expression); nothing was committed. `details.conflicting` /
+   * `details.redundant` list the constraint/dimension ids involved.
+   */
+  'sketchConflict',
   /** `expectedRevision` does not match, or the document changed under an open transaction. */
   'conflict',
   /** A UI tool session is active or the kernel is still loading; retry later. */
@@ -34,7 +40,7 @@ export const API_ERROR_CODES = [
   'permissionDenied',
   /** The command would discard unsaved user work; it needs the user's approval in the app. */
   'confirmationRequired',
-  /** Recognised but not supported by the current model (e.g. sketch constraints before the solver lands). */
+  /** Recognised but not supported by the current model. */
   'unsupported',
   /** The operation was cancelled. */
   'cancelled',
@@ -94,6 +100,7 @@ export const JSON_RPC_ERROR: Record<ApiErrorCode, number> = {
   notFound: -32004,
   referenceNotFound: -32005,
   featureFailed: -32010,
+  sketchConflict: -32015,
   conflict: -32009,
   busy: -32011,
   transactionState: -32012,

@@ -39,3 +39,7 @@
   width: 72px;
   outline: none;
 }
+
+.selected {
+  border-color: var(--hc-geometry-selection);
+}

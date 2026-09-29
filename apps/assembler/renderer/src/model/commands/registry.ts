@@ -12,6 +12,7 @@ import { useAutomationStore } from '../../api/app/automationStore.js';
 import { useProjectStore } from '../project/projectStore.js';
 import { FEATURE_COMMANDS } from './featureCommands.js';
 import { isPlanarFace, makeFaceRef, type AssemblerState, type SelectionItem } from '../store.js';
+import { SKETCH_COMMANDS } from './sketchCommands.js';
 
 /** Read access to the store snapshot and its actions. Commands never mutate `ctx` directly — they call its action methods. */
 export type CommandContext = AssemblerState;
@@ -54,16 +55,6 @@ export interface Command {
 
 export const KERNEL_LOADING_REASON = 'The CAD kernel is still loading.';
 const KERNEL_FAILED_REASON = 'The CAD kernel failed to load.';
-const SKETCH_SOLVER_REASON = 'Requires the sketch solver (Phase 1)';
-
-/** The single selected face if it is planar (a sketch plane), else `null`. */
-function singlePlanarFace(ctx: CommandContext) {
-  const faces = selected(ctx, 'face');
-  if (ctx.selection.length !== 1 || faces.length !== 1) return null;
-  const face = faces[0]!;
-  return isPlanarFace(ctx.evaluation, face.bodyId, face.faceKey) ? face : null;
-}
-
 function sectionOnly(ctx: CommandContext): CommandAvailability {
   return ctx.viewState.sectionEnabled
     ? alwaysEnabled
@@ -122,58 +113,7 @@ function booleanAvailability(ctx: CommandContext): CommandAvailability {
  * {@link searchCommands} — keep additions grouped with their siblings.
  */
 export const COMMANDS: readonly Command[] = [
-  {
-    id: 'sketch.rectangle',
-    label: 'Rectangle',
-    group: 'sketch',
-    shortcut: 'R',
-    keywords: ['sketch', 'rect', 'box profile', 'draw'],
-    availability: (ctx) => {
-      const faces = selected(ctx, 'face');
-      const recommended =
-        ctx.selection.length === 1 &&
-        faces.length === 1 &&
-        isPlanarFace(ctx.evaluation, faces[0]!.bodyId, faces[0]!.faceKey);
-      return { enabled: true, recommended, priority: recommended ? 70 : 0 };
-    },
-    run: (ctx) => {
-      const faces = selected(ctx, 'face');
-      if (
-        ctx.selection.length === 1 &&
-        faces.length === 1 &&
-        isPlanarFace(ctx.evaluation, faces[0]!.bodyId, faces[0]!.faceKey)
-      ) {
-        const face = faces[0]!;
-        ctx.beginSketchRectangle({ bodyId: face.bodyId, faceKey: face.faceKey });
-        return;
-      }
-      ctx.beginSketchRectangle();
-    },
-  },
-  {
-    id: 'sketch.line',
-    label: 'Line',
-    group: 'sketch',
-    shortcut: 'L',
-    keywords: ['sketch', 'draw', 'segment'],
-    availability: () => ({ enabled: false, reason: SKETCH_SOLVER_REASON }),
-    run: () => undefined,
-  },
-  {
-    id: 'sketch.circle',
-    label: 'Circle',
-    group: 'sketch',
-    shortcut: 'C',
-    keywords: ['sketch', 'draw', 'round', 'hole', 'diameter'],
-    availability: (ctx) => {
-      const face = singlePlanarFace(ctx);
-      return { enabled: true, recommended: face !== null, priority: face ? 65 : 0 };
-    },
-    run: (ctx) => {
-      const face = singlePlanarFace(ctx);
-      ctx.beginSketchCircle(face ? { bodyId: face.bodyId, faceKey: face.faceKey } : undefined);
-    },
-  },
+  ...SKETCH_COMMANDS,
   {
     id: 'tools.extrude',
     label: 'Extrude',
@@ -205,7 +145,12 @@ export const COMMANDS: readonly Command[] = [
         return;
       }
       if (ctx.selection.length === 1 && profiles.length === 1) {
-        ctx.beginExtrude({ kind: 'sketch', featureId: profiles[0]!.featureId });
+        const { featureId, regionKey } = profiles[0]!;
+        ctx.beginExtrude({
+          kind: 'sketch',
+          featureId,
+          ...(regionKey ? { regions: [regionKey] } : {}),
+        });
       }
     },
   },

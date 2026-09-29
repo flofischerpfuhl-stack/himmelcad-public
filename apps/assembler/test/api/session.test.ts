@@ -15,15 +15,23 @@ import {
   AgentSession,
   HEADLESS_CAPABILITIES,
 } from '../../renderer/src/api/session.js';
-import type { Feature } from '../../renderer/src/model/document.js';
+import type { Feature, SketchFeature } from '../../renderer/src/model/document.js';
 import { useAssemblerStore } from '../../renderer/src/model/store.js';
+import { addRectangle } from '../../renderer/src/sketch/builders.js';
+import { setSketchDimension } from '../../renderer/src/sketch/featureOps.js';
+import { setSketchSolverFactory } from '../../renderer/src/sketch/solverProvider.js';
+import { EMPTY_SKETCH } from '../../renderer/src/sketch/types.js';
 import { createNodeKernelAdapter } from '../kernel/nodeKernel.js';
+import { loadNodeSolver } from '../sketch/nodeSolver.js';
 
 type Json = Record<string, unknown>;
 
 const store = useAssemblerStore;
 const kernel = createNodeKernelAdapter();
 store.getState().attachKernel(kernel);
+setSketchSolverFactory(() => ({
+  solve: async (request) => (await loadNodeSolver()).solve(request),
+}));
 
 let dirty = false;
 const session = new AgentSession({
@@ -96,11 +104,17 @@ async function apiPlate(): Promise<{ sketchId: string; extrudeId: string; bodyId
 }
 
 async function uiPlate(): Promise<void> {
-  const s = store.getState();
-  s.beginSketchRectangle();
-  store.getState().setPreviewRect(0, 0, 80, 50);
-  store.getState().commit();
-  const sketchId = store.getState().features.at(-1)!.id;
+  // A dimensioned rectangle committed the way a finished sketch session commits it.
+  const sketch: SketchFeature = {
+    id: store.getState().allocateFeatureId('sketch', new Set()),
+    name: 'Sketch 1',
+    suppressed: false,
+    kind: 'sketch',
+    plane: { kind: 'plane', plane: 'XY', offset: 0 },
+    ...addRectangle(EMPTY_SKETCH, [0, 0], [80, 50], { position: true, size: true }).sketch,
+  };
+  store.getState().addFeature(sketch, [{ kind: 'sketchProfile', featureId: sketch.id }]);
+  const sketchId = sketch.id;
   store.getState().beginExtrude({ kind: 'sketch', featureId: sketchId });
   store.getState().setDistance(6);
   await store.getState().whenSettled();
@@ -160,14 +174,14 @@ void test('fillet by edge key equals the UI fillet tool; edit/suppress/delete eq
   });
   assert.deepEqual(normalized(store.getState().features), normalized(ui));
 
-  // feature.edit vs editFeatureParams
-  await call('feature.edit', {
-    featureId: sketchId,
-    params: { profiles: [{ ...RECT, width: 90 }] },
-  });
+  // sketch.setDimension vs the History panel's dimension edit (setSketchDimension)
+  await call('sketch.setDimension', { featureId: sketchId, dimension: 'd3', value: 90 });
   const apiEdited = store.getState().features;
   store.getState().undo();
-  store.getState().editFeatureParams(sketchId, { profiles: [{ ...RECT, width: 90 }] as never });
+  await store.getState().whenSettled();
+  const sketchFeature = store.getState().features.find((f) => f.id === sketchId) as SketchFeature;
+  const width = sketchFeature.dimensions.find((d) => d.name === 'd3')!;
+  assert.equal(await setSketchDimension(sketchId, width.id, 90), null);
   assert.deepEqual(store.getState().features, apiEdited);
   await store.getState().whenSettled();
   const widened = await call<{ bbox: { size: number[] } }>('body.get', { bodyId });
@@ -316,7 +330,8 @@ void test('optimistic concurrency: expectedRevision and user edits during a tran
 
 void test('writes are refused while a UI tool session is active', async () => {
   await reset();
-  store.getState().beginSketchRectangle();
+  const { bodyId } = await apiPlate();
+  store.getState().beginMove(bodyId);
   await fails(
     call('feature.create', { kind: 'sketch', params: { plane: 'XY', profiles: [RECT] } }),
     'busy',
@@ -360,24 +375,102 @@ void test('the app endpoint session has no file access and cannot discard unsave
   assert.deepEqual(hello.capabilities, ['document.read', 'document.write', 'view.write']);
 });
 
-void test('sketch profile commands edit dimensions in place', async () => {
+void test('sketch commands: shapes with dimensions, constraints, conflicts, regions', async () => {
   await reset();
   const { sketchId, bodyId } = await apiPlate();
-  const added = await call('sketch.addProfile', {
+  const added = await call<Json>('sketch.addProfile', {
     featureId: sketchId,
     profile: { kind: 'circle', cx: 100, cy: 25, radius: 10 },
   });
-  assert.equal(added.profileIndex, 1);
-  await call('sketch.editProfile', {
-    featureId: sketchId,
-    index: 0,
-    profile: { ...RECT, height: 40 },
-  });
-  const sketches = (await call('sketches.list')) as { profiles: unknown[]; consumed: boolean }[];
-  assert.equal(sketches[0]!.profiles.length, 2);
+  assert.deepEqual((added.shape as Json).dimensions, { cx: 'd5', cy: 'd6', diameter: 'd7' });
+  assert.equal(added.dof, 0);
+  await call('sketch.setDimension', { featureId: sketchId, dimension: 'd4', value: 40 });
+  const sketches = (await call('sketches.list')) as {
+    regions: { key: string; entityIds: string[] }[];
+    dimensions: { name: string; value: number }[];
+    consumed: boolean;
+  }[];
+  assert.equal(sketches[0]!.regions.length, 2);
   assert.equal(sketches[0]!.consumed, true);
+  assert.equal(sketches[0]!.dimensions.find((d) => d.name === 'd4')!.value, 40);
   const body = await call<{ bbox: { max: number[] } }>('body.get', { bodyId });
   assert.deepEqual(body.bbox.max, [110, 40, 6]);
-  await call('sketch.removeProfile', { featureId: sketchId, index: 1 });
-  await fails(call('sketch.removeProfile', { featureId: sketchId, index: 0 }), 'invalidParams');
+
+  // An expression drives a dimension from another one.
+  await call('sketch.setDimension', { featureId: sketchId, dimension: 'd7', expression: 'd4 / 2' });
+  const circle = (await call<{ bbox: { min: number[] } }>('body.get', { bodyId })).bbox;
+  assert.deepEqual(circle.min, [0, 0, 0]);
+  const list = (await call('sketches.list')) as { dimensions: { name: string; value: number }[] }[];
+  assert.equal(list[0]!.dimensions.find((d) => d.name === 'd7')!.value, 20);
+
+  // A redundant constraint is rejected with the solver's diagnosis; nothing changes.
+  const before = store.getState().features;
+  const redundant = await fails(
+    call('sketch.addConstraint', { featureId: sketchId, kind: 'horizontal', refs: ['l1'] }),
+    'sketchConflict',
+  );
+  assert.ok(
+    (redundant.details?.redundant as string[]).length > 0 || redundant.details?.conflicting,
+  );
+  assert.equal(store.getState().features, before);
+  await fails(
+    call('sketch.setDimension', { featureId: sketchId, dimension: 'd9', value: 1 }),
+    'notFound',
+  );
+
+  // Deleting the circle removes its dimensions too.
+  const circleIds = (added.shape as { entityIds: string[] }).entityIds;
+  await call('sketch.deleteItems', { featureId: sketchId, ids: [circleIds[1]!] });
+  const after = (await call('sketches.list')) as { regions: unknown[]; dimensions: unknown[] }[];
+  assert.equal(after[0]!.regions.length, 1);
+  assert.equal(after[0]!.dimensions.length, 4);
+});
+
+void test('revolve through the API: polyline profile about a construction centre line', async () => {
+  await reset();
+  const sketch = await call<Json>('feature.create', { kind: 'sketch', params: { plane: 'XZ' } });
+  const featureId = sketch.featureId as string;
+  const profile = await call<Json>('sketch.addPolyline', {
+    featureId,
+    points: [
+      [5, 0],
+      [15, 0],
+      [15, 4],
+      [9, 4],
+      [9, 10],
+      [5, 10],
+    ],
+    closed: true,
+  });
+  // Axis-aligned segments were constrained horizontal/vertical: 12 point DOF - 6 = 6.
+  assert.equal(profile.dof, 6);
+  const axis = await call<Json>('sketch.addPolyline', {
+    featureId,
+    points: [
+      [0, -2],
+      [0, 12],
+    ],
+    construction: true,
+  });
+  assert.equal((axis.regions as unknown[]).length, 1, 'construction lines bound no region');
+  const revolve = await call<Json>('feature.create', {
+    kind: 'revolve',
+    params: {
+      profile: { kind: 'sketch', featureId },
+      axis: { kind: 'sketchLine', featureId, entityId: (axis.lineIds as string[])[0] },
+    },
+  });
+  const bodies = revolve.bodies as { volume: number; valid: boolean }[];
+  assert.equal(bodies.length, 1);
+  const ring = (r0: number, r1: number, h: number) => Math.PI * (r1 * r1 - r0 * r0) * h;
+  assert.ok(Math.abs(bodies[0]!.volume - (ring(5, 15, 4) + ring(5, 9, 6))) < 1e-3);
+  assert.equal(bodies[0]!.valid, true);
+  // Validated like any known kind: a bad axis fails before the kernel.
+  await fails(
+    call('feature.create', {
+      kind: 'revolve',
+      params: { profile: { kind: 'sketch', featureId }, axis: { kind: 'sketchEdge' } },
+    }),
+    'invalidParams',
+  );
 });

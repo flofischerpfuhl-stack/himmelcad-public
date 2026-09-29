@@ -16,6 +16,9 @@ stable-reference scheme and open risks: `assembler/KERNEL-SPIKE.md`.
 - `renderer/src/kernel/` — kernel adapter contract, OCCT evaluator,
   naming/reference resolution, worker.
 - `renderer/src/viewport/` — WebGL2 scene, picking by face/edge naming key.
+- `renderer/src/sketch/` — constrained sketches and sketch mode: data model,
+  region (profile) detection, planeGCS solver worker, drawing tools,
+  inference, session store and overlay UI (`assembler/SKETCHING.md`).
 - `renderer/public/licenses/` — third-party notices and license texts
   shipped with the app (OCCT is LGPL-2.1 with the Open CASCADE exception; see
   `LICENSES/THIRD_PARTY.md`).
@@ -24,7 +27,7 @@ stable-reference scheme and open risks: `assembler/KERNEL-SPIKE.md`.
 
 - `pnpm dev` — Vite dev server + Electron together.
 - `pnpm dev:web` — Vite only, for iterating on the renderer in a browser.
-- `pnpm build` — renderer (Vite) + Electron main/preload (`tsc`).
+- `pnpm build` — renderer (Vite) + Electron main/preload (`tsc`) + headless CLI.
 - `pnpm typecheck` — renderer and main-process TypeScript projects.
 - `pnpm test` — Node test runner; kernel tests load the real OCCT wasm in
   Node (once per test file).
@@ -39,12 +42,31 @@ Shell `H`, Union/Subtract/Intersect) preview `features + provisional
 feature` on the kernel's preview channel — one request in flight, newest
 parameters next, stale results dropped. A kernel failure keeps the last
 valid preview, shows the error under the tool pill and disables Done.
-Circle (`C`) and Rectangle (`R`) take their plane from the first click on
-a planar face; Extrude picks New/Join/Cut from face contact (out of a face
-joins, into a body cuts, free-standing is new) until the badge overrides it.
-A closed profile lying inside a body face starts as a through-cut preview
-(Cut, the material's depth under the profile) instead of "Join, 0 mm".
-Escape order: dimension field, placed circle centre, tool, selection.
+Extrude picks New/Join/Cut from face contact (out of a face joins, into a
+body cuts, free-standing is new) until the badge overrides it; a single
+clicked sketch region extrudes just that profile. A closed profile lying
+inside a body face starts as a through-cut preview (Cut, the material's
+depth under the profile) instead of "Join, 0 mm". Escape order: dimension
+field, tool, selection.
+
+## Sketch mode
+
+Constrained sketches solved by FreeCAD's planeGCS (WebAssembly, own worker;
+LGPL record in `LICENSES/THIRD_PARTY.md`). Line `L`, Arc `A`, Circle `C`,
+Rectangle `R`, Polygon `G` start a sketch (on XY, or on the selected planar
+face; the first click on a face moves an empty new sketch there); Trim `T`,
+Offset `O`, Dimension `D`, Construction `Q` and the constraints (Shift +
+letter) work inside it. Double-click a sketch (viewport, Items, History) to
+edit it. Snapping and inferred horizontal/vertical/perpendicular/parallel/
+midpoint/point-on constraints while drawing; typed values add dimensions;
+dimensions accept expressions (`d1 / 2`). Blue = under-constrained, green =
+fully constrained; conflicting edits are rejected with a red banner and the
+last valid sketch is kept. Dragging moves unconstrained geometry through the
+solver. Esc cancels the tool, then leaves the sketch; the session undoes step
+by step and becomes one document undo step. Profiles are the detected closed
+regions (holes and intersections included), referenced by stable keys.
+Project files are schema 2; schema 1 files migrate on load. Details and
+limits: `assembler/SKETCHING.md`.
 
 Modelling features (`model/features.ts`, kernel in `kernel/features/`,
 tools in `model/featureTools.ts`, commands in
@@ -53,17 +75,17 @@ session with the same preview/commit/cancel contract. Each starts from the
 selection (a disabled command says what is missing), and clicks while it
 runs edit its references; clicking empty space finishes:
 
-| Tool                         | Start from                                           | Handles / badges                                                                                |
-| ---------------------------- | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| Revolve `V`                  | one sketch profile or planar face (+ axis edge)      | angle arc (15° snap, Shift free), New/Join/Cut, axis X/Y/Z; default 360° about an in-plane axis |
-| Sweep `W`                    | profile + path edges (chain), or a straight line     | New/Join/Cut; line-path length arrow; click edges/a sketch outline for the path                 |
-| Loft                         | two or more profiles, in selection order             | New/Join/Cut, Smooth/Straight                                                                   |
-| Mirror                       | bodies (+ a planar face as plane)                    | plane YZ/XZ/XY/face with offset arrow, Keep original / Mirror in place                          |
-| Pattern                      | bodies (+ an edge as direction/axis)                 | Linear/Circular, X/Y/Z, spacing arrow or angle arc, count chip                                  |
-| Split Body                   | one body (+ a planar face)                           | plane YZ/XZ/XY/face with offset arrow                                                           |
-| Align                        | a face on the moving body, then a face on the target | Face to face / Same direction, Centred / Keep position, gap arrow                               |
-| Offset Face                  | faces of one body (recommended for curved faces)     | distance arrow (negative removes material, e.g. enlarges a hole)                                |
-| Delete Face (`Del` on faces) | faces of one body                                    | — (holes, fillets and chamfers between planar faces)                                            |
+| Tool                         | Start from                                           | Handles / badges                                                                                                                                                                                                       |
+| ---------------------------- | ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Revolve `V`                  | one sketch profile or planar face (+ axis edge)      | angle arc (15° snap, Shift free), New/Join/Cut, axis X/Y/Z; click an edge or sketch line (construction lines included) for the axis; default 360° about a construction line of the sketch, else an in-plane world axis |
+| Sweep `W`                    | profile + path edges (chain), or a straight line     | New/Join/Cut; line-path length arrow; click edges/a sketch outline for the path                                                                                                                                        |
+| Loft                         | two or more profiles, in selection order             | New/Join/Cut, Smooth/Straight                                                                                                                                                                                          |
+| Mirror                       | bodies (+ a planar face as plane)                    | plane YZ/XZ/XY/face with offset arrow, Keep original / Mirror in place                                                                                                                                                 |
+| Pattern                      | bodies (+ an edge as direction/axis)                 | Linear/Circular, X/Y/Z, spacing arrow or angle arc, count chip                                                                                                                                                         |
+| Split Body                   | one body (+ a planar face)                           | plane YZ/XZ/XY/face with offset arrow                                                                                                                                                                                  |
+| Align                        | a face on the moving body, then a face on the target | Face to face / Same direction, Centred / Keep position, gap arrow                                                                                                                                                      |
+| Offset Face                  | faces of one body (recommended for curved faces)     | distance arrow (negative removes material, e.g. enlarges a hole)                                                                                                                                                       |
+| Delete Face (`Del` on faces) | faces of one body                                    | — (holes, fillets and chamfers between planar faces)                                                                                                                                                                   |
 
 New/Join/Cut is chosen automatically: a profile mostly inside a body cuts
 it, one touching a body (or lying on its face) joins, a free-standing one
@@ -110,6 +132,11 @@ viewport, directly usable with `page.mouse`.
 | `bodies()`                        | Displayed bodies (the active tool's preview if any): `id`, `name`, `volume`, `min`, `max`.                                                                                                                                           |
 | `faces(bodyId)` / `edges(bodyId)` | Stable references (`faceKey`/`edgeKey`) with readable names (`"Extrude 1 end · plane +Z at …"`, `"Circle Ø6 at …"`) plus geometry.                                                                                                   |
 | `waitForKernelIdle()`             | Resolves when no document/preview evaluation is outstanding and that state has been drawn (so anchors are current).                                                                                                                  |
+| `sketchToScreen([u, v], id?)`     | Page pixel of sketch coordinates in the open sketch session (or in the evaluated sketch `id`), `null` if not visible.                                                                                                                |
+| `sketchSession()`                 | Open session summary: feature id, tool, DOF, problem message, constraint kinds, dimensions (`id`, `name`, `kind`, `value`), selection.                                                                                               |
+| `dimensionChip(name)`             | Centre of the value chip of dimension `name` (e.g. `"d1"`), or `null`.                                                                                                                                                               |
+| `waitForSketchIdle()`             | Resolves when no sketch edit/drag solve is pending, the document settled and the frame is drawn.                                                                                                                                     |
+| `sketchStore`                     | The sketch-mode zustand store (`begin`, `dispatch`, `setTool`, …).                                                                                                                                                                   |
 
 Example (see `D:\AgentWork\HimmelCAD-Assembler\shots\tool-shots.mjs` on the
 Windows host for a full script):

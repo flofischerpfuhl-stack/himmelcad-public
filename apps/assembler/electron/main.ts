@@ -85,7 +85,17 @@ const WORKER_CSP =
 // (the main document, the React app bundle, styles, fonts, the .wasm binary
 // itself) gets the strict `DOCUMENT_CSP`. Matched by filename prefix so a
 // content hash change across builds does not need this list updated.
-const WORKER_CSP_FILE_PREFIXES = ['kernel.worker-', 'replicad_single-'];
+// The sketch-solver worker (`renderer/src/sketch/solver.worker.ts`) and the
+// LGPL planeGCS glue chunk it imports (`planegcs-<hash>.js`) need the same
+// policy: planeGCS's Emscripten embind glue builds its invokers with
+// `new Function` (`Function.apply`), found when the worker failed to load
+// under a 'wasm-unsafe-eval'-only policy.
+const WORKER_CSP_FILE_PREFIXES = [
+  'kernel.worker-',
+  'replicad_single-',
+  'solver.worker-',
+  'planegcs-',
+];
 
 function cspFor(filePath: string): string {
   const base = filePath.replace(/\\/g, '/').split('/').pop() ?? '';

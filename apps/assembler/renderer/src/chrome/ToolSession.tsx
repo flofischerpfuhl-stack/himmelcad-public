@@ -26,25 +26,6 @@ interface ToolMeta {
 
 function toolMeta(tool: ToolSessionState): ToolMeta {
   switch (tool.kind) {
-    case 'sketchRectangle':
-      return {
-        label: 'Rectangle',
-        shortcut: 'R',
-        prompt:
-          tool.plane.kind === 'face'
-            ? 'Click two corners.'
-            : 'Click two corners on the grid or a face.',
-      };
-    case 'sketchCircle':
-      return {
-        label: 'Circle',
-        shortcut: 'C',
-        prompt: tool.center
-          ? 'Click to set the radius or type a value. Esc to restart.'
-          : tool.plane.kind === 'face'
-            ? 'Click the centre.'
-            : 'Click the centre on the grid or a planar face.',
-      };
     case 'extrude':
       return {
         label: 'Extrude',
@@ -158,18 +139,6 @@ function ToolBadge({
             { value: 'intersect', label: 'Intersect' },
           ]}
           onChange={(operation) => state.setBooleanOperation(operation)}
-        />
-      );
-    case 'sketchCircle':
-      return (
-        <Badge
-          ariaLabel="Circle dimension"
-          value={tool.dimension}
-          options={[
-            { value: 'radius', label: 'Radius' },
-            { value: 'diameter', label: 'Diameter' },
-          ]}
-          onChange={(dimension) => state.setCircleDimension(dimension)}
         />
       );
     case 'move':

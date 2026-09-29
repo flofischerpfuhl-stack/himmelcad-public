@@ -5,31 +5,30 @@
  */
 import type * as R from 'replicad';
 
-import {
-  frameForPlane,
-  framePoint,
-  frameUv,
-  profileOutlineUv,
-  type SketchFrame,
-  type Vec3,
-} from '../../model/document.js';
+import { MIN_FEATURE_SIZE_MM, frameForPlane, framePoint, type Vec3 } from '../../model/document.js';
 import {
   worldAxisVector,
   type AxisRef,
   type PlaneRef,
   type ProfileRef,
 } from '../../model/features.js';
+import { entityMap, pointPos } from '../../sketch/types.js';
 import { assignEdgeKeys } from '../naming.js';
+import { regionFace, regionPieceName } from '../sketchGeometry.js';
 import type { BodyStateLike, FeatureKit, ReplayContextLike } from './kit.js';
 import { cross, dot, normalize, sub } from './rigid.js';
 
 /** One closed planar profile ready for a sweep-type operation. */
 export interface ProfileSection {
   face: R.Face;
-  /** Profile index in its sketch (0 for a face profile). */
+  /** Position in the reference's profile list (0 for a face profile), used in face names. */
   profileIndex: number;
-  /** Boundary edges with the profile segment they belong to (naming of generated side faces). */
-  segments: { edge: R.Edge; segment: number; midpoint: Vec3 }[];
+  /**
+   * Boundary edges with the piece they belong to (naming of generated side
+   * faces): the sketch entity id (`~k` for several pieces of one entity), or
+   * the edge's index among the face's edges for a face profile.
+   */
+  segments: { edge: R.Edge; segment: string; midpoint: Vec3 }[];
   normal: Vec3;
   center: Vec3;
   /** Sample points of the outline (world). */
@@ -74,7 +73,7 @@ export function profileSections(
           best = s;
         }
       });
-      return { edge, segment: best, midpoint };
+      return { edge, segment: String(best), midpoint };
     });
     return [
       {
@@ -89,46 +88,40 @@ export function profileSections(
   }
   const sketchFeature = ctx.sketchFeatures.get(ref.featureId);
   const sketch = ctx.sketches.get(ref.featureId);
-  if (!sketchFeature || !sketch) kit.fail(`Missing reference: sketch "${ref.featureId}"`);
-  const indices =
-    ref.profileIndex !== undefined ? [ref.profileIndex] : sketchFeature.profiles.map((_, i) => i);
-  return indices.map((index) => {
-    const profile = sketchFeature.profiles[index];
-    if (!profile) kit.fail(`Missing reference: profile ${index} of "${sketchFeature.name}"`);
-    const face = kit.profileFace(sketch.frame, profile);
-    const outlineUv = profileOutlineUv(profile);
+  const regions = ctx.sketchRegions.get(ref.featureId);
+  if (!sketchFeature || !sketch || !regions) {
+    kit.fail(`Missing reference: sketch "${ref.featureId}"`);
+  }
+  if (regions.length === 0) kit.fail(`"${sketchFeature.name}" has no closed profile`);
+  // Same rule as Extrude: the listed region keys in order, else every region.
+  const keys = ref.regions ?? regions.map((r) => r.key);
+  return keys.map((key, index) => {
+    const region = regions.find((r) => r.key === key);
+    if (!region) kit.fail(`Missing reference: profile "${key}" of "${sketchFeature.name}"`);
+    if (region.area < MIN_FEATURE_SIZE_MM * MIN_FEATURE_SIZE_MM) {
+      kit.fail(`Sketch profile is too small (${region.area.toFixed(4)} mm²)`);
+    }
+    let face: R.Face;
+    try {
+      face = regionFace(sketch.frame, region);
+    } catch (error) {
+      kit.fail(`Profile "${key}" could not be built: ${kit.describeError(error)}`);
+    }
     const segments = face.edges.map((edge) => {
       const midpoint = pointOf(edge.pointAt(0.5));
-      return { edge, segment: nearestSegment(sketch.frame, outlineUv, midpoint), midpoint };
+      return { edge, segment: regionPieceName(sketch.frame, region, midpoint), midpoint };
     });
-    const evaluated = sketch.profiles[index];
+    const evaluated = sketch.profiles.find((p) => p.key === key);
     return {
       face,
       profileIndex: index,
       segments,
       normal: sketch.frame.normal,
-      center: evaluated?.center ?? framePoint(sketch.frame, 0, 0),
+      center: evaluated?.center ?? framePoint(sketch.frame, region.sample[0], region.sample[1]),
       outline: evaluated?.outline ?? sampleEdges(face.edges),
     };
   });
 }
-
-function nearestSegment(frame: SketchFrame, outline: [number, number][], point: Vec3): number {
-  if (outline.length > 8) return 0; // a circle is one segment
-  const uv = frameUv(frame, point);
-  let best = 0;
-  let bestDistance = Infinity;
-  outline.forEach((p, s) => {
-    const q = outline[(s + 1) % outline.length]!;
-    const d = Math.hypot((p[0] + q[0]) / 2 - uv.u, (p[1] + q[1]) / 2 - uv.v);
-    if (d < bestDistance) {
-      bestDistance = d;
-      best = s;
-    }
-  });
-  return best;
-}
-
 /** A straight line in space: `point` + t · `dir` (unit). */
 export interface Line3 {
   point: Vec3;
@@ -165,22 +158,18 @@ export function resolveAxis(kit: FeatureKit, ctx: ReplayContextLike, ref: AxisRe
   const sketchFeature = ctx.sketchFeatures.get(ref.featureId);
   const sketch = ctx.sketches.get(ref.featureId);
   if (!sketchFeature || !sketch) kit.fail(`Missing reference: sketch "${ref.featureId}"`);
-  const profile = sketchFeature.profiles[ref.profileIndex];
-  if (!profile) {
-    kit.fail(`Missing reference: profile ${ref.profileIndex} of "${sketchFeature.name}"`);
-  }
-  if (profile.kind === 'circle') kit.fail('An axis must be a straight sketch line');
-  const outline = profileOutlineUv(profile);
-  const a = outline[ref.segment];
-  const b = outline[(ref.segment + 1) % outline.length];
-  if (!a || !b) {
-    kit.fail(`Missing reference: line ${ref.segment} of "${sketchFeature.name}"`);
-  }
+  const entities = entityMap(sketchFeature);
+  const line = entities.get(ref.entityId);
+  if (!line) kit.fail(`Missing reference: line "${ref.entityId}" of "${sketchFeature.name}"`);
+  if (line.kind !== 'line') kit.fail('An axis must be a straight sketch line');
+  const a = pointPos(entities, line.a);
+  const b = pointPos(entities, line.b);
+  if (!a || !b) kit.fail(`Missing reference: line "${ref.entityId}" of "${sketchFeature.name}"`);
   const p = framePoint(sketch.frame, a[0], a[1]);
   const q = framePoint(sketch.frame, b[0], b[1]);
+  if (distance(p, q) < MIN_FEATURE_SIZE_MM) kit.fail('The axis line is too short');
   return { point: p, dir: normalize(sub(q, p)) };
 }
-
 /** A resolved plane: point + unit normal. */
 export interface Plane3 {
   point: Vec3;

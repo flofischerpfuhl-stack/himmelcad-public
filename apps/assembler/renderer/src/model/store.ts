@@ -22,7 +22,7 @@
  * - the explicit tool state machine
  *   (`collectingReferences -> preview -> numericEditing -> committing`,
  *   with `cancel()` valid from any uncommitted state) for the interactive
- *   tools `sketchRectangle`, `extrude`, `move`, plus one-step commands for
+ *   tools `extrude`, `move` and the generic feature tool, plus one-step commands for
  *   fillet/chamfer, shell and body booleans.
  *
  * Built on zustand. Usable as a React hook (`useAssemblerStore()`) and
@@ -41,8 +41,6 @@ import {
 } from '../kernel/types.js';
 import {
   createDemoDocument,
-  frameForFace,
-  frameForPlane,
   type BooleanFeature,
   type ChamferFeature,
   type EdgeRef,
@@ -57,8 +55,6 @@ import {
   type Plane,
   type ShellFeature,
   type SketchFeature,
-  type SketchFrame,
-  type SketchPlaneRef,
   type Vec3,
 } from './document.js';
 import { MODELING_FEATURE_LABEL, type TransformFeature } from './features.js';
@@ -77,7 +73,8 @@ export type SelectionItem =
   | { kind: 'body'; bodyId: string }
   | { kind: 'face'; bodyId: string; faceKey: string }
   | { kind: 'edge'; bodyId: string; edgeKey: string }
-  | { kind: 'sketchProfile'; featureId: string }
+  /** A sketch's profiles: one region (`regionKey`) or, without it, every region. */
+  | { kind: 'sketchProfile'; featureId: string; regionKey?: string }
   | { kind: 'feature'; featureId: string };
 
 /** Explicit lifecycle every tool session moves through. `cancel()` is valid from any of these except after commit. */
@@ -85,15 +82,6 @@ export type ToolPhase = 'collectingReferences' | 'preview' | 'numericEditing' | 
 
 interface ToolSessionBase {
   phase: ToolPhase;
-}
-
-/** `R` — draws a rectangle on a plane, or on a selected planar body face. */
-export interface SketchRectangleTool extends ToolSessionBase {
-  kind: 'sketchRectangle';
-  plane: SketchPlaneRef;
-  /** Resolved frame the rectangle is drawn in. */
-  frame: SketchFrame;
-  preview: { x: number; y: number; width: number; height: number } | null;
 }
 
 /**
@@ -157,19 +145,6 @@ export interface BooleanTool extends ToolSessionBase, KernelPreviewFields {
   toolBodyIds: string[];
 }
 
-/** `C` — centre click + radius click on a plane or a planar body face. */
-export interface SketchCircleTool extends ToolSessionBase {
-  kind: 'sketchCircle';
-  plane: SketchPlaneRef;
-  frame: SketchFrame;
-  /** Centre in sketch (u, v) coordinates once placed. */
-  center: { u: number; v: number } | null;
-  /** Radius once the cursor moved away from the centre (or typed). */
-  radius: number | null;
-  /** Which value the dimension chip shows and edits. */
-  dimension: 'radius' | 'diameter';
-}
-
 /**
  * `M` — the Move/Rotate gizmo on a single body: translate along the axis
  * arrows, rotate with the rings (degrees about world X, then Y, then Z,
@@ -198,9 +173,11 @@ export interface FeatureTool extends ToolSessionBase, KernelPreviewFields {
   draft: FeatureDraft;
 }
 
+/**
+ * Tool sessions of the 3D modelling context. Sketching (Line, Arc, Circle,
+ * Rectangle, …) happens in a sketch session instead (`sketch/session.ts`).
+ */
 export type ToolSession =
-  | SketchRectangleTool
-  | SketchCircleTool
   | ExtrudeTool
   | MoveTool
   | EdgeBlendTool
@@ -303,8 +280,6 @@ export interface AssemblerState {
   setIsolatedBodyIds: (bodyIds: string[] | null) => void;
 
   activeTool: ToolSession | null;
-  beginSketchRectangle: (origin?: { bodyId: string; faceKey: string }) => void;
-  setPreviewRect: (x: number, y: number, width: number, height: number) => void;
   beginExtrude: (profile: ExtrudeProfileRef) => void;
   setDistance: (distanceMm: number) => void;
   setExtrudeOperation: (operation: ExtrudeOperation) => void;
@@ -322,20 +297,6 @@ export interface AssemblerState {
   updateFeatureDraft: (
     update: (draft: FeatureDraft, evaluation: EvaluationResult) => FeatureDraft,
   ) => void;
-  /** `C` — starts the circle tool on the XY plane or on a planar body face. */
-  beginSketchCircle: (origin?: { bodyId: string; faceKey: string }) => void;
-  /**
-   * Moves the active sketch tool (rectangle or circle) onto a planar body
-   * face — the first click on a face picks the sketch plane, like Shapr3D.
-   * Only before the first point is placed; returns `false` if not applicable.
-   */
-  setSketchPlaneFace: (bodyId: string, faceKey: string) => boolean;
-  setCircleCenter: (u: number, v: number) => void;
-  /** Sets the circle radius (mm); a non-positive value clears it. */
-  setCircleRadius: (radius: number) => void;
-  setCircleDimension: (dimension: 'radius' | 'diameter') => void;
-  /** Clears a placed centre (first Escape of the circle tool). `false` if there was none. */
-  resetSketchCircle: () => boolean;
   /** `F` — starts the fillet/chamfer tool on the selected edges of one body (live preview). */
   beginEdgeBlend: (kind: 'fillet' | 'chamfer') => void;
   setBlendSize: (size: number) => void;
@@ -369,6 +330,19 @@ export interface AssemblerState {
    * Used by the File > Import > STEP flow (`model/project/`).
    */
   addImportedBody: (input: { data: string; fileName: string }) => void;
+  /**
+   * Appends a fully formed feature (e.g. a sketch finished in a sketch
+   * session) as one undo step and selects `selection` (default: the feature).
+   */
+  addFeature: (feature: Feature, selection?: SelectionItem[]) => void;
+  /**
+   * Routes Undo/Redo to a nested editing session (a sketch session undoes
+   * step by step inside the session) until reset with `null`. `history`
+   * mirrors the delegate while it is set; call `syncHistory` after the
+   * delegate's own stacks change.
+   */
+  setHistoryDelegate: (delegate: HistoryDelegate | null) => void;
+  syncHistory: () => void;
 
   editFeatureParams: (featureId: string, patch: FeaturePatch) => void;
   setSuppressed: (featureId: string, suppressed: boolean) => void;
@@ -420,6 +394,14 @@ export interface AssemblerState {
   ) => boolean;
   /** A fresh feature id (`feature-<kind>-<n>`) from the same counter the UI tools use, unique in `features`. */
   allocateFeatureId: (kind: string, reserved?: ReadonlySet<string>) => string;
+}
+
+/** A nested undo scope (see {@link AssemblerState.setHistoryDelegate}). */
+export interface HistoryDelegate {
+  undo: () => void;
+  redo: () => void;
+  canUndo: () => boolean;
+  canRedo: () => boolean;
 }
 
 // ---- reference helpers (pure) -------------------------------------------------
@@ -483,7 +465,9 @@ function selectionKeysEqual(a: SelectionItem, b: SelectionItem): boolean {
     case 'edge':
       return b.kind === 'edge' && a.bodyId === b.bodyId && a.edgeKey === b.edgeKey;
     case 'sketchProfile':
-      return b.kind === 'sketchProfile' && a.featureId === b.featureId;
+      return (
+        b.kind === 'sketchProfile' && a.featureId === b.featureId && a.regionKey === b.regionKey
+      );
     case 'feature':
       return b.kind === 'feature' && a.featureId === b.featureId;
   }
@@ -511,7 +495,13 @@ function remapSelectionItem(
       return edge.key === item.edgeKey ? item : { ...item, edgeKey: edge.key };
     }
     case 'sketchProfile':
-      return evaluation.sketches.some((s) => s.featureId === item.featureId) ? item : null;
+      return evaluation.sketches.some(
+        (s) =>
+          s.featureId === item.featureId &&
+          (item.regionKey === undefined || s.profiles.some((p) => p.key === item.regionKey)),
+      )
+        ? item
+        : null;
     case 'feature':
       return featureIds.has(item.featureId) ? item : null;
   }
@@ -533,12 +523,14 @@ function highestFeatureIdSuffix(features: readonly { id: string }[]): number {
   return max;
 }
 
-function createFeatureId(kind: string): string {
+/** A new, never reused feature id `feature-<kind>-<n>`. */
+export function createFeatureId(kind: string): string {
   featureIdCounter += 1;
   return `feature-${kind}-${featureIdCounter}`;
 }
 
-function nextFeatureName(prefix: string, features: readonly Feature[]): string {
+/** Next free display name `"<prefix> <n>"`, e.g. `"Sketch 3"`. */
+export function nextFeatureName(prefix: string, features: readonly Feature[]): string {
   const count = features.filter((f) => f.name.startsWith(`${prefix} `)).length;
   return `${prefix} ${count + 1}`;
 }
@@ -656,6 +648,8 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
   /** Completed evaluations by feature-array identity (undo/redo reuse them instantly). */
   let resultCache = new WeakMap<Feature[], EvaluationResult>();
   let settledWaiters: (() => void)[] = [];
+  /** Nested undo scope (a sketch session) while set; see `setHistoryDelegate`. */
+  let historyDelegate: HistoryDelegate | null = null;
 
   function isSettled(): boolean {
     const state = get();
@@ -821,20 +815,6 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
       .map((item) => item.bodyId);
   }
 
-  /** Frame of a planar body face, or `null` if it is not planar. */
-  function facePlane(
-    bodyId: string,
-    faceKey: string,
-  ): { plane: SketchPlaneRef; frame: SketchFrame } | null {
-    const ref = makeFaceRef(get().evaluation, bodyId, faceKey);
-    const normal = ref?.signature.normal;
-    if (!ref || !normal || ref.signature.surface !== 'plane') return null;
-    return {
-      plane: { kind: 'face', face: ref },
-      frame: frameForFace(normal, ref.signature.centroid),
-    };
-  }
-
   function sectionOffsetFor(axis: SectionAxis): number {
     const state = get();
     return defaultSectionOffset(
@@ -913,6 +893,10 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
 
     history: { canUndo: false, canRedo: false },
     undo: () => {
+      if (historyDelegate) {
+        historyDelegate.undo();
+        return;
+      }
       const state = get();
       if (past.length === 0) return;
       const previousFeatures = past[past.length - 1]!;
@@ -923,6 +907,10 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
       });
     },
     redo: () => {
+      if (historyDelegate) {
+        historyDelegate.redo();
+        return;
+      }
       const state = get();
       if (future.length === 0) return;
       const nextFeatures = future[future.length - 1]!;
@@ -965,39 +953,11 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
     setIsolatedBodyIds: (bodyIds) => set({ isolatedBodyIds: bodyIds }),
 
     activeTool: null,
-    beginSketchRectangle: (origin) => {
-      const state = get();
-      let plane: SketchPlaneRef = { kind: 'plane', plane: 'XY' as Plane, offset: 0 };
-      let frame: SketchFrame = frameForPlane('XY', 0);
-      if (origin) {
-        const ref = makeFaceRef(state.evaluation, origin.bodyId, origin.faceKey);
-        const normal = ref?.signature.normal;
-        if (ref && normal && ref.signature.surface === 'plane') {
-          plane = { kind: 'face', face: ref };
-          frame = frameForFace(normal, ref.signature.centroid);
-        }
-      }
-      endPreview();
-      set({
-        activeTool: {
-          kind: 'sketchRectangle',
-          phase: 'collectingReferences',
-          plane,
-          frame,
-          preview: null,
-        },
-      });
-    },
-    setPreviewRect: (x, y, width, height) => {
-      const tool = get().activeTool;
-      if (!tool || tool.kind !== 'sketchRectangle') return;
-      set({ activeTool: { ...tool, phase: 'preview', preview: { x, y, width, height } } });
-    },
     beginExtrude: (profile) => {
       const state = get();
       let contact: SketchContact | null = null;
       if (profile.kind === 'sketch') {
-        contact = findSketchContact(state.evaluation, profile.featureId, profile.profileIndex);
+        contact = findSketchContact(state.evaluation, profile.featureId, profile.regions);
         if (!contact && !state.evaluation.sketches.some((s) => s.featureId === profile.featureId)) {
           // Not evaluated yet (just drawn): trust the sketch's own face reference.
           const sketch = state.features.find(
@@ -1029,7 +989,7 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
               state.evaluation,
               state.features,
               profile.featureId,
-              profile.profileIndex,
+              profile.regions,
               contact,
             )
           : null;
@@ -1062,53 +1022,6 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
       if (operation === 'new') delete next.targetBodyId;
       else if (targetBodyId !== undefined) next.targetBodyId = targetBodyId;
       updatePreviewTool(next);
-    },
-
-    beginSketchCircle: (origin) => {
-      const placed = origin ? facePlane(origin.bodyId, origin.faceKey) : null;
-      endPreview();
-      set({
-        activeTool: {
-          kind: 'sketchCircle',
-          phase: 'collectingReferences',
-          plane: placed?.plane ?? { kind: 'plane', plane: 'XY', offset: 0 },
-          frame: placed?.frame ?? frameForPlane('XY', 0),
-          center: null,
-          radius: null,
-          dimension: 'diameter',
-        },
-      });
-    },
-    setSketchPlaneFace: (bodyId, faceKey) => {
-      const tool = get().activeTool;
-      if (tool?.kind === 'sketchCircle' && tool.center) return false;
-      if (tool?.kind === 'sketchRectangle' && tool.preview) return false;
-      if (tool?.kind !== 'sketchCircle' && tool?.kind !== 'sketchRectangle') return false;
-      const placed = facePlane(bodyId, faceKey);
-      if (!placed) return false;
-      set({ activeTool: { ...tool, plane: placed.plane, frame: placed.frame } });
-      return true;
-    },
-    setCircleCenter: (u, v) => {
-      const tool = get().activeTool;
-      if (tool?.kind !== 'sketchCircle') return;
-      set({ activeTool: { ...tool, phase: 'preview', center: { u, v }, radius: null } });
-    },
-    setCircleRadius: (radius) => {
-      const tool = get().activeTool;
-      if (tool?.kind !== 'sketchCircle' || !tool.center) return;
-      set({ activeTool: { ...tool, radius: radius > 0 ? radius : null } });
-    },
-    setCircleDimension: (dimension) => {
-      const tool = get().activeTool;
-      if (tool?.kind !== 'sketchCircle') return;
-      set({ activeTool: { ...tool, dimension } });
-    },
-    resetSketchCircle: () => {
-      const tool = get().activeTool;
-      if (tool?.kind !== 'sketchCircle' || !tool.center) return false;
-      set({ activeTool: { ...tool, phase: 'collectingReferences', center: null, radius: null } });
-      return true;
     },
 
     beginEdgeBlend: (kind) => {
@@ -1247,45 +1160,6 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
       const state = get();
       const tool = state.activeTool;
       if (!tool) return;
-
-      if (tool.kind === 'sketchRectangle') {
-        if (!tool.preview) {
-          set({ activeTool: null });
-          notifySettled();
-          return;
-        }
-        const id = createFeatureId('sketch');
-        const feature: SketchFeature = {
-          id,
-          name: nextFeatureName('Sketch', state.features),
-          suppressed: false,
-          kind: 'sketch',
-          plane: tool.plane,
-          profiles: [{ kind: 'rectangle', ...tool.preview }],
-        };
-        commitFeatures([...state.features, feature], [{ kind: 'sketchProfile', featureId: id }]);
-        return;
-      }
-
-      if (tool.kind === 'sketchCircle') {
-        if (!tool.center || tool.radius === null) {
-          endPreview();
-          set({ activeTool: null });
-          notifySettled();
-          return;
-        }
-        const id = createFeatureId('sketch');
-        const feature: SketchFeature = {
-          id,
-          name: nextFeatureName('Sketch', state.features),
-          suppressed: false,
-          kind: 'sketch',
-          plane: tool.plane,
-          profiles: [{ kind: 'circle', cx: tool.center.u, cy: tool.center.v, radius: tool.radius }],
-        };
-        commitFeatures([...state.features, feature], [{ kind: 'sketchProfile', featureId: id }]);
-        return;
-      }
 
       // A kernel error for the current parameters blocks Done (the tool stays open).
       if (isPreviewTool(tool) && tool.previewError !== null && !tool.previewPending) return;
@@ -1434,6 +1308,23 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
         fileName: input.fileName,
       };
       appendFeature(feature);
+    },
+    addFeature: (feature, selection) => {
+      commitFeatures(
+        [...get().features, feature],
+        selection ?? [{ kind: 'feature', featureId: feature.id }],
+      );
+    },
+    setHistoryDelegate: (delegate) => {
+      historyDelegate = delegate;
+      get().syncHistory();
+    },
+    syncHistory: () => {
+      set({
+        history: historyDelegate
+          ? { canUndo: historyDelegate.canUndo(), canRedo: historyDelegate.canRedo() }
+          : { canUndo: past.length > 0, canRedo: future.length > 0 },
+      });
     },
 
     editFeatureParams: (featureId, patch) => {

@@ -27,22 +27,22 @@ export type WorldAxis = 'X' | 'Y' | 'Z';
 
 /**
  * A straight axis: a world axis (through `origin`, default the world
- * origin), a straight body edge (or the axis of a circular edge), or one
- * straight segment of a sketch profile (e.g. a rectangle side).
+ * origin), a straight body edge (or the axis of a circular edge), or a
+ * sketch line by entity id (construction lines included, e.g. a dedicated
+ * centre line), read from the sketch's last solved state.
  */
 export type AxisRef =
   | { kind: 'world'; axis: WorldAxis; origin?: Vec3 }
   | { kind: 'edge'; edge: EdgeRef }
-  | { kind: 'sketchEdge'; featureId: string; profileIndex: number; segment: number };
+  | { kind: 'sketchLine'; featureId: string; entityId: string };
 
 /**
- * Sweep path: a chain of body edges, the closed outline of a sketch
- * profile, or a straight world line (fallback until open sketch curves
- * exist).
+ * Sweep path: a chain of body edges, the closed outer outline of a sketch
+ * region (by region key, see `sketch/regions.ts`), or a straight world line.
  */
 export type PathRef =
   | { kind: 'edges'; edges: EdgeRef[] }
-  | { kind: 'sketch'; featureId: string; profileIndex: number }
+  | { kind: 'sketch'; featureId: string; region: string }
   | { kind: 'line'; start: Vec3; end: Vec3 };
 
 /** A plane: a construction plane with offset, or a planar body face. */
@@ -224,7 +224,7 @@ export function sketchIdsUsedBy(feature: ModelingFeature): string[] {
   switch (feature.kind) {
     case 'revolve':
       addProfile(feature.profile);
-      if (feature.axis.kind === 'sketchEdge') out.push(feature.axis.featureId);
+      if (feature.axis.kind === 'sketchLine') out.push(feature.axis.featureId);
       break;
     case 'sweep':
       addProfile(feature.profile);

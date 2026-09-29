@@ -49,8 +49,8 @@ export function validateModelingFeature(r: Rec, path: string, h: FormatHelpers):
     if (!isRecord(v)) h.fail(p, 'expected an object');
     if (v.kind === 'sketch') {
       if (!isString(v.featureId)) h.fail(`${p}.featureId`, 'expected a string');
-      if (v.profileIndex !== undefined && !isNumber(v.profileIndex)) {
-        h.fail(`${p}.profileIndex`, 'expected a number');
+      if (v.regions !== undefined && (!Array.isArray(v.regions) || !v.regions.every(isString))) {
+        h.fail(`${p}.regions`, 'expected an array of region keys');
       }
     } else if (v.kind === 'face') {
       h.faceRef(v.face, `${p}.face`);
@@ -65,12 +65,11 @@ export function validateModelingFeature(r: Rec, path: string, h: FormatHelpers):
       if (v.origin !== undefined && !isVec3(v.origin)) h.fail(`${p}.origin`, 'expected a Vec3');
     } else if (v.kind === 'edge') {
       h.edgeRef(v.edge, `${p}.edge`);
-    } else if (v.kind === 'sketchEdge') {
+    } else if (v.kind === 'sketchLine') {
       if (!isString(v.featureId)) h.fail(`${p}.featureId`, 'expected a string');
-      if (!isNumber(v.profileIndex)) h.fail(`${p}.profileIndex`, 'expected a number');
-      if (!isNumber(v.segment)) h.fail(`${p}.segment`, 'expected a number');
+      if (!isString(v.entityId)) h.fail(`${p}.entityId`, 'expected a string');
     } else {
-      h.fail(`${p}.kind`, 'expected "world", "edge" or "sketchEdge"');
+      h.fail(`${p}.kind`, 'expected "world", "edge" or "sketchLine"');
     }
   };
   const plane = (v: unknown, p: string) => {
@@ -116,7 +115,7 @@ export function validateModelingFeature(r: Rec, path: string, h: FormatHelpers):
         p.edges.forEach((e, i) => h.edgeRef(e, `${path}.path.edges[${i}]`));
       } else if (p.kind === 'sketch') {
         if (!isString(p.featureId)) h.fail(`${path}.path.featureId`, 'expected a string');
-        if (!isNumber(p.profileIndex)) h.fail(`${path}.path.profileIndex`, 'expected a number');
+        if (!isString(p.region)) h.fail(`${path}.path.region`, 'expected a region key');
       } else if (p.kind === 'line') {
         if (!isVec3(p.start)) h.fail(`${path}.path.start`, 'expected a Vec3');
         if (!isVec3(p.end)) h.fail(`${path}.path.end`, 'expected a Vec3');

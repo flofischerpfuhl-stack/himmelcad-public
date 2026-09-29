@@ -15,6 +15,9 @@
 
 import type { ModelingFeature } from './features.js';
 
+import { addCircle, addRectangle } from '../sketch/builders.js';
+import { EMPTY_SKETCH, type SketchData } from '../sketch/types.js';
+
 /** A length or coordinate in millimetres. */
 export type Millimeters = number;
 
@@ -88,24 +91,24 @@ export type SketchPlaneRef =
   | { kind: 'face'; face: FaceRef };
 
 /**
- * One closed profile of a sketch, in the sketch frame's (u, v) coordinates.
- * Data-driven so polylines/arcs/constraints can be added as new kinds later.
- * A rectangle may have negative width/height (a drag towards -u/-v); it is
- * normalized during evaluation.
+ * A constrained 2D sketch (schema v2): entities in the sketch frame's
+ * (u, v) coordinates (always the last solved state), constraints and
+ * driving dimensions — see `sketch/types.ts`. Profiles are not stored:
+ * they are the closed regions detected from the geometry
+ * (`sketch/regions.ts`).
  */
-export type SketchProfile =
-  | { kind: 'rectangle'; x: Millimeters; y: Millimeters; width: Millimeters; height: Millimeters }
-  | { kind: 'circle'; cx: Millimeters; cy: Millimeters; radius: Millimeters };
-
-export interface SketchFeature extends FeatureBase {
+export interface SketchFeature extends FeatureBase, SketchData {
   kind: 'sketch';
   plane: SketchPlaneRef;
-  profiles: SketchProfile[];
 }
 
-/** What an extrude reads its profile from. */
+/**
+ * What an extrude reads its profile from: regions of a sketch by their
+ * stable region key (`regions` absent = every region of the sketch), or a
+ * planar body face (push/pull).
+ */
 export type ExtrudeProfileRef =
-  | { kind: 'sketch'; featureId: string; profileIndex?: number }
+  | { kind: 'sketch'; featureId: string; regions?: string[] }
   | { kind: 'face'; face: FaceRef };
 
 export type ExtrudeOperation = 'new' | 'join' | 'cut';
@@ -284,68 +287,6 @@ export function frameUv(
   return { u: dot(rel, frame.u), v: dot(rel, frame.v) };
 }
 
-/** Normalized rectangle (non-negative size). */
-export function normalizeRect(p: { x: number; y: number; width: number; height: number }): {
-  x0: number;
-  y0: number;
-  w: number;
-  h: number;
-} {
-  const x0 = p.width >= 0 ? p.x : p.x + p.width;
-  const y0 = p.height >= 0 ? p.y : p.y + p.height;
-  return { x0, y0, w: Math.abs(p.width), h: Math.abs(p.height) };
-}
-
-/**
- * Closed outline of a profile in sketch (u, v) coordinates, counter-
- * clockwise, without repeating the first point. Rectangles give their four
- * corners in segment order (segment i runs from point i to point i+1:
- * 0 = bottom (-v), 1 = right (+u), 2 = top (+v), 3 = left (-u)); circles
- * give `segments` samples.
- */
-export function profileOutlineUv(profile: SketchProfile, segments = 64): [number, number][] {
-  if (profile.kind === 'rectangle') {
-    const { x0, y0, w, h } = normalizeRect(profile);
-    return [
-      [x0, y0],
-      [x0 + w, y0],
-      [x0 + w, y0 + h],
-      [x0, y0 + h],
-    ];
-  }
-  const points: [number, number][] = [];
-  for (let i = 0; i < segments; i += 1) {
-    const a = (i / segments) * Math.PI * 2;
-    points.push([
-      profile.cx + Math.cos(a) * profile.radius,
-      profile.cy + Math.sin(a) * profile.radius,
-    ]);
-  }
-  return points;
-}
-
-/** Centre of a profile in sketch coordinates. */
-export function profileCenterUv(profile: SketchProfile): [number, number] {
-  if (profile.kind === 'circle') return [profile.cx, profile.cy];
-  const { x0, y0, w, h } = normalizeRect(profile);
-  return [x0 + w / 2, y0 + h / 2];
-}
-
-/** Error message for a profile below the minimum size, or `null` when valid. */
-export function profileSizeError(profile: SketchProfile): string | null {
-  if (profile.kind === 'rectangle') {
-    const { w, h } = normalizeRect(profile);
-    if (w < MIN_FEATURE_SIZE_MM || h < MIN_FEATURE_SIZE_MM) {
-      return `Sketch rectangle is too small (${w.toFixed(3)} x ${h.toFixed(3)} mm)`;
-    }
-    return null;
-  }
-  if (profile.radius < MIN_FEATURE_SIZE_MM / 2) {
-    return `Sketch circle is too small (radius ${profile.radius.toFixed(3)} mm)`;
-  }
-  return null;
-}
-
 function dot(a: readonly [number, number, number], b: readonly [number, number, number]): number {
   return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 }
@@ -360,6 +301,12 @@ function normalize(v: readonly [number, number, number]): Vec3 {
 }
 
 // ---- Demo document ------------------------------------------------------------
+
+/** A fully dimensioned rectangle sketch (corner position from the origin + size). */
+function rectangleSketch(x: number, y: number, width: number, height: number): SketchData {
+  return addRectangle(EMPTY_SKETCH, [x, y], [x + width, y + height], { position: true, size: true })
+    .sketch;
+}
 
 /**
  * Printable demo bracket, as real B-rep: an 80 x 50 x 6 mm base plate, an
@@ -383,7 +330,7 @@ export function createDemoDocument(): Feature[] {
     suppressed: false,
     kind: 'sketch',
     plane: { kind: 'plane', plane: 'XY', offset: 0 },
-    profiles: [{ kind: 'rectangle', x: 0, y: 0, width: 80, height: 50 }],
+    ...rectangleSketch(0, 0, 80, 50),
   };
   const extrude1: ExtrudeFeature = {
     id: 'feature-extrude-1',
@@ -402,7 +349,7 @@ export function createDemoDocument(): Feature[] {
     suppressed: false,
     kind: 'sketch',
     plane: { kind: 'plane', plane: 'XY', offset: 6 },
-    profiles: [{ kind: 'rectangle', x: 0, y: 42, width: 80, height: 8 }],
+    ...rectangleSketch(0, 42, 80, 8),
   };
   const extrude2: ExtrudeFeature = {
     id: 'feature-extrude-2',
@@ -425,7 +372,7 @@ export function createDemoDocument(): Feature[] {
       {
         bodyId: plateBody,
         // Plate top face | upright front face (rectangle segment 0 = -v side, y = 42).
-        key: 'feature-extrude-1:end:0|feature-extrude-2:side:0:0',
+        key: 'feature-extrude-1:end:0|feature-extrude-2:side:0:l1',
         signature: { curve: 'line', midpoint: [40, 42, 6], length: 80, direction: [1, 0, 0] },
       },
     ],
@@ -449,7 +396,7 @@ export function createDemoDocument(): Feature[] {
         },
       },
     },
-    profiles: [{ kind: 'circle', cx: 40, cy: 20, radius: 3 }],
+    ...addCircle(EMPTY_SKETCH, [40, 20], 3, { position: true, size: true }).sketch,
   };
   const extrude3: ExtrudeFeature = {
     id: 'feature-extrude-5',

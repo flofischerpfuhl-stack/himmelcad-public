@@ -144,13 +144,22 @@ function selected<K extends SelectionItem['kind']>(
 function selectedProfiles(ctx: DraftContext): ProfileRef[] {
   const out: ProfileRef[] = [];
   for (const item of ctx.selection) {
-    if (item.kind === 'sketchProfile') out.push({ kind: 'sketch', featureId: item.featureId });
+    if (item.kind === 'sketchProfile') out.push(sketchProfileRef(item.featureId, item.regionKey));
     else if (item.kind === 'face') {
       const ref = faceRefOf(ctx.evaluation, item.bodyId, item.faceKey);
       if (ref && isPlanar(ref)) out.push({ kind: 'face', face: ref });
     }
   }
   return out;
+}
+
+/** A sketch profile reference: one region by key, or (without a key) every region. */
+function sketchProfileRef(featureId: string, regionKey: string | undefined): ProfileRef {
+  return {
+    kind: 'sketch',
+    featureId,
+    ...(regionKey !== undefined ? { regions: [regionKey] } : {}),
+  };
 }
 
 function selectedEdges(ctx: DraftContext): EdgeRef[] {
@@ -186,10 +195,10 @@ export function profileSamples(
   }
   const sketch = evaluation.sketches.find((s) => s.featureId === ref.featureId);
   if (!sketch) return null;
-  const profiles =
-    ref.profileIndex !== undefined
-      ? sketch.profiles.slice(ref.profileIndex, ref.profileIndex + 1)
-      : sketch.profiles;
+  const regions = ref.regions;
+  const profiles = regions
+    ? sketch.profiles.filter((p) => regions.includes(p.key))
+    : sketch.profiles;
   if (profiles.length === 0) return null;
   const center: Vec3 = [0, 0, 0];
   for (const p of profiles)
@@ -222,7 +231,7 @@ export function autoProfileOperation(
   }
   for (const ref of profiles) {
     if (ref.kind === 'face') return { operation: 'join', targetBodyId: ref.face.bodyId };
-    const contact = findSketchContact(evaluation, ref.featureId, ref.profileIndex);
+    const contact = findSketchContact(evaluation, ref.featureId, ref.regions);
     if (contact) return { operation: 'join', targetBodyId: contact.bodyId };
     const samples = profileSamples(evaluation, ref);
     if (!samples) continue;
@@ -237,8 +246,51 @@ export function autoProfileOperation(
   return { operation: 'new' };
 }
 
-/** A world axis lying in the profile's plane that does not cross the profile, nearest first. */
+/**
+ * Straight construction lines of a sketch profile's own sketch that do not
+ * cross the profile (a drawn centre line), nearest first.
+ */
+export function sketchAxisCandidates(evaluation: EvaluationResult, profile: ProfileRef): AxisRef[] {
+  if (profile.kind !== 'sketch') return [];
+  const sketch = evaluation.sketches.find((s) => s.featureId === profile.featureId);
+  const samples = profileSamples(evaluation, profile);
+  if (!sketch || !samples) return [];
+  const n = samples.normal;
+  const out: { axis: AxisRef; distance: number }[] = [];
+  for (const curve of sketch.curves) {
+    if (curve.kind !== 'line' || !curve.construction) continue;
+    const a = curve.points[0];
+    const b = curve.points[curve.points.length - 1];
+    if (!a || !b || Math.hypot(...sub(b, a)) < MIN_FEATURE_SIZE_MM) continue;
+    const side = normalize(cross(n, normalize(sub(b, a))));
+    const offsets = samples.outline.map((p) => dot(sub(p, a), side));
+    const min = Math.min(...offsets);
+    const max = Math.max(...offsets);
+    if ((min < -1e-6 && max > 1e-6) || Math.max(Math.abs(min), Math.abs(max)) < 1e-6) continue;
+    out.push({
+      axis: { kind: 'sketchLine', featureId: profile.featureId, entityId: curve.entityId },
+      distance: Math.min(Math.abs(min), Math.abs(max)),
+    });
+  }
+  return out.sort((x, y) => x.distance - y.distance).map((c) => c.axis);
+}
+
+/**
+ * Default revolve axis: a construction line of the profile's sketch (a
+ * drawn centre line), else a world axis lying in the profile's plane that
+ * does not cross the profile, nearest first.
+ */
 export function defaultRevolveAxis(
+  evaluation: EvaluationResult,
+  profile: ProfileRef,
+): AxisRef | null {
+  const fromSketch = sketchAxisCandidates(evaluation, profile)[0];
+  if (fromSketch) return fromSketch;
+  return defaultWorldRevolveAxis(evaluation, profile);
+}
+
+/** A world axis lying in the profile's plane that does not cross the profile, nearest first. */
+function defaultWorldRevolveAxis(
   evaluation: EvaluationResult,
   profile: ProfileRef,
 ): AxisRef | null {
@@ -498,7 +550,9 @@ export type ToolPick =
   | { kind: 'body'; bodyId: string }
   | { kind: 'face'; bodyId: string; faceKey: string }
   | { kind: 'edge'; bodyId: string; edgeKey: string }
-  | { kind: 'sketchProfile'; featureId: string };
+  | { kind: 'sketchProfile'; featureId: string; regionKey?: string }
+  /** A straight sketch line (construction lines included): an axis or direction. */
+  | { kind: 'sketchLine'; featureId: string; entityId: string };
 
 function toggle<T>(
   list: readonly T[],
@@ -514,7 +568,7 @@ function toggle<T>(
 
 const sameProfile = (a: ProfileRef, b: ProfileRef) =>
   a.kind === 'sketch' && b.kind === 'sketch'
-    ? a.featureId === b.featureId && a.profileIndex === b.profileIndex
+    ? a.featureId === b.featureId && (a.regions ?? []).join('\n') === (b.regions ?? []).join('\n')
     : a.kind === 'face' && b.kind === 'face'
       ? a.face.bodyId === b.face.bodyId && a.face.key === b.face.key
       : false;
@@ -529,14 +583,19 @@ export function acceptPick(
   const edgeRef = pick.kind === 'edge' ? edgeRefOf(evaluation, pick.bodyId, pick.edgeKey) : null;
   const pickedBody =
     pick.kind === 'body' || pick.kind === 'face' || pick.kind === 'edge' ? pick.bodyId : null;
+  const lineAxis: AxisRef | null =
+    pick.kind === 'sketchLine'
+      ? { kind: 'sketchLine', featureId: pick.featureId, entityId: pick.entityId }
+      : null;
   switch (draft.kind) {
     case 'revolve':
       if (edgeRef && (edgeRef.signature.curve === 'line' || edgeRef.signature.curve === 'circle')) {
         return { ...draft, axis: { kind: 'edge', edge: edgeRef } };
       }
+      if (lineAxis) return { ...draft, axis: lineAxis };
       if (pick.kind === 'sketchProfile')
         return retarget(
-          { ...draft, profile: { kind: 'sketch', featureId: pick.featureId } },
+          { ...draft, profile: sketchProfileRef(pick.featureId, pick.regionKey) },
           evaluation,
         );
       if (faceRef && isPlanar(faceRef))
@@ -557,13 +616,17 @@ export function acceptPick(
       if (pick.kind === 'sketchProfile') {
         if (draft.profile.kind === 'sketch' && draft.profile.featureId === pick.featureId)
           return draft;
-        // A second sketch is a closed path (e.g. a ring around which the profile sweeps).
-        return { ...draft, path: { kind: 'sketch', featureId: pick.featureId, profileIndex: 0 } };
+        // A second sketch's region outline is a closed path (e.g. a ring the profile sweeps around).
+        const region =
+          pick.regionKey ??
+          evaluation.sketches.find((s) => s.featureId === pick.featureId)?.profiles[0]?.key;
+        if (region === undefined) return draft;
+        return { ...draft, path: { kind: 'sketch', featureId: pick.featureId, region } };
       }
       return draft;
     case 'loft': {
       let ref: ProfileRef | null = null;
-      if (pick.kind === 'sketchProfile') ref = { kind: 'sketch', featureId: pick.featureId };
+      if (pick.kind === 'sketchProfile') ref = sketchProfileRef(pick.featureId, pick.regionKey);
       else if (faceRef && isPlanar(faceRef)) ref = { kind: 'face', face: faceRef };
       if (!ref) return draft;
       const profiles = toggle(draft.profiles, ref, sameProfile, false);
@@ -577,6 +640,11 @@ export function acceptPick(
         return { ...draft, bodyIds: toggle(draft.bodyIds, pickedBody, (a, b) => a === b) };
       return draft;
     case 'pattern':
+      if (lineAxis) {
+        return draft.pattern.kind === 'linear'
+          ? { ...draft, pattern: { ...draft.pattern, direction: lineAxis } }
+          : { ...draft, pattern: { ...draft.pattern, axis: lineAxis } };
+      }
       if (edgeRef) {
         const axis: AxisRef = { kind: 'edge', edge: edgeRef };
         if (draft.pattern.kind === 'linear' && edgeRef.signature.curve === 'line') {
@@ -729,8 +797,8 @@ export function draftMeta(draft: FeatureDraft): DraftMeta {
         label: 'Revolve',
         shortcut: 'V',
         prompt: draft.axis
-          ? 'Drag the arc or type an angle. Click an edge to change the axis.'
-          : 'Pick the axis: a straight edge, or X/Y/Z.',
+          ? 'Drag the arc or type an angle. Click an edge or a sketch line to change the axis.'
+          : 'Pick the axis: a straight edge, a sketch line, or X/Y/Z.',
       };
     case 'sweep':
       return {
@@ -848,13 +916,12 @@ export function draftBadges(draft: FeatureDraft): DraftBadge[] {
             { value: 'X', label: 'X' },
             { value: 'Y', label: 'Y' },
             { value: 'Z', label: 'Z' },
-            ...(draft.axis?.kind === 'edge' || draft.axis?.kind === 'sketchEdge'
-              ? [{ value: 'edge', label: 'Edge' }]
-              : []),
+            ...(draft.axis?.kind === 'edge' ? [{ value: 'edge', label: 'Edge' }] : []),
+            ...(draft.axis?.kind === 'sketchLine' ? [{ value: 'edge', label: 'Sketch line' }] : []),
           ],
           apply: (d, value, evaluation) => {
             if (d.kind !== 'revolve' || value === 'edge') return d;
-            const auto = defaultRevolveAxis(evaluation, d.profile);
+            const auto = defaultWorldRevolveAxis(evaluation, d.profile);
             const origin = auto?.kind === 'world' && auto.axis === value ? auto.origin : undefined;
             return {
               ...d,
@@ -1055,9 +1122,9 @@ function axisLine(
     return null;
   }
   const sketch = evaluation.sketches.find((s) => s.featureId === ref.featureId);
-  const outline = sketch?.profiles[ref.profileIndex]?.outline;
-  const a = outline?.[ref.segment];
-  const b = outline?.[(ref.segment + 1) % (outline?.length ?? 1)];
+  const curve = sketch?.curves.find((c) => c.entityId === ref.entityId && c.kind === 'line');
+  const a = curve?.points[0];
+  const b = curve?.points[curve.points.length - 1];
   return a && b ? { point: a, dir: normalize(sub(b, a)) } : null;
 }
 

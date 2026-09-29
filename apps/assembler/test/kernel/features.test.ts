@@ -17,7 +17,6 @@ import type {
   FilletFeature,
   Plane,
   SketchFeature,
-  SketchProfile,
 } from '../../renderer/src/model/document.js';
 import type {
   AlignFeature,
@@ -32,6 +31,11 @@ import type {
   SweepFeature,
   TransformFeature,
 } from '../../renderer/src/model/features.js';
+import { addPolyline, sketchFromLegacyProfiles } from '../../renderer/src/sketch/builders.js';
+import { EMPTY_SKETCH } from '../../renderer/src/sketch/types.js';
+import { detectRegions } from '../../renderer/src/sketch/regions.js';
+import type { LegacySketchProfile } from '../sketch/fixtures.js';
+import { PROJECT_FORMAT_ID, loadProjectFile } from '../../renderer/src/model/project/format.js';
 import { loadNodeKernel } from './nodeKernel.js';
 
 const base = (id: string) => ({ id, name: id, suppressed: false });
@@ -40,9 +44,18 @@ function sketch(
   id: string,
   plane: Plane,
   offset: number,
-  ...profiles: SketchProfile[]
+  ...profiles: LegacySketchProfile[]
 ): SketchFeature {
-  return { ...base(id), kind: 'sketch', plane: { kind: 'plane', plane, offset }, profiles };
+  // Rectangle sides become lines l1 (bottom, -v), l2 (+u), l3 (top), l4 (-u); a circle is c1.
+  const { sketch: data } = sketchFromLegacyProfiles(profiles);
+  return { ...base(id), kind: 'sketch', plane: { kind: 'plane', plane, offset }, ...data };
+}
+
+/** Key of the only region of a sketch feature. */
+function regionKey(feature: SketchFeature): string {
+  const [region] = detectRegions(feature);
+  assert.ok(region, `${feature.id} has a region`);
+  return region.key;
 }
 
 function extrude(
@@ -133,13 +146,13 @@ void test('revolve: full and partial revolutions of a sketch rectangle about wor
   near(body.volume, Math.PI * (20 * 20 - 10 * 10) * 5, 1e-3, 'ring volume');
   bbox(body, [-20, -20, 0], [20, 20, 5]);
   assert.equal(body.valid, true);
-  // Faces named from the profile segments: 1 = +u side (outer wall), 3 = -u side (inner wall).
-  const outer = body.faces.find((f) => f.key === 'r1:side:0:1');
+  // Faces named after the profile's sketch lines: l2 = +u side (outer wall), l4 = -u side (inner wall).
+  const outer = body.faces.find((f) => f.key === 'r1:side:0:l2');
   assert.equal(outer?.surface, 'cylinder');
   near(outer.area, 2 * Math.PI * 20 * 5, 1e-3, 'outer wall area');
-  assert.ok(body.faces.some((f) => f.key === 'r1:side:0:3'));
+  assert.ok(body.faces.some((f) => f.key === 'r1:side:0:l4'));
   assert.ok(
-    body.faces.some((f) => f.key === 'r1:side:0:0'),
+    body.faces.some((f) => f.key === 'r1:side:0:l1'),
     'bottom annulus named by OCCT-missed fallback',
   );
 
@@ -165,14 +178,14 @@ void test('revolve: full and partial revolutions of a sketch rectangle about wor
 
 void test('revolve: axis from a sketch line and from a body edge', async () => {
   const s = sketch('s1', 'XZ', 0, { kind: 'rectangle', x: 0, y: 0, width: 10, height: 5 });
-  // Revolve about the rectangle's own left side (segment 3, the Z axis) -> cylinder r=10 h=5.
+  // Revolve about the rectangle's own left side (line l4, the Z axis) -> cylinder r=10 h=5.
   const cyl = only(
     await evaluate([
       s,
       revolve(
         'r1',
         { kind: 'sketch', featureId: 's1' },
-        { kind: 'sketchEdge', featureId: 's1', profileIndex: 0, segment: 3 },
+        { kind: 'sketchLine', featureId: 's1', entityId: 'l4' },
       ),
     ]),
   );
@@ -209,6 +222,73 @@ void test('revolve: axis from a sketch line and from a body edge', async () => {
   bbox(ring, [20, -20, 0], [60, 20, 4]);
 });
 
+void test('revolve: an L-profile about a construction centre line of the same sketch', async () => {
+  let data = addPolyline(
+    EMPTY_SKETCH,
+    [
+      [5, 0],
+      [15, 0],
+      [15, 4],
+      [9, 4],
+      [9, 10],
+      [5, 10],
+    ],
+    { closed: true },
+  ).sketch;
+  const axis = addPolyline(
+    data,
+    [
+      [2, -2],
+      [2, 12],
+    ],
+    { construction: true },
+  );
+  data = axis.sketch;
+  const s: SketchFeature = {
+    ...base('s1'),
+    kind: 'sketch',
+    plane: { kind: 'plane', plane: 'XZ', offset: 0 },
+    ...data,
+  };
+  // The construction line bounds no region: the profile is the L alone.
+  assert.equal(detectRegions(s).length, 1);
+  const lineId = axis.lineIds[0]!;
+  const result = await evaluate([
+    s,
+    revolve(
+      'r1',
+      { kind: 'sketch', featureId: 's1' },
+      { kind: 'sketchLine', featureId: 's1', entityId: lineId },
+    ),
+  ]);
+  assert.deepEqual(result.errors, {});
+  const body = only(result);
+  // Pappus about u = 2: rectangles u 5..15 x v 0..4 and u 5..9 x v 4..10 (radii from the axis).
+  const ring = (r0: number, r1: number, h: number) => Math.PI * (r1 * r1 - r0 * r0) * h;
+  near(body.volume, ring(3, 13, 4) + ring(3, 7, 6), 1e-3, 'revolved L');
+  bbox(body, [-11, -13, 0], [15, 13, 10]);
+  assert.equal(body.valid, true);
+
+  const missing = await evaluate([
+    s,
+    revolve(
+      'r2',
+      { kind: 'sketch', featureId: 's1' },
+      { kind: 'sketchLine', featureId: 's1', entityId: 'l99' },
+    ),
+  ]);
+  assert.equal(missing.errors.r2, 'Missing reference: line "l99" of "s1"');
+  const notLine = await evaluate([
+    sketch('c', 'XZ', 0, { kind: 'circle', cx: 20, cy: 0, radius: 2 }),
+    revolve(
+      'r3',
+      { kind: 'sketch', featureId: 'c' },
+      { kind: 'sketchLine', featureId: 'c', entityId: 'c1' },
+    ),
+  ]);
+  assert.equal(notLine.errors.r3, 'An axis must be a straight sketch line');
+});
+
 void test('revolve: join onto a body, cut a groove into a shaft; errors are readable', async () => {
   const shaft = [
     sketch('s', 'XY', 0, { kind: 'circle', cx: 0, cy: 0, radius: 10 }),
@@ -228,7 +308,7 @@ void test('revolve: join onto a body, cut a groove into a shaft; errors are read
   near(body.volume, Math.PI * 100 * 40 - Math.PI * (100 - 64) * 4, 1e-3, 'grooved shaft');
   assert.equal(body.valid, true);
   assert.ok(
-    body.faces.some((f) => f.key === 'rc:side:0:3' && f.surface === 'cylinder'),
+    body.faces.some((f) => f.key === 'rc:side:0:l4' && f.surface === 'cylinder'),
     'groove bottom keyed',
   );
 
@@ -281,8 +361,8 @@ void test('revolve: a fillet on a revolved edge survives an earlier sketch edit 
     revolve('r1', { kind: 'sketch', featureId: 's1' }, { kind: 'world', axis: 'Z' }),
   ];
   const first = only(await evaluate(doc(10)));
-  // Outer top circle: between the outer wall (side:0:1) and the top annulus (side:0:2).
-  const edge = first.edges.find((e) => e.key === 'r1:side:0:1|r1:side:0:2');
+  // Outer top circle: between the outer wall (side:0:l2) and the top annulus (side:0:l3).
+  const edge = first.edges.find((e) => e.key === 'r1:side:0:l2|r1:side:0:l3');
   assert.ok(edge, `outer top edge keyed (edges: ${first.edges.map((e) => e.key).join(', ')})`);
   const fillet: FilletFeature = {
     ...base('f1'),
@@ -317,7 +397,7 @@ void test('sweep: along a line, a closed sketch path (torus) and a body edge', a
   const rod = only(await evaluate([profile, line]));
   near(rod.volume, Math.PI * 4 * 30, 1e-3, 'rod volume');
   bbox(rod, [-2, -2, 0], [2, 2, 30]);
-  assert.ok(rod.faces.some((f) => f.key === 'w1:side:0:0' && f.surface === 'cylinder'));
+  assert.ok(rod.faces.some((f) => f.key === 'w1:side:0:c1' && f.surface === 'cylinder'));
   assert.ok(
     rod.faces.some((f) => f.key === 'w1:start:0') && rod.faces.some((f) => f.key === 'w1:end:0'),
   );
@@ -332,7 +412,7 @@ void test('sweep: along a line, a closed sketch path (torus) and a body edge', a
       ...line,
       id: 'w2',
       profile: { kind: 'sketch', featureId: 'small' },
-      path: { kind: 'sketch', featureId: 'path', profileIndex: 0 },
+      path: { kind: 'sketch', featureId: 'path', region: regionKey(ringPath) },
     },
   ]);
   assert.deepEqual(torus.errors, {});
@@ -393,8 +473,8 @@ void test('loft: square frustum (ruled) matches the prismatoid volume; three sec
     ...base('l1'),
     kind: 'loft',
     profiles: [
-      { kind: 'sketch', featureId: 'a', profileIndex: 0 },
-      { kind: 'sketch', featureId: 'b', profileIndex: 0 },
+      { kind: 'sketch', featureId: 'a', regions: [regionKey(s1)] },
+      { kind: 'sketch', featureId: 'b', regions: [regionKey(s2)] },
     ],
     ruled: true,
     operation: 'new',
@@ -735,6 +815,144 @@ void test('delete face: fill a hole, remove a fillet and a chamfer; unsupported 
   const topDel = await evaluate([...doc, { ...del, faces: [faceRef(plate, topOf(10))] }]);
   assert.match(topDel.errors.d1 ?? '', /^Delete Face can remove holes/);
   assert.match(topDel.errors.d1 ?? '', /BRepAlgoAPI_Defeaturing/);
+});
+
+// ---- Schema v1 files with modelling features -------------------------------------------------
+
+void test('a schema-1 file with revolve/sweep/loft/pattern migrates (profiles, axes, paths, face keys) and evaluates', async () => {
+  const plane = (p: Plane, offset = 0) => ({ kind: 'plane', plane: p, offset });
+  const rect = (x: number, y: number, width: number, height: number) => ({
+    kind: 'rectangle',
+    x,
+    y,
+    width,
+    height,
+  });
+  const v1Features = [
+    { ...base('s1'), kind: 'sketch', plane: plane('XZ'), profiles: [rect(10, 0, 10, 5)] },
+    {
+      ...base('r1'),
+      kind: 'revolve',
+      profile: { kind: 'sketch', featureId: 's1', profileIndex: 0 },
+      axis: { kind: 'world', axis: 'Z' },
+      angle: 360,
+      operation: 'new',
+    },
+    {
+      ...base('f1'),
+      kind: 'fillet',
+      radius: 1,
+      edges: [
+        {
+          bodyId: 'body:r1',
+          // v1 naming: outer wall (segment 1) | top annulus (segment 2).
+          key: 'r1:side:0:1|r1:side:0:2',
+          signature: {
+            curve: 'circle',
+            midpoint: [-20, 0, 5],
+            length: 40 * Math.PI,
+            direction: null,
+          },
+        },
+      ],
+    },
+    { ...base('s2'), kind: 'sketch', plane: plane('XZ'), profiles: [rect(30, 0, 4, 4)] },
+    {
+      ...base('r2'),
+      kind: 'revolve',
+      profile: { kind: 'sketch', featureId: 's2' },
+      axis: { kind: 'sketchEdge', featureId: 's1', profileIndex: 0, segment: 3 },
+      angle: 90,
+      operation: 'new',
+    },
+    {
+      ...base('p'),
+      kind: 'sketch',
+      plane: plane('XY', 40),
+      profiles: [{ kind: 'circle', cx: 0, cy: 0, radius: 20 }],
+    },
+    {
+      ...base('ring'),
+      kind: 'sketch',
+      plane: plane('XZ'),
+      profiles: [{ kind: 'circle', cx: 20, cy: 40, radius: 2 }],
+    },
+    {
+      ...base('w1'),
+      kind: 'sweep',
+      profile: { kind: 'sketch', featureId: 'ring' },
+      path: { kind: 'sketch', featureId: 'p', profileIndex: 0 },
+      operation: 'new',
+    },
+    { ...base('la'), kind: 'sketch', plane: plane('XY', 60), profiles: [rect(-5, -5, 10, 10)] },
+    { ...base('lb'), kind: 'sketch', plane: plane('XY', 70), profiles: [rect(-3, -3, 6, 6)] },
+    {
+      ...base('l1'),
+      kind: 'loft',
+      profiles: [
+        { kind: 'sketch', featureId: 'la', profileIndex: 0 },
+        { kind: 'sketch', featureId: 'lb', profileIndex: 0 },
+      ],
+      ruled: true,
+      operation: 'new',
+    },
+    {
+      ...base('pt'),
+      kind: 'pattern',
+      bodyIds: ['body:l1'],
+      pattern: {
+        kind: 'linear',
+        direction: { kind: 'sketchEdge', featureId: 'la', profileIndex: 0, segment: 0 },
+        count: 2,
+        spacing: 30,
+      },
+    },
+  ];
+  const project = loadProjectFile(
+    JSON.stringify({
+      format: PROJECT_FORMAT_ID,
+      schemaVersion: 1,
+      appVersion: '0.1.0-features',
+      units: 'mm',
+      projectName: 'v1 modelling features',
+      features: v1Features,
+      createdAt: '2026-09-29T00:00:00.000Z',
+      modifiedAt: '2026-09-29T00:00:00.000Z',
+    }),
+  );
+  assert.equal(project.schemaVersion, 2);
+  const byId = new Map(project.features.map((f) => [f.id, f]));
+  const r1 = byId.get('r1') as RevolveFeature;
+  assert.deepEqual(r1.profile, { kind: 'sketch', featureId: 's1', regions: ['l1+l2+l3+l4'] });
+  assert.deepEqual((byId.get('r2') as RevolveFeature).axis, {
+    kind: 'sketchLine',
+    featureId: 's1',
+    entityId: 'l4',
+  });
+  assert.deepEqual((byId.get('r2') as RevolveFeature).profile, { kind: 'sketch', featureId: 's2' });
+  assert.deepEqual((byId.get('w1') as SweepFeature).path, {
+    kind: 'sketch',
+    featureId: 'p',
+    region: 'c1',
+  });
+  assert.deepEqual(
+    (byId.get('l1') as LoftFeature).profiles.map((p) => p.kind === 'sketch' && p.regions),
+    [['l1+l2+l3+l4'], ['l1+l2+l3+l4']],
+  );
+  const pattern = (byId.get('pt') as PatternFeature).pattern;
+  assert.deepEqual(pattern.kind === 'linear' && pattern.direction, {
+    kind: 'sketchLine',
+    featureId: 'la',
+    entityId: 'l1',
+  });
+  assert.equal((byId.get('f1') as FilletFeature).edges[0]!.key, 'r1:side:0:l2|r1:side:0:l3');
+
+  const result = await evaluate(project.features);
+  assert.deepEqual(result.errors, {});
+  assert.deepEqual(result.warnings, {}, 'the fillet resolves by its renamed key');
+  assert.ok(result.bodies.every((b) => b.valid));
+  // r1 ring + r2 quarter ring + swept torus + loft frustum + its pattern copy.
+  assert.equal(result.bodies.length, 5);
 });
 
 // ---- Timing ------------------------------------------------------------------------

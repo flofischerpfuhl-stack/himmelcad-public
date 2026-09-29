@@ -12,6 +12,8 @@ import { installAutomationHook } from './devtools/automationHook.js';
 import { WorkerKernelAdapter } from './kernel/workerAdapter.js';
 import { useProjectStore } from './model/project/projectStore.js';
 import { useAssemblerStore } from './model/store.js';
+import { setSketchSolverFactory } from './sketch/solverProvider.js';
+import { WorkerSketchSolver } from './sketch/workerSolver.js';
 
 // Dev-only automation hook for screen recordings (`window.__assembler`, see
 // `devtools/automationHook.ts`). Never present in production builds.
@@ -26,6 +28,13 @@ useAssemblerStore.getState().attachKernel(kernelAdapter);
 useProjectStore.getState().attachKernelAdapter(kernelAdapter);
 // Agent access (desktop only, off until the user enables it): canonical command layer on this document.
 installAutomationBridge(kernelAdapter);
+// The sketch solver (planeGCS, WebAssembly) gets its own worker, started on first use.
+setSketchSolverFactory(
+  () =>
+    new WorkerSketchSolver(
+      () => new Worker(new URL('./sketch/solver.worker.ts', import.meta.url), { type: 'module' }),
+    ),
+);
 
 const rootEl = document.getElementById('hc-root');
 if (!rootEl) throw new Error('Missing #hc-root mount point');

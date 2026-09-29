@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import { createDemoDocument, type Feature } from '../../renderer/src/model/document.js';
 import { exportAllBodiesStl, exportBodyStl } from '../../renderer/src/kernel/stlExport.js';
+import { circle, rect, sketchFeature } from '../sketch/fixtures.js';
 import { loadNodeKernel } from './nodeKernel.js';
 
 function readStlHeader(buffer: ArrayBuffer): { triangleCount: number; byteLength: number } {
@@ -63,24 +64,15 @@ void test('binary STL: header, triangle count and watertight demo body', async (
 
 void test('binary STL: "all bodies" export merges every body into one triangle soup', async () => {
   const { evaluator } = await loadNodeKernel();
+  const s1 = sketchFeature('s1', [rect(0, 0, 10, 10), circle(40, 10, 5)]);
   const box: Feature[] = [
-    {
-      id: 's1',
-      name: 'Sketch 1',
-      suppressed: false,
-      kind: 'sketch',
-      plane: { kind: 'plane', plane: 'XY', offset: 0 },
-      profiles: [
-        { kind: 'rectangle', x: 0, y: 0, width: 10, height: 10 },
-        { kind: 'circle', cx: 40, cy: 10, radius: 5 },
-      ],
-    },
+    s1.feature,
     {
       id: 'e1',
       name: 'Extrude 1',
       suppressed: false,
       kind: 'extrude',
-      profile: { kind: 'sketch', featureId: 's1', profileIndex: 0 },
+      profile: { kind: 'sketch', featureId: 's1', regions: [s1.regionKeys[0]!] },
       distance: 10,
       symmetric: false,
       operation: 'new',
@@ -90,7 +82,7 @@ void test('binary STL: "all bodies" export merges every body into one triangle s
       name: 'Extrude 2',
       suppressed: false,
       kind: 'extrude',
-      profile: { kind: 'sketch', featureId: 's1', profileIndex: 1 },
+      profile: { kind: 'sketch', featureId: 's1', regions: [s1.regionKeys[1]!] },
       distance: 10,
       symmetric: false,
       operation: 'new',

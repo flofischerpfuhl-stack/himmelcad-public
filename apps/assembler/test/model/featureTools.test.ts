@@ -18,7 +18,17 @@ import {
   type FeatureDraft,
 } from '../../renderer/src/model/featureTools.js';
 import { loadProjectFile, saveProjectFile } from '../../renderer/src/model/project/format.js';
-import { useAssemblerStore, type ToolSession } from '../../renderer/src/model/store.js';
+import {
+  makeFaceRef,
+  useAssemblerStore,
+  type ToolSession,
+} from '../../renderer/src/model/store.js';
+import {
+  addPolyline,
+  sketchFromLegacyProfiles,
+  type LegacySketchProfile,
+} from '../../renderer/src/sketch/builders.js';
+import { EMPTY_SKETCH } from '../../renderer/src/sketch/types.js';
 import { createNodeKernelAdapter } from '../kernel/nodeKernel.js';
 
 const store = useAssemblerStore;
@@ -27,9 +37,16 @@ store.getState().attachKernel(createNodeKernelAdapter());
 function sketch(
   id: string,
   plane: SketchFeature['plane'],
-  profiles: SketchFeature['profiles'],
+  profiles: LegacySketchProfile[],
 ): SketchFeature {
-  return { id, name: id, suppressed: false, kind: 'sketch', plane, profiles };
+  return {
+    id,
+    name: id,
+    suppressed: false,
+    kind: 'sketch',
+    plane,
+    ...sketchFromLegacyProfiles(profiles).sketch,
+  };
 }
 
 function box(id: string, x: number, y: number, w: number, d: number, h: number): Feature[] {
@@ -193,6 +210,78 @@ void test('revolve tool: picking an edge sets the axis; the axis badge picks a w
   store.getState().cancel();
 });
 
+void test('revolve tool: a construction centre line of the sketch is the default axis; a sketch line pick sets it', async () => {
+  const profile = addPolyline(
+    EMPTY_SKETCH,
+    [
+      [5, 0],
+      [15, 0],
+      [15, 4],
+      [9, 4],
+      [9, 10],
+      [5, 10],
+    ],
+    { closed: true },
+  );
+  const centre = addPolyline(
+    profile.sketch,
+    [
+      [0, -2],
+      [0, 12],
+    ],
+    { construction: true },
+  );
+  const lSketch: SketchFeature = {
+    id: 'l',
+    name: 'Sketch 1',
+    suppressed: false,
+    kind: 'sketch',
+    plane: { kind: 'plane', plane: 'XZ', offset: 0 },
+    ...centre.sketch,
+  };
+  await load([lSketch]);
+  const regionKey = store.getState().evaluation.sketches[0]!.profiles[0]!.key;
+  store.getState().select({ kind: 'sketchProfile', featureId: 'l', regionKey });
+  run('tools.revolve');
+  assert.deepEqual(draft('revolve').axis, {
+    kind: 'sketchLine',
+    featureId: 'l',
+    entityId: centre.lineIds[0],
+  });
+  assert.deepEqual(draft('revolve').profile, {
+    kind: 'sketch',
+    featureId: 'l',
+    regions: [regionKey],
+  });
+  assert.deepEqual(
+    draftBadges(draft('revolve'))
+      .find((b) => b.ariaLabel === 'Revolve axis')!
+      .options.map((o) => o.label),
+    ['X', 'Y', 'Z', 'Sketch line'],
+  );
+  await store.getState().whenSettled();
+  const ring = (r0: number, r1: number, h: number) => Math.PI * (r1 * r1 - r0 * r0) * h;
+  const preview = tool('feature').previewEvaluation!.bodies[0]!;
+  assert.ok(Math.abs(preview.volume - (ring(5, 15, 4) + ring(5, 9, 6))) < 1e-3);
+
+  // Picking a profile line instead: revolving about the L's own inner side (u = 5).
+  const inner = profile.lineIds[5]!;
+  store
+    .getState()
+    .updateFeatureDraft((d, ev) =>
+      acceptPick(d, { kind: 'sketchLine', featureId: 'l', entityId: inner }, ev),
+    );
+  assert.deepEqual(draft('revolve').axis, { kind: 'sketchLine', featureId: 'l', entityId: inner });
+  await store.getState().whenSettled();
+  const about = tool('feature').previewEvaluation!.bodies[0]!;
+  assert.ok(Math.abs(about.volume - (ring(0, 10, 4) + ring(0, 4, 6))) < 1e-3);
+  store.getState().commit();
+  await store.getState().whenSettled();
+  assert.equal(store.getState().features.at(-1)!.kind, 'revolve');
+  assert.deepEqual(store.getState().evaluation.errors, {});
+  store.getState().undo();
+});
+
 void test('pattern, mirror, split, align tools: start from the selection, badges and handles, one undo step each', async () => {
   await load([...box('a', 0, 0, 10, 10, 10), ...box('c', 30, 0, 20, 20, 20)]);
   const a = store.getState().evaluation.bodies[0]!;
@@ -329,10 +418,13 @@ void test('extrude: a closed profile inside a body face starts as a through-cut 
   await load(box('p', 0, 0, 40, 30, 10));
   const plate = store.getState().evaluation.bodies[0]!;
   const top = plate.faces.find((f) => f.normal?.[2] === 1)!;
-  store.getState().beginSketchCircle({ bodyId: plate.id, faceKey: top.key });
-  store.getState().setCircleCenter(20, 15);
-  store.getState().setCircleRadius(3);
-  store.getState().commit();
+  // A circle sketched on the top face, committed like a finished sketch session.
+  const hole = sketch(
+    'hole-s',
+    { kind: 'face', face: makeFaceRef(store.getState().evaluation, plate.id, top.key)! },
+    [{ kind: 'circle', cx: 20, cy: 15, radius: 3 }],
+  );
+  store.getState().addFeature(hole, [{ kind: 'sketchProfile', featureId: hole.id }]);
   // Immediately (the new sketch is not evaluated yet) — the start still reads the sketch data.
   run('tools.extrude');
   assert.equal(tool('extrude').operation, 'cut');

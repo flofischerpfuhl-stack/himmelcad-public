@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 
+import { registerEscapeRung } from '@himmelcad/ui';
+
 import { parseExpression } from './expr.js';
 import styles from './DimensionLabel.module.css';
 
@@ -25,6 +27,17 @@ export interface DimensionLabelProps {
   onBeginEdit: () => void;
   onCommit: (value: number) => void;
   onCancelEdit: () => void;
+  /** Display text instead of `"<prefix> <value> mm"` (e.g. `"30°"`, `"Ø 20"`). */
+  display?: string;
+  /** Text the field opens with instead of the formatted value (e.g. a stored expression). */
+  editText?: string;
+  /**
+   * Receives the typed text unparsed (sketch dimensions accept expressions
+   * with names, `"d1 / 2"`); when set, `onCommit` is not called.
+   */
+  onCommitText?: (text: string) => void;
+  /** Visual emphasis: selected (accent border). */
+  selected?: boolean;
 }
 
 /**
@@ -40,6 +53,8 @@ export function DimensionLabel(props: DimensionLabelProps): JSX.Element {
   const [text, setText] = useState('');
   const [selectAll, setSelectAll] = useState(true);
   const inputRef = useRef<HTMLInputElement>(null);
+  /** Set by a revert so the blur that follows does not commit. */
+  const closingRef = useRef(false);
   const lastRequest = useRef<number | null>(props.editRequest?.nonce ?? null);
   const { onBeginEdit } = props;
   const unit = props.unit ?? 'mm';
@@ -63,23 +78,41 @@ export function DimensionLabel(props: DimensionLabelProps): JSX.Element {
   }, [editing, selectAll]);
 
   const beginEdit = () => {
-    setText(formatValue(props.value, unit));
+    setText(props.editText ?? formatValue(props.value, unit));
     setSelectAll(true);
     setEditing(true);
     props.onBeginEdit();
   };
 
   const applyAndClose = () => {
-    const parsed = parseExpression(text.replace(/\s*(mm|°|deg)\s*$/i, ''));
-    if (parsed !== null && Number.isFinite(parsed)) props.onCommit(parsed);
+    if (props.onCommitText) {
+      if (text.trim() !== '') props.onCommitText(text);
+    } else {
+      const parsed = parseExpression(text.replace(/\s*(mm|°|deg)\s*$/i, ''));
+      if (parsed !== null && Number.isFinite(parsed)) props.onCommit(parsed);
+    }
     setEditing(false);
     props.onCancelEdit();
   };
 
   const revertAndClose = () => {
+    closingRef.current = true;
     setEditing(false);
     props.onCancelEdit();
   };
+
+  // Escape reverts the field on the shared escape ladder (it runs before the input's own keydown).
+  useEffect(() => {
+    if (!editing) {
+      closingRef.current = false;
+      return;
+    }
+    return registerEscapeRung('fieldRevert', () => {
+      if (document.activeElement !== inputRef.current) return false;
+      revertAndClose();
+      return true;
+    });
+  });
 
   // Dimension labels float above the 3D canvas; stop pointer events here so
   // the viewport's own pointer handlers (orbit/pick/tool-drag) never see a
@@ -92,14 +125,13 @@ export function DimensionLabel(props: DimensionLabelProps): JSX.Element {
     return (
       <button
         type="button"
-        className={`${styles.label} ${props.invalid ? styles.invalid : ''}`}
+        className={`${styles.label} ${props.invalid ? styles.invalid : ''} ${props.selected ? styles.selected : ''}`}
         style={{ left: props.x, top: props.y }}
         onClick={beginEdit}
         onPointerDown={stopPointer}
-        aria-label={`${props.label}: ${formatValue(props.value, '')}${unitName ? ` ${unitName}` : ''}, click to edit`}
+        aria-label={`${props.label}: ${props.display ?? `${formatValue(props.value, '')}${unitName ? ` ${unitName}` : ''}`}, click to edit`}
       >
-        {prefix}
-        {formatValue(props.value, unit)}
+        {props.display ?? `${prefix}${formatValue(props.value, unit)}`}
       </button>
     );
   }
@@ -125,7 +157,9 @@ export function DimensionLabel(props: DimensionLabelProps): JSX.Element {
         inputMode="decimal"
         value={text}
         onChange={(event) => setText(event.target.value)}
-        onBlur={applyAndClose}
+        onBlur={() => {
+          if (!closingRef.current) applyAndClose();
+        }}
         onKeyDown={(event) => {
           if (event.key === 'Enter') {
             event.preventDefault();

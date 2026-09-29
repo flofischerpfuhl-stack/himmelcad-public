@@ -130,6 +130,41 @@ void test('production build: kernel reaches ready, the demo part renders, Save/R
   mkdirSync(SHOTS_DIR, { recursive: true });
   await window.screenshot({ path: join(SHOTS_DIR, 'f-electron-production-ready.png') });
 
+  // The sketch-solver worker (planeGCS wasm + embind glue) must load under
+  // the packaged app:// CSP: draw a circle in sketch mode and wait for the
+  // solver's status instead of the "solver not available" problem banner.
+  // Clicks: the first may move the new sketch onto the clicked face; a
+  // zero-radius click is ignored, so A, A, B always yields one circle.
+  const centre = await window.evaluate(() => {
+    const r = document.querySelector('canvas')!.getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  });
+  await window.keyboard.press('c');
+  await window.waitForSelector('[data-sketch-status]');
+  await window.waitForTimeout(500);
+  for (const p of [centre, centre, { x: centre.x + 40, y: centre.y }]) {
+    await window.mouse.click(p.x, p.y);
+    await window.waitForTimeout(300);
+  }
+  await window.waitForFunction(
+    () => {
+      const text = document.querySelector('[data-sketch-status]')?.textContent ?? '';
+      return (
+        /degrees of freedom|Fully constrained/.test(text) ||
+        !!document.querySelector('[data-sketch-problem]')
+      );
+    },
+    { timeout: 20_000 },
+  );
+  const sketchProblem = await window.evaluate(
+    () => document.querySelector('[data-sketch-problem]')?.textContent ?? null,
+  );
+  assert.equal(sketchProblem, null, `sketch solver failed in the packaged app: ${sketchProblem}`);
+  await window.screenshot({ path: join(SHOTS_DIR, 'f-electron-production-sketch.png') });
+  await window.keyboard.press('Escape');
+  await window.keyboard.press('Escape');
+  await window.waitForFunction(() => !document.querySelector('[data-sketch-status]'));
+
   // Native dialogs cannot be driven headlessly; stub them in the main
   // process (the same `electron.dialog` singleton `fileApi.ts` calls) to
   // return a fixed temp path, then exercise Save and Open exactly as the

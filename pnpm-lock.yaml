@@ -50,6 +50,9 @@ importers:
       '@himmelcad/ui':
         specifier: workspace:*
         version: link:../../packages/@himmelcad/ui
+      '@salusoft89/planegcs':
+        specifier: 1.2.0
+        version: 1.2.0
       lucide-react:
         specifier: ^0.460.0
         version: 0.460.0(react@19.2.5)
@@ -1350,6 +1353,9 @@ packages:
 
   '@rtsao/scc@1.1.0':
     resolution: {integrity: sha512-zt6OdqaDoOnJ1ZYsCYGt9YmWzDXl4vQdKTyJev62gFhRGKdx7mcT54V9KIjg+d2wi9EXsPvAPKe7i7WjfVWB8g==}
+
+  '@salusoft89/planegcs@1.2.0':
+    resolution: {integrity: sha512-NcdWJnJRCnIDvM9yJD98Jm8qaK//wRqMEbJ0WtibKnhbzI484TjIEbYD6EVUZejndXGC9yBkuKgqXg+9buzi6Q==}
 
   '@sindresorhus/is@4.6.0':
     resolution: {integrity: sha512-t09vSN3MdfsyCHoFcTRCH/iUtG7OJ0CsjzB8cjAmKc/va/kIgeDI/TxsigdncE/4be734m0cvIYwNaV4i2XqAw==}
@@ -4740,6 +4746,8 @@ snapshots:
     optional: true
 
   '@rtsao/scc@1.1.0': {}
+
+  '@salusoft89/planegcs@1.2.0': {}
 
   '@sindresorhus/is@4.6.0': {}
 

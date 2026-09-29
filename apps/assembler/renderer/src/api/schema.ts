@@ -120,7 +120,10 @@ export const DEFS: Record<string, JsonSchema> = {
   ),
   FaceInput: { oneOf: [ref('FaceRef'), ref('Selector')] },
   EdgeInput: { oneOf: [ref('EdgeRef'), ref('Selector')] },
-  SketchProfile: {
+  Vec2: { type: 'array', items: num, minItems: 2, maxItems: 2 },
+  SketchShape: {
+    description:
+      'Convenience shape, expanded into entities + constraints + dimensions (fully dimensioned: position from the sketch origin and size), like a rectangle/circle drawn and dimensioned in the app.',
     oneOf: [
       obj(
         {
@@ -131,16 +134,96 @@ export const DEFS: Record<string, JsonSchema> = {
           height: num,
         },
         ['kind', 'x', 'y', 'width', 'height'],
-        'Axis-aligned rectangle in sketch (u, v) coordinates; (x, y) is a corner.',
+        'Axis-aligned rectangle in sketch (u, v) coordinates; (x, y) is a corner. Dimension roles: x, y, width, height.',
       ),
-      obj({ kind: { const: 'circle' }, cx: num, cy: num, radius: positive }, [
-        'kind',
-        'cx',
-        'cy',
-        'radius',
-      ]),
+      obj(
+        { kind: { const: 'circle' }, cx: num, cy: num, radius: positive },
+        ['kind', 'cx', 'cy', 'radius'],
+        'Circle. Dimension roles: cx, cy, diameter.',
+      ),
     ],
   },
+  SketchEntity: {
+    description:
+      'Sketch geometry in the sketch frame (u, v) mm, always the last solved state. Points are referenced by id; "origin" is the fixed sketch origin (never stored). Construction geometry never bounds a profile (e.g. a revolve axis line).',
+    oneOf: [
+      obj(
+        { id: str, kind: { const: 'point' }, x: num, y: num, construction: { type: 'boolean' } },
+        ['id', 'kind', 'x', 'y'],
+      ),
+      obj({ id: str, kind: { const: 'line' }, a: str, b: str, construction: { type: 'boolean' } }, [
+        'id',
+        'kind',
+        'a',
+        'b',
+      ]),
+      obj(
+        {
+          id: str,
+          kind: { const: 'circle' },
+          center: str,
+          radius: positive,
+          construction: { type: 'boolean' },
+        },
+        ['id', 'kind', 'center', 'radius'],
+      ),
+      obj(
+        {
+          id: str,
+          kind: { const: 'arc' },
+          center: str,
+          start: str,
+          end: str,
+          construction: { type: 'boolean' },
+        },
+        ['id', 'kind', 'center', 'start', 'end'],
+        'Counter-clockwise from start to end around center.',
+      ),
+    ],
+  },
+  SketchConstraintKind: {
+    enum: [
+      'coincident',
+      'horizontal',
+      'vertical',
+      'parallel',
+      'perpendicular',
+      'tangent',
+      'equal',
+      'fixed',
+      'midpoint',
+      'symmetric',
+      'concentric',
+      'pointOnObject',
+    ],
+  },
+  SketchDimensionKind: {
+    enum: ['distance', 'horizontalDistance', 'verticalDistance', 'radius', 'diameter', 'angle'],
+  },
+  SketchConstraint: obj(
+    {
+      id: str,
+      kind: ref('SketchConstraintKind'),
+
+      refs: { type: 'array', items: str, minItems: 1 },
+    },
+    ['id', 'kind', 'refs'],
+    'refs: coincident 2 points; horizontal/vertical 1 line or 2 points; parallel/perpendicular 2 lines; tangent 2 curves (one round); equal 2 lines or 2 round; fixed 1 point/curve; midpoint point + line; symmetric 2 points + line/point; concentric 2 round; pointOnObject point + curve.',
+  ),
+  SketchDimension: obj(
+    {
+      id: str,
+      name: { type: 'string', pattern: '^[A-Za-z_][A-Za-z0-9_]*$' },
+      kind: ref('SketchDimensionKind'),
+
+      refs: { type: 'array', items: str, minItems: 1 },
+      value: { type: 'number', minimum: 0 },
+      expression: { type: 'string' },
+      offset: num,
+    },
+    ['id', 'name', 'kind', 'refs', 'value'],
+    'Driving dimension (mm, angle in degrees). refs: distance 1 line / 2 points / point + line / 2 parallel lines; horizontal/verticalDistance 1 line or 2 points; radius/diameter 1 circle/arc; angle 2 lines. `expression` (e.g. "d1 / 2 + 3") uses names of other dimensions of the sketch.',
+  ),
   SketchPlane: {
     oneOf: [
       obj({ kind: { const: 'plane' }, plane: { enum: ['XY', 'XZ', 'YZ'] }, offset: num }, [
@@ -156,15 +239,79 @@ export const DEFS: Record<string, JsonSchema> = {
         {
           kind: { const: 'sketch' },
           featureId: str,
-          profileIndex: { type: 'integer', minimum: 0 },
+          regions: { type: 'array', items: str, minItems: 1 },
         },
         ['kind', 'featureId'],
-        'All profiles of the sketch (fused) unless `profileIndex` is given.',
+        'Every closed region of the sketch (fused) unless `regions` lists region keys (sketches.list → regions[].key).',
       ),
       obj(
         { kind: { const: 'face' }, face: ref('FaceInput') },
         ['kind', 'face'],
-        'Push/pull of a planar body face along its outward normal.',
+        'Push/pull of a planar body face along its outward normal (Extrude); a planar face as profile (Revolve/Sweep/Loft).',
+      ),
+    ],
+  },
+  AxisRef: {
+    oneOf: [
+      obj(
+        { kind: { const: 'world' }, axis: { enum: ['X', 'Y', 'Z'] }, origin: ref('Vec3') },
+        ['kind', 'axis'],
+        'A world axis direction through `origin` (default the world origin).',
+      ),
+      obj(
+        { kind: { const: 'edge' }, edge: ref('EdgeInput') },
+        ['kind', 'edge'],
+        'A straight body edge, or the axis of a circular edge.',
+      ),
+      obj(
+        { kind: { const: 'sketchLine' }, featureId: str, entityId: str },
+        ['kind', 'featureId', 'entityId'],
+        'A sketch line by entity id (construction lines included), e.g. a revolve centre line.',
+      ),
+    ],
+  },
+  PathRef: {
+    oneOf: [
+      obj(
+        {
+          kind: { const: 'edges' },
+          edges: { type: 'array', items: ref('EdgeInput'), minItems: 1 },
+        },
+        ['kind', 'edges'],
+        'A connected chain of body edges.',
+      ),
+      obj(
+        { kind: { const: 'sketch' }, featureId: str, region: str },
+        ['kind', 'featureId', 'region'],
+        'The closed outer outline of a sketch region.',
+      ),
+      obj(
+        { kind: { const: 'line' }, start: ref('Vec3'), end: ref('Vec3') },
+        ['kind', 'start', 'end'],
+        'A straight world line.',
+      ),
+    ],
+  },
+  PatternDefinition: {
+    oneOf: [
+      obj(
+        {
+          kind: { const: 'linear' },
+          direction: ref('AxisRef'),
+          count: { type: 'integer', minimum: 2, maximum: 200 },
+          spacing: num,
+        },
+        ['kind', 'direction', 'count', 'spacing'],
+      ),
+      obj(
+        {
+          kind: { const: 'circular' },
+          axis: ref('AxisRef'),
+          count: { type: 'integer', minimum: 2, maximum: 200 },
+          angle: { type: 'number', exclusiveMinimum: 0, maximum: 360 },
+        },
+        ['kind', 'axis', 'count', 'angle'],
+        '`angle` is the total angle in degrees; 360 spreads the instances evenly.',
       ),
     ],
   },
@@ -173,10 +320,21 @@ export const DEFS: Record<string, JsonSchema> = {
       obj({ kind: { const: 'body' }, bodyId: str }, ['kind', 'bodyId']),
       obj({ kind: { const: 'face' }, bodyId: str, faceKey: str }, ['kind', 'bodyId', 'faceKey']),
       obj({ kind: { const: 'edge' }, bodyId: str, edgeKey: str }, ['kind', 'bodyId', 'edgeKey']),
-      obj({ kind: { const: 'sketchProfile' }, featureId: str }, ['kind', 'featureId']),
+      obj(
+        { kind: { const: 'sketchProfile' }, featureId: str, regionKey: str },
+        ['kind', 'featureId'],
+        'One region of a sketch (`regionKey`), or every region.',
+      ),
       obj({ kind: { const: 'feature' }, featureId: str }, ['kind', 'featureId']),
     ],
   },
+};
+
+const operation: JsonSchema = {
+  enum: ['new', 'join', 'cut'],
+  default: 'new',
+  description:
+    'New body, or join/cut into `targetBodyId` (default: the most recently changed body).',
 };
 
 export interface FeatureKindSpec {
@@ -195,13 +353,21 @@ export interface FeatureKindSpec {
 export const FEATURE_KIND_SCHEMAS: Record<string, FeatureKindSpec> = {
   sketch: {
     label: 'Sketch',
-    summary: 'Closed profiles on a construction plane or a planar body face (mm, sketch u/v).',
+    summary:
+      'Constrained 2D sketch on a construction plane or a planar body face (mm, sketch u/v): entities, constraints and driving dimensions, solved by planeGCS on every write. Profiles are the detected closed regions (sketches.list → regions). Input shorthand: `profiles: [SketchShape]` adds fully dimensioned rectangles/circles.',
     params: obj(
       {
         plane: ref('SketchPlane'),
-        profiles: { type: 'array', items: ref('SketchProfile'), minItems: 1 },
+        entities: { type: 'array', items: ref('SketchEntity') },
+        constraints: { type: 'array', items: ref('SketchConstraint') },
+        dimensions: { type: 'array', items: ref('SketchDimension') },
+        profiles: {
+          type: 'array',
+          items: ref('SketchShape'),
+          description: 'Input-only shorthand, expanded into entities/constraints/dimensions.',
+        },
       },
-      ['plane', 'profiles'],
+      ['plane'],
     ),
   },
   extrude: {
@@ -281,6 +447,134 @@ export const FEATURE_KIND_SCHEMAS: Record<string, FeatureKindSpec> = {
     label: 'Import',
     summary: 'A STEP file embedded (base64) as one history step producing bodies.',
     params: obj({ data: str, fileName: str }, ['data', 'fileName']),
+  },
+  revolve: {
+    label: 'Revolve',
+    summary:
+      'Revolves a profile about an axis (world axis, body edge or sketch line — e.g. a construction centre line); New/Join/Cut like Extrude. The axis must not cross the profile.',
+    params: obj(
+      {
+        profile: ref('ExtrudeProfile'),
+        axis: ref('AxisRef'),
+        angle: {
+          type: 'number',
+          minimum: -360,
+          maximum: 360,
+          default: 360,
+          description: 'Degrees; 360 is a full revolution, negative turns the other way.',
+        },
+        operation,
+        targetBodyId: str,
+        resultBodyName: str,
+      },
+      ['profile', 'axis'],
+    ),
+  },
+  sweep: {
+    label: 'Sweep',
+    summary:
+      'Sweeps a profile (without holes) along a path (edge chain, sketch region outline or straight line); New/Join/Cut.',
+    params: obj(
+      {
+        profile: ref('ExtrudeProfile'),
+        path: ref('PathRef'),
+        operation,
+        targetBodyId: str,
+        resultBodyName: str,
+      },
+      ['profile', 'path'],
+    ),
+  },
+  loft: {
+    label: 'Loft',
+    summary:
+      'Lofts through two or more single profiles on different planes, in order; smooth or ruled; New/Join/Cut.',
+    params: obj(
+      {
+        profiles: { type: 'array', items: ref('ExtrudeProfile'), minItems: 2 },
+        ruled: { type: 'boolean', default: false },
+        operation,
+        targetBodyId: str,
+        resultBodyName: str,
+      },
+      ['profiles'],
+    ),
+  },
+  mirror: {
+    label: 'Mirror',
+    summary:
+      'Mirrors bodies across a plane; with keepOriginal (default) the mirror images are new bodies.',
+    params: obj(
+      {
+        bodyIds: { type: 'array', items: str, minItems: 1 },
+        plane: ref('SketchPlane'),
+        keepOriginal: { type: 'boolean', default: true },
+      },
+      ['bodyIds', 'plane'],
+    ),
+  },
+  pattern: {
+    label: 'Pattern',
+    summary: 'Copies bodies in a linear or circular pattern (independent copies).',
+    params: obj(
+      { bodyIds: { type: 'array', items: str, minItems: 1 }, pattern: ref('PatternDefinition') },
+      ['bodyIds', 'pattern'],
+    ),
+  },
+  split: {
+    label: 'Split',
+    summary: 'Splits a body by a plane into two bodies (the positive side becomes new).',
+    params: obj({ bodyId: str, plane: ref('SketchPlane') }, ['bodyId', 'plane']),
+  },
+  transform: {
+    label: 'Move/Rotate',
+    summary:
+      'Rigid transform of a body: rotate rx, ry, rz degrees about world X, then Y, then Z through `pivot`, then translate (dx, dy, dz); `copy` makes a new body.',
+    params: obj(
+      {
+        bodyId: str,
+        dx: num,
+        dy: num,
+        dz: num,
+        rx: num,
+        ry: num,
+        rz: num,
+        pivot: ref('Vec3'),
+        copy: { type: 'boolean', default: false },
+      },
+      ['bodyId'],
+      'Missing components default to 0, the pivot to the world origin.',
+    ),
+  },
+  align: {
+    label: 'Align',
+    summary:
+      'Moves a body so its planar `face` lies on the plane of `target` (a planar face of another body): face to face by default, same direction with flip; `offset` leaves a gap; `center` slides the face centres together.',
+    params: obj(
+      {
+        bodyId: str,
+        face: ref('FaceInput'),
+        target: ref('FaceInput'),
+        flip: { type: 'boolean', default: false },
+        center: { type: 'boolean', default: true },
+        offset: { type: 'number', default: 0 },
+      },
+      ['face', 'target'],
+    ),
+  },
+  offsetFace: {
+    label: 'Offset Face',
+    summary:
+      'Offsets faces of one body along their normals: positive adds material, negative removes it (e.g. enlarges a hole).',
+    params: obj({ faces: { type: 'array', items: ref('FaceInput'), minItems: 1 }, distance: num }, [
+      'faces',
+      'distance',
+    ]),
+  },
+  deleteFace: {
+    label: 'Delete Face',
+    summary: 'Removes faces (holes, fillets, chamfers) of one body and heals it.',
+    params: obj({ faces: { type: 'array', items: ref('FaceInput'), minItems: 1 } }, ['faces']),
   },
 };
 
@@ -372,10 +666,11 @@ export const METHODS: Record<string, MethodSpec> = {
   'sketches.list': {
     kind: 'query',
     capability: 'document.read',
-    summary: 'Sketches with their frame and profiles (parameters and world-space centres).',
+    summary:
+      'Sketches with frame, entities, constraints, dimensions and their detected profiles (regions with stable keys, the boundary entity ids and world-space centres).',
     params: obj({ scope }),
     result:
-      '[{featureId, name, plane, frame: {origin,u,v,normal}, profiles: [{index, kind, params, center}], consumed}]',
+      '[{featureId, name, plane, frame: {origin,u,v,normal}, entities, constraints, dimensions, regions: [{key, area, sample, center, holes, entityIds}], consumed}]',
   },
   'selection.get': {
     kind: 'query',
@@ -450,39 +745,128 @@ export const METHODS: Record<string, MethodSpec> = {
     kind: 'command',
     capability: 'document.write',
     transactional: true,
-    summary: 'Adds a profile to an existing sketch.',
-    params: obj({ featureId: str, profile: ref('SketchProfile'), expectedRevision: revision }, [
+    summary:
+      'Adds a fully dimensioned rectangle or circle (entities + constraints + dimensions) to a sketch and re-solves it.',
+    params: obj({ featureId: str, profile: ref('SketchShape'), expectedRevision: revision }, [
       'featureId',
       'profile',
     ]),
-    result: '{featureId, profileIndex, revision, committed, errors}',
+    result:
+      '{featureId, shape: {kind, entityIds, dimensions: {role: name}}, dof, regions, revision, committed, errors}',
   },
-  'sketch.editProfile': {
+  'sketch.addPolyline': {
     kind: 'command',
     capability: 'document.write',
     transactional: true,
-    summary: 'Replaces profile `index` of a sketch (its dimensions are its parameters).',
+    summary:
+      'Adds connected lines through `points` (closed: back to the first point). Axis-aligned segments get horizontal/vertical constraints unless autoConstrain is false; construction lines never bound a profile (use one as a revolve axis).',
     params: obj(
       {
         featureId: str,
-        index: { type: 'integer', minimum: 0 },
-        profile: ref('SketchProfile'),
+        points: { type: 'array', items: ref('Vec2'), minItems: 2 },
+        closed: { type: 'boolean', default: false },
+        construction: { type: 'boolean', default: false },
+        autoConstrain: { type: 'boolean', default: true },
         expectedRevision: revision,
       },
-      ['featureId', 'index', 'profile'],
+      ['featureId', 'points'],
     ),
-    result: '{featureId, profileIndex, revision, committed, errors}',
+    result: '{featureId, pointIds, lineIds, dof, regions, revision, committed, errors}',
   },
-  'sketch.removeProfile': {
+  'sketch.addArc': {
     kind: 'command',
     capability: 'document.write',
     transactional: true,
-    summary: 'Removes profile `index` of a sketch (a sketch keeps at least one profile).',
+    summary: 'Adds a counter-clockwise arc from `start` to `end` around `center`.',
     params: obj(
-      { featureId: str, index: { type: 'integer', minimum: 0 }, expectedRevision: revision },
-      ['featureId', 'index'],
+      {
+        featureId: str,
+        center: ref('Vec2'),
+        start: ref('Vec2'),
+        end: ref('Vec2'),
+        construction: { type: 'boolean', default: false },
+        expectedRevision: revision,
+      },
+      ['featureId', 'center', 'start', 'end'],
     ),
-    result: '{featureId, revision, committed, errors}',
+    result: '{featureId, entityIds: [center, start, end, arc], dof, regions, revision, committed}',
+  },
+  'sketch.addConstraint': {
+    kind: 'command',
+    capability: 'document.write',
+    transactional: true,
+    summary:
+      'Adds a geometric constraint (see $defs.SketchConstraint for the refs per kind) and re-solves; a conflicting or redundant constraint fails with sketchConflict.',
+    params: obj(
+      {
+        featureId: str,
+        kind: ref('SketchConstraintKind'),
+        refs: { type: 'array', items: str, minItems: 1 },
+        expectedRevision: revision,
+      },
+      ['featureId', 'kind', 'refs'],
+    ),
+    result: '{featureId, constraintId, dof, regions, revision, committed}',
+  },
+  'sketch.addDimension': {
+    kind: 'command',
+    capability: 'document.write',
+    transactional: true,
+    summary:
+      'Adds a driving dimension (value in mm / degrees, or an expression over other dimension names) and re-solves the sketch to it.',
+    params: {
+      ...obj(
+        {
+          featureId: str,
+          kind: ref('SketchDimensionKind'),
+          refs: { type: 'array', items: str, minItems: 1 },
+          value: { type: 'number', minimum: 0 },
+          expression: str,
+          name: { type: 'string', pattern: '^[A-Za-z_][A-Za-z0-9_]*$' },
+          expectedRevision: revision,
+        },
+        ['featureId', 'kind', 'refs'],
+      ),
+      anyOf: [{ required: ['value'] }, { required: ['expression'] }],
+    },
+    result: '{featureId, dimensionId, name, value, dof, regions, revision, committed}',
+  },
+  'sketch.setDimension': {
+    kind: 'command',
+    capability: 'document.write',
+    transactional: true,
+    summary:
+      'Changes a dimension (by id or name, e.g. "d3") to a value or expression; the sketch re-solves and dependent features re-evaluate (the History-panel dimension edit).',
+    params: {
+      ...obj(
+        {
+          featureId: str,
+          dimension: str,
+          value: { type: 'number', minimum: 0 },
+          expression: str,
+          expectedRevision: revision,
+        },
+        ['featureId', 'dimension'],
+      ),
+      anyOf: [{ required: ['value'] }, { required: ['expression'] }],
+    },
+    result: '{featureId, dimensionId, name, value, dof, regions, revision, committed, errors}',
+  },
+  'sketch.deleteItems': {
+    kind: 'command',
+    capability: 'document.write',
+    transactional: true,
+    summary:
+      'Deletes entities, constraints or dimensions by id (curves take their unused points, constraints/dimensions on deleted geometry go with them).',
+    params: obj(
+      {
+        featureId: str,
+        ids: { type: 'array', items: str, minItems: 1 },
+        expectedRevision: revision,
+      },
+      ['featureId', 'ids'],
+    ),
+    result: '{featureId, dof, regions, revision, committed, errors}',
   },
   'transaction.begin': {
     kind: 'command',
@@ -629,6 +1013,7 @@ export const AGENT_API_SCHEMA = {
   featureKinds: FEATURE_KIND_SCHEMAS,
   methods: METHODS,
   limits: {
-    sketchEntities: 'rectangle and circle profiles; lines/arcs/constraints await the sketch solver',
+    sketchEntities:
+      'points, lines, circles and arcs (no splines/ellipses/slots/text); constraints and driving dimensions solved by planeGCS; no reference (driven) dimensions',
   },
 } as const;

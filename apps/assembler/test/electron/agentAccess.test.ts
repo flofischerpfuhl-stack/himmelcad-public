@@ -112,17 +112,14 @@ void test('agent access: off by default, UI toggle + indicator, bench projects o
     }[];
     await window.getByText(features.at(-1)!.name, { exact: true }).first().waitFor();
 
-    // Editable: change the first sketch (as the parameter panel would), then undo with Ctrl+Z.
+    // Editable: grow a size dimension of the first sketch (as the History panel would), then undo with Ctrl+Z.
     const sketch = features.find((f) => f.kind === 'sketch')!;
-    const profiles = sketch.params.profiles as Record<string, number | string>[];
-    const first = profiles[0]!;
-    const grown =
-      first.kind === 'circle'
-        ? { ...first, radius: Number(first.radius) + 0.5 }
-        : { ...first, width: Number(first.width) + 2 };
-    const edited = await rpc(status, 'feature.edit', {
+    const dimensions = sketch.params.dimensions as { name: string; kind: string; value: number }[];
+    const size = dimensions.find((d) => d.kind === 'distance' || d.kind === 'diameter')!;
+    const edited = await rpc(status, 'sketch.setDimension', {
       featureId: sketch.id,
-      params: { profiles: [grown, ...profiles.slice(1)] },
+      dimension: size.name,
+      value: size.value + (size.kind === 'diameter' ? 1 : 2),
     });
     assert.deepEqual(edited.body.result?.errors, {}, `${file}: edit re-evaluates cleanly`);
     await window.screenshot({ path: join(SHOTS_DIR, `agent-${file.replace('.hcasm', '')}.png`) });

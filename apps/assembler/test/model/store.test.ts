@@ -3,6 +3,8 @@ import test from 'node:test';
 
 import { createDemoDocument, type SketchFeature } from '../../renderer/src/model/document.js';
 import { useAssemblerStore } from '../../renderer/src/model/store.js';
+import { addRectangle } from '../../renderer/src/sketch/builders.js';
+import { EMPTY_SKETCH } from '../../renderer/src/sketch/types.js';
 import { createNodeKernelAdapter } from '../kernel/nodeKernel.js';
 
 const store = useAssemblerStore;
@@ -14,8 +16,13 @@ const SKETCH: SketchFeature = {
   suppressed: false,
   kind: 'sketch',
   plane: { kind: 'plane', plane: 'XY', offset: 0 },
-  profiles: [{ kind: 'rectangle', x: 0, y: 0, width: 10, height: 10 }],
+  ...rect(10, 10),
 };
+
+/** A fully dimensioned rectangle sketch anchored at the origin (same entity ids for any size). */
+function rect(width: number, height: number) {
+  return addRectangle(EMPTY_SKETCH, [0, 0], [width, height], { position: true, size: true }).sketch;
+}
 
 async function load(features: SketchFeature[] | ReturnType<typeof createDemoDocument>) {
   store.getState().loadDocument(features);
@@ -103,25 +110,37 @@ void test('selection is pruned after undo removes the selected body', async () =
   assert.equal(store.getState().selection.length, 0);
 });
 
-void test('sketchRectangle tool: commit adds exactly one feature and selects its profile; cancel adds nothing', async () => {
+void test('addFeature appends exactly one undoable feature and selects what it is told to', async () => {
   await load([]);
-  store.getState().beginSketchRectangle();
-  store.getState().setPreviewRect(1, 2, 30, 40);
-  store.getState().commit();
+  store.getState().addFeature(SKETCH, [{ kind: 'sketchProfile', featureId: SKETCH.id }]);
   await store.getState().whenSettled();
-
   assert.equal(store.getState().features.length, 1);
-  const feature = store.getState().features[0];
-  assert.equal(feature?.kind, 'sketch');
-  assert.equal(store.getState().selection.length, 1);
-  assert.equal(store.getState().selection[0]?.kind, 'sketchProfile');
+  assert.deepEqual(store.getState().selection, [{ kind: 'sketchProfile', featureId: SKETCH.id }]);
   assert.equal(store.getState().evaluation.sketches.length, 1);
+  assert.equal(store.getState().evaluation.sketches[0]!.profiles.length, 1);
+  assert.equal(store.getState().history.canUndo, true);
+  store.getState().undo();
+  assert.equal(store.getState().features.length, 0);
+});
 
-  store.getState().beginSketchRectangle();
-  store.getState().setPreviewRect(0, 0, 5, 5);
-  store.getState().cancel();
-  assert.equal(store.getState().features.length, 1);
-  assert.equal(store.getState().history.canRedo, false);
+void test('a history delegate takes over undo/redo until it is removed', async () => {
+  await load([]);
+  store.getState().addFeature(SKETCH);
+  let undos = 0;
+  store.getState().setHistoryDelegate({
+    undo: () => {
+      undos += 1;
+    },
+    redo: () => undefined,
+    canUndo: () => false,
+    canRedo: () => true,
+  });
+  assert.deepEqual(store.getState().history, { canUndo: false, canRedo: true });
+  store.getState().undo();
+  assert.equal(undos, 1);
+  assert.equal(store.getState().features.length, 1, 'the document is untouched');
+  store.getState().setHistoryDelegate(null);
+  assert.deepEqual(store.getState().history, { canUndo: true, canRedo: false });
 });
 
 void test('rapid parameter edits: only the newest revision is applied', async () => {
@@ -144,9 +163,7 @@ void test('rapid parameter edits: only the newest revision is applied', async ()
       seen.push(state.evaluation.bodies[0]?.max[0] ?? -1);
   });
   for (const width of [20, 30, 40]) {
-    store.getState().editFeatureParams(SKETCH.id, {
-      profiles: [{ kind: 'rectangle', x: 0, y: 0, width, height: 10 }],
-    });
+    store.getState().editFeatureParams(SKETCH.id, rect(width, 10));
   }
   await store.getState().whenSettled();
   unsubscribe();
@@ -161,9 +178,7 @@ void test('a selected face survives re-evaluation after an earlier parameter edi
   await load(createDemoDocument());
   const bodyId = 'body:feature-extrude-1';
   store.getState().select({ kind: 'face', bodyId, faceKey: 'feature-fillet-3:round:0' });
-  store.getState().editFeatureParams('feature-sketch-1', {
-    profiles: [{ kind: 'rectangle', x: 0, y: 0, width: 120, height: 50 }],
-  });
+  store.getState().editFeatureParams('feature-sketch-1', rect(120, 50));
   await store.getState().whenSettled();
   assert.deepEqual(store.getState().selection, [
     { kind: 'face', bodyId, faceKey: 'feature-fillet-3:round:0' },

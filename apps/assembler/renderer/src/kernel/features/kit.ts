@@ -8,15 +8,8 @@
  */
 import type * as R from 'replicad';
 
-import type {
-  CurveKind,
-  EdgeRef,
-  FaceRef,
-  SketchFeature,
-  SketchFrame,
-  SketchProfile,
-  Vec3,
-} from '../../model/document.js';
+import type { CurveKind, EdgeRef, FaceRef, SketchFeature, Vec3 } from '../../model/document.js';
+import type { SketchRegion } from '../../sketch/regions.js';
 import type { FaceGeom, KeyedFace, KeyedFaceKeys } from '../naming.js';
 import type { EvaluatedSketch } from '../types.js';
 
@@ -51,6 +44,8 @@ export interface ReplayContextLike {
   order: string[];
   sketches: Map<string, EvaluatedSketch>;
   sketchFeatures: Map<string, SketchFeature>;
+  /** Detected regions (closed profiles) per sketch feature id. */
+  sketchRegions: Map<string, SketchRegion[]>;
   featureOrder: ReadonlyMap<string, number>;
   createdCount: number;
   warn: (message: string) => void;
@@ -90,8 +85,6 @@ export interface FeatureKit {
   ): void;
   withKeys(geoms: FaceGeom[], keys: KeyedFaceKeys[]): KeyedFace[];
   diagonalOf(shape: Shape3D): number;
-  /** The planar face of one sketch profile (the extrude profile construction). */
-  profileFace(frame: SketchFrame, profile: SketchProfile): R.Face;
   /** Adds a body to the replay (creation order, default colour from the palette unless given). */
   addBody(
     ctx: ReplayContextLike,

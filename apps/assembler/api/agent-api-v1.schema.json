@@ -20,6 +20,7 @@
     "notFound",
     "referenceNotFound",
     "featureFailed",
+    "sketchConflict",
     "conflict",
     "busy",
     "transactionState",
@@ -174,7 +175,16 @@
         }
       ]
     },
-    "SketchProfile": {
+    "Vec2": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      },
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "SketchShape": {
+      "description": "Convenience shape, expanded into entities + constraints + dimensions (fully dimensioned: position from the sketch origin and size), like a rectangle/circle drawn and dimensioned in the app.",
       "oneOf": [
         {
           "type": "object",
@@ -197,7 +207,7 @@
           },
           "required": ["kind", "x", "y", "width", "height"],
           "additionalProperties": false,
-          "description": "Axis-aligned rectangle in sketch (u, v) coordinates; (x, y) is a corner."
+          "description": "Axis-aligned rectangle in sketch (u, v) coordinates; (x, y) is a corner. Dimension roles: x, y, width, height."
         },
         {
           "type": "object",
@@ -217,9 +227,197 @@
             }
           },
           "required": ["kind", "cx", "cy", "radius"],
-          "additionalProperties": false
+          "additionalProperties": false,
+          "description": "Circle. Dimension roles: cx, cy, diameter."
         }
       ]
+    },
+    "SketchEntity": {
+      "description": "Sketch geometry in the sketch frame (u, v) mm, always the last solved state. Points are referenced by id; \"origin\" is the fixed sketch origin (never stored). Construction geometry never bounds a profile (e.g. a revolve axis line).",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "kind": {
+              "const": "point"
+            },
+            "x": {
+              "type": "number"
+            },
+            "y": {
+              "type": "number"
+            },
+            "construction": {
+              "type": "boolean"
+            }
+          },
+          "required": ["id", "kind", "x", "y"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "kind": {
+              "const": "line"
+            },
+            "a": {
+              "type": "string",
+              "minLength": 1
+            },
+            "b": {
+              "type": "string",
+              "minLength": 1
+            },
+            "construction": {
+              "type": "boolean"
+            }
+          },
+          "required": ["id", "kind", "a", "b"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "kind": {
+              "const": "circle"
+            },
+            "center": {
+              "type": "string",
+              "minLength": 1
+            },
+            "radius": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "construction": {
+              "type": "boolean"
+            }
+          },
+          "required": ["id", "kind", "center", "radius"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "kind": {
+              "const": "arc"
+            },
+            "center": {
+              "type": "string",
+              "minLength": 1
+            },
+            "start": {
+              "type": "string",
+              "minLength": 1
+            },
+            "end": {
+              "type": "string",
+              "minLength": 1
+            },
+            "construction": {
+              "type": "boolean"
+            }
+          },
+          "required": ["id", "kind", "center", "start", "end"],
+          "additionalProperties": false,
+          "description": "Counter-clockwise from start to end around center."
+        }
+      ]
+    },
+    "SketchConstraintKind": {
+      "enum": [
+        "coincident",
+        "horizontal",
+        "vertical",
+        "parallel",
+        "perpendicular",
+        "tangent",
+        "equal",
+        "fixed",
+        "midpoint",
+        "symmetric",
+        "concentric",
+        "pointOnObject"
+      ]
+    },
+    "SketchDimensionKind": {
+      "enum": ["distance", "horizontalDistance", "verticalDistance", "radius", "diameter", "angle"]
+    },
+    "SketchConstraint": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "$ref": "#/$defs/SketchConstraintKind"
+        },
+        "refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1
+        }
+      },
+      "required": ["id", "kind", "refs"],
+      "additionalProperties": false,
+      "description": "refs: coincident 2 points; horizontal/vertical 1 line or 2 points; parallel/perpendicular 2 lines; tangent 2 curves (one round); equal 2 lines or 2 round; fixed 1 point/curve; midpoint point + line; symmetric 2 points + line/point; concentric 2 round; pointOnObject point + curve."
+    },
+    "SketchDimension": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+        },
+        "kind": {
+          "$ref": "#/$defs/SketchDimensionKind"
+        },
+        "refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1
+        },
+        "value": {
+          "type": "number",
+          "minimum": 0
+        },
+        "expression": {
+          "type": "string"
+        },
+        "offset": {
+          "type": "number"
+        }
+      },
+      "required": ["id", "name", "kind", "refs", "value"],
+      "additionalProperties": false,
+      "description": "Driving dimension (mm, angle in degrees). refs: distance 1 line / 2 points / point + line / 2 parallel lines; horizontal/verticalDistance 1 line or 2 points; radius/diameter 1 circle/arc; angle 2 lines. `expression` (e.g. \"d1 / 2 + 3\") uses names of other dimensions of the sketch."
     },
     "SketchPlane": {
       "oneOf": [
@@ -266,14 +464,18 @@
               "type": "string",
               "minLength": 1
             },
-            "profileIndex": {
-              "type": "integer",
-              "minimum": 0
+            "regions": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "minItems": 1
             }
           },
           "required": ["kind", "featureId"],
           "additionalProperties": false,
-          "description": "All profiles of the sketch (fused) unless `profileIndex` is given."
+          "description": "Every closed region of the sketch (fused) unless `regions` lists region keys (sketches.list → regions[].key)."
         },
         {
           "type": "object",
@@ -287,7 +489,168 @@
           },
           "required": ["kind", "face"],
           "additionalProperties": false,
-          "description": "Push/pull of a planar body face along its outward normal."
+          "description": "Push/pull of a planar body face along its outward normal (Extrude); a planar face as profile (Revolve/Sweep/Loft)."
+        }
+      ]
+    },
+    "AxisRef": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "world"
+            },
+            "axis": {
+              "enum": ["X", "Y", "Z"]
+            },
+            "origin": {
+              "$ref": "#/$defs/Vec3"
+            }
+          },
+          "required": ["kind", "axis"],
+          "additionalProperties": false,
+          "description": "A world axis direction through `origin` (default the world origin)."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "edge"
+            },
+            "edge": {
+              "$ref": "#/$defs/EdgeInput"
+            }
+          },
+          "required": ["kind", "edge"],
+          "additionalProperties": false,
+          "description": "A straight body edge, or the axis of a circular edge."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "sketchLine"
+            },
+            "featureId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "entityId": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": ["kind", "featureId", "entityId"],
+          "additionalProperties": false,
+          "description": "A sketch line by entity id (construction lines included), e.g. a revolve centre line."
+        }
+      ]
+    },
+    "PathRef": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "edges"
+            },
+            "edges": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/EdgeInput"
+              },
+              "minItems": 1
+            }
+          },
+          "required": ["kind", "edges"],
+          "additionalProperties": false,
+          "description": "A connected chain of body edges."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "sketch"
+            },
+            "featureId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "region": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": ["kind", "featureId", "region"],
+          "additionalProperties": false,
+          "description": "The closed outer outline of a sketch region."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "line"
+            },
+            "start": {
+              "$ref": "#/$defs/Vec3"
+            },
+            "end": {
+              "$ref": "#/$defs/Vec3"
+            }
+          },
+          "required": ["kind", "start", "end"],
+          "additionalProperties": false,
+          "description": "A straight world line."
+        }
+      ]
+    },
+    "PatternDefinition": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "linear"
+            },
+            "direction": {
+              "$ref": "#/$defs/AxisRef"
+            },
+            "count": {
+              "type": "integer",
+              "minimum": 2,
+              "maximum": 200
+            },
+            "spacing": {
+              "type": "number"
+            }
+          },
+          "required": ["kind", "direction", "count", "spacing"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "circular"
+            },
+            "axis": {
+              "$ref": "#/$defs/AxisRef"
+            },
+            "count": {
+              "type": "integer",
+              "minimum": 2,
+              "maximum": 200
+            },
+            "angle": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 360
+            }
+          },
+          "required": ["kind", "axis", "count", "angle"],
+          "additionalProperties": false,
+          "description": "`angle` is the total angle in degrees; 360 spreads the instances evenly."
         }
       ]
     },
@@ -352,10 +715,15 @@
             "featureId": {
               "type": "string",
               "minLength": 1
+            },
+            "regionKey": {
+              "type": "string",
+              "minLength": 1
             }
           },
           "required": ["kind", "featureId"],
-          "additionalProperties": false
+          "additionalProperties": false,
+          "description": "One region of a sketch (`regionKey`), or every region."
         },
         {
           "type": "object",
@@ -377,22 +745,40 @@
   "featureKinds": {
     "sketch": {
       "label": "Sketch",
-      "summary": "Closed profiles on a construction plane or a planar body face (mm, sketch u/v).",
+      "summary": "Constrained 2D sketch on a construction plane or a planar body face (mm, sketch u/v): entities, constraints and driving dimensions, solved by planeGCS on every write. Profiles are the detected closed regions (sketches.list → regions). Input shorthand: `profiles: [SketchShape]` adds fully dimensioned rectangles/circles.",
       "params": {
         "type": "object",
         "properties": {
           "plane": {
             "$ref": "#/$defs/SketchPlane"
           },
+          "entities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/SketchEntity"
+            }
+          },
+          "constraints": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/SketchConstraint"
+            }
+          },
+          "dimensions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/SketchDimension"
+            }
+          },
           "profiles": {
             "type": "array",
             "items": {
-              "$ref": "#/$defs/SketchProfile"
+              "$ref": "#/$defs/SketchShape"
             },
-            "minItems": 1
+            "description": "Input-only shorthand, expanded into entities/constraints/dimensions."
           }
         },
-        "required": ["plane", "profiles"],
+        "required": ["plane"],
         "additionalProperties": false
       }
     },
@@ -587,6 +973,287 @@
         "required": ["data", "fileName"],
         "additionalProperties": false
       }
+    },
+    "revolve": {
+      "label": "Revolve",
+      "summary": "Revolves a profile about an axis (world axis, body edge or sketch line — e.g. a construction centre line); New/Join/Cut like Extrude. The axis must not cross the profile.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "profile": {
+            "$ref": "#/$defs/ExtrudeProfile"
+          },
+          "axis": {
+            "$ref": "#/$defs/AxisRef"
+          },
+          "angle": {
+            "type": "number",
+            "minimum": -360,
+            "maximum": 360,
+            "default": 360,
+            "description": "Degrees; 360 is a full revolution, negative turns the other way."
+          },
+          "operation": {
+            "enum": ["new", "join", "cut"],
+            "default": "new",
+            "description": "New body, or join/cut into `targetBodyId` (default: the most recently changed body)."
+          },
+          "targetBodyId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "resultBodyName": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": ["profile", "axis"],
+        "additionalProperties": false
+      }
+    },
+    "sweep": {
+      "label": "Sweep",
+      "summary": "Sweeps a profile (without holes) along a path (edge chain, sketch region outline or straight line); New/Join/Cut.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "profile": {
+            "$ref": "#/$defs/ExtrudeProfile"
+          },
+          "path": {
+            "$ref": "#/$defs/PathRef"
+          },
+          "operation": {
+            "enum": ["new", "join", "cut"],
+            "default": "new",
+            "description": "New body, or join/cut into `targetBodyId` (default: the most recently changed body)."
+          },
+          "targetBodyId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "resultBodyName": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": ["profile", "path"],
+        "additionalProperties": false
+      }
+    },
+    "loft": {
+      "label": "Loft",
+      "summary": "Lofts through two or more single profiles on different planes, in order; smooth or ruled; New/Join/Cut.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "profiles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/ExtrudeProfile"
+            },
+            "minItems": 2
+          },
+          "ruled": {
+            "type": "boolean",
+            "default": false
+          },
+          "operation": {
+            "enum": ["new", "join", "cut"],
+            "default": "new",
+            "description": "New body, or join/cut into `targetBodyId` (default: the most recently changed body)."
+          },
+          "targetBodyId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "resultBodyName": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": ["profiles"],
+        "additionalProperties": false
+      }
+    },
+    "mirror": {
+      "label": "Mirror",
+      "summary": "Mirrors bodies across a plane; with keepOriginal (default) the mirror images are new bodies.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "bodyIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
+          },
+          "plane": {
+            "$ref": "#/$defs/SketchPlane"
+          },
+          "keepOriginal": {
+            "type": "boolean",
+            "default": true
+          }
+        },
+        "required": ["bodyIds", "plane"],
+        "additionalProperties": false
+      }
+    },
+    "pattern": {
+      "label": "Pattern",
+      "summary": "Copies bodies in a linear or circular pattern (independent copies).",
+      "params": {
+        "type": "object",
+        "properties": {
+          "bodyIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
+          },
+          "pattern": {
+            "$ref": "#/$defs/PatternDefinition"
+          }
+        },
+        "required": ["bodyIds", "pattern"],
+        "additionalProperties": false
+      }
+    },
+    "split": {
+      "label": "Split",
+      "summary": "Splits a body by a plane into two bodies (the positive side becomes new).",
+      "params": {
+        "type": "object",
+        "properties": {
+          "bodyId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "plane": {
+            "$ref": "#/$defs/SketchPlane"
+          }
+        },
+        "required": ["bodyId", "plane"],
+        "additionalProperties": false
+      }
+    },
+    "transform": {
+      "label": "Move/Rotate",
+      "summary": "Rigid transform of a body: rotate rx, ry, rz degrees about world X, then Y, then Z through `pivot`, then translate (dx, dy, dz); `copy` makes a new body.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "bodyId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "dx": {
+            "type": "number"
+          },
+          "dy": {
+            "type": "number"
+          },
+          "dz": {
+            "type": "number"
+          },
+          "rx": {
+            "type": "number"
+          },
+          "ry": {
+            "type": "number"
+          },
+          "rz": {
+            "type": "number"
+          },
+          "pivot": {
+            "$ref": "#/$defs/Vec3"
+          },
+          "copy": {
+            "type": "boolean",
+            "default": false
+          }
+        },
+        "required": ["bodyId"],
+        "additionalProperties": false,
+        "description": "Missing components default to 0, the pivot to the world origin."
+      }
+    },
+    "align": {
+      "label": "Align",
+      "summary": "Moves a body so its planar `face` lies on the plane of `target` (a planar face of another body): face to face by default, same direction with flip; `offset` leaves a gap; `center` slides the face centres together.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "bodyId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "face": {
+            "$ref": "#/$defs/FaceInput"
+          },
+          "target": {
+            "$ref": "#/$defs/FaceInput"
+          },
+          "flip": {
+            "type": "boolean",
+            "default": false
+          },
+          "center": {
+            "type": "boolean",
+            "default": true
+          },
+          "offset": {
+            "type": "number",
+            "default": 0
+          }
+        },
+        "required": ["face", "target"],
+        "additionalProperties": false
+      }
+    },
+    "offsetFace": {
+      "label": "Offset Face",
+      "summary": "Offsets faces of one body along their normals: positive adds material, negative removes it (e.g. enlarges a hole).",
+      "params": {
+        "type": "object",
+        "properties": {
+          "faces": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/FaceInput"
+            },
+            "minItems": 1
+          },
+          "distance": {
+            "type": "number"
+          }
+        },
+        "required": ["faces", "distance"],
+        "additionalProperties": false
+      }
+    },
+    "deleteFace": {
+      "label": "Delete Face",
+      "summary": "Removes faces (holes, fillets, chamfers) of one body and heals it.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "faces": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/FaceInput"
+            },
+            "minItems": 1
+          }
+        },
+        "required": ["faces"],
+        "additionalProperties": false
+      }
     }
   },
   "methods": {
@@ -769,7 +1436,7 @@
     "sketches.list": {
       "kind": "query",
       "capability": "document.read",
-      "summary": "Sketches with their frame and profiles (parameters and world-space centres).",
+      "summary": "Sketches with frame, entities, constraints, dimensions and their detected profiles (regions with stable keys, the boundary entity ids and world-space centres).",
       "params": {
         "type": "object",
         "properties": {
@@ -782,7 +1449,7 @@
         "required": [],
         "additionalProperties": false
       },
-      "result": "[{featureId, name, plane, frame: {origin,u,v,normal}, profiles: [{index, kind, params, center}], consumed}]"
+      "result": "[{featureId, name, plane, frame: {origin,u,v,normal}, entities, constraints, dimensions, regions: [{key, area, sample, center, holes, entityIds}], consumed}]"
     },
     "selection.get": {
       "kind": "query",
@@ -951,7 +1618,7 @@
       "kind": "command",
       "capability": "document.write",
       "transactional": true,
-      "summary": "Adds a profile to an existing sketch.",
+      "summary": "Adds a fully dimensioned rectangle or circle (entities + constraints + dimensions) to a sketch and re-solves it.",
       "params": {
         "type": "object",
         "properties": {
@@ -960,7 +1627,7 @@
             "minLength": 1
           },
           "profile": {
-            "$ref": "#/$defs/SketchProfile"
+            "$ref": "#/$defs/SketchShape"
           },
           "expectedRevision": {
             "type": "integer",
@@ -971,13 +1638,13 @@
         "required": ["featureId", "profile"],
         "additionalProperties": false
       },
-      "result": "{featureId, profileIndex, revision, committed, errors}"
+      "result": "{featureId, shape: {kind, entityIds, dimensions: {role: name}}, dof, regions, revision, committed, errors}"
     },
-    "sketch.editProfile": {
+    "sketch.addPolyline": {
       "kind": "command",
       "capability": "document.write",
       "transactional": true,
-      "summary": "Replaces profile `index` of a sketch (its dimensions are its parameters).",
+      "summary": "Adds connected lines through `points` (closed: back to the first point). Axis-aligned segments get horizontal/vertical constraints unless autoConstrain is false; construction lines never bound a profile (use one as a revolve axis).",
       "params": {
         "type": "object",
         "properties": {
@@ -985,12 +1652,24 @@
             "type": "string",
             "minLength": 1
           },
-          "index": {
-            "type": "integer",
-            "minimum": 0
+          "points": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/Vec2"
+            },
+            "minItems": 2
           },
-          "profile": {
-            "$ref": "#/$defs/SketchProfile"
+          "closed": {
+            "type": "boolean",
+            "default": false
+          },
+          "construction": {
+            "type": "boolean",
+            "default": false
+          },
+          "autoConstrain": {
+            "type": "boolean",
+            "default": true
           },
           "expectedRevision": {
             "type": "integer",
@@ -998,16 +1677,16 @@
             "description": "Optimistic concurrency: the command fails with `conflict` unless the document revision still equals this value."
           }
         },
-        "required": ["featureId", "index", "profile"],
+        "required": ["featureId", "points"],
         "additionalProperties": false
       },
-      "result": "{featureId, profileIndex, revision, committed, errors}"
+      "result": "{featureId, pointIds, lineIds, dof, regions, revision, committed, errors}"
     },
-    "sketch.removeProfile": {
+    "sketch.addArc": {
       "kind": "command",
       "capability": "document.write",
       "transactional": true,
-      "summary": "Removes profile `index` of a sketch (a sketch keeps at least one profile).",
+      "summary": "Adds a counter-clockwise arc from `start` to `end` around `center`.",
       "params": {
         "type": "object",
         "properties": {
@@ -1015,9 +1694,18 @@
             "type": "string",
             "minLength": 1
           },
-          "index": {
-            "type": "integer",
-            "minimum": 0
+          "center": {
+            "$ref": "#/$defs/Vec2"
+          },
+          "start": {
+            "$ref": "#/$defs/Vec2"
+          },
+          "end": {
+            "$ref": "#/$defs/Vec2"
+          },
+          "construction": {
+            "type": "boolean",
+            "default": false
           },
           "expectedRevision": {
             "type": "integer",
@@ -1025,10 +1713,172 @@
             "description": "Optimistic concurrency: the command fails with `conflict` unless the document revision still equals this value."
           }
         },
-        "required": ["featureId", "index"],
+        "required": ["featureId", "center", "start", "end"],
         "additionalProperties": false
       },
-      "result": "{featureId, revision, committed, errors}"
+      "result": "{featureId, entityIds: [center, start, end, arc], dof, regions, revision, committed}"
+    },
+    "sketch.addConstraint": {
+      "kind": "command",
+      "capability": "document.write",
+      "transactional": true,
+      "summary": "Adds a geometric constraint (see $defs.SketchConstraint for the refs per kind) and re-solves; a conflicting or redundant constraint fails with sketchConflict.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "featureId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "kind": {
+            "$ref": "#/$defs/SketchConstraintKind"
+          },
+          "refs": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Optimistic concurrency: the command fails with `conflict` unless the document revision still equals this value."
+          }
+        },
+        "required": ["featureId", "kind", "refs"],
+        "additionalProperties": false
+      },
+      "result": "{featureId, constraintId, dof, regions, revision, committed}"
+    },
+    "sketch.addDimension": {
+      "kind": "command",
+      "capability": "document.write",
+      "transactional": true,
+      "summary": "Adds a driving dimension (value in mm / degrees, or an expression over other dimension names) and re-solves the sketch to it.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "featureId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "kind": {
+            "$ref": "#/$defs/SketchDimensionKind"
+          },
+          "refs": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
+          },
+          "value": {
+            "type": "number",
+            "minimum": 0
+          },
+          "expression": {
+            "type": "string",
+            "minLength": 1
+          },
+          "name": {
+            "type": "string",
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Optimistic concurrency: the command fails with `conflict` unless the document revision still equals this value."
+          }
+        },
+        "required": ["featureId", "kind", "refs"],
+        "additionalProperties": false,
+        "anyOf": [
+          {
+            "required": ["value"]
+          },
+          {
+            "required": ["expression"]
+          }
+        ]
+      },
+      "result": "{featureId, dimensionId, name, value, dof, regions, revision, committed}"
+    },
+    "sketch.setDimension": {
+      "kind": "command",
+      "capability": "document.write",
+      "transactional": true,
+      "summary": "Changes a dimension (by id or name, e.g. \"d3\") to a value or expression; the sketch re-solves and dependent features re-evaluate (the History-panel dimension edit).",
+      "params": {
+        "type": "object",
+        "properties": {
+          "featureId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "dimension": {
+            "type": "string",
+            "minLength": 1
+          },
+          "value": {
+            "type": "number",
+            "minimum": 0
+          },
+          "expression": {
+            "type": "string",
+            "minLength": 1
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Optimistic concurrency: the command fails with `conflict` unless the document revision still equals this value."
+          }
+        },
+        "required": ["featureId", "dimension"],
+        "additionalProperties": false,
+        "anyOf": [
+          {
+            "required": ["value"]
+          },
+          {
+            "required": ["expression"]
+          }
+        ]
+      },
+      "result": "{featureId, dimensionId, name, value, dof, regions, revision, committed, errors}"
+    },
+    "sketch.deleteItems": {
+      "kind": "command",
+      "capability": "document.write",
+      "transactional": true,
+      "summary": "Deletes entities, constraints or dimensions by id (curves take their unused points, constraints/dimensions on deleted geometry go with them).",
+      "params": {
+        "type": "object",
+        "properties": {
+          "featureId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Optimistic concurrency: the command fails with `conflict` unless the document revision still equals this value."
+          }
+        },
+        "required": ["featureId", "ids"],
+        "additionalProperties": false
+      },
+      "result": "{featureId, dof, regions, revision, committed, errors}"
     },
     "transaction.begin": {
       "kind": "command",
@@ -1317,6 +2167,6 @@
     }
   },
   "limits": {
-    "sketchEntities": "rectangle and circle profiles; lines/arcs/constraints await the sketch solver"
+    "sketchEntities": "points, lines, circles and arcs (no splines/ellipses/slots/text); constraints and driving dimensions solved by planeGCS; no reference (driven) dimensions"
   }
 }

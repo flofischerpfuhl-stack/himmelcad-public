@@ -7,8 +7,13 @@
  */
 import type { EvaluationResult } from '../kernel/types.js';
 import type { Feature } from '../model/document.js';
-import { ProjectFormatError, migrateAndValidate } from '../model/project/format.js';
+import {
+  CURRENT_SCHEMA_VERSION,
+  ProjectFormatError,
+  migrateAndValidate,
+} from '../model/project/format.js';
 import { ApiError } from './errors.js';
+import { addShape, type ShapeResult, type SketchShape } from './sketchApi.js';
 import { resolveEdgeInput, resolveFaceInput, fillSignatures } from './references.js';
 import { DEFS, FEATURE_KIND_SCHEMAS } from './schema.js';
 import { validateSchema, type JsonSchema } from './validate.js';
@@ -17,6 +22,37 @@ type Json = Record<string, unknown>;
 
 const SCHEMA_ROOT: JsonSchema = { $defs: DEFS };
 const RESERVED_FIELDS = ['id', 'name', 'kind', 'suppressed'];
+
+function isRecord(value: unknown): value is Json {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Expands the sketch input shorthand `profiles: [SketchShape]` into
+ * entities/constraints/dimensions (appended to the given ones, or to an
+ * empty sketch when `fresh`). Returns the params without `profiles`.
+ */
+function expandSketchShapes(
+  params: Json,
+  base: { entities: unknown[]; constraints: unknown[]; dimensions: unknown[] },
+  onShapes?: (shapes: ShapeResult[]) => void,
+): Json {
+  if (!Array.isArray(params.profiles)) return params;
+  const { profiles, ...rest } = params;
+  let sketch = {
+    entities: (rest.entities as unknown[] | undefined) ?? base.entities,
+    constraints: (rest.constraints as unknown[] | undefined) ?? base.constraints,
+    dimensions: (rest.dimensions as unknown[] | undefined) ?? base.dimensions,
+  } as Parameters<typeof addShape>[0];
+  const shapes: ShapeResult[] = [];
+  for (const shape of profiles as SketchShape[]) {
+    const added = addShape(sketch, shape);
+    sketch = added.sketch;
+    shapes.push(added.added);
+  }
+  onShapes?.(shapes);
+  return { ...rest, ...sketch };
+}
 
 /** The stored fields of a feature that the API exposes as `params`. */
 export function paramsOf(feature: Feature): Json {
@@ -30,7 +66,10 @@ export function paramsOf(feature: Feature): Json {
 /** Agent-friendly shorthands accepted on input (normalised before validation). */
 function preprocess(kind: string, params: Json): Json {
   const out = { ...params };
-  if (kind === 'sketch' && typeof out.plane === 'string') {
+  if (
+    (kind === 'sketch' || kind === 'mirror' || kind === 'split') &&
+    typeof out.plane === 'string'
+  ) {
     out.plane = { kind: 'plane', plane: out.plane, offset: 0 };
   }
   return out;
@@ -63,6 +102,37 @@ function normalise(
   features: readonly Feature[],
 ): Json {
   const out = { ...params };
+  /** A profile reference with its face selector (if any) resolved. */
+  const profileRef = (value: unknown, path: string): unknown => {
+    if (!isRecord(value) || value.kind !== 'face') return value;
+    return {
+      kind: 'face',
+      face: resolveFaceInput(value.face, evaluation, features, `${path}.face`, { single: true })[0],
+    };
+  };
+  const axisRef = (value: unknown, path: string): unknown => {
+    if (!isRecord(value) || value.kind !== 'edge') return value;
+    const edges = resolveEdgeInput(value.edge, evaluation, `${path}.edge`);
+    if (edges.length !== 1) {
+      throw new ApiError(
+        'referenceNotFound',
+        `${path}.edge: expected exactly one edge, got ${edges.length}`,
+        {
+          hint: 'Narrow the selector or pass an explicit {bodyId, key} from edges.list.',
+        },
+      );
+    }
+    return { kind: 'edge', edge: edges[0] };
+  };
+  const planeRef = (value: unknown, path: string): unknown => {
+    if (!isRecord(value)) return value;
+    if (value.kind === 'plane') return { offset: 0, ...value };
+    if (value.kind !== 'face') return value;
+    return {
+      kind: 'face',
+      face: resolveFaceInput(value.face, evaluation, features, `${path}.face`, { single: true })[0],
+    };
+  };
   switch (kind) {
     case 'sketch': {
       const plane = out.plane as Json | undefined;
@@ -77,18 +147,65 @@ function normalise(
       }
       return out;
     }
-    case 'extrude': {
-      const profile = out.profile as Json | undefined;
-      if (profile?.kind === 'face') {
-        out.profile = {
-          kind: 'face',
-          face: resolveFaceInput(profile.face, evaluation, features, 'params.profile.face', {
-            single: true,
-          })[0],
-        };
+    case 'extrude':
+      if (out.profile !== undefined) out.profile = profileRef(out.profile, 'params.profile');
+      return out;
+    case 'revolve':
+      if (out.profile !== undefined) out.profile = profileRef(out.profile, 'params.profile');
+      if (out.axis !== undefined) out.axis = axisRef(out.axis, 'params.axis');
+      return out;
+    case 'sweep': {
+      if (out.profile !== undefined) out.profile = profileRef(out.profile, 'params.profile');
+      const path = out.path as Json | undefined;
+      if (path?.kind === 'edges' && Array.isArray(path.edges)) {
+        const edges = path.edges.flatMap((edge, i) =>
+          resolveEdgeInput(edge, evaluation, `params.path.edges[${i}]`),
+        );
+        out.path = { kind: 'edges', edges };
+        dedupeByKey(out.path as Json, 'edges');
       }
       return out;
     }
+    case 'loft':
+      if (Array.isArray(out.profiles)) {
+        out.profiles = out.profiles.map((p, i) => profileRef(p, `params.profiles[${i}]`));
+      }
+      return out;
+    case 'mirror':
+    case 'split':
+      if (out.plane !== undefined) out.plane = planeRef(out.plane, 'params.plane');
+      return out;
+    case 'pattern': {
+      const pattern = out.pattern as Json | undefined;
+      if (pattern?.kind === 'linear' && pattern.direction !== undefined) {
+        out.pattern = {
+          ...pattern,
+          direction: axisRef(pattern.direction, 'params.pattern.direction'),
+        };
+      } else if (pattern?.kind === 'circular' && pattern.axis !== undefined) {
+        out.pattern = { ...pattern, axis: axisRef(pattern.axis, 'params.pattern.axis') };
+      }
+      return out;
+    }
+    case 'align':
+      for (const field of ['face', 'target'] as const) {
+        if (out[field] !== undefined) {
+          out[field] = resolveFaceInput(out[field], evaluation, features, `params.${field}`, {
+            single: true,
+          })[0];
+        }
+      }
+      if (out.bodyId === undefined && isRecord(out.face)) out.bodyId = out.face.bodyId;
+      return out;
+    case 'offsetFace':
+    case 'deleteFace':
+      if (Array.isArray(out.faces)) {
+        out.faces = out.faces.flatMap((face, i) =>
+          resolveFaceInput(face, evaluation, features, `params.faces[${i}]`, { single: false }),
+        );
+        dedupeByKey(out, 'faces');
+      }
+      return out;
     case 'fillet':
     case 'chamfer':
       if (Array.isArray(out.edges)) {
@@ -126,8 +243,22 @@ function dedupeByKey(params: Json, field: string): void {
 /** Kind-specific defaults for a new feature (applied under the caller's params). */
 function defaults(kind: string, params: Json): Json {
   switch (kind) {
+    case 'sketch':
+      return { entities: [], constraints: [], dimensions: [] };
     case 'extrude':
       return { symmetric: false, operation: 'new' };
+    case 'revolve':
+      return { angle: 360, operation: 'new' };
+    case 'sweep':
+      return { operation: 'new' };
+    case 'loft':
+      return { ruled: false, operation: 'new' };
+    case 'mirror':
+      return { keepOriginal: true };
+    case 'transform':
+      return { dx: 0, dy: 0, dz: 0, rx: 0, ry: 0, rz: 0, pivot: [0, 0, 0], copy: false };
+    case 'align':
+      return { flip: false, center: true, offset: 0 };
     case 'move':
       return { dx: 0, dy: 0, dz: 0 };
     case 'shell': {
@@ -142,7 +273,7 @@ function defaults(kind: string, params: Json): Json {
 /** Strict final check through the `.hcasm` validator (the persistence contract). */
 export function validateStored(feature: Feature): Feature {
   try {
-    const project = migrateAndValidate(1, {
+    const project = migrateAndValidate(CURRENT_SCHEMA_VERSION, {
       appVersion: 'agent-api',
       units: 'mm',
       projectName: 'validation',
@@ -171,10 +302,16 @@ export function buildNewFeature(input: {
   params: Json;
   evaluation: EvaluationResult;
   features: readonly Feature[];
+  /** Receives what the sketch `profiles` shorthand created. */
+  onShapes?: (shapes: ShapeResult[]) => void;
 }): Feature {
   const raw = preprocess(input.kind, input.params);
   checkSchema(input.kind, raw);
-  const resolved = normalise(input.kind, raw, input.evaluation, input.features);
+  const expanded =
+    input.kind === 'sketch'
+      ? expandSketchShapes(raw, { entities: [], constraints: [], dimensions: [] }, input.onShapes)
+      : raw;
+  const resolved = normalise(input.kind, expanded, input.evaluation, input.features);
   const feature = {
     id: input.id,
     name: input.name,
@@ -192,11 +329,17 @@ export function buildEditedFeature(input: {
   params: Json;
   evaluation: EvaluationResult;
   features: readonly Feature[];
+  onShapes?: (shapes: ShapeResult[]) => void;
 }): Feature {
   const kind = input.existing.kind;
   const patch = preprocess(kind, input.params);
   checkSchema(kind, { ...paramsOf(input.existing), ...patch });
-  const resolved = normalise(kind, patch, input.evaluation, input.features);
+  // Editing a sketch with the `profiles` shorthand replaces its geometry by those shapes.
+  const expanded =
+    kind === 'sketch'
+      ? expandSketchShapes(patch, { entities: [], constraints: [], dimensions: [] }, input.onShapes)
+      : patch;
+  const resolved = normalise(kind, expanded, input.evaluation, input.features);
   return validateStored({ ...input.existing, ...resolved } as Feature);
 }
 

@@ -27,7 +27,7 @@ import type { KernelAdapter } from '../kernel/adapter.js';
 import { exportAllBodiesStl, stlBufferForMeshes } from '../kernel/stlExport.js';
 import { buildThreeMf } from '../kernel/threeMf.js';
 import type { EvaluationResult } from '../kernel/types.js';
-import type { Feature, SketchFeature, SketchProfile } from '../model/document.js';
+import type { Feature, SketchFeature } from '../model/document.js';
 import { consumedSketchIds } from '../model/modeling.js';
 import { ProjectFormatError, loadProjectFile, saveProjectFile } from '../model/project/format.js';
 import type { AssemblerState, SelectionItem } from '../model/store.js';
@@ -40,6 +40,21 @@ import {
   selectFaces,
 } from './describe.js';
 import { ApiError } from './errors.js';
+import {
+  addArcShape,
+  addConstraint,
+  addDimension,
+  addPolylineShape,
+  addShape,
+  deleteSketchItems,
+  describeRegions,
+  findDimension,
+  setDimension,
+  sketchDataOf,
+  solveSketch,
+  type ShapeResult,
+  type SketchShape,
+} from './sketchApi.js';
 import {
   buildEditedFeature,
   buildNewFeature,
@@ -59,6 +74,12 @@ import {
   type Capability,
 } from './schema.js';
 import { validateSchema, type JsonSchema } from './validate.js';
+import type {
+  SketchConstraintKind,
+  SketchData,
+  SketchDimensionKind,
+  Vec2,
+} from '../sketch/types.js';
 
 type Json = Record<string, unknown>;
 
@@ -234,9 +255,13 @@ export class AgentSession {
           this.patchFeature(f, String(p.featureId), { name: String(p.name) }),
         );
       case 'sketch.addProfile':
-      case 'sketch.editProfile':
-      case 'sketch.removeProfile':
-        return this.write(method, (f) => this.editSketchProfiles(method, p, f));
+      case 'sketch.addPolyline':
+      case 'sketch.addArc':
+      case 'sketch.addConstraint':
+      case 'sketch.addDimension':
+      case 'sketch.setDimension':
+      case 'sketch.deleteItems':
+        return this.write(method, (f) => this.editSketch(method, p, f));
       case 'transaction.begin':
         return this.beginTransaction(p);
       case 'transaction.preview':
@@ -452,16 +477,13 @@ export class AgentSession {
           frame: evaluated?.frame ?? null,
           consumed: consumed.has(sketch.id),
           ...(evaluation.errors[sketch.id] ? { error: evaluation.errors[sketch.id] } : {}),
-          profiles: sketch.profiles.map((profile, index) => ({
-            index,
-            kind: profile.kind,
-            params: profile,
-            center: evaluated?.profiles[index]?.center ?? null,
-          })),
+          entities: sketch.entities,
+          constraints: sketch.constraints,
+          dimensions: sketch.dimensions,
+          regions: describeRegions(sketch, evaluated),
         };
       });
   }
-
   private setSelection(p: Json): Json {
     const items = p.items as SelectionItem[];
     const state = this.store.getState();
@@ -490,11 +512,14 @@ export class AgentSession {
    */
   private async write(
     method: string,
-    mutate: (features: Feature[], evaluation: EvaluationResult) => WriteOutcome,
+    mutate: (
+      features: Feature[],
+      evaluation: EvaluationResult,
+    ) => WriteOutcome | Promise<WriteOutcome>,
   ): Promise<Json> {
     if (this.tx) {
       const tx = this.tx;
-      const outcome = mutate(tx.staged, await this.stagedEvaluation());
+      const outcome = await mutate(tx.staged, await this.stagedEvaluation());
       const evaluation = await this.evaluate(outcome.features);
       this.assertNoFeatureErrors(outcome.touched, evaluation);
       tx.staged = outcome.features;
@@ -510,7 +535,7 @@ export class AgentSession {
     }
     this.ensureWritable();
     const base = this.store.getState().features;
-    const outcome = mutate(base, await this.committedEvaluation());
+    const outcome = await mutate(base, await this.committedEvaluation());
     const evaluation = await this.evaluate(outcome.features);
     this.assertNoFeatureErrors(outcome.touched, evaluation);
     this.commit(base, outcome.features, evaluation, outcome.selection);
@@ -566,13 +591,32 @@ export class AgentSession {
     return new Set(this.tx ? this.tx.staged.map((f) => f.id) : []);
   }
 
-  private createFeature(p: Json, features: Feature[], evaluation: EvaluationResult): WriteOutcome {
+  private async createFeature(
+    p: Json,
+    features: Feature[],
+    evaluation: EvaluationResult,
+  ): Promise<WriteOutcome> {
     const kind = String(p.kind);
     const params = isRecord(p.params) ? p.params : {};
     const id = this.store.getState().allocateFeatureId(idSegment(kind), this.reservedIds());
     const name =
       typeof p.name === 'string' ? p.name : nextFeatureName(featureLabel(kind, params), features);
-    const feature = buildNewFeature({ id, name, kind, params, evaluation, features });
+    const created: { shapes?: ShapeResult[] } = {};
+    let feature = buildNewFeature({
+      id,
+      name,
+      kind,
+      params,
+      evaluation,
+      features,
+      onShapes: (s) => (created.shapes = s),
+    });
+    let sketchInfo: Json = {};
+    if (feature.kind === 'sketch') {
+      const solved = await this.solved(feature, sketchDataOf(feature));
+      feature = solved.feature;
+      sketchInfo = { dof: solved.dof, ...(created.shapes ? { shapes: created.shapes } : {}) };
+    }
     const next = [...features, feature];
     const selection: SelectionItem[] =
       kind === 'sketch'
@@ -584,23 +628,49 @@ export class AgentSession {
       features: next,
       touched: [id],
       selection,
-      result: { featureId: id, name, kind },
+      result: { featureId: id, name, kind, ...sketchInfo },
     };
   }
 
-  private editFeature(p: Json, features: Feature[], evaluation: EvaluationResult): WriteOutcome {
+  private async editFeature(
+    p: Json,
+    features: Feature[],
+    evaluation: EvaluationResult,
+  ): Promise<WriteOutcome> {
     const existing = this.findFeature(features, String(p.featureId));
-    const edited = buildEditedFeature({
+    const params = isRecord(p.params) ? p.params : {};
+    const created: { shapes?: ShapeResult[] } = {};
+    let edited = buildEditedFeature({
       existing,
-      params: isRecord(p.params) ? p.params : {},
+      params,
       evaluation,
       features,
+      onShapes: (s) => (created.shapes = s),
     });
+    let sketchInfo: Json = {};
+    const geometryChanged = ['entities', 'constraints', 'dimensions', 'profiles'].some(
+      (key) => key in params,
+    );
+    if (edited.kind === 'sketch' && geometryChanged) {
+      const solved = await this.solved(edited, sketchDataOf(edited));
+      edited = solved.feature;
+      sketchInfo = { dof: solved.dof, ...(created.shapes ? { shapes: created.shapes } : {}) };
+    }
     return {
       features: features.map((f) => (f.id === existing.id ? edited : f)),
       touched: [existing.id],
-      result: { featureId: existing.id },
+      result: { featureId: existing.id, ...sketchInfo },
     };
+  }
+
+  /** Solves `data` for sketch `feature` and returns the stored (validated) solved feature. */
+  private async solved(
+    feature: SketchFeature,
+    data: SketchData,
+  ): Promise<{ feature: SketchFeature; dof: number }> {
+    const { sketch, dof } = await solveSketch(data);
+    const stored = validateStored({ ...feature, ...sketch }) as SketchFeature;
+    return { feature: stored, dof };
   }
 
   private deleteFeature(p: Json, features: Feature[]): WriteOutcome {
@@ -626,37 +696,87 @@ export class AgentSession {
     };
   }
 
-  private editSketchProfiles(method: string, p: Json, features: Feature[]): WriteOutcome {
+  /** The `sketch.*` commands: one edit of one sketch, re-solved, validated and committed as one step. */
+  private async editSketch(method: string, p: Json, features: Feature[]): Promise<WriteOutcome> {
     const existing = this.findFeature(features, String(p.featureId));
     if (existing.kind !== 'sketch') {
       throw new ApiError('invalidParams', `"${existing.name}" is a ${existing.kind}, not a sketch`);
     }
-    const profiles = [...existing.profiles];
-    const index = typeof p.index === 'number' ? p.index : profiles.length;
-    if (method !== 'sketch.addProfile' && !profiles[index]) {
-      throw new ApiError('notFound', `Sketch "${existing.name}" has no profile ${index}`, {
-        details: { profileCount: profiles.length },
-      });
-    }
-    if (method === 'sketch.addProfile') profiles.push(p.profile as SketchProfile);
-    else if (method === 'sketch.editProfile') profiles[index] = p.profile as SketchProfile;
-    else {
-      if (profiles.length === 1) {
-        throw new ApiError('invalidParams', 'A sketch keeps at least one profile', {
-          hint: 'Delete the sketch feature instead (feature.delete).',
-        });
+    const data = sketchDataOf(existing);
+    let next: SketchData;
+    let result: Json = {};
+    switch (method) {
+      case 'sketch.addProfile': {
+        const added = addShape(data, p.profile as SketchShape);
+        next = added.sketch;
+        result = { shape: added.added };
+        break;
       }
-      profiles.splice(index, 1);
+      case 'sketch.addPolyline': {
+        const added = addPolylineShape(data, p.points as Vec2[], {
+          closed: p.closed === true,
+          construction: p.construction === true,
+          autoConstrain: p.autoConstrain !== false,
+        });
+        next = added.sketch;
+        result = { pointIds: added.pointIds, lineIds: added.lineIds };
+        break;
+      }
+      case 'sketch.addArc': {
+        const added = addArcShape(
+          data,
+          p.center as Vec2,
+          p.start as Vec2,
+          p.end as Vec2,
+          p.construction === true,
+        );
+        next = added.sketch;
+        result = { entityIds: added.entityIds };
+        break;
+      }
+      case 'sketch.addConstraint': {
+        const added = addConstraint(data, p.kind as SketchConstraintKind, p.refs as string[]);
+        next = added.sketch;
+        result = { constraintId: added.constraintId };
+        break;
+      }
+      case 'sketch.addDimension': {
+        const added = addDimension(data, p.kind as SketchDimensionKind, p.refs as string[], {
+          ...(typeof p.value === 'number' ? { value: p.value } : {}),
+          ...(typeof p.expression === 'string' ? { expression: p.expression } : {}),
+          ...(typeof p.name === 'string' ? { name: p.name } : {}),
+        });
+        next = added.sketch;
+        result = { dimensionId: added.dimension.id, name: added.dimension.name };
+        break;
+      }
+      case 'sketch.setDimension': {
+        const dimension = findDimension(data, String(p.dimension));
+        next = setDimension(data, dimension.id, {
+          ...(typeof p.value === 'number' ? { value: p.value } : {}),
+          ...(typeof p.expression === 'string' ? { expression: p.expression } : {}),
+        });
+        result = { dimensionId: dimension.id, name: dimension.name };
+        break;
+      }
+      default:
+        next = deleteSketchItems(data, p.ids as string[]);
+        break;
     }
-    const edited = validateStored({ ...existing, profiles });
+    const solved = await this.solved(existing, next);
+    const dimensionId = result.dimensionId;
+    if (typeof dimensionId === 'string') {
+      result.value = solved.feature.dimensions.find((d) => d.id === dimensionId)?.value ?? null;
+    }
     return {
-      features: features.map((f) => (f.id === existing.id ? edited : f)),
+      features: features.map((f) => (f.id === existing.id ? solved.feature : f)),
       touched: [existing.id],
       result: {
         featureId: existing.id,
-        ...(method === 'sketch.removeProfile'
-          ? {}
-          : { profileIndex: method === 'sketch.addProfile' ? profiles.length - 1 : index }),
+        ...result,
+        dof: solved.dof,
+        // World-space centres come with the next evaluation (sketches.list).
+        regions: describeRegions(solved.feature, undefined),
       },
     };
   }

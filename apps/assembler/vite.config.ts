@@ -25,7 +25,12 @@ function kernelWorkerCsp(): Plugin {
     configureServer(server) {
       server.middlewares.use((req, res, next) => {
         const url = req.url ?? '';
-        if (/kernel\.worker|replicad[-_]opencascadejs|replicad_single/i.test(url)) {
+        // The sketch-solver worker and its planeGCS embind glue (`new Function`) need the same.
+        if (
+          /kernel\.worker|replicad[-_]opencascadejs|replicad_single|solver\.worker|planegcs/i.test(
+            url,
+          )
+        ) {
           res.setHeader('Content-Security-Policy', WORKER_CSP);
         }
         next();
@@ -46,6 +51,14 @@ export default defineConfig({
   // The CAD kernel worker is an ES module worker (see renderer/src/kernel/kernel.worker.ts).
   worker: {
     format: 'es',
+    rollupOptions: {
+      output: {
+        // The LGPL planeGCS glue + wrapper stay one separately replaceable
+        // chunk (`planegcs-<hash>.js`, next to `planegcs-<hash>.wasm`).
+        manualChunks: (id: string) =>
+          id.includes('@salusoft89/planegcs') ? 'planegcs' : undefined,
+      },
+    },
   },
   build: {
     outDir: '../dist/renderer',

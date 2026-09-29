@@ -7,7 +7,7 @@
  * style and the message.
  */
 import { AlertTriangle, ChevronDown, ChevronRight, MoreHorizontal } from 'lucide-react';
-import { Fragment, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import {
   Menu,
@@ -23,7 +23,9 @@ import { ExpressionField } from './ExpressionField.js';
 import { ModelingFeatureParams } from './FeatureParams.js';
 import { isModelingFeature } from '../model/features.js';
 import type { AssemblerState, FeaturePatch } from '../model/store.js';
-import type { ExtrudeOperation, Feature, SketchProfile } from '../model/document.js';
+import type { ExtrudeOperation, Feature } from '../model/document.js';
+import { useSketchStore } from '../sketch/session.js';
+import { SketchParams } from '../sketch/ui/SketchParams.js';
 import panelStyles from './Panel.module.css';
 import styles from './HistoryPanel.module.css';
 
@@ -137,6 +139,10 @@ function HistoryCard({
           state.select({ kind: 'feature', featureId: feature.id });
           onToggleExpanded();
         }}
+        onDoubleClick={() => {
+          // Double-clicking a sketch step opens it in sketch mode (Shapr3D).
+          if (feature.kind === 'sketch') useSketchStore.getState().begin({ featureId: feature.id });
+        }}
         onContextMenu={(event) => {
           event.preventDefault();
           onContextMenu(event.clientX, event.clientY);
@@ -233,76 +239,13 @@ function FeatureParams({
   const edit = (patch: FeaturePatch) => state.editFeatureParams(feature.id, patch);
 
   if (feature.kind === 'sketch') {
-    const setProfile = (index: number, profile: SketchProfile) =>
-      edit({ profiles: feature.profiles.map((p, i) => (i === index ? profile : p)) });
     return (
-      <div className={styles.params}>
-        {feature.profiles.map((profile, index) =>
-          profile.kind === 'rectangle' ? (
-            <Fragment key={index}>
-              <ExpressionField
-                label="Width"
-                value={profile.width}
-                unit="mm"
-                onCommit={(v) => setProfile(index, { ...profile, width: v })}
-              />
-              <ExpressionField
-                label="Height"
-                value={profile.height}
-                unit="mm"
-                onCommit={(v) => setProfile(index, { ...profile, height: v })}
-              />
-              <ExpressionField
-                label="X"
-                value={profile.x}
-                unit="mm"
-                onCommit={(v) => setProfile(index, { ...profile, x: v })}
-              />
-              <ExpressionField
-                label="Y"
-                value={profile.y}
-                unit="mm"
-                onCommit={(v) => setProfile(index, { ...profile, y: v })}
-              />
-            </Fragment>
-          ) : (
-            <Fragment key={index}>
-              <ExpressionField
-                label="Center X"
-                value={profile.cx}
-                unit="mm"
-                onCommit={(v) => setProfile(index, { ...profile, cx: v })}
-              />
-              <ExpressionField
-                label="Center Y"
-                value={profile.cy}
-                unit="mm"
-                onCommit={(v) => setProfile(index, { ...profile, cy: v })}
-              />
-              <div className={styles.paramsFull}>
-                <ExpressionField
-                  label="Diameter"
-                  value={profile.radius * 2}
-                  unit="mm"
-                  onCommit={(v) => setProfile(index, { ...profile, radius: v / 2 })}
-                />
-              </div>
-            </Fragment>
-          ),
-        )}
-        {feature.plane.kind === 'plane' ? (
-          <div className={styles.paramsFull}>
-            <ExpressionField
-              label="Plane offset"
-              value={feature.plane.offset}
-              unit="mm"
-              onCommit={(v) =>
-                feature.plane.kind === 'plane' && edit({ plane: { ...feature.plane, offset: v } })
-              }
-            />
-          </div>
-        ) : null}
-      </div>
+      <SketchParams
+        feature={feature}
+        state={state}
+        className={styles.params}
+        fullClassName={styles.paramsFull}
+      />
     );
   }
 

@@ -2,8 +2,8 @@
  * Solids built from profiles — Revolve, Sweep, Loft — with Extrude's
  * New/Join/Cut semantics. Faces are named from OCCT's own generation
  * history (`Generated(edge)` / `GeneratedFace(edge)`, first/last shapes):
- * `<feature>:side:<profile>:<segment>` for the face swept by a profile
- * segment, `:start:<p>` / `:end:<p>` for the caps; a face OCCT does not
+ * `<feature>:side:<p>:<entityId>` for the face swept by a boundary piece of
+ * sketch region `p` (the extrude naming; a face profile uses the edge index), `:start:<p>` / `:end:<p>` for the caps; a face OCCT does not
  * report falls back to the segment lying on its surface, else `:new`.
  */
 import * as R from 'replicad';
@@ -154,7 +154,7 @@ function sweepPath(kit: FeatureKit, ctx: ReplayContextLike, feature: SweepFeatur
     const [section] = profileSections(kit, ctx, {
       kind: 'sketch',
       featureId: path.featureId,
-      profileIndex: path.profileIndex,
+      regions: [path.region],
     });
     return outerWire(kit, section!.face);
   }

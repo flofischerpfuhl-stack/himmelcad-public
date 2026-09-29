@@ -10,13 +10,12 @@ import {
   frameForPlane,
   framePoint,
   MIN_FEATURE_SIZE_MM,
-  profileCenterUv,
-  profileOutlineUv,
   type ExtrudeOperation,
   type Feature,
   type SketchFeature,
   type Vec3,
 } from './document.js';
+import { detectRegions, loopPolygon } from '../sketch/regions.js';
 import { isModelingFeature, sketchIdsUsedBy } from './features.js';
 import type { SelectionItem } from './store.js';
 
@@ -44,14 +43,13 @@ const PLANE_TOLERANCE_MM = 1e-4;
 export function findSketchContact(
   evaluation: EvaluationResult,
   sketchFeatureId: string,
-  profileIndex?: number,
+  regions?: readonly string[],
 ): SketchContact | null {
   const sketch = evaluation.sketches.find((s) => s.featureId === sketchFeatureId);
   if (!sketch) return null;
-  const profiles =
-    profileIndex !== undefined
-      ? sketch.profiles.slice(profileIndex, profileIndex + 1)
-      : sketch.profiles;
+  const profiles = regions
+    ? sketch.profiles.filter((p) => regions.includes(p.key))
+    : sketch.profiles;
   const samples: Vec3[] = [];
   for (const profile of profiles) {
     samples.push(profile.center);
@@ -98,7 +96,7 @@ export function extrudeStartDepth(
   evaluation: EvaluationResult,
   features: readonly Feature[],
   sketchFeatureId: string,
-  profileIndex: number | undefined,
+  regionKeys: readonly string[] | undefined,
   contact: SketchContact,
 ): number | null {
   const sketch = features.find(
@@ -119,16 +117,18 @@ export function extrudeStartDepth(
           sketch.plane.face.signature.normal ?? face.normal,
           sketch.plane.face.signature.centroid,
         );
-  const profiles =
-    profileIndex !== undefined
-      ? sketch.profiles.slice(profileIndex, profileIndex + 1)
-      : sketch.profiles;
-  if (profiles.length === 0) return null;
+  // Regions straight from the sketch data (it may not be evaluated yet), like the kernel detects them.
+  const all = detectRegions(sketch);
+  const regions = regionKeys ? all.filter((r) => regionKeys.includes(r.key)) : all;
+  if (regions.length === 0) return null;
   const samples: Vec3[] = [];
-  for (const profile of profiles) {
-    const [cu, cv] = profileCenterUv(profile);
-    samples.push(framePoint(frame, cu, cv));
-    for (const [u, v] of profileOutlineUv(profile, 32)) samples.push(framePoint(frame, u, v));
+  for (const region of regions) {
+    samples.push(framePoint(frame, region.sample[0], region.sample[1]));
+    const outline = loopPolygon(region.outer);
+    const step = Math.max(1, Math.floor(outline.length / 32));
+    for (let i = 0; i < outline.length; i += step) {
+      samples.push(framePoint(frame, outline[i]![0], outline[i]![1]));
+    }
   }
   if (!samples.every((p) => faceContainsPoint(body, faceIndex, p))) return null;
   const into: Vec3 = [
@@ -136,10 +136,9 @@ export function extrudeStartDepth(
     -frame.normal[1] * contact.sign,
     -frame.normal[2] * contact.sign,
   ];
-  const depths = profiles.map((profile) => {
-    const [cu, cv] = profileCenterUv(profile);
-    return depthInsideBody(body, framePoint(frame, cu, cv), into);
-  });
+  const depths = regions.map((region) =>
+    depthInsideBody(body, framePoint(frame, region.sample[0], region.sample[1]), into),
+  );
   if (depths.some((d) => d === null)) return null;
   const depth = Math.max(...(depths as number[]));
   if (!(depth >= MIN_FEATURE_SIZE_MM)) return null;
