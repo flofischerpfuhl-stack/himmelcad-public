@@ -119,7 +119,7 @@ export interface EvaluatedSketch {
   /** Every curve (construction included) as a world polyline. */
   curves: {
     entityId: string;
-    kind: 'line' | 'circle' | 'arc';
+    kind: 'line' | 'circle' | 'arc' | 'ellipse' | 'ellipticArc' | 'spline' | 'text';
     construction: boolean;
     points: Vec3[];
   }[];

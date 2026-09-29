@@ -3,13 +3,17 @@
  * constraints valid for the current selection) and the constraints to add.
  * Pure; used by the sketch commands, the palette and tests.
  */
+import { splineTangentPoint } from './splineTangent.js';
 import {
+  curveEnds,
   curvePointIds,
   entityMap,
   isCurve,
+  isElliptic,
   isRound,
   type SketchConstraint,
   type SketchConstraintKind,
+  type SketchCurve,
   type SketchData,
   type SketchEntity,
 } from './types.js';
@@ -42,8 +46,22 @@ export const CONSTRAINT_INFO: readonly ConstraintInfo[] = [
   { kind: 'pointOnObject', label: 'Point on curve', shortcut: 'Shift+K', glyph: '⊙' },
 ];
 
+/** Constraints created by tools only (sketch patterns), not offered in the palette. */
+const TOOL_CONSTRAINT_INFO: readonly ConstraintInfo[] = [
+  { kind: 'translate', label: 'Linear pattern', shortcut: '', glyph: '⋯' },
+  { kind: 'rotate', label: 'Circular pattern', shortcut: '', glyph: '↻' },
+];
+
 export function constraintInfo(kind: SketchConstraintKind): ConstraintInfo {
-  return CONSTRAINT_INFO.find((c) => c.kind === kind)!;
+  return (
+    CONSTRAINT_INFO.find((c) => c.kind === kind) ??
+    TOOL_CONSTRAINT_INFO.find((c) => c.kind === kind) ?? {
+      kind,
+      label: kind,
+      shortcut: '',
+      glyph: '?',
+    }
+  );
 }
 
 /** Plans the constraint(s) of `kind` for the selected ids (entities only; constraints/dimensions ignored). */
@@ -53,9 +71,12 @@ export function planConstraint(
   selection: readonly string[],
 ): ConstraintPlan {
   const map = entityMap(sketch);
-  const selected = selection
-    .map((id) => map.get(id))
-    .filter((e): e is SketchEntity => e !== undefined);
+  const all = selection.map((id) => map.get(id)).filter((e): e is SketchEntity => e !== undefined);
+  // Text is positioned by its anchor point; only Lock applies to the text entity itself.
+  if (kind !== 'fixed' && all.some((e) => e.kind === 'text')) {
+    return { ok: false, reason: 'Constrain the text by its anchor point.' };
+  }
+  const selected = all;
   const points = selected.filter((e) => e.kind === 'point');
   const lines = selected.filter((e) => e.kind === 'line');
   const rounds = selected.filter((e) => isRound(e));
@@ -81,9 +102,46 @@ export function planConstraint(
       return only(2) && lines.length === 2
         ? one(lines.map((l) => l.id))
         : fail('Select two lines.');
-    case 'tangent':
-      if (only(2) && curves.length === 2 && rounds.length >= 1) return one(curves.map((c) => c.id));
-      return fail('Select a circle or arc and another curve.');
+    case 'tangent': {
+      if (!only(2) || curves.length !== 2) {
+        return fail(
+          'Select a circle or arc and another curve, or a spline and a curve sharing its end.',
+        );
+      }
+      const [a, b] = curves as [SketchCurve, SketchCurve];
+      const basic = new Set(['line', 'circle', 'arc']);
+      if (rounds.length >= 1 && basic.has(a.kind) && basic.has(b.kind)) return one([a.id, b.id]);
+      if (
+        (a.kind === 'ellipse' && b.kind === 'line') ||
+        (a.kind === 'line' && b.kind === 'ellipse')
+      ) {
+        return one([a.id, b.id]);
+      }
+      const spline = a.kind === 'spline' ? a : b.kind === 'spline' ? b : null;
+      if (spline) {
+        const other = spline === a ? b : a;
+        if (other.kind !== 'line' && other.kind !== 'arc' && other.kind !== 'spline') {
+          return fail('A spline can be tangent to a line, arc or spline sharing its end point.');
+        }
+        const ends: string[] = curveEnds(spline) ?? [];
+        const otherEnds: string[] = curveEnds(other) ?? [];
+        const shared = ends.find((p) => otherEnds.includes(p));
+        if (!shared)
+          return fail(
+            'The spline and the curve must share an end point (make them coincident first).',
+          );
+        if (!splineTangentPoint(spline, shared)) {
+          return fail('This spline end has no tangent handle.');
+        }
+        if (other.kind === 'spline' && !splineTangentPoint(other, shared)) {
+          return fail('This spline end has no tangent handle.');
+        }
+        return one([a.id, b.id]);
+      }
+      return fail(
+        'Select a circle or arc and another curve, or a spline and a curve sharing its end.',
+      );
+    }
     case 'equal':
       if (only(2) && lines.length === 2) return one(lines.map((l) => l.id));
       if (only(2) && rounds.length === 2) return one(rounds.map((r) => r.id));
@@ -125,13 +183,24 @@ export function planConstraint(
       }
       if (only(3) && points.length === 3) return one(points.map((p) => p.id));
       return fail('Select two points and a line (or a centre point).');
-    case 'concentric':
-      return only(2) && rounds.length === 2
-        ? one(rounds.map((r) => r.id))
-        : fail('Select two circles or arcs.');
-    case 'pointOnObject':
-      return only(2) && points.length === 1 && curves.length === 1
-        ? one([points[0]!.id, curves[0]!.id])
-        : fail('Select a point and a curve.');
+    case 'concentric': {
+      const centred = selected.filter((e) => isRound(e) || isElliptic(e));
+      return only(2) && centred.length === 2
+        ? one(centred.map((r) => r.id))
+        : fail('Select two circles, arcs or ellipses.');
+    }
+    case 'pointOnObject': {
+      const target = curves[0];
+      if (!(only(2) && points.length === 1 && curves.length === 1)) {
+        return fail('Select a point and a curve.');
+      }
+      if (target!.kind === 'spline' || target!.kind === 'text') {
+        return fail('Points can be placed on lines, circles, arcs and ellipses.');
+      }
+      return one([points[0]!.id, target!.id]);
+    }
+    case 'translate':
+    case 'rotate':
+      return fail('Created by the sketch Pattern tool.');
   }
 }

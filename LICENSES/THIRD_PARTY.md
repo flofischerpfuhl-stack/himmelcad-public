@@ -43,6 +43,9 @@ entry below explicitly says they are used in the product build.
 
 | `replicad` | `1.1.0` | MIT | https://replicad.xyz | Assembler CAD-kernel worker: B-rep modelling API over OCCT (bundled into the worker chunk). Transitives `flatbush` 4.6.2 (ISC), `flatqueue` 3.1.0 (ISC), `opentype.js` 1.3.4 (MIT), `tiny-inflate` 1.0.3 (MIT), `string.prototype.codepointat` 0.2.1 (MIT). |
 
+| `opentype.js` | `1.3.4` | MIT | https://github.com/opentypejs/opentype.js | Assembler sketch text (direct dependency since 2026-09-30): parses the bundled font to turn typed text into glyph outlines (`renderer/src/sketch/text/fonts.ts`), in the renderer and the headless CLI. Transitives `tiny-inflate` 1.0.3 (MIT, WOFF decompression), `string.prototype.codepointat` 0.2.1 (MIT). |
+| `@fontsource/inter` | `5.3.0` | OFL-1.1 | https://fontsource.org/fonts/inter (upstream https://github.com/rsms/inter) | Assembler sketch text font: only `files/inter-latin-400-normal.woff` (Inter 4.001, Latin subset, OS/2 `fsType` 0 = installable embedding) is bundled as an asset and parsed at runtime. SIL OFL 1.1 permits bundling and embedding with software; the font is shipped unmodified and never sold on its own; its license text ships in `renderer/public/licenses/Inter-OFL.txt`. Checked 2026-09-30 from the package's `LICENSE` and the font's name table. The theme's `Kamikaze` display fonts are **not** used for sketch text: their license is not recorded here, so they are not cleared for embedding into user geometry. |
+
 (The full production Node tree is enumerated by `pnpm licenses list --prod`
 and gated in CI by `node scripts/check-licenses.mjs --pnpm`. The list above
 covers the load-bearing runtime entries.)

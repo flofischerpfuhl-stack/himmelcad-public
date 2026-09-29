@@ -4,6 +4,7 @@
  * references that resolve. Geometric consistency (whether the constraints
  * can be satisfied) is the solver's job, not this validator's.
  */
+import { splineDegree, validKnots } from './spline.js';
 import { ORIGIN_ID, type SketchConstraintKind, type SketchDimensionKind } from './types.js';
 
 const CONSTRAINT_KINDS: readonly SketchConstraintKind[] = [
@@ -19,6 +20,8 @@ const CONSTRAINT_KINDS: readonly SketchConstraintKind[] = [
   'symmetric',
   'concentric',
   'pointOnObject',
+  'translate',
+  'rotate',
 ];
 
 const DIMENSION_KINDS: readonly SketchDimensionKind[] = [
@@ -75,6 +78,10 @@ export function validateSketchData(raw: Raw): SketchValidationError | null {
       line: [],
       circle: ['radius'],
       arc: [],
+      ellipse: [],
+      ellipticArc: [],
+      spline: [],
+      text: ['height', 'angle'],
     };
     const numeric = fields[e.kind as string];
     if (!numeric)
@@ -85,6 +92,40 @@ export function validateSketchData(raw: Raw): SketchValidationError | null {
     if (e.kind === 'circle' && !((e.radius as number) > 0)) {
       return { path: `${path}.radius`, message: 'expected a positive number' };
     }
+    if (e.kind === 'text') {
+      if (!((e.height as number) > 0)) {
+        return { path: `${path}.height`, message: 'expected a positive number' };
+      }
+      for (const field of ['text', 'font', 'outline']) {
+        if (!isString(e[field])) return { path: `${path}.${field}`, message: 'expected a string' };
+      }
+    }
+    if (e.kind === 'spline') {
+      if (e.mode !== 'control' && e.mode !== 'fit') {
+        return { path: `${path}.mode`, message: 'expected "control" or "fit"' };
+      }
+      if (!Array.isArray(e.points) || e.points.length < 2) {
+        return { path: `${path}.points`, message: 'expected at least two point ids' };
+      }
+      if (e.degree !== undefined && !(Number.isInteger(e.degree) && (e.degree as number) >= 1)) {
+        return { path: `${path}.degree`, message: 'expected a positive integer' };
+      }
+      if (e.knots !== undefined) {
+        const n = e.points.length;
+        const p = splineDegree(n, (e.degree as number | undefined) ?? 3);
+        if (!Array.isArray(e.knots) || !e.knots.every(isNumber) || !validKnots(e.knots, n, p)) {
+          return { path: `${path}.knots`, message: 'expected a clamped knot vector' };
+        }
+      }
+      if (
+        e.handles !== undefined &&
+        (!Array.isArray(e.handles) ||
+          e.handles.length !== 2 ||
+          !e.handles.every((h) => h === null || isString(h)))
+      ) {
+        return { path: `${path}.handles`, message: 'expected [point id | null, point id | null]' };
+      }
+    }
     kinds.set(e.id, e.kind as string);
   }
   for (const [i, e] of (entities as Raw[]).entries()) {
@@ -93,11 +134,24 @@ export function validateSketchData(raw: Raw): SketchValidationError | null {
       line: ['a', 'b'],
       circle: ['center'],
       arc: ['center', 'start', 'end'],
+      ellipse: ['center', 'major', 'minor'],
+      ellipticArc: ['center', 'major', 'minor', 'start', 'end'],
+      spline: [],
+      text: ['anchor'],
     };
     for (const field of refs[e.kind as string] ?? []) {
       const ref = e[field];
       if (!isString(ref) || kinds.get(ref) !== 'point') {
         return { path: `entities[${i}].${field}`, message: 'expected the id of a point entity' };
+      }
+    }
+    if (e.kind === 'spline') {
+      const ids = [...(e.points as unknown[]), ...((e.handles as unknown[] | undefined) ?? [])];
+      for (const ref of ids) {
+        if (ref === null) continue;
+        if (!isString(ref) || kinds.get(ref) !== 'point') {
+          return { path: `entities[${i}].points`, message: 'expected ids of point entities' };
+        }
       }
     }
   }
@@ -115,6 +169,12 @@ export function validateSketchData(raw: Raw): SketchValidationError | null {
     }
     if (!Array.isArray(c.refs) || c.refs.length === 0 || !c.refs.every(refOk)) {
       return { path: `${path}.refs`, message: 'expected ids of entities of this sketch' };
+    }
+    if (c.value !== undefined && !isNumber(c.value)) {
+      return { path: `${path}.value`, message: 'expected a number' };
+    }
+    if (c.kind === 'rotate' && !isNumber(c.value)) {
+      return { path: `${path}.value`, message: 'expected the rotation angle in degrees' };
     }
   }
   const names = new Set<string>();
@@ -144,6 +204,61 @@ export function validateSketchData(raw: Raw): SketchValidationError | null {
     }
     if (d.offset !== undefined && !isNumber(d.offset)) {
       return { path: `${path}.offset`, message: 'expected a number' };
+    }
+    if (d.along !== undefined && !isNumber(d.along)) {
+      return { path: `${path}.along`, message: 'expected a number' };
+    }
+    if (d.driven !== undefined && typeof d.driven !== 'boolean') {
+      return { path: `${path}.driven`, message: 'expected a boolean' };
+    }
+  }
+  const projections = raw.projections;
+  if (projections !== undefined) {
+    if (!Array.isArray(projections)) return { path: 'projections', message: 'expected an array' };
+    for (const [i, p] of projections.entries()) {
+      const path = `projections[${i}]`;
+      if (!isRecord(p)) return { path, message: 'expected an object' };
+      if (!isString(p.id) || p.id === '') {
+        return { path: `${path}.id`, message: 'expected a non-empty string' };
+      }
+      if (ids.has(p.id)) return { path: `${path}.id`, message: `duplicate id "${p.id}"` };
+      ids.add(p.id);
+      const source = p.source;
+      if (
+        !isRecord(source) ||
+        (source.kind !== 'edge' && source.kind !== 'face') ||
+        !isRecord(source.ref) ||
+        !isString(source.ref.bodyId) ||
+        !isString(source.ref.key) ||
+        !isRecord(source.ref.signature)
+      ) {
+        return { path: `${path}.source`, message: 'expected an edge or face reference' };
+      }
+      if (
+        !Array.isArray(p.entities) ||
+        !p.entities.every((id) => isString(id) && kinds.has(id) && kinds.get(id) !== 'point')
+      ) {
+        return { path: `${path}.entities`, message: 'expected ids of curve entities' };
+      }
+    }
+  }
+  const memory = raw.regionMemory;
+  if (memory !== undefined) {
+    if (!Array.isArray(memory)) return { path: 'regionMemory', message: 'expected an array' };
+    for (const [i, m] of memory.entries()) {
+      if (
+        !isRecord(m) ||
+        !isString(m.key) ||
+        !isNumber(m.area) ||
+        !Array.isArray(m.sample) ||
+        m.sample.length !== 2 ||
+        !m.sample.every(isNumber) ||
+        !Array.isArray(m.box) ||
+        m.box.length !== 4 ||
+        !m.box.every(isNumber)
+      ) {
+        return { path: `regionMemory[${i}]`, message: 'expected { key, sample, area, box }' };
+      }
     }
   }
   return null;

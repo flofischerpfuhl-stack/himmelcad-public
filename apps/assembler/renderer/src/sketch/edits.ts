@@ -13,16 +13,21 @@ import {
   dist,
   entityCurve,
   intersectCurves,
+  isClosedCurve,
   isFullCircle,
   normalize,
   paramOf,
   pointAt,
+  reverseCurve,
   scale,
   sketchCurves,
   sub,
+  subCurve,
   type Curve2,
 } from './geometry.js';
+import { beziersToBspline } from './spline.js';
 import {
+  curveEnds,
   curvePointIds,
   entityMap,
   idAllocator,
@@ -224,14 +229,17 @@ export function toggleConstruction(sketch: SketchData, ids: readonly string[]): 
 export function trimAt(sketch: SketchData, curveId: string, at: Vec2): EditResult | null {
   const map = entityMap(sketch);
   const entity = map.get(curveId);
-  if (!isCurve(entity)) return null;
+  if (!isCurve(entity) || entity.kind === 'text') return null;
   const curve = entityCurve(map, entity);
   if (!curve) return null;
   const cuts: { t: number; point: Vec2; by: string }[] = [];
-  for (const other of sketchCurves(sketch, { includeConstruction: true })) {
+  for (const other of sketchCurves(sketch, { includeConstruction: true, includeText: false })) {
     if (other.id === curveId) continue;
     for (const hit of intersectCurves(curve, other.curve))
       cuts.push({ t: hit.t1, point: hit.point, by: other.id });
+  }
+  if (entity.kind === 'ellipse' || entity.kind === 'ellipticArc' || entity.kind === 'spline') {
+    return trimGeneric(sketch, entity, curve, cuts, at);
   }
   const full = isFullCircle(curve);
   const inner = cuts
@@ -281,7 +289,7 @@ export function trimAt(sketch: SketchData, curveId: string, at: Vec2): EditResul
 
   const before = [...inner].reverse().find((c) => c.t < t);
   const after = inner.find((c) => c.t > t);
-  if (entity.kind === 'circle') return null;
+  if (entity.kind !== 'line' && entity.kind !== 'arc') return null;
   const last = entity.kind === 'line' ? entity.b : entity.end;
   const replace = (patch: Partial<SketchEntity>) => {
     b.entities = b.entities.map((e) =>
@@ -309,6 +317,100 @@ export function trimAt(sketch: SketchData, curveId: string, at: Vec2): EditResul
   return b.result();
 }
 
+/** A point at a trim cut: an existing point there, else a new one attached to the cutter and the curve. */
+function cutPointFor(b: SketchBuilder, curveId: string, cut: { point: Vec2; by: string }): string {
+  for (const e of b.entities) {
+    if (e.kind === 'point' && dist([e.x, e.y], cut.point) < 1e-6) return e.id;
+  }
+  const id = b.addPoint(cut.point);
+  // Text glyph contours (`t1.3`) are not constraint targets.
+  if (!cut.by.includes('.')) b.constrain('pointOnObject', [id, cut.by], true);
+  const target = b.entities.find((e) => e.id === curveId);
+  if (target?.kind !== 'spline') b.constrain('pointOnObject', [id, curveId], true);
+  return id;
+}
+
+/**
+ * Trim of ellipses, elliptical arcs and splines: the kept parameter ranges
+ * become elliptical arcs on the same axis points, or control-point splines
+ * (exact: the kept Bézier pieces as a degree-3 spline with triple knots).
+ */
+function trimGeneric(
+  sketch: SketchData,
+  entity: Extract<SketchEntity, { kind: 'ellipse' | 'ellipticArc' | 'spline' }>,
+  curve: Curve2,
+  cuts: { t: number; point: Vec2; by: string }[],
+  at: Vec2,
+): EditResult | null {
+  const closed = isClosedCurve(curve);
+  const inner = cuts
+    .filter((c) => closed || (c.t > 1e-9 && c.t < 1 - 1e-9))
+    .sort((a, b) => a.t - b.t)
+    .filter((c, i, list) => i === 0 || c.t - list[i - 1]!.t > 1e-9);
+  if (inner.length === 0 || (closed && inner.length < 2)) {
+    return { sketch: deleteItems(sketch, [entity.id]), optional: [] };
+  }
+  const t = closestOnCurve(curve, at).t;
+  const b = new SketchBuilder(sketch);
+  const ends = curveEnds(entity);
+  const ranges: { t0: number; t1: number; start: string; end: string }[] = [];
+  if (closed) {
+    let k = inner.findIndex((c) => c.t > t);
+    if (k < 0) k = 0;
+    const startCut = inner[k]!;
+    const endCut = inner[(k - 1 + inner.length) % inner.length]!;
+    const t1 = endCut.t <= startCut.t ? endCut.t + 1 : endCut.t;
+    ranges.push({
+      t0: startCut.t,
+      t1,
+      start: cutPointFor(b, entity.id, startCut),
+      end: cutPointFor(b, entity.id, endCut),
+    });
+  } else {
+    const before = [...inner].reverse().find((c) => c.t < t);
+    const after = inner.find((c) => c.t > t);
+    if (!ends) return null;
+    if (before)
+      ranges.push({ t0: 0, t1: before.t, start: ends[0], end: cutPointFor(b, entity.id, before) });
+    if (after)
+      ranges.push({ t0: after.t, t1: 1, start: cutPointFor(b, entity.id, after), end: ends[1] });
+  }
+  if (ranges.length === 0) return { sketch: deleteItems(sketch, [entity.id]), optional: [] };
+  const construction = entity.construction === true;
+  const pieces: SketchEntity[] = ranges.map((range, i) => {
+    const id = i === 0 ? entity.id : b.id(entity.kind === 'spline' ? 's' : 'ea');
+    if (entity.kind === 'spline') {
+      const part = subCurve(curve, range.t0, range.t1);
+      const segs = part.kind === 'bezier' ? part.segs : [];
+      const { poles, knots, degree } = beziersToBspline(segs);
+      const points = poles.map((p, k) =>
+        k === 0 ? range.start : k === poles.length - 1 ? range.end : b.addPoint(p),
+      );
+      return {
+        id,
+        kind: 'spline',
+        mode: 'control',
+        points,
+        degree,
+        knots,
+        ...(construction ? { construction } : {}),
+      };
+    }
+    return {
+      id,
+      kind: 'ellipticArc',
+      center: entity.center,
+      major: entity.major,
+      minor: entity.minor,
+      start: range.start,
+      end: range.end,
+      ...(construction ? { construction } : {}),
+    };
+  });
+  b.entities = b.entities.flatMap((e) => (e.id === entity.id ? pieces : [e]));
+  return b.result();
+}
+
 // ---- offset ----------------------------------------------------------------------------
 
 /**
@@ -322,7 +424,7 @@ export function curveChain(
 ): { id: string; reversed: boolean }[] {
   const map = entityMap(sketch);
   const start = map.get(curveId);
-  if (!isCurve(start) || start.kind === 'circle')
+  if (!isCurve(start) || (start.kind !== 'line' && start.kind !== 'arc'))
     return isCurve(start) ? [{ id: curveId, reversed: false }] : [];
   const ends = (e: SketchEntity): [string, string] | null =>
     e.kind === 'line' ? [e.a, e.b] : e.kind === 'arc' ? [e.start, e.end] : null;
@@ -361,6 +463,7 @@ function offsetCurve(curve: Curve2, d: number): Curve2 | null {
     const n: Vec2 = [-dir[1], dir[0]];
     return { kind: 'line', a: add(curve.a, scale(n, d)), b: add(curve.b, scale(n, d)) };
   }
+  if (curve.kind !== 'arc') return null;
   // Left of a counter-clockwise arc points to the centre.
   const r = curve.r - Math.sign(curve.sweep || 1) * d;
   if (r <= 1e-9) return null;
@@ -434,7 +537,7 @@ export function offsetChain(
     const a = pointIds[i]!;
     const b = pointIds[i + 1]!;
     if (c.kind === 'line') created.push(builder.addLine(a, b));
-    else {
+    else if (c.kind === 'arc') {
       const center = builder.addPoint(c.c);
       created.push(c.sweep >= 0 ? builder.addArc(center, a, b) : builder.addArc(center, b, a));
     }
@@ -454,8 +557,7 @@ function isChainClosed(sketch: SketchData, chain: { id: string; reversed: boolea
 }
 
 function reverseOf(curve: Curve2): Curve2 {
-  if (curve.kind === 'line') return { kind: 'line', a: curve.b, b: curve.a };
-  return { ...curve, a0: curve.a0 + curve.sweep, sweep: -curve.sweep };
+  return reverseCurve(curve);
 }
 
 /** Signed offset distance for a cursor position relative to the clicked curve (left of its direction = positive). */
@@ -469,6 +571,7 @@ export function offsetSide(sketch: SketchData, curveId: string, cursor: Vec2): n
     const dir = normalize(sub(curve.b, curve.a));
     return cross(dir, sub(cursor, curve.a));
   }
+  if (curve.kind !== 'arc') return 0;
   // Arcs/circles (counter-clockwise): left = towards the centre.
   return curve.r - dist(cursor, curve.c);
 }
