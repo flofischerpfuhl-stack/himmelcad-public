@@ -3,7 +3,10 @@
 Stand: Phase 0 in progress (2026-09-29). **Planungsdokument, keine
 Implementierungszusage oder Behauptung fertiger Funktionen.** Die
 Produktgrenze steht jetzt in [ADR 0033](../docs/adr/0033-assembler-product-boundary.md);
-die gepinnte Fork-Basis steht in [FORK-BASE.md](FORK-BASE.md).
+die gepinnte Fork-Basis steht in [FORK-BASE.md](FORK-BASE.md). Der
+Phase-1-Kernel-Durchstich (OCCT als WebAssembly, Messwerte, Referenzschema)
+ist in [KERNEL-SPIKE.md](KERNEL-SPIKE.md) festgehalten — Durchstich-Evidenz,
+keine endgültige Architekturentscheidung.
 
 **Zuerst [OWNER-INTENT.md](OWNER-INTENT.md) lesen:** Dort stehen Florians
 Originalintention, Bedingungen und Vorschläge mit Originalaussagen und Status.
