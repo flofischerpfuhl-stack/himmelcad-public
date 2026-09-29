@@ -21,6 +21,7 @@ import { COMMANDS } from '../model/commands/registry.js';
 import { onCloseRequested } from '../model/project/persistence.js';
 import { useProjectStore } from '../model/project/projectStore.js';
 import { CommandGroupMenu } from './CommandGroupMenu.js';
+import { RecentFilesMenu } from './RecentFilesMenu.js';
 import type { AssemblerState } from '../model/store.js';
 import styles from './TopBar.module.css';
 
@@ -102,6 +103,7 @@ export function TopBar({ state }: { state: AssemblerState }): JSX.Element {
           getState={() => state}
           trigger="File"
           triggerClassName={styles.menuTrigger}
+          extraItems={<RecentFilesMenu />}
         />
         <CommandGroupMenu
           label="Edit"
@@ -163,6 +165,28 @@ export function TopBar({ state }: { state: AssemblerState }): JSX.Element {
           </button>
           <button type="button" onClick={() => void useProjectStore.getState().saveThenProceed()}>
             Save
+          </button>
+        </div>
+      </Dialog>
+
+      <Dialog
+        open={project.unitHintOffer !== null}
+        onClose={() => useProjectStore.getState().resolveUnitHint(false)}
+        title="Check the imported mesh's units"
+      >
+        <p>
+          {project.unitHintOffer
+            ? `This STL's bounding box looks like it may be in ${
+                project.unitHintOffer.hint === 'm' ? 'metres' : 'inches'
+              } rather than millimetres. Rescale it to millimetres (×${project.unitHintOffer.scaleToMm}), or keep the coordinates as imported?`
+            : ''}
+        </p>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
+          <button type="button" onClick={() => useProjectStore.getState().resolveUnitHint(false)}>
+            Keep as imported
+          </button>
+          <button type="button" onClick={() => useProjectStore.getState().resolveUnitHint(true)}>
+            Rescale to millimetres
           </button>
         </div>
       </Dialog>

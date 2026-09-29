@@ -28,6 +28,12 @@ const api: AssemblerApi = {
     },
     respondClose: (allow: boolean) => ipcRenderer.invoke('assembler:project:respondClose', allow),
   },
+  recentFiles: {
+    list: () => ipcRenderer.invoke('assembler:recentFiles:list'),
+    remove: (path: string) => ipcRenderer.invoke('assembler:recentFiles:remove', path),
+    openPath: (path: string) => ipcRenderer.invoke('assembler:recentFiles:openPath', path),
+    locate: (oldPath: string) => ipcRenderer.invoke('assembler:recentFiles:locate', oldPath),
+  },
   automation: {
     status: () => ipcRenderer.invoke('assembler:automation:status'),
     setEnabled: (enabled: boolean) =>
