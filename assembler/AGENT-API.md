@@ -263,6 +263,21 @@ in the production app). The tasks still model the pipe adapter as stacked
 extrusions and the phone stand's rest upright, so the numbers stay comparable;
 both are now expressible with a revolve and a sketch polyline.
 
+Re-run 2026-09-30 after the perf, selection and packaging merges (same host
+and scripts; outputs in `D:\AgentWork\HimmelCAD-Assembler\bench-j`; "In app" =
+`agentAccess.test.ts` with `ASSEMBLER_BENCH_DIR` on these schema-2 files).
+Same command counts and volumes; the pipe adapter's and cable clip's STL/3MF
+are larger because the kernel now tessellates per face (curved faces get their
+own density); times indicative only:
+
+| Task               | Commands (queries) | Valid | BBox | Volume mm³ (expected)                | 3MF / STL bytes | Reopen | Edit + undo | In app | Time s |
+| ------------------ | ------------------ | ----- | ---- | ------------------------------------ | --------------- | ------ | ----------- | ------ | ------ |
+| enclosure-with-lid | 11 (5)             | yes   | ok   | 13367.6 (13367.6); 10702.3 (10702.3) | 163297 / 70084  | yes    | yes         | yes    | 3.25   |
+| bracket-with-slot  | 14 (5)             | yes   | ok   | 20429.0 (20429.0)                    | 150395 / 65084  | yes    | yes         | yes    | 3.29   |
+| pipe-adapter       | 11 (5)             | yes   | ok   | 5814.0 (5814.0)                      | 232793 / 101984 | yes    | yes         | yes    | 2.67   |
+| phone-stand        | 11 (3)             | yes   | ok   | 91143.7 (91143.7)                    | 25957 / 11084   | yes    | yes         | yes    | 2.85   |
+| cable-clip         | 13 (4)             | yes   | ok   | 1337.6 (1337.6)                      | 166747 / 71284  | yes    | yes         | yes    | 3.14   |
+
 Repair rounds (the scripts were written by the implementing agent against the
 API, then run): 3 of 5 passed first time; 2 needed one fix each, both in the
 script, not the API. Phone stand: `.one()` failed because the lip front and
