@@ -28,6 +28,18 @@ const api: AssemblerApi = {
     },
     respondClose: (allow: boolean) => ipcRenderer.invoke('assembler:project:respondClose', allow),
   },
+  automation: {
+    status: () => ipcRenderer.invoke('assembler:automation:status'),
+    setEnabled: (enabled: boolean) =>
+      ipcRenderer.invoke('assembler:automation:setEnabled', enabled),
+    onRequest: (listener: (id: string, body: string) => void) => {
+      const handler = (_event: unknown, id: string, body: string) => listener(id, body);
+      ipcRenderer.on('assembler:automation:request', handler);
+      return () => ipcRenderer.removeListener('assembler:automation:request', handler);
+    },
+    respond: (id: string, body: string) =>
+      ipcRenderer.invoke('assembler:automation:respond', id, body),
+  },
 };
 
 contextBridge.exposeInMainWorld('assembler', api);

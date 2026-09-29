@@ -221,6 +221,11 @@ Vor API-Festlegung dieselben Druckteil-Aufgaben mit FreeCAD-Python, build123d
 und dem Assembler-Vertrag vergleichen: Tokens pro gültigem exportierbarem Teil,
 Reparaturrunden, Maße und spätere manuelle Editierbarkeit.
 
+Stand 2026-09-29: Vertrag `hcasm.agent-api@1`, Headless-CLI, In-App-Endpunkt,
+Python-Schicht und ein erster Benchmark (fünf Druckteile, nur Assembler-Seite,
+ohne Token-Messung und ohne FreeCAD-/build123d-Vergleich) sind in
+[AGENT-API.md](AGENT-API.md) dokumentiert.
+
 ## 6. Umsetzung in überprüfbaren Schritten
 
 | Phase                     | Ergebnis                                                                                    | Abschlusskriterium                                                                       |

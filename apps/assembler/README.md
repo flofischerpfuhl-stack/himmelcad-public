@@ -44,14 +44,30 @@ a planar face; Extrude picks New/Join/Cut from face contact (out of a face
 joins, into a body cuts, free-standing is new) until the badge overrides it.
 Escape order: dimension field, placed circle centre, tool, selection.
 
+## Agent API (UI, Python and agents share one command layer)
+
+`renderer/src/api/` implements the canonical command/query contract
+`hcasm.agent-api@1` (schema: `api/agent-api-v1.schema.json`). Two
+transports run it: `assembler-headless` (JSON-RPC over stdio with the
+in-process kernel — `pnpm build:headless`, then
+`node bin/assembler-headless.mjs`) and, in the desktop app, the opt-in
+"Agent Access (Local)" loopback endpoint (off by default, bearer token,
+indicator while on). Python: `sdk/python/src/himmelcad/assembler`.
+Benchmark: `bench/run_bench.py`. Design, trust boundary, evidence and
+limits: `assembler/AGENT-API.md`.
+
+- `pnpm api:schema` — regenerate the checked-in contract after changing
+  `renderer/src/api/schema.ts` (a test fails while they differ).
+- New feature kinds: add an entry to `FEATURE_KIND_SCHEMAS`
+  (`renderer/src/api/schema.ts`); until then they are accepted generically.
+
 ## Dev automation hook (DEV only)
 
 `pnpm dev:web` / `pnpm dev` builds expose `window.__assembler` for cheap,
 calibration-free screen recordings and UI smoke scripts (Playwright). It is
 installed from `renderer/src/devtools/automationHook.ts` behind
 `import.meta.env.DEV`, is absent from production builds and is **not part
-of the product contract** (agents use the command registry / the future
-automation API). Screen positions are CSS pixels relative to the page
+of the product contract** (agents use the agent API above). Screen positions are CSS pixels relative to the page
 viewport, directly usable with `page.mouse`.
 
 | Member                            | Returns                                                                                                                                 |

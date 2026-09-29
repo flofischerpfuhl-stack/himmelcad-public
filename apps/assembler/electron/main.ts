@@ -3,6 +3,7 @@ import { extname, join, normalize, resolve } from 'node:path';
 
 import { BrowserWindow, app, protocol } from 'electron';
 
+import { registerAutomation, stopAutomation } from './automationIpc';
 import { attachCloseGuard, registerFileApi } from './fileApi';
 import { ASSEMBLER_PRODUCT_NAME, createMainWindowOptions } from './windowOptions';
 
@@ -133,8 +134,11 @@ async function createWindow(): Promise<void> {
   win.webContents.on('will-redirect', (event) => event.preventDefault());
 
   registerFileApi(() => mainWindow);
+  // Agent access (loopback JSON-RPC endpoint): off until the user turns it on in the UI.
+  registerAutomation(() => mainWindow);
   attachCloseGuard(win);
   win.on('closed', () => {
+    void stopAutomation();
     if (mainWindow === win) mainWindow = null;
   });
 
