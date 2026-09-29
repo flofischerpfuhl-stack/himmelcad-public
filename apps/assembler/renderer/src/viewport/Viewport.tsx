@@ -66,6 +66,8 @@ import { isAmbiguous } from './pickCandidates.js';
 import { usePreferences } from '../model/preferences.js';
 import { setCameraPoseProbe, useWorkspaceStore, type CameraCommand } from '../model/workspace.js';
 import { displayBodyName, useItemsStore } from '../model/items.js';
+import { printOverlayBatches } from '../print/overlay.js';
+import { usePrintStore } from '../print/printStore.js';
 import { DimensionLabel } from './DimensionLabel.js';
 import { ViewportRenderer } from './gl.js';
 import {
@@ -468,6 +470,14 @@ export function Viewport(props: ViewportProps): JSX.Element {
   useEffect(() => {
     dirtyRef.current = true;
   }, [state]);
+  // Print mode overlays (overhangs, thin walls, build volume) redraw on their own changes.
+  useEffect(
+    () =>
+      usePrintStore.subscribe(() => {
+        dirtyRef.current = true;
+      }),
+    [],
+  );
 
   // ---- GL lifecycle ---------------------------------------------------------
   useEffect(() => {
@@ -729,7 +739,14 @@ export function Viewport(props: ViewportProps): JSX.Element {
           hovered: handleHover?.kind === 'toolHandle' && handleHover.handle === h.handle,
         }),
       );
+      const printOverlays = printOverlayBatches(
+        scene.bodies,
+        current.hiddenBodyIds,
+        current.isolatedBodyIds,
+      );
       const built = buildScene({
+        extraOverlays: printOverlays.surface,
+        extraOverlaysLast: printOverlays.last,
         colors,
         pose: poseRef.current,
         aspect,

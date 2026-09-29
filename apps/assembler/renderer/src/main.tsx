@@ -13,6 +13,9 @@ import { installAutomationHook } from './devtools/automationHook.js';
 import { WorkerKernelAdapter } from './kernel/workerAdapter.js';
 import { useProjectStore } from './model/project/projectStore.js';
 import { useAssemblerStore } from './model/store.js';
+import { setPrintKernel } from './print/exporting.js';
+import { setAgentPrintRunner, setPrintRunner } from './print/printStore.js';
+import { PrintabilityRunner } from './print/runner.js';
 import { setSketchSolverFactory } from './sketch/solverProvider.js';
 import { WorkerSketchSolver } from './sketch/workerSolver.js';
 
@@ -32,6 +35,12 @@ useAssemblerStore.getState().attachKernel(kernelAdapter);
 useProjectStore.getState().attachKernelAdapter(kernelAdapter);
 // Agent access (desktop only, off until the user enables it): canonical command layer on this document.
 installAutomationBridge(kernelAdapter);
+// Print mode: printability analysis/orientation in their own worker; export re-tessellation on the kernel.
+const printWorker = () =>
+  new Worker(new URL('./print/printability.worker.ts', import.meta.url), { type: 'module' });
+setPrintRunner(new PrintabilityRunner(printWorker));
+setAgentPrintRunner(new PrintabilityRunner(printWorker));
+setPrintKernel(kernelAdapter);
 // The sketch solver (planeGCS, WebAssembly) gets its own worker, started on first use.
 setSketchSolverFactory(
   () =>

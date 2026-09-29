@@ -121,6 +121,13 @@ export interface SceneInput {
   pivot?: { point: Vec3; hovered: boolean; pickable?: boolean } | null;
   /** Multiplies the edge pick widths (e.g. 2 for touch/coarse pointers). Default 1. */
   hitScale?: number;
+  /**
+   * Mode overlays on body surfaces (e.g. Print mode overhangs), drawn right
+   * after the shaded bodies — below edges and selection highlights.
+   */
+  extraOverlays?: readonly FlatBatch[];
+  /** Mode overlays drawn after everything else (e.g. the translucent build volume). */
+  extraOverlaysLast?: readonly FlatBatch[];
 }
 
 /** An angle handle: arc about `axis` through `center`, from `ref` by `value` degrees. */
@@ -403,6 +410,7 @@ export function buildScene(input: SceneInput): BuiltScene {
   }
 
   // ---- Bodies ---------------------------------------------------------------
+  const bodyFlatStart = flat.length;
   for (const body of visibleBodies) {
     const isMovePreview = input.movePreview?.bodyId === body.id;
     const isExtrudePreview =
@@ -563,6 +571,7 @@ export function buildScene(input: SceneInput): BuiltScene {
     });
   }
 
+  flat.splice(bodyFlatStart, 0, ...(input.extraOverlays ?? []));
   flat.push(...overlays, ...sectionPlaneBatches);
 
   // ---- Sketches ---------------------------------------------------------
@@ -948,6 +957,8 @@ export function buildScene(input: SceneInput): BuiltScene {
       });
     }
   }
+
+  flat.push(...(input.extraOverlaysLast ?? []));
 
   const frame: SceneFrame = {
     viewProj,

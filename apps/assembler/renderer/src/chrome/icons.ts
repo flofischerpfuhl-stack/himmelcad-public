@@ -49,6 +49,7 @@ import type { Feature } from '../model/document.js';
 import type { SelectionItem } from '../model/store.js';
 import { SKETCH_COMMAND_ICONS } from '../sketch/ui/sketchIcons.js';
 import { MODELING_COMMAND_ICON, MODELING_FEATURE_ICON } from './featureIcons.js';
+import { PRINT_COMMAND_ICONS } from '../print/printIcons.js';
 
 export const GROUP_ICON: Record<CommandGroup, LucideIcon> = {
   sketch: PenSquare,
@@ -102,6 +103,7 @@ export const COMMAND_ICON: Partial<Record<string, LucideIcon>> = {
   'file.save': Save,
   'file.export3mf': FileOutput,
   ...MODELING_COMMAND_ICON,
+  ...PRINT_COMMAND_ICONS,
 };
 
 /** `COMMAND_ICON[command.id]`, falling back to the command's group icon. */

@@ -14,6 +14,7 @@ import { useItemsStore } from '../model/items.js';
 import { usePreferences } from '../model/preferences.js';
 import { isPreviewTool, useAssemblerStore } from '../model/store.js';
 import { currentCameraPose, useWorkspaceStore } from '../model/workspace.js';
+import { usePrintStore } from '../print/printStore.js';
 import type { CameraPose } from '../viewport/camera.js';
 import { getViewportProbe, type ScreenPoint } from '../viewport/automation.js';
 import type { ToolHandleKind } from '../viewport/picking.js';
@@ -67,6 +68,8 @@ export interface AssemblerAutomation {
   preferences: typeof usePreferences;
   /** The live camera pose. */
   cameraPose(): CameraPose | null;
+  /** Print mode: printability report, settings, place-on-plate / auto-orient state. */
+  printStore: typeof usePrintStore;
 }
 
 declare global {
@@ -190,6 +193,7 @@ export function installAutomationHook(store: typeof useAssemblerStore): void {
       })),
     workspaceStore: useWorkspaceStore,
     itemsStore: useItemsStore,
+    printStore: usePrintStore,
     preferences: usePreferences,
     cameraPose: () => currentCameraPose(),
     waitForKernelIdle: async () => {
