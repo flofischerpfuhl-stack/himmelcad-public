@@ -59,7 +59,12 @@ function enterPose(
     center = [t[0] - n[0] * d, t[1] - n[1] * d, t[2] - n[2] * d];
   }
   const plane = session?.plane ?? { kind: 'plane' as const, plane: 'XY' as const, offset: 0 };
-  return poseLookingAlong(sketchViewDirection(frame, plane), center, distance, frame.v);
+  // Keeps the projection (perspective/orthographic, field of view); the sketch view is never rolled.
+  return {
+    ...current,
+    ...poseLookingAlong(sketchViewDirection(frame, plane), center, distance, frame.v),
+    roll: 0,
+  };
 }
 
 export function useSketchViewport(refs: SketchViewportRefs): {

@@ -1,10 +1,16 @@
 /**
  * Pure orbit-camera state and math for the Assembler viewport: presets
- * (`CameraPreset` from the store), orbit/pan/zoom deltas, and the
- * view-projection matrix. No WebGL, no DOM — unit tested directly.
+ * (`CameraPreset` from the store), orbit/pan/zoom deltas, perspective or
+ * orthographic projection, view roll and the view-cube orientation. No
+ * WebGL, no DOM — unit tested directly.
  *
  * Convention: `yaw` rotates around world Z (up), `pitch` tilts away from the
  * XY plane, `distance` is eye-to-target. Z is up, matching `model/document.ts`.
+ * The camera basis is derived continuously from yaw/pitch (no special case
+ * at the poles), so Top/Bottom are exact (pitch = ±90°) and screen-up there
+ * is the direction pointing away from the eye's horizontal offset: with the
+ * presets' yaw of -90° that is +Y on Top and -Y on Bottom, like every CAD
+ * view cube.
  */
 import {
   crossVec3,
@@ -22,13 +28,25 @@ export interface CameraPose {
   distance: number;
   yaw: number;
   pitch: number;
+  /** Rotation of the view about its viewing axis, radians (view-cube roll arrows). Default 0. */
+  roll?: number;
+  /**
+   * Vertical field of view in degrees; `0` = orthographic. Default
+   * {@link DEFAULT_FOV_DEG}. An orthographic view shows the same size at the
+   * target as the default perspective, so toggling keeps the framing.
+   */
+  fov?: number;
 }
 
-export const FOV_Y_RADIANS = (45 * Math.PI) / 180;
+export const DEFAULT_FOV_DEG = 45;
+/** Kept for callers that need the default perspective angle. */
+export const FOV_Y_RADIANS = (DEFAULT_FOV_DEG * Math.PI) / 180;
+export const MIN_PERSPECTIVE_FOV_DEG = 10;
+export const MAX_PERSPECTIVE_FOV_DEG = 90;
 const MIN_DISTANCE = 1;
 const MAX_DISTANCE = 100000;
-const MIN_PITCH = -Math.PI / 2 + 0.02;
-const MAX_PITCH = Math.PI / 2 - 0.02;
+/** Orbit stops just short of the poles; presets may sit exactly on them. */
+const MAX_ORBIT_PITCH = Math.PI / 2 - 1e-4;
 
 export const DEFAULT_POSE: CameraPose = {
   target: [0, 0, 0],
@@ -37,32 +55,113 @@ export const DEFAULT_POSE: CameraPose = {
   pitch: Math.PI / 5,
 };
 
-export function eyeOf(pose: CameraPose): Vec3 {
+export function isOrthographic(pose: CameraPose): boolean {
+  return (pose.fov ?? DEFAULT_FOV_DEG) <= 0;
+}
+
+/** Perspective field of view (radians); the reference angle for orthographic views. */
+function fovRadians(pose: CameraPose): number {
+  const fov = pose.fov ?? DEFAULT_FOV_DEG;
+  return ((fov <= 0 ? DEFAULT_FOV_DEG : fov) * Math.PI) / 180;
+}
+
+/** World height visible at `depth` in front of the eye (constant for orthographic views). */
+export function viewHeightAt(pose: CameraPose, depth: number): number {
+  if (isOrthographic(pose)) return 2 * pose.distance * Math.tan(FOV_Y_RADIANS / 2);
+  return 2 * Math.max(0, depth) * Math.tan(fovRadians(pose) / 2);
+}
+
+/** World units per CSS pixel at `depth` for a viewport `cssHeight` pixels tall. */
+export function worldPerPixel(pose: CameraPose, depth: number, cssHeight: number): number {
+  return viewHeightAt(pose, depth) / Math.max(1, cssHeight);
+}
+
+/** Unit direction from the target towards the eye. */
+export function viewDirection(pose: CameraPose): Vec3 {
   const cp = Math.cos(pose.pitch);
+  return [cp * Math.cos(pose.yaw), cp * Math.sin(pose.yaw), Math.sin(pose.pitch)];
+}
+
+export function eyeOf(pose: CameraPose): Vec3 {
+  const d = viewDirection(pose);
   return [
-    pose.target[0] + pose.distance * cp * Math.cos(pose.yaw),
-    pose.target[1] + pose.distance * cp * Math.sin(pose.yaw),
-    pose.target[2] + pose.distance * Math.sin(pose.pitch),
+    pose.target[0] + pose.distance * d[0],
+    pose.target[1] + pose.distance * d[1],
+    pose.target[2] + pose.distance * d[2],
   ];
 }
 
-export function viewMatrix(pose: CameraPose): Mat4 {
-  const eye = eyeOf(pose);
-  const up: Vec3 =
-    Math.abs(pose.pitch) > MAX_PITCH - 0.05
-      ? [Math.cos(pose.yaw), Math.sin(pose.yaw), 0]
-      : [0, 0, 1];
-  return lookAtMat4(eye, pose.target, up);
+/**
+ * Eye position for screen-facing geometry (ribbons, billboards): the real
+ * eye in perspective, a far point along the view direction in orthographic
+ * views (parallel rays).
+ */
+export function billboardEye(pose: CameraPose): Vec3 {
+  if (!isOrthographic(pose)) return eyeOf(pose);
+  const d = viewDirection(pose);
+  const far = pose.distance * 1000;
+  return [pose.target[0] + far * d[0], pose.target[1] + far * d[1], pose.target[2] + far * d[2]];
 }
 
-export function projectionMatrix(aspect: number, distance: number): Mat4 {
+/** Camera basis in world coordinates: `right`, `up` (screen axes) and `back` (towards the eye). */
+export function cameraBasis(pose: CameraPose): { right: Vec3; up: Vec3; back: Vec3 } {
+  const back = viewDirection(pose);
+  const sp = Math.sin(pose.pitch);
+  const cp = Math.cos(pose.pitch);
+  // d(back)/d(pitch): continuous, never parallel to `back`, also at the poles.
+  const up0: Vec3 = [-sp * Math.cos(pose.yaw), -sp * Math.sin(pose.yaw), cp];
+  const right0 = normalizeVec3(crossVec3(up0, back));
+  const roll = pose.roll ?? 0;
+  if (roll === 0) return { right: right0, up: up0, back };
+  const c = Math.cos(roll);
+  const s = Math.sin(roll);
+  return {
+    right: [right0[0] * c - up0[0] * s, right0[1] * c - up0[1] * s, right0[2] * c - up0[2] * s],
+    up: [up0[0] * c + right0[0] * s, up0[1] * c + right0[1] * s, up0[2] * c + right0[2] * s],
+    back,
+  };
+}
+
+export function viewMatrix(pose: CameraPose): Mat4 {
+  return lookAtMat4(eyeOf(pose), pose.target, cameraBasis(pose).up);
+}
+
+function orthographicMat4(halfWidth: number, halfHeight: number, near: number, far: number): Mat4 {
+  const nf = 1 / (near - far);
+  return new Float32Array([
+    1 / halfWidth,
+    0,
+    0,
+    0,
+    0,
+    1 / halfHeight,
+    0,
+    0,
+    0,
+    0,
+    2 * nf,
+    0,
+    0,
+    0,
+    (far + near) * nf,
+    1,
+  ]);
+}
+
+export function projectionMatrix(aspect: number, distance: number, fovDeg?: number): Mat4 {
+  const fov = fovDeg ?? DEFAULT_FOV_DEG;
+  if (fov <= 0) {
+    const halfHeight = distance * Math.tan(FOV_Y_RADIANS / 2);
+    // Depth range around the target, generous on both sides of the eye.
+    return orthographicMat4(halfHeight * aspect, halfHeight, -distance * 50, distance * 50);
+  }
   const near = Math.max(0.01, distance * 0.002);
   const far = Math.max(near + 1, distance * 50);
-  return perspectiveMat4(FOV_Y_RADIANS, aspect, near, far);
+  return perspectiveMat4((fov * Math.PI) / 180, aspect, near, far);
 }
 
 export function viewProjectionMatrix(pose: CameraPose, aspect: number): Mat4 {
-  return multiplyMat4(projectionMatrix(aspect, pose.distance), viewMatrix(pose));
+  return multiplyMat4(projectionMatrix(aspect, pose.distance, pose.fov), viewMatrix(pose));
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -73,7 +172,7 @@ export function orbit(pose: CameraPose, dxPixels: number, dyPixels: number): Cam
   return {
     ...pose,
     yaw: pose.yaw - dxPixels * 0.006,
-    pitch: clamp(pose.pitch + dyPixels * 0.006, MIN_PITCH, MAX_PITCH),
+    pitch: clamp(pose.pitch + dyPixels * 0.006, -MAX_ORBIT_PITCH, MAX_ORBIT_PITCH),
   };
 }
 
@@ -84,16 +183,8 @@ export function pan(
   dyPixels: number,
   viewportHeightPx: number,
 ): CameraPose {
-  const eye = eyeOf(pose);
-  const forward = normalizeVec3([
-    pose.target[0] - eye[0],
-    pose.target[1] - eye[1],
-    pose.target[2] - eye[2],
-  ]);
-  const worldUp: Vec3 = [0, 0, 1];
-  const right = normalizeVec3(crossVec3(forward, worldUp));
-  const up = crossVec3(right, forward);
-  const scale = (2 * pose.distance * Math.tan(FOV_Y_RADIANS / 2)) / Math.max(1, viewportHeightPx);
+  const { right, up } = cameraBasis(pose);
+  const scale = worldPerPixel(pose, pose.distance, viewportHeightPx);
   const dx = -dxPixels * scale;
   const dy = dyPixels * scale;
   return {
@@ -122,6 +213,29 @@ export function zoomTowards(pose: CameraPose, factor: number, anchor: Vec3 | nul
   };
 }
 
+/**
+ * Changes the field of view (`0` = orthographic) keeping the apparent size
+ * of the target plane: the distance is scaled so the visible height at the
+ * target stays the same.
+ */
+export function withFov(pose: CameraPose, fovDeg: number): CameraPose {
+  const next = fovDeg <= 0 ? 0 : clamp(fovDeg, MIN_PERSPECTIVE_FOV_DEG, MAX_PERSPECTIVE_FOV_DEG);
+  const height = viewHeightAt(pose, pose.distance);
+  if (next === 0) {
+    return { ...pose, fov: 0, distance: height / (2 * Math.tan(FOV_Y_RADIANS / 2)) };
+  }
+  const distance = height / (2 * Math.tan((next * Math.PI) / 360));
+  return { ...pose, fov: next, distance: clamp(distance, MIN_DISTANCE, MAX_DISTANCE) };
+}
+
+/** Rotates the view about its viewing axis by `degrees` (positive = content turns counter-clockwise on screen). */
+export function rollBy(pose: CameraPose, degrees: number): CameraPose {
+  let roll = (pose.roll ?? 0) + (degrees * Math.PI) / 180;
+  while (roll > Math.PI) roll -= 2 * Math.PI;
+  while (roll <= -Math.PI) roll += 2 * Math.PI;
+  return { ...pose, roll: Math.abs(roll) < 1e-9 ? 0 : roll };
+}
+
 export type CameraPresetName = 'iso' | 'front' | 'back' | 'top' | 'bottom' | 'left' | 'right';
 
 const PRESET_ANGLES: Record<CameraPresetName, { yaw: number; pitch: number }> = {
@@ -130,14 +244,42 @@ const PRESET_ANGLES: Record<CameraPresetName, { yaw: number; pitch: number }> = 
   back: { yaw: Math.PI / 2, pitch: 0 },
   right: { yaw: 0, pitch: 0 },
   left: { yaw: Math.PI, pitch: 0 },
-  top: { yaw: -Math.PI / 2, pitch: MAX_PITCH },
-  bottom: { yaw: -Math.PI / 2, pitch: MIN_PITCH },
+  top: { yaw: -Math.PI / 2, pitch: Math.PI / 2 },
+  bottom: { yaw: -Math.PI / 2, pitch: -Math.PI / 2 },
 };
 
-/** Keeps the current target/distance, only reorienting yaw/pitch. */
+/** Keeps the current target/distance/projection, only reorienting yaw/pitch (roll reset). */
 export function presetPose(preset: CameraPresetName, current: CameraPose): CameraPose {
   const angles = PRESET_ANGLES[preset];
-  return { ...current, yaw: angles.yaw, pitch: angles.pitch };
+  return { ...current, yaw: angles.yaw, pitch: angles.pitch, roll: 0 };
+}
+
+/**
+ * Pose looking at the current target from world direction `dir` (target →
+ * eye). Straight up/down directions use yaw -90° (screen-up +Y on top, -Y
+ * below) unless `upHint` names the world direction that should point up.
+ */
+export function poseFromDirection(
+  dir: Vec3,
+  current: CameraPose,
+  upHint?: Vec3 | null,
+): CameraPose {
+  const d = normalizeVec3(dir);
+  const pitch = Math.asin(clamp(d[2], -1, 1));
+  let yaw: number;
+  if (Math.abs(d[2]) > 1 - 1e-9) {
+    // At the poles screen-up is -(cos yaw, sin yaw) looking down, +(…) looking up.
+    const up = upHint ?? [0, d[2] > 0 ? 1 : -1, 0];
+    yaw = d[2] > 0 ? Math.atan2(-up[1], -up[0]) : Math.atan2(up[1], up[0]);
+  } else {
+    yaw = Math.atan2(d[1], d[0]);
+  }
+  return {
+    ...current,
+    yaw,
+    pitch: Math.abs(d[2]) > 1 - 1e-9 ? Math.sign(d[2]) * (Math.PI / 2) : pitch,
+    roll: 0,
+  };
 }
 
 export interface Bounds {
@@ -162,8 +304,9 @@ export function fitPose(
   }
   const center: Vec3 = [(min[0] + max[0]) / 2, (min[1] + max[1]) / 2, (min[2] + max[2]) / 2];
   const radius = Math.max(1, Math.hypot(max[0] - min[0], max[1] - min[1], max[2] - min[2]) / 2);
-  const fitFactor = 1 / Math.sin(Math.min(FOV_Y_RADIANS, FOV_Y_RADIANS * Math.max(1, aspect)) / 2);
-  // 2.0x (rather than a tight ~1.15x) leaves a comfortable margin around
+  const fov = isOrthographic(current) ? FOV_Y_RADIANS : fovRadians(current);
+  const fitFactor = 1 / Math.sin(Math.min(fov, fov * Math.max(1, aspect)) / 2);
+  // 1.5x (rather than a tight ~1.15x) leaves a comfortable margin around
   // the framed bounds so the part reads as centred in the free viewport
   // area at roughly 40-50% of the viewport height, matching the pleasing
   // "fit" look of the Shapr3D reference rather than filling the frame.
@@ -171,19 +314,29 @@ export function fitPose(
   return { ...current, target: center, distance: clamp(distance, MIN_DISTANCE, MAX_DISTANCE) };
 }
 
+function wrapAngle(a: number): number {
+  let d = a;
+  while (d > Math.PI) d -= Math.PI * 2;
+  while (d < -Math.PI) d += Math.PI * 2;
+  return d;
+}
+
 export function lerpPose(a: CameraPose, b: CameraPose, t: number): CameraPose {
-  let dyaw = b.yaw - a.yaw;
-  while (dyaw > Math.PI) dyaw -= Math.PI * 2;
-  while (dyaw < -Math.PI) dyaw += Math.PI * 2;
+  // Views straight up/down keep the destination yaw (it sets screen-up there).
+  const dyaw = wrapAngle(b.yaw - a.yaw);
+  const rollA = a.roll ?? 0;
+  const rollB = b.roll ?? 0;
   return {
+    ...b,
     target: [
       a.target[0] + (b.target[0] - a.target[0]) * t,
       a.target[1] + (b.target[1] - a.target[1]) * t,
       a.target[2] + (b.target[2] - a.target[2]) * t,
     ],
     distance: a.distance * Math.pow(b.distance / a.distance, t),
-    yaw: a.yaw + dyaw * t,
+    yaw: t >= 1 ? b.yaw : a.yaw + dyaw * t,
     pitch: a.pitch + (b.pitch - a.pitch) * t,
+    roll: t >= 1 ? rollB : rollA + wrapAngle(rollB - rollA) * t,
   };
 }
 
@@ -194,4 +347,112 @@ export function isLookingFromBelow(pose: CameraPose): boolean {
 
 export function invertViewProjection(pose: CameraPose, aspect: number): Mat4 | null {
   return invertMat4(viewProjectionMatrix(pose, aspect));
+}
+
+// ---- View cube ------------------------------------------------------------------------------
+
+export type CubeFaceName = 'front' | 'back' | 'right' | 'left' | 'top' | 'bottom';
+
+/** A cube face in world terms: outward normal plus the directions its label reads right/up. */
+export interface CubeFace {
+  name: CubeFaceName;
+  label: string;
+  normal: Vec3;
+  right: Vec3;
+  up: Vec3;
+}
+
+/**
+ * The six labelled faces. A face is what the camera sees when it looks
+ * *from* that side: Front = from -Y, Right = from +X, Top = from +Z
+ * (matching {@link presetPose}).
+ */
+export const CUBE_FACES: readonly CubeFace[] = [
+  { name: 'front', label: 'Front', normal: [0, -1, 0], right: [1, 0, 0], up: [0, 0, 1] },
+  { name: 'back', label: 'Back', normal: [0, 1, 0], right: [-1, 0, 0], up: [0, 0, 1] },
+  { name: 'right', label: 'Right', normal: [1, 0, 0], right: [0, 1, 0], up: [0, 0, 1] },
+  { name: 'left', label: 'Left', normal: [-1, 0, 0], right: [0, -1, 0], up: [0, 0, 1] },
+  { name: 'top', label: 'Top', normal: [0, 0, 1], right: [1, 0, 0], up: [0, 1, 0] },
+  { name: 'bottom', label: 'Bottom', normal: [0, 0, -1], right: [1, 0, 0], up: [0, -1, 0] },
+];
+
+/** World → cube-local CSS coordinates (x right, y down, z towards the viewer when looking from the front). */
+function worldToCss(v: Vec3): Vec3 {
+  return [v[0], -v[2], -v[1]];
+}
+
+function matrix3d(x: Vec3, y: Vec3, z: Vec3, t: Vec3 = [0, 0, 0]): number[] {
+  // CSS matrix3d is column-major: the images of the local x, y, z axes, then the translation.
+  return [x[0], x[1], x[2], 0, y[0], y[1], y[2], 0, z[0], z[1], z[2], 0, t[0], t[1], t[2], 1];
+}
+
+/**
+ * CSS `matrix3d` values that orient the view cube exactly like the scene:
+ * derived from the same camera basis as {@link viewMatrix} (roll and poles
+ * included), so the face facing the viewer is always the side the camera
+ * looks from.
+ */
+export function cubeMatrix3d(pose: CameraPose): number[] {
+  const { right, up, back } = cameraBasis(pose);
+  // screen(css) = (world·right, -(world·up), world·back); cube-local css → world first.
+  const cssAxisToScreen = (cssAxis: Vec3): Vec3 => {
+    // cube-local css axis → world: inverse of worldToCss.
+    const w: Vec3 = [cssAxis[0], -cssAxis[2], -cssAxis[1]];
+    return [
+      w[0] * right[0] + w[1] * right[1] + w[2] * right[2],
+      -(w[0] * up[0] + w[1] * up[1] + w[2] * up[2]),
+      w[0] * back[0] + w[1] * back[1] + w[2] * back[2],
+    ];
+  };
+  return matrix3d(
+    cssAxisToScreen([1, 0, 0]),
+    cssAxisToScreen([0, 1, 0]),
+    cssAxisToScreen([0, 0, 1]),
+  );
+}
+
+/** CSS `matrix3d` placing a face (label upright, outward normal as its local +z) at `half` px from the centre. */
+export function cubeFaceMatrix3d(face: CubeFace, half: number): number[] {
+  const n = worldToCss(face.normal);
+  return matrix3d(worldToCss(face.right), worldToCss([-face.up[0], -face.up[1], -face.up[2]]), n, [
+    n[0] * half,
+    n[1] * half,
+    n[2] * half,
+  ]);
+}
+
+/** The face whose outward normal points most directly at the viewer. */
+export function facingCubeFace(pose: CameraPose): CubeFace {
+  const back = viewDirection(pose);
+  let best = CUBE_FACES[0]!;
+  let bestDot = -Infinity;
+  for (const face of CUBE_FACES) {
+    const d = face.normal[0] * back[0] + face.normal[1] * back[1] + face.normal[2] * back[2];
+    if (d > bestDot) {
+      bestDot = d;
+      best = face;
+    }
+  }
+  return best;
+}
+
+/** `true` when the camera looks straight at a cube face (within `toleranceDeg`). */
+export function isFaceOnView(pose: CameraPose, toleranceDeg = 0.5): boolean {
+  const back = viewDirection(pose);
+  const face = facingCubeFace(pose);
+  const d = face.normal[0] * back[0] + face.normal[1] * back[1] + face.normal[2] * back[2];
+  return d > Math.cos((toleranceDeg * Math.PI) / 180);
+}
+
+/**
+ * View direction (target → eye) for a cell of a face's 3x3 grid:
+ * `(0, 0)` = the face, one non-zero coordinate = the edge view between two
+ * faces, two = the corner (isometric) view of three faces.
+ */
+export function cubeCellDirection(face: CubeFace, i: -1 | 0 | 1, j: -1 | 0 | 1): Vec3 {
+  return normalizeVec3([
+    face.normal[0] + face.right[0] * i + face.up[0] * j,
+    face.normal[1] + face.right[1] * i + face.up[1] * j,
+    face.normal[2] + face.right[2] * i + face.up[2] * j,
+  ]);
 }
