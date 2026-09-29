@@ -57,5 +57,7 @@ export function featureKindLabel(kind: Feature['kind']): string {
       return 'Move';
     case 'setAppearance':
       return 'Appearance';
+    case 'importStep':
+      return 'Import';
   }
 }

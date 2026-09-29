@@ -41,6 +41,7 @@ import {
   Spline,
   SquareDashedMousePointer,
   Trash2,
+  FileInput,
   Triangle,
   Undo2,
   type LucideIcon,
@@ -127,6 +128,8 @@ export function featureKindIcon(kind: Feature['kind']): LucideIcon {
       return MoveDiagonal;
     case 'setAppearance':
       return Eye;
+    case 'importStep':
+      return FileInput;
   }
 }
 
