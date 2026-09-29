@@ -16,6 +16,11 @@ export interface KernelStatusInfo {
   progress: number | null;
   /** Wall-clock load time (download + compile + init) once ready, ms. */
   loadMs: number | null;
+  /**
+   * One-off message for the user, e.g. after the kernel crashed and was
+   * restarted ("… Your document is unchanged."). Absent normally.
+   */
+  notice?: string;
 }
 
 /** One B-rep face after evaluation, with its stable naming key. */
