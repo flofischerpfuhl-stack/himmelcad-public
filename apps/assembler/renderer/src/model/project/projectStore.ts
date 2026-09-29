@@ -81,6 +81,13 @@ export interface ProjectFileState {
 
   newProject: () => void;
   openProject: () => Promise<void>;
+  /**
+   * Applies an already-read `.hcasm` (path + text) as the current document —
+   * the common tail of `openProject` (OS dialog), the Recent Files list and
+   * opening a file via double-click/command-line argument or a second app
+   * instance forwarding its argv (`electron/main.ts`).
+   */
+  openFromResult: (opened: io.OpenResult) => Promise<void>;
   save: () => Promise<void>;
   saveAs: () => Promise<void>;
   exportStlAll: () => Promise<void>;
@@ -299,6 +306,11 @@ export const useProjectStore = create<ProjectFileState>((set, get) => ({
     ensureSubscription();
     const opened = await io.openProjectDialog();
     if (!opened) return;
+    await get().openFromResult(opened);
+  },
+
+  openFromResult: async (opened) => {
+    ensureSubscription();
     try {
       const project = loadProjectFile(opened.text);
       const referenceMeshes = await decodeReferenceMeshes(project.referenceMeshes ?? []);

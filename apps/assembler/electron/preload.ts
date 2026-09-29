@@ -27,6 +27,11 @@ const api: AssemblerApi = {
       return () => ipcRenderer.removeListener('assembler:project:close-requested', handler);
     },
     respondClose: (allow: boolean) => ipcRenderer.invoke('assembler:project:respondClose', allow),
+    onOpenRequested: (listener: (path: string, text: string) => void) => {
+      const handler = (_event: unknown, path: string, text: string) => listener(path, text);
+      ipcRenderer.on('assembler:project:open-requested', handler);
+      return () => ipcRenderer.removeListener('assembler:project:open-requested', handler);
+    },
   },
   recentFiles: {
     list: () => ipcRenderer.invoke('assembler:recentFiles:list'),

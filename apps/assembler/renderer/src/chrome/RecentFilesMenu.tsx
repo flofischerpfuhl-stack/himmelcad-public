@@ -17,28 +17,6 @@ import {
   type RecentFileInfo,
 } from '../model/project/persistence.js';
 import { useProjectStore } from '../model/project/projectStore.js';
-import { useAssemblerStore } from '../model/store.js';
-import { loadProjectFile } from '../model/project/format.js';
-
-function baseName(path: string): string {
-  const clean = path.replace(/[\\/]+$/, '');
-  const idx = Math.max(clean.lastIndexOf('/'), clean.lastIndexOf('\\'));
-  return idx >= 0 ? clean.slice(idx + 1) : clean;
-}
-
-/** Applies an opened `.hcasm`'s text to the document, the same way `projectStore.openProject` does, but for a path chosen from the Recent list rather than the OS dialog. */
-async function openOpenedProject(opened: { path: string; text: string }): Promise<void> {
-  const project = loadProjectFile(opened.text);
-  useAssemblerStore.getState().loadDocument(project.features, { projectName: project.projectName });
-  useAssemblerStore.getState().applyViewState(project.viewState ?? {});
-  useProjectStore.setState({
-    filePath: opened.path,
-    dirty: false,
-    createdAt: project.createdAt,
-    lastSavedAt: project.modifiedAt,
-    loadError: null,
-  });
-}
 
 export function RecentFilesMenu(): JSX.Element {
   const [entries, setEntries] = useState<RecentFileInfo[] | null>(null);
@@ -63,13 +41,7 @@ export function RecentFilesMenu(): JSX.Element {
         );
         return;
       }
-      try {
-        await openOpenedProject(opened);
-      } catch (error) {
-        useProjectStore.setState({
-          loadError: `Could not open "${baseName(path)}": ${error instanceof Error ? error.message : String(error)}`,
-        });
-      }
+      await useProjectStore.getState().openFromResult(opened);
     };
     if (useProjectStore.getState().isDirty()) {
       // Reuse the existing unsaved-changes flow: stash the intended open as `pendingAction`
@@ -87,13 +59,7 @@ export function RecentFilesMenu(): JSX.Element {
       // Relocating keeps the entry's list position (`recentFiles.ts`
       // `relocateRecentFile`), so refetch rather than guess the new order.
       void listRecentFiles().then((list) => setEntries(list));
-      try {
-        await openOpenedProject(opened);
-      } catch (error) {
-        useProjectStore.setState({
-          loadError: `Could not open "${baseName(opened.path)}": ${error instanceof Error ? error.message : String(error)}`,
-        });
-      }
+      await useProjectStore.getState().openFromResult(opened);
     })();
   };
 

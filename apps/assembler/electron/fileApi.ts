@@ -117,6 +117,25 @@ async function rememberRecentFile(path: string): Promise<void> {
   await writeRecentFilesState(addRecentFile(await readRecentFilesState(), path));
 }
 
+/**
+ * Reads a `.hcasm` at `path` (double-click file association, a CLI
+ * argument, or a second app instance's forwarded argv — `main.ts`),
+ * authorizing it the same way a dialog-obtained path is (so a subsequent
+ * Ctrl+S onto it works) and recording it in Recent Files. `null` if the
+ * path doesn't exist/isn't readable, or isn't absolute.
+ */
+export async function readHcasmFile(path: string): Promise<{ path: string; text: string } | null> {
+  if (!isAbsolute(path)) return null;
+  try {
+    const text = await fs.readFile(path, 'utf8');
+    authorize(path);
+    await rememberRecentFile(path);
+    return { path, text };
+  } catch {
+    return null;
+  }
+}
+
 /** Registers the `assembler:project:*` IPC handlers used by `preload.ts`. Call once per app instance. */
 export function registerFileApi(getWindow: () => BrowserWindow | null): void {
   ipcMain.handle('assembler:project:openDialog', async () => {
@@ -169,15 +188,8 @@ export function registerFileApi(getWindow: () => BrowserWindow | null): void {
 
   /** Opens a specific path from the Recent Files list — trusted because it only ever came from this list or a dialog, never renderer-invented. */
   ipcMain.handle('assembler:recentFiles:openPath', async (_event, path: unknown) => {
-    if (typeof path !== 'string' || !isAbsolute(path)) throw new Error('Invalid path');
-    try {
-      const text = await fs.readFile(path, 'utf8');
-      authorize(path);
-      await rememberRecentFile(path);
-      return { path, text };
-    } catch {
-      return null; // missing/unreadable: the renderer offers Locate…/Remove instead.
-    }
+    if (typeof path !== 'string') throw new Error('Invalid path');
+    return readHcasmFile(path); // null if missing/unreadable: the renderer offers Locate…/Remove instead.
   });
 
   /** "Locate…" for a missing recent entry: lets the user pick its new location and relinks the list entry. */

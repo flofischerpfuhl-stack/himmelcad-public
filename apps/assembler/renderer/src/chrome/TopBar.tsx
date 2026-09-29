@@ -18,7 +18,7 @@ import {
 } from '@himmelcad/ui';
 
 import { COMMANDS } from '../model/commands/registry.js';
-import { onCloseRequested } from '../model/project/persistence.js';
+import { onCloseRequested, onOpenRequested } from '../model/project/persistence.js';
 import { useProjectStore } from '../model/project/projectStore.js';
 import { CommandGroupMenu } from './CommandGroupMenu.js';
 import { RecentFilesMenu } from './RecentFilesMenu.js';
@@ -53,6 +53,23 @@ export function TopBar({ state }: { state: AssemblerState }): JSX.Element {
   useEffect(() => {
     void useProjectStore.getState().checkRecovery();
     return onCloseRequested(() => useProjectStore.getState().requestCloseWindow());
+  }, []);
+
+  // Double-click on a `.hcasm` (file association), a CLI path, or a second
+  // app instance forwarding its argv (`electron/main.ts`,
+  // `requestSingleInstanceLock`) — main pushes the already-read file here
+  // rather than the renderer polling for it.
+  useEffect(() => {
+    return onOpenRequested((opened) => {
+      if (
+        useProjectStore.getState().isDirty() &&
+        // eslint-disable-next-line no-alert -- no dedicated confirm dialog wired for this path yet; matches RecentFilesMenu's interim UX.
+        !window.confirm('Discard unsaved changes and open this project?')
+      ) {
+        return;
+      }
+      void useProjectStore.getState().openFromResult(opened);
+    });
   }, []);
 
   return (

@@ -262,6 +262,20 @@ export function onCloseRequested(listener: () => void): () => void {
   return () => undefined;
 }
 
+/**
+ * Fires when the main process wants a `.hcasm` opened outside the normal
+ * Open dialog: the app was launched with a file argument (double-click on a
+ * `.hcasm`, or a command-line path) or a second app instance forwarded its
+ * argv (`electron/main.ts`, single-instance lock). No-op on the web (there
+ * is no OS file association or process argv there).
+ */
+export function onOpenRequested(listener: (opened: OpenResult) => void): () => void {
+  if (isElectron()) {
+    return window.assembler!.project.onOpenRequested((path, text) => listener({ path, text }));
+  }
+  return () => undefined;
+}
+
 export async function respondClose(allow: boolean): Promise<void> {
   if (isElectron()) await window.assembler!.project.respondClose(allow);
 }

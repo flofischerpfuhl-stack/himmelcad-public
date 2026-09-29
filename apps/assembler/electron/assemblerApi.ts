@@ -44,6 +44,13 @@ export interface AssemblerProjectApi {
   onCloseRequested(listener: () => void): () => void;
   /** Answers a pending close request; `true` lets the window close. */
   respondClose(allow: boolean): Promise<void>;
+  /**
+   * Fired when the main process wants a `.hcasm` opened outside the normal
+   * Open dialog: launched with a file argument (double-click association,
+   * or a CLI path) or forwarded from a second app instance. Returns an
+   * unsubscribe function.
+   */
+  onOpenRequested(listener: (path: string, text: string) => void): () => void;
 }
 
 export interface RecentFileInfo {

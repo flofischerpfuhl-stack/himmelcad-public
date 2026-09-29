@@ -1,0 +1,56 @@
+# Windows packaging for Himmel:CAD Assembler. Modeled on
+# `apps/builder/electron-builder.win.yml`; see that file's comments for the
+# shared conventions (appId scheme, extraResources for LICENSE/THIRD_PARTY,
+# per-user NSIS). Differences from Builder are called out below.
+appId: de.himmelcad.assembler
+# Filesystem-safe (no `:` — see `electron/windowOptions.ts`
+# `ASSEMBLER_APP_NAME`); the in-app/window-title wordmark keeps the colon
+# ("Himmel:CAD Assembler").
+productName: HimmelCAD Assembler
+artifactName: HimmelCAD-Assembler-${version}-${arch}.${ext}
+directories:
+  output: release
+files:
+  - dist/electron/**
+  - dist/renderer/**
+  - build/icon.ico
+  - build/icon.png
+  - package.json
+asar: true
+# The OCCT `.wasm` and its Emscripten loader chunk are the admitted LGPL
+# component (`docs/DEPENDENCY-POLICY.md`, `LICENSES/THIRD_PARTY.md`
+# "replicad-opencascadejs"): they must stay a separately replaceable unit in
+# the installed app, not sealed inside `app.asar`. `asarUnpack` extracts them
+# to a plain `app.asar.unpacked/dist/renderer/assets/` directory next to the
+# asar; Electron's patched `fs` (used by `electron/main.ts`'s `app://`
+# protocol handler) reads unpacked files transparently through the same
+# path, so nothing else needs to change for this to work packaged.
+asarUnpack:
+  - dist/renderer/assets/replicad_single-*.wasm
+  - dist/renderer/assets/replicad_single-*.js
+npmRebuild: false
+extraResources:
+  - from: ../../LICENSE
+    to: LICENSE.txt
+  - from: ../../LICENSES/THIRD_PARTY.md
+    to: THIRD_PARTY_NOTICES.md
+win:
+  icon: build/icon.ico
+  target:
+    - nsis
+  executableName: himmelcad-assembler
+  # `.hcasm` file association: double-click opens the project (forwarded to
+  # a running instance via `requestSingleInstanceLock`/`second-instance` in
+  # `electron/main.ts` if the app is already open).
+  fileAssociations:
+    - ext: hcasm
+      name: HimmelCAD Assembler Project
+      description: HimmelCAD Assembler project file
+      icon: build/icon.ico
+      role: Editor
+nsis:
+  artifactName: HimmelCAD-Assembler-${version}-${arch}-setup.${ext}
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  # Per-user install, no admin/UAC prompt (deliverable requirement).
+  perMachine: false
