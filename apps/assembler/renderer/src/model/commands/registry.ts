@@ -55,9 +55,19 @@ const NOT_IN_SPIKE_REASON = 'Not part of the Phase 1 kernel spike yet';
 const SKETCH_SOLVER_REASON = 'Requires the sketch solver (Phase 1)';
 const PROJECT_FILES_REASON = 'Project files arrive in Phase 1';
 
-/** Default size of a new fillet/chamfer/shell (mm); edited afterwards in the History panel. */
-const DEFAULT_BLEND_MM = 1;
-const DEFAULT_SHELL_MM = 1;
+/** The single selected face if it is planar (a sketch plane), else `null`. */
+function singlePlanarFace(ctx: CommandContext) {
+  const faces = selected(ctx, 'face');
+  if (ctx.selection.length !== 1 || faces.length !== 1) return null;
+  const face = faces[0]!;
+  return isPlanarFace(ctx.evaluation, face.bodyId, face.faceKey) ? face : null;
+}
+
+function sectionOnly(ctx: CommandContext): CommandAvailability {
+  return ctx.viewState.sectionEnabled
+    ? alwaysEnabled
+    : { enabled: false, reason: 'Turn Section View on first.' };
+}
 
 function selected<K extends SelectionItem['kind']>(
   ctx: CommandContext,
@@ -153,9 +163,15 @@ export const COMMANDS: readonly Command[] = [
     label: 'Circle',
     group: 'sketch',
     shortcut: 'C',
-    keywords: ['sketch', 'draw', 'round'],
-    availability: () => ({ enabled: false, reason: SKETCH_SOLVER_REASON }),
-    run: () => undefined,
+    keywords: ['sketch', 'draw', 'round', 'hole', 'diameter'],
+    availability: (ctx) => {
+      const face = singlePlanarFace(ctx);
+      return { enabled: true, recommended: face !== null, priority: face ? 65 : 0 };
+    },
+    run: (ctx) => {
+      const face = singlePlanarFace(ctx);
+      ctx.beginSketchCircle(face ? { bodyId: face.bodyId, faceKey: face.faceKey } : undefined);
+    },
   },
   {
     id: 'tools.extrude',
@@ -207,7 +223,7 @@ export const COMMANDS: readonly Command[] = [
       }
       return { enabled: true, recommended: true, priority: 100 };
     },
-    run: (ctx) => ctx.addEdgeBlend('fillet', DEFAULT_BLEND_MM),
+    run: (ctx) => ctx.beginEdgeBlend('fillet'),
   },
   {
     id: 'tools.chamfer',
@@ -223,7 +239,7 @@ export const COMMANDS: readonly Command[] = [
       }
       return { enabled: true, recommended: true, priority: 90 };
     },
-    run: (ctx) => ctx.addEdgeBlend('chamfer', DEFAULT_BLEND_MM),
+    run: (ctx) => ctx.beginEdgeBlend('chamfer'),
   },
   {
     id: 'tools.shell',
@@ -240,7 +256,7 @@ export const COMMANDS: readonly Command[] = [
       }
       return { enabled: true, priority: 50 };
     },
-    run: (ctx) => ctx.addShell(DEFAULT_SHELL_MM),
+    run: (ctx) => ctx.beginShell(),
   },
   {
     id: 'tools.revolve',
@@ -260,7 +276,7 @@ export const COMMANDS: readonly Command[] = [
     keywords: ['boolean', 'combine', 'add'],
     requiresKernel: true,
     availability: booleanAvailability,
-    run: (ctx) => ctx.addBoolean('union'),
+    run: (ctx) => ctx.beginBoolean('union'),
   },
   {
     id: 'tools.subtract',
@@ -270,7 +286,7 @@ export const COMMANDS: readonly Command[] = [
     keywords: ['boolean', 'cut', 'remove'],
     requiresKernel: true,
     availability: booleanAvailability,
-    run: (ctx) => ctx.addBoolean('subtract'),
+    run: (ctx) => ctx.beginBoolean('subtract'),
   },
   {
     id: 'tools.intersect',
@@ -280,7 +296,7 @@ export const COMMANDS: readonly Command[] = [
     keywords: ['boolean', 'common'],
     requiresKernel: true,
     availability: booleanAvailability,
-    run: (ctx) => ctx.addBoolean('intersect'),
+    run: (ctx) => ctx.beginBoolean('intersect'),
   },
   {
     id: 'transform.moveRotate',
@@ -356,6 +372,24 @@ export const COMMANDS: readonly Command[] = [
     keywords: ['clip', 'cutaway'],
     availability: (ctx) => ({ enabled: true, recommended: ctx.viewState.sectionEnabled }),
     run: (ctx) => ctx.setSectionEnabled(!ctx.viewState.sectionEnabled),
+  },
+  ...(['X', 'Y', 'Z'] as const).map(
+    (axis): Command => ({
+      id: `modes.sectionAxis${axis}`,
+      label: `Section along ${axis}`,
+      group: 'modes',
+      keywords: ['section', 'clip', 'axis', 'plane', axis.toLowerCase()],
+      availability: sectionOnly,
+      run: (ctx) => ctx.setSectionAxis(axis),
+    }),
+  ),
+  {
+    id: 'modes.sectionFlip',
+    label: 'Flip section',
+    group: 'modes',
+    keywords: ['section', 'clip', 'reverse', 'other side'],
+    availability: sectionOnly,
+    run: (ctx) => ctx.setSectionFlipped(!ctx.viewState.sectionFlipped),
   },
   {
     id: 'modes.isolate',

@@ -68,6 +68,43 @@
   color: var(--hc-fg-on-accent);
 }
 
+.busy {
+  display: inline-flex;
+  color: var(--hc-fg-subtle);
+  animation: spin 900ms linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.error {
+  position: absolute;
+  top: 100px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: var(--hc-space-2);
+  max-width: min(640px, calc(100vw - 360px));
+  padding: var(--hc-space-1) var(--hc-space-3);
+  background: var(--hc-bg-island);
+  border: 1px solid var(--hc-error);
+  border-radius: var(--hc-radius-lg);
+  box-shadow: var(--hc-shadow-island);
+  color: var(--hc-error-fg);
+  font-family: var(--hc-font-ui);
+  font-size: 12px;
+  pointer-events: auto;
+}
+
+.errorHint {
+  color: var(--hc-fg-subtle);
+  white-space: nowrap;
+}
+
 .actions {
   position: absolute;
   bottom: 20px;
@@ -81,5 +118,8 @@
 @media (prefers-reduced-motion: reduce) {
   .badgeOption {
     transition: none;
+  }
+  .busy {
+    animation: none;
   }
 }

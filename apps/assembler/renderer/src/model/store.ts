@@ -59,6 +59,13 @@ import {
   type SketchFrame,
   type SketchPlaneRef,
 } from './document.js';
+import {
+  autoExtrudeOperation,
+  defaultSectionOffset,
+  findSketchContact,
+  visibleBounds,
+  type SketchContact,
+} from './modeling.js';
 
 /** One selectable/hoverable thing in the viewport or a panel. */
 export type SelectionItem =
@@ -84,24 +91,78 @@ export interface SketchRectangleTool extends ToolSessionBase {
   preview: { x: number; y: number; width: number; height: number } | null;
 }
 
+/**
+ * Live kernel preview shared by every tool that adds a B-rep feature
+ * (extrude, fillet/chamfer, shell, booleans). The store evaluates
+ * `features + provisional feature` on the kernel's `preview` channel
+ * without touching `features`; at most one preview request is in flight
+ * and only the newest parameters are sent next (throttling), and results
+ * of an older tool session or older than the one shown are discarded.
+ */
+export interface KernelPreviewFields {
+  /**
+   * Kernel evaluation of `features + provisional feature`. `null` until the
+   * first valid preview arrives. When the kernel rejects the current
+   * parameters this keeps the **last valid** preview (see `previewError`).
+   * The provisional feature carries a reserved `__preview_*__` id.
+   */
+  previewEvaluation: EvaluationResult | null;
+  /** `true` while a newer preview than `previewEvaluation` is being computed. */
+  previewPending: boolean;
+  /** Kernel error for the most recently evaluated parameters, else `null`. Blocks commit once current. */
+  previewError: string | null;
+}
+
 /** `E` — extrudes a sketch profile or pushes/pulls a planar body face. */
-export interface ExtrudeTool extends ToolSessionBase {
+export interface ExtrudeTool extends ToolSessionBase, KernelPreviewFields {
   kind: 'extrude';
   profile: ExtrudeProfileRef;
   distance: number;
   operation: ExtrudeOperation;
   targetBodyId?: string;
-  /** `true` once the user picked the operation explicitly (disables sign-based join/cut). */
+  /** `true` once the user picked the operation explicitly (disables the automatic choice). */
   operationLocked: boolean;
-  /**
-   * Kernel evaluation of `features + provisional feature`, recomputed
-   * asynchronously on every change without touching `features`. `null`
-   * until the first preview result arrives. The provisional feature
-   * carries the reserved id `"__preview_extrude__"`.
-   */
-  previewEvaluation: EvaluationResult | null;
-  /** `true` while a newer preview than `previewEvaluation` is being computed. */
-  previewPending: boolean;
+  /** Body face the sketch lies on (drives the automatic New/Join/Cut choice), else `null`. */
+  contact: SketchContact | null;
+}
+
+/** `F` — fillets or chamfers the selected edges of one body. */
+export interface EdgeBlendTool extends ToolSessionBase, KernelPreviewFields {
+  kind: 'edgeBlend';
+  blend: 'fillet' | 'chamfer';
+  bodyId: string;
+  edges: EdgeRef[];
+  /** Fillet radius or chamfer distance, mm. */
+  size: number;
+}
+
+/** `H` — hollows a body, opening the selected faces, walls grow inwards. */
+export interface ShellTool extends ToolSessionBase, KernelPreviewFields {
+  kind: 'shell';
+  bodyId: string;
+  faces: FaceRef[];
+  thickness: number;
+}
+
+/** Union/Subtract/Intersect of the selected bodies; the first selected body is the target. */
+export interface BooleanTool extends ToolSessionBase, KernelPreviewFields {
+  kind: 'boolean';
+  operation: BooleanFeature['operation'];
+  targetBodyId: string;
+  toolBodyIds: string[];
+}
+
+/** `C` — centre click + radius click on a plane or a planar body face. */
+export interface SketchCircleTool extends ToolSessionBase {
+  kind: 'sketchCircle';
+  plane: SketchPlaneRef;
+  frame: SketchFrame;
+  /** Centre in sketch (u, v) coordinates once placed. */
+  center: { u: number; v: number } | null;
+  /** Radius once the cursor moved away from the centre (or typed). */
+  radius: number | null;
+  /** Which value the dimension chip shows and edits. */
+  dimension: 'radius' | 'diameter';
 }
 
 /** `M` — translates a single body. */
@@ -111,10 +172,35 @@ export interface MoveTool extends ToolSessionBase {
   delta: { dx: number; dy: number; dz: number };
 }
 
-export type ToolSession = SketchRectangleTool | ExtrudeTool | MoveTool;
+export type ToolSession =
+  | SketchRectangleTool
+  | SketchCircleTool
+  | ExtrudeTool
+  | MoveTool
+  | EdgeBlendTool
+  | ShellTool
+  | BooleanTool;
+
+/** Tools that show a live kernel preview. */
+export type PreviewTool = ExtrudeTool | EdgeBlendTool | ShellTool | BooleanTool;
+
+export function isPreviewTool(tool: ToolSession | null): tool is PreviewTool {
+  return (
+    tool?.kind === 'extrude' ||
+    tool?.kind === 'edgeBlend' ||
+    tool?.kind === 'shell' ||
+    tool?.kind === 'boolean'
+  );
+}
 
 /** Reserved feature id used only for the extrude tool's live preview; never committed. */
 export const PREVIEW_EXTRUDE_FEATURE_ID = '__preview_extrude__';
+/** Reserved feature id of the fillet/chamfer, shell and boolean tools' live previews; never committed. */
+export const PREVIEW_FEATURE_ID = '__preview_feature__';
+
+/** Default fillet radius / chamfer distance and shell thickness when a tool starts, mm. */
+export const DEFAULT_BLEND_SIZE_MM = 1;
+export const DEFAULT_SHELL_THICKNESS_MM = 1;
 
 export type DisplayMode = 'shaded' | 'wireframe' | 'xray';
 export type SectionAxis = 'X' | 'Y' | 'Z';
@@ -124,7 +210,10 @@ export interface ViewState {
   displayMode: DisplayMode;
   sectionEnabled: boolean;
   sectionAxis: SectionAxis;
+  /** Plane position along `sectionAxis`, world mm. Reset to the model's centre on enable/axis change. */
   sectionOffset: number;
+  /** `false` keeps the material below the plane (`axis < offset`), `true` the material above it. */
+  sectionFlipped: boolean;
   measureEnabled: boolean;
   gridVisible: boolean;
   snapToGrid: boolean;
@@ -193,6 +282,32 @@ export interface AssemblerState {
   setExtrudeOperation: (operation: ExtrudeOperation) => void;
   beginMove: (bodyId: string) => void;
   setDelta: (dx: number, dy: number, dz: number) => void;
+  /** `C` — starts the circle tool on the XY plane or on a planar body face. */
+  beginSketchCircle: (origin?: { bodyId: string; faceKey: string }) => void;
+  /**
+   * Moves the active sketch tool (rectangle or circle) onto a planar body
+   * face — the first click on a face picks the sketch plane, like Shapr3D.
+   * Only before the first point is placed; returns `false` if not applicable.
+   */
+  setSketchPlaneFace: (bodyId: string, faceKey: string) => boolean;
+  setCircleCenter: (u: number, v: number) => void;
+  /** Sets the circle radius (mm); a non-positive value clears it. */
+  setCircleRadius: (radius: number) => void;
+  setCircleDimension: (dimension: 'radius' | 'diameter') => void;
+  /** Clears a placed centre (first Escape of the circle tool). `false` if there was none. */
+  resetSketchCircle: () => boolean;
+  /** `F` — starts the fillet/chamfer tool on the selected edges of one body (live preview). */
+  beginEdgeBlend: (kind: 'fillet' | 'chamfer') => void;
+  setBlendSize: (size: number) => void;
+  setBlendKind: (kind: 'fillet' | 'chamfer') => void;
+  /** Adds/removes an edge of the tool's body while the fillet/chamfer tool runs. */
+  toggleBlendEdge: (bodyId: string, edgeKey: string) => void;
+  /** `H` — starts the shell tool on the selected faces of one body (live preview). */
+  beginShell: () => void;
+  setShellThickness: (thickness: number) => void;
+  /** Starts a Union/Subtract/Intersect preview of the selected bodies (first selected = target). */
+  beginBoolean: (operation: BooleanFeature['operation']) => void;
+  setBooleanOperation: (operation: BooleanFeature['operation']) => void;
   /** Enters the `numericEditing` phase (e.g. a dimension field gained focus). No-op without an active tool. */
   beginNumericEditing: () => void;
   /** Leaves `numericEditing` back to `preview`. No-op unless currently `numericEditing`. */
@@ -219,7 +334,14 @@ export interface AssemblerState {
   setSectionEnabled: (enabled: boolean) => void;
   setSectionAxis: (axis: SectionAxis) => void;
   setSectionOffset: (offset: number) => void;
+  setSectionFlipped: (flipped: boolean) => void;
   setMeasureEnabled: (enabled: boolean) => void;
+  /**
+   * Explicit per-sketch viewport visibility (not undo-tracked). Sketches
+   * without an entry are shown until an extrude consumes them.
+   */
+  sketchVisibility: Record<string, boolean>;
+  setSketchVisible: (featureId: string, visible: boolean) => void;
   setGridVisible: (visible: boolean) => void;
   setSnapToGrid: (enabled: boolean) => void;
   setGridStep: (step: number) => void;
@@ -379,10 +501,60 @@ function buildProvisionalExtrude(tool: {
   };
 }
 
-/** For a sketch lying on a body face: join into that body for a positive distance, cut for a negative one. */
-function autoOperation(distance: number): ExtrudeOperation {
-  return distance < 0 ? 'cut' : 'join';
+/** Provisional feature of a preview tool, or `null` when its parameters have no geometry yet. */
+function buildProvisional(tool: PreviewTool): Feature | null {
+  const base = { id: PREVIEW_FEATURE_ID, suppressed: false };
+  switch (tool.kind) {
+    case 'extrude':
+      return tool.distance === 0 ? null : buildProvisionalExtrude(tool);
+    case 'edgeBlend':
+      return tool.blend === 'fillet'
+        ? {
+            ...base,
+            name: 'Fillet (preview)',
+            kind: 'fillet',
+            edges: tool.edges,
+            radius: tool.size,
+          }
+        : {
+            ...base,
+            name: 'Chamfer (preview)',
+            kind: 'chamfer',
+            edges: tool.edges,
+            distance: tool.size,
+          };
+    case 'shell':
+      return {
+        ...base,
+        name: 'Shell (preview)',
+        kind: 'shell',
+        bodyId: tool.bodyId,
+        faces: tool.faces,
+        thickness: tool.thickness,
+      };
+    case 'boolean':
+      return {
+        ...base,
+        name: 'Boolean (preview)',
+        kind: 'boolean',
+        operation: tool.operation,
+        targetBodyId: tool.targetBodyId,
+        toolBodyIds: tool.toolBodyIds,
+      };
+  }
 }
+
+const BOOLEAN_LABEL: Record<BooleanFeature['operation'], string> = {
+  union: 'Union',
+  subtract: 'Subtract',
+  intersect: 'Intersect',
+};
+
+const NO_PREVIEW: KernelPreviewFields = {
+  previewEvaluation: null,
+  previewPending: false,
+  previewError: null,
+};
 
 export const useAssemblerStore = create<AssemblerState>((set, get) => {
   /** Undo/redo snapshots of `features`; only `history.canUndo/canRedo` are public. */
@@ -394,16 +566,20 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
   /** Document revision: bumped on every `features` change. */
   let documentRevision = 0;
   let documentJob: KernelJob | null = null;
-  /** Preview revision: bumped on every provisional change, tool end, or document change. */
+  /** Preview revision: bumped on every provisional change and tool start/end. */
   let previewRevision = 0;
   let previewJob: KernelJob | null = null;
+  /** Tool session: bumped on every tool start/end; results of other sessions are dropped. */
+  let toolSession = 0;
+  /** Revision of the preview currently shown (results older than this are dropped). */
+  let shownPreviewRevision = 0;
   /** Completed evaluations by feature-array identity (undo/redo reuse them instantly). */
   let resultCache = new WeakMap<Feature[], EvaluationResult>();
   let settledWaiters: (() => void)[] = [];
 
   function isSettled(): boolean {
     const state = get();
-    const previewBusy = state.activeTool?.kind === 'extrude' && state.activeTool.previewPending;
+    const previewBusy = isPreviewTool(state.activeTool) && state.activeTool.previewPending;
     return !state.evaluationPending && !previewBusy;
   }
 
@@ -466,37 +642,125 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
     });
   }
 
-  /** Requests a preview evaluation for the active extrude tool. */
-  function evaluatePreview(tool: ExtrudeTool): ExtrudeTool {
+  /**
+   * Marks the tool's preview stale and requests a kernel evaluation of the
+   * new parameters. Throttled: while one preview is in flight nothing else
+   * is posted; when it returns, the newest parameters are sent (so a drag
+   * produces a steady stream of previews at kernel speed, never a queue).
+   * Returns the tool with `previewPending` set; the caller stores it.
+   */
+  function evaluatePreview<T extends PreviewTool>(tool: T): T {
     previewRevision += 1;
+    if (!buildProvisional(tool)) {
+      // Nothing to preview (e.g. zero distance): show the committed model.
+      shownPreviewRevision = previewRevision;
+      return { ...tool, previewEvaluation: null, previewPending: false, previewError: null };
+    }
+    if (kernel && !previewJob) queueMicrotask(startPreviewJob);
+    return { ...tool, previewPending: true };
+  }
+
+  function startPreviewJob(): void {
+    if (!kernel || previewJob) return;
+    const tool = get().activeTool;
+    if (!isPreviewTool(tool) || !tool.previewPending) return;
+    const provisional = buildProvisional(tool);
+    if (!provisional) return;
     const revision = previewRevision;
-    if (!kernel) return { ...tool, previewPending: true };
-    const features = [...get().features, buildProvisionalExtrude(tool)];
-    const job = kernel.evaluate({ channel: 'preview', revision, features });
+    const session = toolSession;
+    const job = kernel.evaluate({
+      channel: 'preview',
+      revision,
+      features: [...get().features, provisional],
+    });
     previewJob = job;
     void job.outcome.then((outcome) => {
-      if (outcome.revision !== previewRevision) return; // stale or tool ended
-      previewJob = null;
+      if (previewJob === job) previewJob = null;
+      if (session !== toolSession) return; // the tool ended; nothing to show
       const current = get().activeTool;
-      if (current?.kind !== 'extrude') return;
-      set({
-        activeTool: {
-          ...current,
-          previewPending: false,
-          previewEvaluation: outcome.kind === 'done' ? outcome.result : current.previewEvaluation,
-        },
-      });
+      if (!isPreviewTool(current)) return;
+      if (outcome.kind === 'done' && revision > shownPreviewRevision) {
+        shownPreviewRevision = revision;
+        const error = outcome.result.errors[provisional.id] ?? null;
+        const latest = revision === previewRevision;
+        set({
+          activeTool: {
+            ...current,
+            // An invalid parameter keeps the last valid preview on screen.
+            previewEvaluation: error ? current.previewEvaluation : outcome.result,
+            previewError: error,
+            previewPending: !latest,
+          },
+        });
+      } else if (outcome.kind === 'failed' && revision === previewRevision) {
+        set({ activeTool: { ...current, previewPending: false, previewError: outcome.message } });
+      }
+      // Newer parameters arrived while this one was computing: send them now.
+      if (revision !== previewRevision) startPreviewJob();
       notifySettled();
     });
-    return { ...tool, previewPending: true };
   }
 
   function endPreview(): void {
     previewRevision += 1;
+    toolSession += 1;
+    shownPreviewRevision = previewRevision;
     if (previewJob) {
       kernel?.cancel(previewJob.id);
       previewJob = null;
     }
+  }
+
+  /** Stores an updated preview tool and requests its preview. */
+  function updatePreviewTool(tool: PreviewTool): void {
+    set({ activeTool: evaluatePreview(tool) });
+    notifySettled();
+  }
+
+  function selectedEdgeRefs(): EdgeRef[] {
+    const state = get();
+    return state.selection
+      .filter((item): item is Extract<SelectionItem, { kind: 'edge' }> => item.kind === 'edge')
+      .map((item) => makeEdgeRef(state.evaluation, item.bodyId, item.edgeKey))
+      .filter((ref): ref is EdgeRef => ref !== null);
+  }
+
+  function selectedFaceRefs(): FaceRef[] {
+    const state = get();
+    return state.selection
+      .filter((item): item is Extract<SelectionItem, { kind: 'face' }> => item.kind === 'face')
+      .map((item) => makeFaceRef(state.evaluation, item.bodyId, item.faceKey))
+      .filter((ref): ref is FaceRef => ref !== null);
+  }
+
+  function selectedBodyIds(): string[] {
+    return get()
+      .selection.filter(
+        (item): item is Extract<SelectionItem, { kind: 'body' }> => item.kind === 'body',
+      )
+      .map((item) => item.bodyId);
+  }
+
+  /** Frame of a planar body face, or `null` if it is not planar. */
+  function facePlane(
+    bodyId: string,
+    faceKey: string,
+  ): { plane: SketchPlaneRef; frame: SketchFrame } | null {
+    const ref = makeFaceRef(get().evaluation, bodyId, faceKey);
+    const normal = ref?.signature.normal;
+    if (!ref || !normal || ref.signature.surface !== 'plane') return null;
+    return {
+      plane: { kind: 'face', face: ref },
+      frame: frameForFace(normal, ref.signature.centroid),
+    };
+  }
+
+  function sectionOffsetFor(axis: SectionAxis): number {
+    const state = get();
+    return defaultSectionOffset(
+      visibleBounds(state.evaluation.bodies, state.hiddenBodyIds, state.isolatedBodyIds),
+      axis,
+    );
   }
 
   function setFeatures(nextFeatures: Feature[], extra: Partial<AssemblerState> = {}): void {
@@ -559,7 +823,7 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
       });
       evaluateDocument();
       const tool = get().activeTool;
-      if (tool?.kind === 'extrude') set({ activeTool: evaluatePreview(tool) });
+      if (isPreviewTool(tool)) updatePreviewTool(tool);
     },
     whenSettled: () =>
       new Promise<void>((resolve) => {
@@ -651,29 +915,31 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
     },
     beginExtrude: (profile) => {
       const state = get();
-      let operation: ExtrudeOperation = 'new';
-      let targetBodyId: string | undefined;
+      let contact: SketchContact | null = null;
       if (profile.kind === 'sketch') {
-        const sketch = state.features.find(
-          (f): f is SketchFeature => f.id === profile.featureId && f.kind === 'sketch',
-        );
-        if (sketch?.plane.kind === 'face') {
-          operation = 'join';
-          targetBodyId = sketch.plane.face.bodyId;
+        contact = findSketchContact(state.evaluation, profile.featureId, profile.profileIndex);
+        if (!contact && !state.evaluation.sketches.some((s) => s.featureId === profile.featureId)) {
+          // Not evaluated yet (just drawn): trust the sketch's own face reference.
+          const sketch = state.features.find(
+            (f): f is SketchFeature => f.id === profile.featureId && f.kind === 'sketch',
+          );
+          if (sketch?.plane.kind === 'face') {
+            contact = { bodyId: sketch.plane.face.bodyId, faceKey: sketch.plane.face.key, sign: 1 };
+          }
         }
       } else {
-        operation = 'join';
+        contact = { bodyId: profile.face.bodyId, faceKey: profile.face.key, sign: 1 };
       }
       const tool: ExtrudeTool = {
         kind: 'extrude',
         phase: 'collectingReferences',
         profile,
         distance: 0,
-        operation,
-        ...(targetBodyId !== undefined ? { targetBodyId } : {}),
+        operation: autoExtrudeOperation(contact, 0),
+        ...(contact ? { targetBodyId: contact.bodyId } : {}),
         operationLocked: false,
-        previewEvaluation: null,
-        previewPending: false,
+        contact,
+        ...NO_PREVIEW,
       };
       endPreview();
       // A zero distance has no geometry to preview; the first drag/entry requests one.
@@ -683,17 +949,148 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
       const tool = get().activeTool;
       if (!tool || tool.kind !== 'extrude') return;
       const operation =
-        !tool.operationLocked && (tool.targetBodyId !== undefined || tool.profile.kind === 'face')
-          ? autoOperation(distanceMm)
-          : tool.operation;
-      set({
-        activeTool: evaluatePreview({ ...tool, phase: 'preview', distance: distanceMm, operation }),
-      });
+        tool.operationLocked || tool.profile.kind === 'face'
+          ? tool.profile.kind === 'face'
+            ? distanceMm < 0
+              ? 'cut'
+              : 'join'
+            : tool.operation
+          : autoExtrudeOperation(tool.contact, distanceMm);
+      updatePreviewTool({ ...tool, phase: 'preview', distance: distanceMm, operation });
     },
     setExtrudeOperation: (operation) => {
       const tool = get().activeTool;
-      if (!tool || tool.kind !== 'extrude') return;
-      set({ activeTool: evaluatePreview({ ...tool, operation, operationLocked: true }) });
+      if (!tool || tool.kind !== 'extrude' || tool.profile.kind === 'face') return;
+      // Join/Cut need a target: the touched body, else the most recently changed one.
+      const targetBodyId = tool.contact?.bodyId ?? tool.targetBodyId;
+      const next: ExtrudeTool = { ...tool, operation, operationLocked: true };
+      if (operation === 'new') delete next.targetBodyId;
+      else if (targetBodyId !== undefined) next.targetBodyId = targetBodyId;
+      updatePreviewTool(next);
+    },
+
+    beginSketchCircle: (origin) => {
+      const placed = origin ? facePlane(origin.bodyId, origin.faceKey) : null;
+      endPreview();
+      set({
+        activeTool: {
+          kind: 'sketchCircle',
+          phase: 'collectingReferences',
+          plane: placed?.plane ?? { kind: 'plane', plane: 'XY', offset: 0 },
+          frame: placed?.frame ?? frameForPlane('XY', 0),
+          center: null,
+          radius: null,
+          dimension: 'diameter',
+        },
+      });
+    },
+    setSketchPlaneFace: (bodyId, faceKey) => {
+      const tool = get().activeTool;
+      if (tool?.kind === 'sketchCircle' && tool.center) return false;
+      if (tool?.kind === 'sketchRectangle' && tool.preview) return false;
+      if (tool?.kind !== 'sketchCircle' && tool?.kind !== 'sketchRectangle') return false;
+      const placed = facePlane(bodyId, faceKey);
+      if (!placed) return false;
+      set({ activeTool: { ...tool, plane: placed.plane, frame: placed.frame } });
+      return true;
+    },
+    setCircleCenter: (u, v) => {
+      const tool = get().activeTool;
+      if (tool?.kind !== 'sketchCircle') return;
+      set({ activeTool: { ...tool, phase: 'preview', center: { u, v }, radius: null } });
+    },
+    setCircleRadius: (radius) => {
+      const tool = get().activeTool;
+      if (tool?.kind !== 'sketchCircle' || !tool.center) return;
+      set({ activeTool: { ...tool, radius: radius > 0 ? radius : null } });
+    },
+    setCircleDimension: (dimension) => {
+      const tool = get().activeTool;
+      if (tool?.kind !== 'sketchCircle') return;
+      set({ activeTool: { ...tool, dimension } });
+    },
+    resetSketchCircle: () => {
+      const tool = get().activeTool;
+      if (tool?.kind !== 'sketchCircle' || !tool.center) return false;
+      set({ activeTool: { ...tool, phase: 'collectingReferences', center: null, radius: null } });
+      return true;
+    },
+
+    beginEdgeBlend: (kind) => {
+      const edges = selectedEdgeRefs();
+      if (edges.length === 0) return;
+      const bodyId = edges[0]!.bodyId;
+      endPreview();
+      updatePreviewTool({
+        kind: 'edgeBlend',
+        phase: 'preview',
+        blend: kind,
+        bodyId,
+        edges: edges.filter((e) => e.bodyId === bodyId),
+        size: DEFAULT_BLEND_SIZE_MM,
+        ...NO_PREVIEW,
+      });
+    },
+    setBlendSize: (size) => {
+      const tool = get().activeTool;
+      if (tool?.kind !== 'edgeBlend' || !Number.isFinite(size)) return;
+      updatePreviewTool({ ...tool, size });
+    },
+    setBlendKind: (kind) => {
+      const tool = get().activeTool;
+      if (tool?.kind !== 'edgeBlend' || tool.blend === kind) return;
+      updatePreviewTool({ ...tool, blend: kind });
+    },
+    toggleBlendEdge: (bodyId, edgeKey) => {
+      const tool = get().activeTool;
+      if (tool?.kind !== 'edgeBlend' || bodyId !== tool.bodyId) return;
+      const present = tool.edges.some((e) => e.key === edgeKey);
+      if (present) {
+        if (tool.edges.length === 1) return; // keep at least one edge
+        updatePreviewTool({ ...tool, edges: tool.edges.filter((e) => e.key !== edgeKey) });
+        return;
+      }
+      const ref = makeEdgeRef(get().evaluation, bodyId, edgeKey);
+      if (ref) updatePreviewTool({ ...tool, edges: [...tool.edges, ref] });
+    },
+
+    beginShell: () => {
+      const faces = selectedFaceRefs();
+      if (faces.length === 0) return;
+      const bodyId = faces[0]!.bodyId;
+      endPreview();
+      updatePreviewTool({
+        kind: 'shell',
+        phase: 'preview',
+        bodyId,
+        faces: faces.filter((f) => f.bodyId === bodyId),
+        thickness: DEFAULT_SHELL_THICKNESS_MM,
+        ...NO_PREVIEW,
+      });
+    },
+    setShellThickness: (thickness) => {
+      const tool = get().activeTool;
+      if (tool?.kind !== 'shell' || !Number.isFinite(thickness)) return;
+      updatePreviewTool({ ...tool, thickness });
+    },
+
+    beginBoolean: (operation) => {
+      const bodyIds = selectedBodyIds();
+      if (bodyIds.length < 2) return;
+      endPreview();
+      updatePreviewTool({
+        kind: 'boolean',
+        phase: 'preview',
+        operation,
+        targetBodyId: bodyIds[0]!,
+        toolBodyIds: bodyIds.slice(1),
+        ...NO_PREVIEW,
+      });
+    },
+    setBooleanOperation: (operation) => {
+      const tool = get().activeTool;
+      if (tool?.kind !== 'boolean' || tool.operation === operation) return;
+      updatePreviewTool({ ...tool, operation });
     },
     beginMove: (bodyId) => {
       endPreview();
@@ -745,6 +1142,29 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
         return;
       }
 
+      if (tool.kind === 'sketchCircle') {
+        if (!tool.center || tool.radius === null) {
+          endPreview();
+          set({ activeTool: null });
+          notifySettled();
+          return;
+        }
+        const id = createFeatureId('sketch');
+        const feature: SketchFeature = {
+          id,
+          name: nextFeatureName('Sketch', state.features),
+          suppressed: false,
+          kind: 'sketch',
+          plane: tool.plane,
+          profiles: [{ kind: 'circle', cx: tool.center.u, cy: tool.center.v, radius: tool.radius }],
+        };
+        commitFeatures([...state.features, feature], [{ kind: 'sketchProfile', featureId: id }]);
+        return;
+      }
+
+      // A kernel error for the current parameters blocks Done (the tool stays open).
+      if (isPreviewTool(tool) && tool.previewError !== null && !tool.previewPending) return;
+
       if (tool.kind === 'extrude') {
         const provisional = buildProvisionalExtrude(tool);
         const id = createFeatureId('extrude');
@@ -754,6 +1174,25 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
           name: nextFeatureName('Extrude', state.features),
         };
         commitFeatures([...state.features, feature]);
+        return;
+      }
+
+      if (tool.kind === 'edgeBlend' || tool.kind === 'shell' || tool.kind === 'boolean') {
+        const provisional = buildProvisional(tool)!;
+        const prefix =
+          tool.kind === 'edgeBlend'
+            ? tool.blend === 'fillet'
+              ? 'Fillet'
+              : 'Chamfer'
+            : tool.kind === 'shell'
+              ? 'Shell'
+              : BOOLEAN_LABEL[tool.operation];
+        const feature = {
+          ...provisional,
+          id: createFeatureId(provisional.kind),
+          name: nextFeatureName(prefix, state.features),
+        } as Feature;
+        appendFeature(feature);
         return;
       }
 
@@ -819,11 +1258,9 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
         .filter((item): item is Extract<SelectionItem, { kind: 'body' }> => item.kind === 'body')
         .map((item) => item.bodyId);
       if (bodyIds.length < 2) return;
-      const label =
-        operation === 'union' ? 'Union' : operation === 'subtract' ? 'Subtract' : 'Intersect';
       const feature: BooleanFeature = {
         id: createFeatureId('boolean'),
-        name: nextFeatureName(label, state.features),
+        name: nextFeatureName(BOOLEAN_LABEL[operation], state.features),
         suppressed: false,
         kind: 'boolean',
         operation,
@@ -858,6 +1295,7 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
       sectionEnabled: false,
       sectionAxis: 'Z',
       sectionOffset: 0,
+      sectionFlipped: false,
       measureEnabled: false,
       gridVisible: true,
       snapToGrid: true,
@@ -866,10 +1304,31 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
     },
     setDisplayMode: (mode) => set((s) => ({ viewState: { ...s.viewState, displayMode: mode } })),
     setSectionEnabled: (enabled) =>
-      set((s) => ({ viewState: { ...s.viewState, sectionEnabled: enabled } })),
-    setSectionAxis: (axis) => set((s) => ({ viewState: { ...s.viewState, sectionAxis: axis } })),
+      set((s) => ({
+        viewState: {
+          ...s.viewState,
+          sectionEnabled: enabled,
+          // Turning the section on starts at the centre of the visible model.
+          ...(enabled && !s.viewState.sectionEnabled
+            ? { sectionOffset: sectionOffsetFor(s.viewState.sectionAxis) }
+            : {}),
+        },
+      })),
+    setSectionAxis: (axis) =>
+      set((s) => ({
+        viewState: {
+          ...s.viewState,
+          sectionAxis: axis,
+          ...(axis !== s.viewState.sectionAxis ? { sectionOffset: sectionOffsetFor(axis) } : {}),
+        },
+      })),
     setSectionOffset: (offset) =>
       set((s) => ({ viewState: { ...s.viewState, sectionOffset: offset } })),
+    setSectionFlipped: (flipped) =>
+      set((s) => ({ viewState: { ...s.viewState, sectionFlipped: flipped } })),
+    sketchVisibility: {},
+    setSketchVisible: (featureId, visible) =>
+      set((s) => ({ sketchVisibility: { ...s.sketchVisibility, [featureId]: visible } })),
     setMeasureEnabled: (enabled) =>
       set((s) => ({ viewState: { ...s.viewState, measureEnabled: enabled } })),
     setGridVisible: (visible) =>
@@ -912,6 +1371,7 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
         hover: null,
         hiddenBodyIds: [],
         isolatedBodyIds: null,
+        sketchVisibility: {},
         evaluation: EMPTY_EVALUATION,
       });
       setFeatures(features);

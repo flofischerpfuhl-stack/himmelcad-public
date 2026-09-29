@@ -1,6 +1,8 @@
 /**
  * Items panel (left): bodies with type icon, visibility eye and isolate,
- * plus sketches. Click selects (Ctrl/Cmd adds, Shift range), hover sets
+ * plus sketches with a visibility eye (sketches consumed by an extrude are
+ * hidden in the viewport by default, like Shapr3D; selecting one here shows
+ * it while selected). Click selects (Ctrl/Cmd adds, Shift range), hover sets
  * the store hover so the viewport highlights it, right-click opens the
  * shared context menu for that item.
  */
@@ -10,6 +12,7 @@ import { useState } from 'react';
 import { Menu, MenuItem } from '@himmelcad/ui';
 
 import { findCommand } from '../model/commands/registry.js';
+import { consumedSketchIds, isSketchVisible } from '../model/modeling.js';
 import type { AssemblerState, SelectionItem } from '../model/store.js';
 import panelStyles from './Panel.module.css';
 import styles from './ItemsPanel.module.css';
@@ -207,9 +210,13 @@ function BodyRow({ row, state, selected, onSelect, onContextMenu }: RowProps): J
 }
 
 function SketchRow({ row, state, selected, onSelect, onContextMenu }: RowProps): JSX.Element {
+  const featureId = row.item.kind === 'sketchProfile' ? row.item.featureId : '';
+  const consumed = consumedSketchIds(state.features);
+  const visible = isSketchVisible(featureId, consumed, state.sketchVisibility);
+  const hint = consumed.has(featureId) ? ' (used by an extrude)' : '';
   return (
     <div
-      className={`${styles.row} ${selected ? styles.rowSelected : ''}`}
+      className={`${styles.row} ${selected ? styles.rowSelected : ''} ${visible ? '' : styles.rowHidden}`}
       onClick={(event) => onSelect(event)}
       onMouseEnter={() => state.setHover(row.item)}
       onMouseLeave={() => state.setHover(null)}
@@ -222,6 +229,18 @@ function SketchRow({ row, state, selected, onSelect, onContextMenu }: RowProps):
         <PenSquare size={13} />
       </span>
       <span className={styles.name}>{row.name}</span>
+      <button
+        type="button"
+        className={styles.rowButton}
+        aria-label={visible ? 'Hide sketch' : 'Show sketch'}
+        title={visible ? `Hide sketch${hint}` : `Show sketch${hint}`}
+        onClick={(event) => {
+          event.stopPropagation();
+          state.setSketchVisible(featureId, !visible);
+        }}
+      >
+        {visible ? <Eye size={13} /> : <EyeOff size={13} />}
+      </button>
     </div>
   );
 }

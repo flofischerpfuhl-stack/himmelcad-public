@@ -84,15 +84,18 @@ export function resolveShortcut(event: KeyEvent, ctx: CommandContext): Command |
 
 /**
  * Layered Escape handling (interaction research §4): a focused numeric
- * field consumes Escape first (leaving `numericEditing`), then an active
- * tool (cancelling it, `features` untouched), then the current selection
- * and hover. Each layer only acts if the one before it had nothing to do.
+ * field consumes Escape first (leaving `numericEditing`), then a placed
+ * circle centre, then an active tool (cancelling it, `features`
+ * untouched), then the current selection and hover. Each layer only acts
+ * if the one before it had nothing to do.
  */
 export function handleEscape(ctx: CommandContext): void {
   if (ctx.activeTool?.phase === 'numericEditing') {
     ctx.endNumericEditing();
     return;
   }
+  // The circle tool drops a placed centre first (Shapr3D: Escape twice leaves the tool).
+  if (ctx.activeTool?.kind === 'sketchCircle' && ctx.resetSketchCircle()) return;
   if (ctx.activeTool) {
     ctx.cancel();
     return;

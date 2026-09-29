@@ -1,73 +1,203 @@
 /**
  * Tool-session chrome: a top-centre pill (tool name, shortcut, one-line
- * prompt, and — for Extrude — the New body/Join operation badge) plus
- * floating Done/Cancel buttons near the bottom centre. Rendered whenever
- * `activeTool` is set; the viewport owns the in-canvas handles and
- * editable dimension labels this refers to.
+ * prompt, the tool's option badge — Extrude New/Join/Cut, Fillet/Chamfer,
+ * Union/Subtract/Intersect, Radius/Diameter — and the kernel's error for
+ * the current parameters) plus floating Done/Cancel buttons near the bottom
+ * centre. Rendered whenever `activeTool` is set; the viewport owns the
+ * in-canvas handles and editable dimension chips this refers to.
  */
-import { Check, X } from 'lucide-react';
+import { AlertTriangle, Check, LoaderCircle, X } from 'lucide-react';
 
 import { Button, Tooltip } from '@himmelcad/ui';
 
-import type { AssemblerState, ToolSession as ToolSessionState } from '../model/store.js';
+import {
+  isPreviewTool,
+  type AssemblerState,
+  type ToolSession as ToolSessionState,
+} from '../model/store.js';
 import styles from './ToolSession.module.css';
 
-const TOOL_META: Record<
-  ToolSessionState['kind'],
-  { label: string; shortcut: string; prompt: string }
-> = {
-  sketchRectangle: {
-    label: 'Rectangle',
-    shortcut: 'R',
-    prompt: 'Click two corners on the grid.',
-  },
-  extrude: {
-    label: 'Extrude',
-    shortcut: 'E',
-    prompt: 'Drag the arrow or type a distance.',
-  },
-  move: {
-    label: 'Move',
-    shortcut: 'M',
-    prompt: 'Drag the arrow or type an offset.',
-  },
-};
+interface ToolMeta {
+  label: string;
+  shortcut: string;
+  prompt: string;
+}
+
+function toolMeta(tool: ToolSessionState): ToolMeta {
+  switch (tool.kind) {
+    case 'sketchRectangle':
+      return {
+        label: 'Rectangle',
+        shortcut: 'R',
+        prompt:
+          tool.plane.kind === 'face'
+            ? 'Click two corners.'
+            : 'Click two corners on the grid or a face.',
+      };
+    case 'sketchCircle':
+      return {
+        label: 'Circle',
+        shortcut: 'C',
+        prompt: tool.center
+          ? 'Click to set the radius or type a value. Esc to restart.'
+          : tool.plane.kind === 'face'
+            ? 'Click the centre.'
+            : 'Click the centre on the grid or a planar face.',
+      };
+    case 'extrude':
+      return {
+        label: 'Extrude',
+        shortcut: 'E',
+        prompt:
+          tool.distance === 0
+            ? 'Drag the arrow or type a distance.'
+            : 'Drag the arrow or type a distance, then Done.',
+      };
+    case 'move':
+      return { label: 'Move', shortcut: 'M', prompt: 'Drag the arrow or type an offset.' };
+    case 'edgeBlend':
+      return {
+        label: tool.blend === 'fillet' ? 'Fillet' : 'Chamfer',
+        shortcut: 'F',
+        prompt: `Drag the arrow or type a ${tool.blend === 'fillet' ? 'radius' : 'distance'}. ${tool.edges.length} ${tool.edges.length === 1 ? 'edge' : 'edges'}; click edges to add or remove.`,
+      };
+    case 'shell':
+      return {
+        label: 'Shell',
+        shortcut: 'H',
+        prompt: `Drag the arrow or type a wall thickness. ${tool.faces.length} open ${tool.faces.length === 1 ? 'face' : 'faces'}.`,
+      };
+    case 'boolean':
+      return {
+        label: 'Boolean',
+        shortcut: '',
+        prompt: `Keeps the first selected body; ${tool.toolBodyIds.length === 1 ? '1 tool body is' : `${tool.toolBodyIds.length} tool bodies are`} consumed.`,
+      };
+  }
+}
+
+interface BadgeOption<T extends string> {
+  value: T;
+  label: string;
+}
+
+function Badge<T extends string>(props: {
+  ariaLabel: string;
+  value: T;
+  options: readonly BadgeOption<T>[];
+  onChange: (value: T) => void;
+}): JSX.Element {
+  return (
+    <span className={styles.badge} role="radiogroup" aria-label={props.ariaLabel}>
+      {props.options.map((option) => (
+        <button
+          key={option.value}
+          type="button"
+          role="radio"
+          aria-checked={props.value === option.value}
+          className={`${styles.badgeOption} ${props.value === option.value ? styles.badgeOptionActive : ''}`}
+          onClick={() => props.onChange(option.value)}
+        >
+          {option.label}
+        </button>
+      ))}
+    </span>
+  );
+}
+
+function ToolBadge({
+  state,
+  tool,
+}: {
+  state: AssemblerState;
+  tool: ToolSessionState;
+}): JSX.Element | null {
+  switch (tool.kind) {
+    case 'extrude':
+      if (tool.profile.kind !== 'sketch') return null;
+      return (
+        <Badge
+          ariaLabel="Extrude operation"
+          value={tool.operation}
+          options={[
+            { value: 'new', label: 'New body' },
+            { value: 'join', label: 'Join' },
+            { value: 'cut', label: 'Cut' },
+          ]}
+          onChange={(operation) => state.setExtrudeOperation(operation)}
+        />
+      );
+    case 'edgeBlend':
+      return (
+        <Badge
+          ariaLabel="Edge treatment"
+          value={tool.blend}
+          options={[
+            { value: 'fillet', label: 'Fillet' },
+            { value: 'chamfer', label: 'Chamfer' },
+          ]}
+          onChange={(blend) => state.setBlendKind(blend)}
+        />
+      );
+    case 'boolean':
+      return (
+        <Badge
+          ariaLabel="Boolean operation"
+          value={tool.operation}
+          options={[
+            { value: 'union', label: 'Union' },
+            { value: 'subtract', label: 'Subtract' },
+            { value: 'intersect', label: 'Intersect' },
+          ]}
+          onChange={(operation) => state.setBooleanOperation(operation)}
+        />
+      );
+    case 'sketchCircle':
+      return (
+        <Badge
+          ariaLabel="Circle dimension"
+          value={tool.dimension}
+          options={[
+            { value: 'radius', label: 'Radius' },
+            { value: 'diameter', label: 'Diameter' },
+          ]}
+          onChange={(dimension) => state.setCircleDimension(dimension)}
+        />
+      );
+    default:
+      return null;
+  }
+}
 
 export function ToolSession({ state }: { state: AssemblerState }): JSX.Element | null {
   const tool = state.activeTool;
   if (!tool) return null;
-  const meta = TOOL_META[tool.kind];
+  const meta = toolMeta(tool);
+  const preview = isPreviewTool(tool) ? tool : null;
+  const error = preview?.previewError ?? null;
+  const blocked = error !== null && !(preview?.previewPending ?? false);
 
   return (
     <>
       <div className={styles.pill} role="status" aria-label={`${meta.label} tool active`}>
         <span className={styles.name}>{meta.label}</span>
-        <span className={styles.shortcut}>{meta.shortcut}</span>
+        {meta.shortcut ? <span className={styles.shortcut}>{meta.shortcut}</span> : null}
         <span className={styles.divider} aria-hidden />
         <span className={styles.prompt}>{meta.prompt}</span>
-        {tool.kind === 'extrude' && tool.profile.kind === 'sketch' ? (
-          <span className={styles.badge} role="radiogroup" aria-label="Extrude operation">
-            <button
-              type="button"
-              role="radio"
-              aria-checked={tool.operation === 'new'}
-              className={`${styles.badgeOption} ${tool.operation === 'new' ? styles.badgeOptionActive : ''}`}
-              onClick={() => state.setExtrudeOperation('new')}
-            >
-              New body
-            </button>
-            <button
-              type="button"
-              role="radio"
-              aria-checked={tool.operation === 'join'}
-              className={`${styles.badgeOption} ${tool.operation === 'join' ? styles.badgeOptionActive : ''}`}
-              onClick={() => state.setExtrudeOperation('join')}
-            >
-              Join
-            </button>
+        <ToolBadge state={state} tool={tool} />
+        {preview?.previewPending ? (
+          <span className={styles.busy} aria-label="Computing preview">
+            <LoaderCircle size={13} />
           </span>
         ) : null}
       </div>
+      {error ? (
+        <div className={styles.error} role="alert">
+          <AlertTriangle size={13} aria-hidden />
+          <span>{error}</span>
+          <span className={styles.errorHint}>Showing the last valid preview.</span>
+        </div>
+      ) : null}
       <div className={styles.actions}>
         <Tooltip content="Cancel (Esc)">
           <Button
@@ -80,12 +210,13 @@ export function ToolSession({ state }: { state: AssemblerState }): JSX.Element |
             Cancel
           </Button>
         </Tooltip>
-        <Tooltip content="Done (Enter)">
+        <Tooltip content={blocked ? 'Fix the error first' : 'Done (Enter)'}>
           <Button
             variant="primary"
             size="small"
             icon={<Check size={14} />}
             aria-label="Commit tool"
+            disabled={blocked}
             onClick={() => state.commit()}
           >
             Done
