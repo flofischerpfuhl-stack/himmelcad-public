@@ -48,7 +48,7 @@ function roundFaceEdgesTouch(result: EvaluationResult): { key: string; area: num
 void test('demo bracket evaluates to one valid B-rep body matching the hand calculation', async (t) => {
   const { evaluator, loadMs } = await loadNodeKernel();
   const start = performance.now();
-  const result = evaluator.evaluate(createDemoDocument());
+  const result = await evaluator.evaluate(createDemoDocument());
   const totalMs = performance.now() - start;
   t.diagnostic(
     `wasm load ${loadMs.toFixed(0)} ms; demo evaluation ${totalMs.toFixed(0)} ms ` +
@@ -83,7 +83,7 @@ void test('demo bracket evaluates to one valid B-rep body matching the hand calc
 
 void test('tessellation: every triangle carries a face id, planes are flat-shaded, cylinders smooth', async () => {
   const { evaluator } = await loadNodeKernel();
-  const bracket = body(evaluator.evaluate(createDemoDocument()));
+  const bracket = body(await evaluator.evaluate(createDemoDocument()));
   const { mesh } = bracket;
   const triangles = mesh.indices.length / 3;
   assert.equal(mesh.triangleFaces.length, triangles);
@@ -121,9 +121,9 @@ void test('tessellation: every triangle carries a face id, planes are flat-shade
 
 void test('stable references: editing the base-plate sketch width keeps the fillet on the inner edge', async (t) => {
   const { evaluator } = await loadNodeKernel();
-  const before = evaluator.evaluate(createDemoDocument());
+  const before = await evaluator.evaluate(createDemoDocument());
   const start = performance.now();
-  const after = evaluator.evaluate(withSketch1Width(createDemoDocument(), 100));
+  const after = await evaluator.evaluate(withSketch1Width(createDemoDocument(), 100));
   t.diagnostic(`parameter-edit re-evaluation ${(performance.now() - start).toFixed(0)} ms`);
   assert.deepEqual(after.errors, {});
   assert.deepEqual(after.warnings, {}, 'resolved by naming key, not by the geometric fallback');
@@ -151,7 +151,7 @@ void test('stable references: removing the referenced face yields a Missing refe
   const suppressed = createDemoDocument().map((f) =>
     f.id === 'feature-extrude-2' ? { ...f, suppressed: true } : f,
   );
-  const result = evaluator.evaluate(suppressed);
+  const result = await evaluator.evaluate(suppressed);
   assert.match(result.errors['feature-fillet-3'] ?? '', /^Missing reference: edge /);
   assert.equal(result.warnings['feature-fillet-3'], undefined);
   // The rest of the history still evaluates: plate with the hole, no fillet.
@@ -162,14 +162,14 @@ void test('stable references: removing the referenced face yields a Missing refe
   const separate = createDemoDocument().map((f) =>
     f.id === 'feature-extrude-2' ? ({ ...f, operation: 'new' } as ExtrudeFeature) : f,
   );
-  const split = evaluator.evaluate(separate);
+  const split = await evaluator.evaluate(separate);
   assert.equal(split.bodies.length, 2);
   assert.match(split.errors['feature-fillet-3'] ?? '', /^Missing reference: edge /);
 });
 
 void test('face push/pull keeps the face identity; chamfer, shell, move and booleans evaluate', async () => {
   const { evaluator } = await loadNodeKernel();
-  const demo = evaluator.evaluate(createDemoDocument());
+  const demo = await evaluator.evaluate(createDemoDocument());
   const bracket = body(demo);
   const top = bracket.faces.find((f) => f.normal && f.normal[2] > 0.999 && f.centroid[2] > 45)!;
   const pushPull: ExtrudeFeature = {
@@ -203,7 +203,7 @@ void test('face push/pull keeps the face identity; chamfer, shell, move and bool
       edges: [{ bodyId: PLATE, key: outerEdge.key, signature: edgeSignatureOf(outerEdge) }],
     },
   ];
-  const result = evaluator.evaluate(features);
+  const result = await evaluator.evaluate(features);
   assert.deepEqual(result.errors, {});
   const grown = body(result);
   assert.ok(Math.abs(grown.max[2] - 51) < 1e-6, `pushed top to z=51, got ${grown.max}`);
@@ -247,11 +247,11 @@ void test('face push/pull keeps the face identity; chamfer, shell, move and bool
       operation: 'new',
     },
   ];
-  const boxes = evaluator.evaluate(box);
+  const boxes = await evaluator.evaluate(box);
   assert.equal(boxes.bodies.length, 2);
   const cube = body(boxes, 'body:feature-extrude-2');
   const cubeTop = cube.faces.find((f) => f.key === 'feature-extrude-2:end:0')!;
-  const shelled = evaluator.evaluate([
+  const shelled = await evaluator.evaluate([
     ...box,
     {
       id: 'feature-shell-4',

@@ -28,6 +28,7 @@ import {
   type FaceRef,
   type Feature,
   type FilletFeature,
+  type ImportStepFeature,
   type MoveFeature,
   type SetAppearanceFeature,
   type ShellFeature,
@@ -110,7 +111,18 @@ export interface EvaluatorOptions {
 }
 
 export interface KernelEvaluator {
-  evaluate(features: readonly Feature[]): EvaluationResult;
+  /**
+   * Replays `features` into evaluated bodies. Async because STEP import
+   * (`ImportStepFeature`) parses the file through replicad's asynchronous
+   * `importSTEP`; every other feature resolves synchronously.
+   */
+  evaluate(features: readonly Feature[]): Promise<EvaluationResult>;
+  /**
+   * Replays `features` and exports the resulting bodies (or a subset, by
+   * body id) as one STEP file, one object per body, named and coloured.
+   * Uses the exact B-rep, not the tessellated mesh.
+   */
+  exportStep(features: readonly Feature[], bodyIds?: readonly string[]): Promise<Uint8Array>;
 }
 
 export function createEvaluator(oc: OpenCascade, options: EvaluatorOptions = {}): KernelEvaluator {
@@ -646,6 +658,36 @@ export function createEvaluator(oc: OpenCascade, options: EvaluatorOptions = {})
     body.color = feature.color;
   }
 
+  /** Imports a STEP file as a new body (Shapr3D-style "Import"), naming its faces by index. */
+  async function applyImportStep(feature: ImportStepFeature, ctx: ReplayContext): Promise<void> {
+    let shape: Shape3D;
+    try {
+      const bytes = base64ToBytes(feature.data);
+      const blob = new Blob([bytes.slice()], { type: 'application/step' });
+      const imported = await R.importSTEP(blob);
+      if (!('faces' in imported)) {
+        throw new FeatureError('STEP file has no solid geometry');
+      }
+      shape = imported as Shape3D;
+    } catch (error) {
+      if (error instanceof FeatureError) throw error;
+      throw new FeatureError(`STEP import failed: ${describeError(error)}`);
+    }
+    const geoms = shape.faces.map(describeFace);
+    const id = bodyIdFor(feature.id);
+    const created = ctx.createdCount;
+    ctx.bodies.set(id, {
+      id,
+      name: feature.fileName.replace(/\.step$|\.stp$/i, '') || `Import ${created + 1}`,
+      color: COLOR_PALETTE[created % COLOR_PALETTE.length]!,
+      createdBy: feature.id,
+      shape,
+      faces: geoms.map((g, i) => ({ ...g, key: `${feature.id}:face:${i}`, aliases: [] })),
+    });
+    ctx.createdCount += 1;
+    ctx.order.push(id);
+  }
+
   // ---- output ------------------------------------------------------------------
 
   function toBody(state: BodyState): { body: Body; triangles: number } {
@@ -764,72 +806,84 @@ export function createEvaluator(oc: OpenCascade, options: EvaluatorOptions = {})
     touch: (bodyId: string) => void;
   }
 
-  return {
-    evaluate(features) {
-      const t0 = now();
-      const errors: Record<string, string> = {};
-      const warnings: Record<string, string> = {};
-      const featureOrder = new Map(features.map((f, i) => [f.id, i]));
-      let currentId = '';
-      const ctx: ReplayContext = {
-        bodies: new Map(),
-        order: [],
-        sketches: new Map(),
-        sketchFeatures: new Map(),
-        featureOrder,
-        createdCount: 0,
-        warn: (message) => {
-          warnings[currentId] = warnings[currentId]
-            ? `${warnings[currentId]}; ${message}`
-            : message;
-        },
-        // "Most recently changed body" is the default join/cut target.
-        touch: (bodyId) => {
-          const index = ctx.order.indexOf(bodyId);
-          if (index >= 0) {
-            ctx.order.splice(index, 1);
-            ctx.order.push(bodyId);
-          }
-        },
-      };
-      const creationOrder: string[] = [];
-
-      for (const feature of features) {
-        if (feature.suppressed) continue;
-        currentId = feature.id;
-        const snapshot = snapshotBodies(ctx.bodies);
-        try {
-          switch (feature.kind) {
-            case 'sketch':
-              ctx.sketches.set(feature.id, evaluateSketch(feature, ctx.bodies, ctx.warn));
-              ctx.sketchFeatures.set(feature.id, feature);
-              break;
-            case 'extrude':
-              applyExtrude(feature, ctx);
-              break;
-            case 'fillet':
-            case 'chamfer':
-              applyBlend(feature, ctx);
-              break;
-            case 'shell':
-              applyShell(feature, ctx);
-              break;
-            case 'boolean':
-              applyBoolean(feature, ctx);
-              break;
-            case 'move':
-              applyMove(feature, ctx);
-              break;
-            case 'setAppearance':
-              applyAppearance(feature, ctx);
-              break;
-          }
-        } catch (error) {
-          errors[feature.id] = error instanceof FeatureError ? error.message : describeError(error);
-          restoreBodies(ctx, snapshot);
+  /** Replays `features` into `ctx.bodies`, in creation order. Shared by `evaluate` and `exportStep`. */
+  async function replayFeatures(features: readonly Feature[]): Promise<{
+    ctx: ReplayContext;
+    creationOrder: string[];
+    errors: Record<string, string>;
+    warnings: Record<string, string>;
+  }> {
+    const errors: Record<string, string> = {};
+    const warnings: Record<string, string> = {};
+    const featureOrder = new Map(features.map((f, i) => [f.id, i]));
+    let currentId = '';
+    const ctx: ReplayContext = {
+      bodies: new Map(),
+      order: [],
+      sketches: new Map(),
+      sketchFeatures: new Map(),
+      featureOrder,
+      createdCount: 0,
+      warn: (message) => {
+        warnings[currentId] = warnings[currentId] ? `${warnings[currentId]}; ${message}` : message;
+      },
+      // "Most recently changed body" is the default join/cut target.
+      touch: (bodyId) => {
+        const index = ctx.order.indexOf(bodyId);
+        if (index >= 0) {
+          ctx.order.splice(index, 1);
+          ctx.order.push(bodyId);
         }
-        for (const id of ctx.order) if (!creationOrder.includes(id)) creationOrder.push(id);
+      },
+    };
+    const creationOrder: string[] = [];
+
+    for (const feature of features) {
+      if (feature.suppressed) continue;
+      currentId = feature.id;
+      const snapshot = snapshotBodies(ctx.bodies);
+      try {
+        switch (feature.kind) {
+          case 'sketch':
+            ctx.sketches.set(feature.id, evaluateSketch(feature, ctx.bodies, ctx.warn));
+            ctx.sketchFeatures.set(feature.id, feature);
+            break;
+          case 'extrude':
+            applyExtrude(feature, ctx);
+            break;
+          case 'fillet':
+          case 'chamfer':
+            applyBlend(feature, ctx);
+            break;
+          case 'shell':
+            applyShell(feature, ctx);
+            break;
+          case 'boolean':
+            applyBoolean(feature, ctx);
+            break;
+          case 'move':
+            applyMove(feature, ctx);
+            break;
+          case 'setAppearance':
+            applyAppearance(feature, ctx);
+            break;
+          case 'importStep':
+            await applyImportStep(feature, ctx);
+            break;
+        }
+      } catch (error) {
+        errors[feature.id] = error instanceof FeatureError ? error.message : describeError(error);
+        restoreBodies(ctx, snapshot);
       }
+      for (const id of ctx.order) if (!creationOrder.includes(id)) creationOrder.push(id);
+    }
+    return { ctx, creationOrder, errors, warnings };
+  }
+
+  return {
+    async evaluate(features) {
+      const t0 = now();
+      const { ctx, creationOrder, errors, warnings } = await replayFeatures(features);
 
       const t1 = now();
       const bodies: Body[] = [];
@@ -853,6 +907,23 @@ export function createEvaluator(oc: OpenCascade, options: EvaluatorOptions = {})
         warnings,
         stats: { modelMs: t1 - t0, tessellateMs: t2 - t1, triangles },
       };
+    },
+
+    async exportStep(features, bodyIds) {
+      const { ctx, creationOrder, errors } = await replayFeatures(features);
+      const firstError = Object.entries(errors)[0];
+      if (firstError) throw new Error(`Cannot export: ${firstError[1]}`);
+      const wanted = bodyIds ? new Set(bodyIds) : null;
+      const shapes = creationOrder
+        .map((id) => ctx.bodies.get(id))
+        .filter(
+          (state): state is BodyState => state !== undefined && (!wanted || wanted.has(state.id)),
+        )
+        .map((state) => ({ shape: state.shape, color: state.color, name: state.name }));
+      if (shapes.length === 0) throw new Error('Nothing to export');
+      const blob = R.exportSTEP(shapes, { unit: 'mm', modelUnit: 'mm' });
+      const buffer = await blob.arrayBuffer();
+      return new Uint8Array(buffer);
     },
   };
 
@@ -978,6 +1049,22 @@ function curveKindOf(type: R.CurveType): CurveKind {
 
 function now(): number {
   return typeof performance !== 'undefined' ? performance.now() : Date.now();
+}
+
+/** Decodes base64 to bytes in the worker/browser and in Node (test) contexts alike. */
+function base64ToBytes(base64: string): Uint8Array {
+  const g = globalThis as {
+    atob?: (s: string) => string;
+    Buffer?: { from(s: string, enc: string): Uint8Array };
+  };
+  if (typeof g.atob === 'function') {
+    const binary = g.atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+    return bytes;
+  }
+  if (g.Buffer) return new Uint8Array(g.Buffer.from(base64, 'base64'));
+  throw new Error('No base64 decoder available');
 }
 
 function dot(a: Vec3, b: Vec3): number {

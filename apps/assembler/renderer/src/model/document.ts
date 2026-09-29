@@ -171,6 +171,21 @@ export interface SetAppearanceFeature extends FeatureBase {
   color: string;
 }
 
+/**
+ * Imports a STEP file as one history step producing a body (Shapr3D-style
+ * "Import"). The STEP content is embedded as base64 so the project file
+ * (`.hcasm`) stays self-contained and Save/Reopen never depends on an
+ * external path. Millimetres are assumed unless the STEP file's own units
+ * say otherwise (the kernel reads the file's `ISO-10303` unit header).
+ */
+export interface ImportStepFeature extends FeatureBase {
+  kind: 'importStep';
+  /** Base64-encoded STEP file bytes (ASCII STEP text, so this is compact). */
+  data: string;
+  /** Original file name, for display and as the default body name. */
+  fileName: string;
+}
+
 export type Feature =
   | SketchFeature
   | ExtrudeFeature
@@ -179,7 +194,8 @@ export type Feature =
   | ShellFeature
   | BooleanFeature
   | MoveFeature
-  | SetAppearanceFeature;
+  | SetAppearanceFeature
+  | ImportStepFeature;
 
 /** Minimum size, in millimetres, of sketch dimensions and extrude distances. */
 export const MIN_FEATURE_SIZE_MM: Millimeters = 0.1;

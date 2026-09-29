@@ -18,12 +18,16 @@ import type { EvaluationResult, KernelStatusInfo } from './types.js';
 
 declare const self: DedicatedWorkerGlobalScope;
 
-export type WorkerRequest = { type: 'evaluate'; jobId: number; features: Feature[] };
+export type WorkerRequest =
+  | { type: 'evaluate'; jobId: number; features: Feature[] }
+  | { type: 'exportStep'; jobId: number; features: Feature[]; bodyIds?: string[] };
 
 export type WorkerResponse =
   | { type: 'status'; status: KernelStatusInfo }
   | { type: 'result'; jobId: number; result: EvaluationResult }
-  | { type: 'failed'; jobId: number; message: string };
+  | { type: 'failed'; jobId: number; message: string }
+  | { type: 'exportResult'; jobId: number; bytes: ArrayBuffer }
+  | { type: 'exportFailed'; jobId: number; message: string };
 
 function post(message: WorkerResponse, transfer: Transferable[] = []): void {
   self.postMessage(message, transfer);
@@ -97,12 +101,30 @@ ready.catch((error: unknown) => {
 
 self.onmessage = (event: MessageEvent<WorkerRequest>) => {
   const message = event.data;
+  if (message.type === 'exportStep') {
+    void ready.then(
+      async (evaluator) => {
+        try {
+          const bytes = (await evaluator.exportStep(message.features, message.bodyIds)).slice();
+          post({ type: 'exportResult', jobId: message.jobId, bytes: bytes.buffer }, [bytes.buffer]);
+        } catch (error) {
+          post({
+            type: 'exportFailed',
+            jobId: message.jobId,
+            message: error instanceof Error ? error.message : String(error),
+          });
+        }
+      },
+      () => undefined,
+    );
+    return;
+  }
   if (message.type !== 'evaluate') return;
   void ready.then(
-    (evaluator) => {
+    async (evaluator) => {
       let result: EvaluationResult;
       try {
-        result = evaluator.evaluate(message.features);
+        result = await evaluator.evaluate(message.features);
       } catch (error) {
         post({
           type: 'failed',

@@ -17,6 +17,7 @@
  * - Failures never leave partial state behind: an outcome is either a full
  *   `EvaluationResult` or an error.
  */
+import type { Feature } from '../model/document.js';
 import type {
   EvaluationChannel,
   EvaluationOutcome,
@@ -43,6 +44,12 @@ export interface KernelAdapter {
    * stopped (worker restart), otherwise it finishes and its result is dropped.
    */
   cancel(jobId: number, options?: { hard?: boolean }): void;
+  /**
+   * One-off exact-geometry STEP export of the given features (optionally
+   * only the given body ids). Bypasses the preview/document coalescing
+   * queue: it is a user-initiated action, not a continuous evaluation.
+   */
+  exportStep(features: readonly Feature[], bodyIds?: readonly string[]): Promise<Uint8Array>;
   dispose(): void;
 }
 
@@ -146,6 +153,10 @@ export abstract class QueuedKernelAdapter implements KernelAdapter {
     this.listeners.clear();
   }
 
+  exportStep(_features: readonly Feature[], _bodyIds?: readonly string[]): Promise<Uint8Array> {
+    return Promise.reject(new Error('STEP export is not supported by this kernel adapter'));
+  }
+
   /** Evaluates one request. Must not throw synchronously for kernel errors. */
   protected abstract run(request: EvaluationRequest): Promise<EvaluationResult>;
 
@@ -187,10 +198,12 @@ export abstract class QueuedKernelAdapter implements KernelAdapter {
  */
 export class InProcessKernelAdapter extends QueuedKernelAdapter {
   private evaluator: KernelEvaluator | null = null;
+  private readonly ready: Promise<KernelEvaluator>;
 
   constructor(load: () => Promise<KernelEvaluator>) {
     super();
-    load().then(
+    this.ready = load();
+    this.ready.then(
       (evaluator) => {
         this.evaluator = evaluator;
         this.setStatus({
@@ -215,5 +228,13 @@ export class InProcessKernelAdapter extends QueuedKernelAdapter {
     // Yield once so callers observe the asynchronous contract.
     await Promise.resolve();
     return this.evaluator!.evaluate(request.features);
+  }
+
+  override async exportStep(
+    features: readonly Feature[],
+    bodyIds?: readonly string[],
+  ): Promise<Uint8Array> {
+    const evaluator = await this.ready;
+    return evaluator.exportStep(features, bodyIds);
   }
 }
