@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react';
 
+import { AgentAccessIndicator } from './chrome/AgentAccessIndicator.js';
 import { CommandContextMenu } from './chrome/ContextMenu.js';
 import { CommandSearch } from './chrome/CommandSearch.js';
 import { HistoryPanel } from './chrome/HistoryPanel.js';
@@ -64,6 +65,7 @@ export function App(): JSX.Element {
       <ToolSession state={state} />
       {state.viewState.sectionEnabled ? <SectionControls state={state} /> : null}
       <StatusStrip state={state} />
+      <AgentAccessIndicator />
 
       {commandSearchOpen ? (
         <CommandSearch state={state} onClose={() => setCommandSearchOpen(false)} />

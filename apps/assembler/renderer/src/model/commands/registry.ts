@@ -8,6 +8,7 @@
  * and identical disabled reasons. Nothing outside this file should decide
  * whether a command is enabled.
  */
+import { useAutomationStore } from '../../api/app/automationStore.js';
 import { useProjectStore } from '../project/projectStore.js';
 import { isPlanarFace, makeFaceRef, type AssemblerState, type SelectionItem } from '../store.js';
 
@@ -574,6 +575,23 @@ export const COMMANDS: readonly Command[] = [
     requiresKernel: true,
     availability: (ctx) => kernelNotReady(ctx) ?? alwaysEnabled,
     run: () => void useProjectStore.getState().importStep(),
+  },
+  {
+    id: 'file.agentAccess',
+    label: 'Agent Access (Local)',
+    group: 'file',
+    keywords: ['agent', 'automation', 'python', 'api', 'ai', 'script', 'endpoint'],
+    availability: () => {
+      const automation = useAutomationStore.getState();
+      if (!automation.available) {
+        return { enabled: false, reason: 'Only available in the desktop app.' };
+      }
+      return { enabled: true, recommended: automation.enabled };
+    },
+    run: () => {
+      const automation = useAutomationStore.getState();
+      void automation.setEnabled(!automation.enabled);
+    },
   },
 ];
 

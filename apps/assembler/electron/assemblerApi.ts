@@ -46,6 +46,27 @@ export interface AssemblerProjectApi {
   respondClose(allow: boolean): Promise<void>;
 }
 
+/** State of the opt-in local agent endpoint (`electron/automationServer.ts`). */
+export interface AssemblerAutomationStatus {
+  enabled: boolean;
+  url: string | null;
+  port: number | null;
+  token: string | null;
+}
+
+/**
+ * Agent access: the main process owns the loopback server; request bodies
+ * are forwarded here and answered by the renderer's canonical command layer.
+ */
+export interface AssemblerAutomationApi {
+  status(): Promise<AssemblerAutomationStatus>;
+  setEnabled(enabled: boolean): Promise<AssemblerAutomationStatus>;
+  /** Subscribes to forwarded JSON-RPC request bodies. Returns an unsubscribe function. */
+  onRequest(listener: (id: string, body: string) => void): () => void;
+  /** Answers a forwarded request (empty string for a notification). */
+  respond(id: string, body: string): Promise<void>;
+}
+
 export interface AssemblerApi {
   readonly platform: AssemblerPlatform;
   readonly versions: {
@@ -54,4 +75,5 @@ export interface AssemblerApi {
     readonly node: string;
   };
   readonly project: AssemblerProjectApi;
+  readonly automation: AssemblerAutomationApi;
 }

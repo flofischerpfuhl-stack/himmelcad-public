@@ -7,6 +7,7 @@ import '@himmelcad/theme/reset.css';
 import './assembler.css';
 
 import { App } from './App.js';
+import { installAutomationBridge } from './api/app/automationStore.js';
 import { installAutomationHook } from './devtools/automationHook.js';
 import { WorkerKernelAdapter } from './kernel/workerAdapter.js';
 import { useProjectStore } from './model/project/projectStore.js';
@@ -23,6 +24,8 @@ const kernelAdapter = new WorkerKernelAdapter(
 useAssemblerStore.getState().attachKernel(kernelAdapter);
 // Project export (STEP) shares the same adapter instance, see `model/project/projectStore.ts`.
 useProjectStore.getState().attachKernelAdapter(kernelAdapter);
+// Agent access (desktop only, off until the user enables it): canonical command layer on this document.
+installAutomationBridge(kernelAdapter);
 
 const rootEl = document.getElementById('hc-root');
 if (!rootEl) throw new Error('Missing #hc-root mount point');
