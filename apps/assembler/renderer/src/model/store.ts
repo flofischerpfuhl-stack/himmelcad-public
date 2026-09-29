@@ -31,7 +31,7 @@
  */
 import { create } from 'zustand';
 
-import type { KernelAdapter, KernelJob } from '../kernel/adapter.js';
+import type { KernelActivity, KernelAdapter, KernelJob } from '../kernel/adapter.js';
 import { baseEdgeKey, baseFaceKey, edgeSignatureOf, faceSignatureOf } from '../kernel/naming.js';
 import {
   EMPTY_EVALUATION,
@@ -256,6 +256,20 @@ export interface AssemblerState {
   kernelProgress: number | null;
   /** Measured kernel load time once ready, ms. */
   kernelLoadMs: number | null;
+  /**
+   * The kernel computation running for longer than {@link LONG_OPERATION_MS}
+   * (progress + Cancel are shown for it), else `null`.
+   */
+  kernelActivity: KernelActivity | null;
+  /** One-off message for the user (kernel restarted after a crash, computation cancelled). */
+  kernelNotice: string | null;
+  dismissKernelNotice: () => void;
+  /**
+   * Cancels the long-running computation: a tool preview ends the tool; a
+   * document evaluation is stopped and the last computed state restored
+   * (the cancelled change stays available as Redo).
+   */
+  cancelKernelWork: () => void;
   /** Connects the store to a kernel and evaluates the current document. */
   attachKernel: (adapter: KernelAdapter) => void;
   /** Resolves once no document or preview evaluation is outstanding. */
@@ -628,6 +642,14 @@ const NO_PREVIEW: KernelPreviewFields = {
   previewError: null,
 };
 
+/** A kernel computation running longer than this shows progress and a Cancel button, ms. */
+export let LONG_OPERATION_MS = 2000;
+
+/** Test hook: shortens the delay before a long computation is shown. */
+export function setLongOperationDelay(ms: number): void {
+  LONG_OPERATION_MS = ms;
+}
+
 export const useAssemblerStore = create<AssemblerState>((set, get) => {
   /** Undo/redo snapshots of `features`; only `history.canUndo/canRedo` are public. */
   let past: Feature[][] = [];
@@ -650,6 +672,41 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
   let settledWaiters: (() => void)[] = [];
   /** Nested undo scope (a sketch session) while set; see `setHistoryDelegate`. */
   let historyDelegate: HistoryDelegate | null = null;
+  /** The feature array the shown `evaluation` belongs to (restored by `cancelKernelWork`). */
+  let lastEvaluatedFeatures: Feature[] | null = null;
+  let unsubscribeActivity: (() => void) | null = null;
+  let activityTimer: ReturnType<typeof setTimeout> | null = null;
+  /** The running job's activity, published to the state only once it runs long. */
+  let runningActivity: KernelActivity | null = null;
+  let lastActivityPublish = 0;
+
+  /** Tracks the adapter's running job; shows it (progress + Cancel) after `LONG_OPERATION_MS`. */
+  function onKernelActivity(activity: KernelActivity | null): void {
+    const previous = runningActivity;
+    runningActivity = activity;
+    if (!activity) {
+      if (activityTimer) clearTimeout(activityTimer);
+      activityTimer = null;
+      if (get().kernelActivity) set({ kernelActivity: null });
+      return;
+    }
+    if (previous?.jobId !== activity.jobId) {
+      if (activityTimer) clearTimeout(activityTimer);
+      if (get().kernelActivity) set({ kernelActivity: null });
+      const jobId = activity.jobId;
+      activityTimer = setTimeout(() => {
+        activityTimer = null;
+        if (runningActivity?.jobId === jobId) set({ kernelActivity: runningActivity });
+      }, LONG_OPERATION_MS);
+      return;
+    }
+    // Progress of a job already shown: at most ~10 updates a second.
+    const now = Date.now();
+    if (get().kernelActivity && now - lastActivityPublish > 100) {
+      lastActivityPublish = now;
+      set({ kernelActivity: activity });
+    }
+  }
 
   function isSettled(): boolean {
     const state = get();
@@ -696,6 +753,7 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
     }
     const cached = resultCache.get(features);
     if (cached) {
+      lastEvaluatedFeatures = features;
       applyEvaluation(cached);
       return;
     }
@@ -708,6 +766,7 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
       documentJob = null;
       if (outcome.kind === 'done') {
         resultCache.set(features, outcome.result);
+        lastEvaluatedFeatures = features;
         applyEvaluation(outcome.result);
       } else if (outcome.kind === 'failed') {
         set({ evaluationPending: false, kernelMessage: outcome.message });
@@ -746,6 +805,7 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
       channel: 'preview',
       revision,
       features: [...get().features, provisional],
+      quality: 'preview',
     });
     previewJob = job;
     void job.outcome.then((outcome) => {
@@ -860,10 +920,45 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
     kernelMessage: 'Loading CAD kernel…',
     kernelProgress: null,
     kernelLoadMs: null,
+    kernelActivity: null,
+    kernelNotice: null,
+    dismissKernelNotice: () => set({ kernelNotice: null }),
+    cancelKernelWork: () => {
+      const activity = runningActivity;
+      if (!kernel || !activity) return;
+      if (activity.channel === 'preview') {
+        kernel.cancel(activity.jobId, { hard: true });
+        // A tool's preview: cancelling the computation cancels the tool.
+        if (previewJob?.id === activity.jobId) get().cancel();
+        return;
+      }
+      kernel.cancel(activity.jobId, { hard: true });
+      if (documentJob?.id === activity.jobId) documentJob = null;
+      const restore = lastEvaluatedFeatures;
+      const state = get();
+      if (!historyDelegate && restore && restore !== state.features && !state.activeTool) {
+        const viaUndo = past[past.length - 1] === restore;
+        if (viaUndo) get().undo();
+        else commitFeatures(restore);
+        set({
+          kernelNotice: `Computation cancelled: the last computed state was restored. ${
+            viaUndo ? 'Redo' : 'Undo'
+          } applies the change again.`,
+        });
+        return;
+      }
+      set({
+        evaluationPending: false,
+        kernelNotice: 'Computation cancelled: the model shows the last computed state.',
+      });
+      notifySettled();
+    },
     attachKernel: (adapter) => {
       unsubscribeKernel?.();
+      unsubscribeActivity?.();
       kernel = adapter;
       resultCache = new WeakMap();
+      unsubscribeActivity = adapter.onActivity(onKernelActivity);
       unsubscribeKernel = adapter.onStatus((status) => {
         const wasReady = get().kernelStatus === 'ready';
         set({
@@ -871,6 +966,7 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
           kernelMessage: status.message,
           kernelProgress: status.progress,
           kernelLoadMs: status.loadMs,
+          ...(status.notice ? { kernelNotice: status.notice } : {}),
         });
         if (status.status === 'error') {
           set({ evaluationPending: false });

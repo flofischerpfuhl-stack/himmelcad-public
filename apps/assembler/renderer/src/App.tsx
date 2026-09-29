@@ -5,6 +5,7 @@ import { CommandContextMenu } from './chrome/ContextMenu.js';
 import { CommandSearch } from './chrome/CommandSearch.js';
 import { HistoryPanel } from './chrome/HistoryPanel.js';
 import { ItemsPanel } from './chrome/ItemsPanel.js';
+import { KernelActivity } from './chrome/KernelActivity.js';
 import { LeftDock } from './chrome/LeftDock.js';
 import { RightDock } from './chrome/RightDock.js';
 import { SectionControls } from './chrome/SectionControls.js';
@@ -67,6 +68,7 @@ export function App(): JSX.Element {
       <SketchChrome />
       {state.viewState.sectionEnabled ? <SectionControls state={state} /> : null}
       <StatusStrip state={state} />
+      <KernelActivity state={state} />
       <AgentAccessIndicator />
 
       {commandSearchOpen ? (
