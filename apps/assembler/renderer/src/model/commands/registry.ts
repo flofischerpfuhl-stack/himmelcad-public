@@ -574,6 +574,17 @@ export const COMMANDS: readonly Command[] = [
     run: () => void useProjectStore.getState().importStep(),
   },
   {
+    id: 'file.importStl',
+    label: 'Import STL…',
+    group: 'file',
+    keywords: ['import', 'stl', 'mesh', 'scan', 'reference'],
+    // Never a kernel input (`apps/assembler/README.md` "STL import"): the
+    // reference mesh is stored and rendered outside OCCT entirely, so this
+    // works even while the kernel is still loading or unavailable.
+    availability: () => alwaysEnabled,
+    run: () => void useProjectStore.getState().importStl(),
+  },
+  {
     id: 'file.agentAccess',
     label: 'Agent Access (Local)',
     group: 'file',

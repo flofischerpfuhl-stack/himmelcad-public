@@ -169,6 +169,125 @@ void test('rejects wrong units', () => {
   assert.throws(() => loadProjectFile(JSON.stringify(raw)), /units/);
 });
 
+void test('round trip preserves viewState (display mode, camera, section, panels)', () => {
+  const text = saveProjectFile({
+    projectName: 'P',
+    features: [],
+    appVersion: '0.1.0-test',
+    createdAt: '2020-01-01T00:00:00.000Z',
+    viewState: {
+      displayMode: 'xray',
+      camera: { preset: 'iso' },
+      section: { enabled: true, axis: 'Y', offset: 12.5, flipped: true },
+      panels: { items: false, history: true },
+    },
+  });
+  const project = loadProjectFile(text);
+  assert.deepEqual(project.viewState, {
+    displayMode: 'xray',
+    camera: { preset: 'iso' },
+    section: { enabled: true, axis: 'Y', offset: 12.5, flipped: true },
+    panels: { items: false, history: true },
+  });
+});
+
+void test('a file with no viewState loads with viewState left undefined (no invented defaults)', () => {
+  const text = saveProjectFile({
+    projectName: 'P',
+    features: [],
+    appVersion: '0.1.0-test',
+    createdAt: '2020-01-01T00:00:00.000Z',
+  });
+  const project = loadProjectFile(text);
+  assert.equal(project.viewState, undefined);
+});
+
+void test('round trip of a reference mesh preserves its transform, bbox and hidden flag', () => {
+  const referenceMeshes = [
+    {
+      id: 'refmesh-1',
+      name: 'Bracket scan',
+      fileName: 'bracket.stl',
+      data: 'Z2FyYmFnZS1nemlwLWJhc2U2NA==', // opaque to format.ts — decoding is meshCodec.ts's job
+      min: [0, 0, 0] as [number, number, number],
+      max: [10, 20, 30] as [number, number, number],
+      transform: { dx: 1, dy: 2, dz: 3 },
+      hidden: true,
+    },
+  ];
+  const text = saveProjectFile({
+    projectName: 'P',
+    features: [],
+    appVersion: '0.1.0-test',
+    createdAt: '2020-01-01T00:00:00.000Z',
+    referenceMeshes,
+  });
+  const project = loadProjectFile(text);
+  assert.deepEqual(project.referenceMeshes, referenceMeshes);
+});
+
+void test('rejects duplicate reference mesh ids', () => {
+  const raw = {
+    format: PROJECT_FORMAT_ID,
+    schemaVersion: 1,
+    appVersion: '0.1.0-test',
+    units: 'mm',
+    projectName: 'P',
+    features: [],
+    referenceMeshes: [
+      {
+        id: 'm1',
+        name: 'A',
+        fileName: 'a.stl',
+        data: 'AA==',
+        min: [0, 0, 0],
+        max: [1, 1, 1],
+        transform: { dx: 0, dy: 0, dz: 0 },
+        hidden: false,
+      },
+      {
+        id: 'm1',
+        name: 'B',
+        fileName: 'b.stl',
+        data: 'AA==',
+        min: [0, 0, 0],
+        max: [1, 1, 1],
+        transform: { dx: 0, dy: 0, dz: 0 },
+        hidden: false,
+      },
+    ],
+    createdAt: '2020-01-01T00:00:00.000Z',
+    modifiedAt: '2020-01-01T00:00:00.000Z',
+  };
+  assert.throws(() => loadProjectFile(JSON.stringify(raw)), /duplicate reference mesh id/);
+});
+
+void test('rejects a reference mesh with an empty data field', () => {
+  const raw = {
+    format: PROJECT_FORMAT_ID,
+    schemaVersion: 1,
+    appVersion: '0.1.0-test',
+    units: 'mm',
+    projectName: 'P',
+    features: [],
+    referenceMeshes: [
+      {
+        id: 'm1',
+        name: 'A',
+        fileName: 'a.stl',
+        data: '',
+        min: [0, 0, 0],
+        max: [1, 1, 1],
+        transform: { dx: 0, dy: 0, dz: 0 },
+        hidden: false,
+      },
+    ],
+    createdAt: '2020-01-01T00:00:00.000Z',
+    modifiedAt: '2020-01-01T00:00:00.000Z',
+  };
+  assert.throws(() => loadProjectFile(JSON.stringify(raw)), /referenceMeshes\[0\]\.data/);
+});
+
 void test('round trip of an importStep feature preserves embedded data', () => {
   const features = [
     {

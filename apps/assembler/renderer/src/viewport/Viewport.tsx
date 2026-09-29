@@ -10,6 +10,11 @@ import {
   type Bounds3,
 } from '../model/modeling.js';
 import {
+  isReferenceMeshBodyId,
+  REFERENCE_MESH_ID_PREFIX,
+  referenceMeshToBody,
+} from '../model/referenceMesh.js';
+import {
   findFace,
   isPlanarFace,
   isPreviewTool,
@@ -156,6 +161,14 @@ function sceneModel(s: AssemblerState): SceneModel {
   const previewTool = isPreviewTool(tool) ? tool : null;
   const preview = previewTool?.previewEvaluation ?? null;
   let bodies = preview?.bodies ?? s.evaluation.bodies;
+  // Reference meshes (imported STL) are never a kernel input — they are
+  // appended straight onto the rendered body list here so the existing
+  // draw/pick/hide pipeline (which operates generically on `Body[]`) shows
+  // them, flat-shaded (their normals are per-triangle, not smoothed) and in
+  // a visually distinct slate colour (`referenceMeshToBody`) — without
+  // reaching into `gl.ts`'s shader.
+  const visibleMeshBodies = s.referenceMeshes.filter((m) => !m.hidden).map(referenceMeshToBody);
+  if (visibleMeshBodies.length > 0) bodies = [...bodies, ...visibleMeshBodies];
   let previewNewBodyIds: string[] = [];
   let moveGhosts: Body[] = [];
   if (tool?.kind === 'move') {
@@ -662,6 +675,13 @@ export function Viewport(props: ViewportProps): JSX.Element {
         return null;
       if (pick.kind === 'sketchProfile')
         return { kind: 'sketchProfile', featureId: pick.featureId };
+      // A reference mesh is always selected as a whole — never per-face
+      // (it has exactly one synthetic whole-mesh "face" for picking, see
+      // `referenceMeshToBody`, but that must never surface as a face
+      // selection).
+      if ('bodyId' in pick && isReferenceMeshBodyId(pick.bodyId)) {
+        return { kind: 'mesh', meshId: pick.bodyId.slice(REFERENCE_MESH_ID_PREFIX.length) };
+      }
       if (wholeBody) return { kind: 'body', bodyId: pick.bodyId };
       return pick;
     },
@@ -1068,7 +1088,16 @@ export function Viewport(props: ViewportProps): JSX.Element {
           return;
         }
         const item = selectionFromPick(pick, isDouble);
-        if (item && item.kind !== 'feature') {
+        // A reference mesh is never a valid feature-tool reference (it has
+        // no B-rep faces/edges for OCCT to consume — `apps/assembler/README.md`
+        // "STL import": excluded from kernel operations).
+        if (
+          item &&
+          (item.kind === 'body' ||
+            item.kind === 'face' ||
+            item.kind === 'edge' ||
+            item.kind === 'sketchProfile')
+        ) {
           store.updateFeatureDraft((draft, evaluation) => acceptPick(draft, item, evaluation));
         }
         return;

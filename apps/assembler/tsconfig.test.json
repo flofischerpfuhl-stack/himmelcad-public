@@ -12,6 +12,7 @@
   "include": [
     "electron/windowOptions.ts",
     "electron/automationServer.ts",
+    "electron/recentFiles.ts",
     "renderer/src/global.d.ts",
     "test",
     "../../types"

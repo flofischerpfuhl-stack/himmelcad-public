@@ -151,6 +151,10 @@ function selectionEquals(a: SelectionItem, b: SelectionItem): boolean {
       return b.kind === 'sketchProfile' && a.featureId === b.featureId;
     case 'feature':
       return false;
+    case 'mesh':
+      return b.kind === 'mesh' && a.meshId === b.meshId;
+    default:
+      return false;
   }
 }
 

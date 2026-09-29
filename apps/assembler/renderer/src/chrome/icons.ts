@@ -149,5 +149,9 @@ export function selectionKindIcon(kind: SelectionItem['kind']): LucideIcon {
       return PenSquare;
     case 'feature':
       return Combine;
+    case 'mesh':
+      return Box;
+    default:
+      return Box;
   }
 }

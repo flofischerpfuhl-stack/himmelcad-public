@@ -7,9 +7,21 @@
  * a tool is active — the tool pill and prompt take over that space.
  */
 import { measureSelection } from '../model/modeling.js';
+import { referenceMeshWorldBounds } from '../model/referenceMesh.js';
 import { selectionSummary } from './format.js';
 import type { AssemblerState } from '../model/store.js';
 import styles from './StatusStrip.module.css';
+
+/** Bounding-box measurement for a single selected reference mesh (it has no B-rep, so only min/max is meaningful — no volume/face/edge measurement). */
+function measureMeshSelection(state: AssemblerState): string | null {
+  const meshItems = state.selection.filter((s) => s.kind === 'mesh');
+  if (meshItems.length !== 1 || meshItems.length !== state.selection.length) return null;
+  const mesh = state.referenceMeshes.find((m) => m.id === meshItems[0]!.meshId);
+  if (!mesh) return null;
+  const { size } = referenceMeshWorldBounds(mesh);
+  const [w, d, h] = size.map((v) => Math.round(Math.abs(v) * 10) / 10);
+  return `${mesh.name} (reference mesh): ${w} × ${d} × ${h} mm`;
+}
 
 export function StatusStrip({ state }: { state: AssemblerState }): JSX.Element | null {
   if (state.kernelStatus !== 'ready') {
@@ -40,7 +52,8 @@ export function StatusStrip({ state }: { state: AssemblerState }): JSX.Element |
   if (state.activeTool) return null;
 
   if (state.viewState.measureEnabled) {
-    const measured = measureSelection(state.evaluation, state.selection);
+    const measured =
+      measureMeshSelection(state) ?? measureSelection(state.evaluation, state.selection);
     return (
       <div className={styles.root} role="status" aria-live="polite">
         {measured ?? 'Measure: select a body, an edge, a face or two parallel faces (Shift adds).'}

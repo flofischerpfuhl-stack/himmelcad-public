@@ -6,7 +6,7 @@
  * the store hover so the viewport highlights it, right-click opens the
  * shared context menu for that item.
  */
-import { Box, Eye, EyeOff, MoreHorizontal, PenSquare, Target } from 'lucide-react';
+import { Box, Boxes, Eye, EyeOff, MoreHorizontal, PenSquare, Target } from 'lucide-react';
 import { useState } from 'react';
 
 import { Menu, MenuItem } from '@himmelcad/ui';
@@ -21,7 +21,7 @@ interface FlatRow {
   item: SelectionItem;
   key: string;
   name: string;
-  kind: 'body' | 'sketch';
+  kind: 'body' | 'sketch' | 'mesh';
 }
 
 export interface ItemsPanelProps {
@@ -48,7 +48,13 @@ export function ItemsPanel({ state, onContextMenu }: ItemsPanelProps): JSX.Eleme
       kind: 'sketch',
     };
   });
-  const rows = [...bodyRows, ...sketchRows];
+  const meshRows: FlatRow[] = state.referenceMeshes.map((mesh) => ({
+    item: { kind: 'mesh', meshId: mesh.id },
+    key: `mesh:${mesh.id}`,
+    name: mesh.name,
+    kind: 'mesh',
+  }));
+  const rows = [...bodyRows, ...meshRows, ...sketchRows];
 
   const isSelected = (item: SelectionItem): boolean =>
     state.selection.some((existing) => selectionEquals(existing, item));
@@ -127,6 +133,20 @@ export function ItemsPanel({ state, onContextMenu }: ItemsPanelProps): JSX.Eleme
             }}
           />
         ))}
+        {meshRows.length > 0 ? <div className={styles.sectionLabel}>Reference meshes</div> : null}
+        {meshRows.map((row) => (
+          <MeshRow
+            key={row.key}
+            row={row}
+            state={state}
+            selected={isSelected(row.item)}
+            onSelect={(event) => selectRow(rows.indexOf(row), event)}
+            onContextMenu={(x, y) => {
+              if (!isSelected(row.item)) state.select(row.item);
+              onContextMenu(x, y);
+            }}
+          />
+        ))}
         {sketchRows.length > 0 ? <div className={styles.sectionLabel}>Sketches</div> : null}
         {sketchRows.map((row) => (
           <SketchRow
@@ -150,6 +170,7 @@ function selectionEquals(a: SelectionItem, b: SelectionItem): boolean {
   if (a.kind !== b.kind) return false;
   if (a.kind === 'body' && b.kind === 'body') return a.bodyId === b.bodyId;
   if (a.kind === 'sketchProfile' && b.kind === 'sketchProfile') return a.featureId === b.featureId;
+  if (a.kind === 'mesh' && b.kind === 'mesh') return a.meshId === b.meshId;
   return false;
 }
 
@@ -201,6 +222,42 @@ function BodyRow({ row, state, selected, onSelect, onContextMenu }: RowProps): J
           event.stopPropagation();
           if (hidden) state.showBodies([bodyId]);
           else state.hideBodies([bodyId]);
+        }}
+      >
+        {hidden ? <EyeOff size={13} /> : <Eye size={13} />}
+      </button>
+    </div>
+  );
+}
+
+function MeshRow({ row, state, selected, onSelect, onContextMenu }: RowProps): JSX.Element {
+  const meshId = row.item.kind === 'mesh' ? row.item.meshId : '';
+  const mesh = state.referenceMeshes.find((m) => m.id === meshId);
+  const hidden = mesh?.hidden ?? false;
+  return (
+    <div
+      className={`${styles.row} ${selected ? styles.rowSelected : ''} ${hidden ? styles.rowHidden : ''}`}
+      onClick={(event) => onSelect(event)}
+      onMouseEnter={() => state.setHover(row.item)}
+      onMouseLeave={() => state.setHover(null)}
+      onContextMenu={(event) => {
+        event.preventDefault();
+        onContextMenu(event.clientX, event.clientY);
+      }}
+      title="Reference mesh — not a solid; excluded from boolean, extrude and other kernel operations."
+    >
+      <span className={styles.icon}>
+        <Boxes size={13} />
+      </span>
+      <span className={styles.name}>{row.name}</span>
+      <button
+        type="button"
+        className={styles.rowButton}
+        aria-label={hidden ? 'Show' : 'Hide'}
+        title={hidden ? 'Show' : 'Hide'}
+        onClick={(event) => {
+          event.stopPropagation();
+          state.setReferenceMeshHidden(meshId, !hidden);
         }}
       >
         {hidden ? <EyeOff size={13} /> : <Eye size={13} />}

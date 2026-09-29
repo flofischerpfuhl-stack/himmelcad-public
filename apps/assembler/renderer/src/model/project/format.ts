@@ -34,12 +34,42 @@ export const CURRENT_SCHEMA_VERSION = 1;
 export interface ProjectViewState {
   displayMode?: 'shaded' | 'wireframe' | 'xray';
   camera?: {
+    /** Last requested camera preset (e.g. `"iso"`, `"top"`); re-applied on Open. */
     preset?: string;
+  };
+  section?: {
+    enabled?: boolean;
+    axis?: 'X' | 'Y' | 'Z';
+    offset?: number;
+    flipped?: boolean;
+  };
+  grid?: {
+    visible?: boolean;
+    snap?: boolean;
+    step?: number;
   };
   panels?: {
     items?: boolean;
     history?: boolean;
   };
+}
+
+/**
+ * One imported STL, persisted as gzip+base64 mesh data
+ * (`model/project/meshCodec.ts`) plus its document-level transform and
+ * visibility. Never a `Feature`: a reference mesh is not a kernel/OCCT
+ * input (`apps/assembler/README.md` "STL import").
+ */
+export interface ReferenceMeshRecordV1 {
+  id: string;
+  name: string;
+  fileName: string;
+  /** gzip+base64 of positions/normals/indices, see `meshCodec.ts`. */
+  data: string;
+  min: [number, number, number];
+  max: [number, number, number];
+  transform: { dx: number; dy: number; dz: number };
+  hidden: boolean;
 }
 
 export interface ProjectFileV1 {
@@ -51,6 +81,7 @@ export interface ProjectFileV1 {
   units: 'mm';
   projectName: string;
   features: Feature[];
+  referenceMeshes?: ReferenceMeshRecordV1[];
   viewState?: ProjectViewState;
   createdAt: string;
   modifiedAt: string;
@@ -145,6 +176,39 @@ function validateProfile(v: unknown, path: string): SketchProfile {
     return v as unknown as SketchProfile;
   }
   fail(`${path}.kind`, `unknown sketch profile kind "${String(r.kind)}"`);
+}
+
+function validateVec3Tuple(v: unknown, path: string): [number, number, number] {
+  if (!isVec3(v)) fail(path, 'expected a Vec3');
+  return v as [number, number, number];
+}
+
+function validateReferenceMesh(v: unknown, index: number): ReferenceMeshRecordV1 {
+  const path = `referenceMeshes[${index}]`;
+  if (!isRecord(v)) fail(path, 'expected an object');
+  const r = v;
+  if (!isString(r.id) || r.id === '') fail(`${path}.id`, 'expected a non-empty string');
+  if (!isString(r.name)) fail(`${path}.name`, 'expected a string');
+  if (!isString(r.fileName)) fail(`${path}.fileName`, 'expected a string');
+  if (!isString(r.data) || r.data === '') fail(`${path}.data`, 'expected a non-empty string');
+  const min = validateVec3Tuple(r.min, `${path}.min`);
+  const max = validateVec3Tuple(r.max, `${path}.max`);
+  if (!isRecord(r.transform)) fail(`${path}.transform`, 'expected an object');
+  const t = r.transform;
+  for (const field of ['dx', 'dy', 'dz']) {
+    if (!isNumber(t[field])) fail(`${path}.transform.${field}`, 'expected a number');
+  }
+  if (!isBoolean(r.hidden)) fail(`${path}.hidden`, 'expected a boolean');
+  return {
+    id: r.id,
+    name: r.name,
+    fileName: r.fileName,
+    data: r.data,
+    min,
+    max,
+    transform: { dx: t.dx as number, dy: t.dy as number, dz: t.dz as number },
+    hidden: r.hidden,
+  };
 }
 
 function validateBase(r: Record<string, unknown>, path: string): void {
@@ -287,6 +351,16 @@ function validateV1Body(raw: Record<string, unknown>): ProjectFileV1 {
   if (raw.viewState !== undefined && !isRecord(raw.viewState)) {
     fail('viewState', 'expected an object');
   }
+  let referenceMeshes: ReferenceMeshRecordV1[] | undefined;
+  if (raw.referenceMeshes !== undefined) {
+    if (!Array.isArray(raw.referenceMeshes)) fail('referenceMeshes', 'expected an array');
+    referenceMeshes = raw.referenceMeshes.map((m, i) => validateReferenceMesh(m, i));
+    const meshIds = new Set<string>();
+    for (const m of referenceMeshes) {
+      if (meshIds.has(m.id)) fail('referenceMeshes', `duplicate reference mesh id "${m.id}"`);
+      meshIds.add(m.id);
+    }
+  }
   return {
     format: PROJECT_FORMAT_ID,
     schemaVersion: 1,
@@ -294,6 +368,7 @@ function validateV1Body(raw: Record<string, unknown>): ProjectFileV1 {
     units: 'mm',
     projectName: raw.projectName,
     features,
+    ...(referenceMeshes !== undefined ? { referenceMeshes } : {}),
     ...(raw.viewState !== undefined ? { viewState: raw.viewState as ProjectViewState } : {}),
     createdAt: raw.createdAt,
     modifiedAt: raw.modifiedAt,
@@ -375,6 +450,7 @@ export function saveProjectFile(input: {
   projectName: string;
   features: Feature[];
   appVersion: string;
+  referenceMeshes?: ReferenceMeshRecordV1[];
   viewState?: ProjectViewState;
   createdAt: string;
   modifiedAt?: string;
@@ -386,6 +462,9 @@ export function saveProjectFile(input: {
     units: 'mm',
     projectName: input.projectName,
     features: input.features,
+    ...(input.referenceMeshes && input.referenceMeshes.length > 0
+      ? { referenceMeshes: input.referenceMeshes }
+      : {}),
     ...(input.viewState ? { viewState: input.viewState } : {}),
     createdAt: input.createdAt,
     modifiedAt: input.modifiedAt ?? new Date().toISOString(),
