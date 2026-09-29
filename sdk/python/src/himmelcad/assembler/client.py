@@ -28,6 +28,7 @@ METHODS = (
     "history.undo", "history.redo",
     "export.stl", "export.3mf", "export.step", "import.step",
     "project.new", "project.open", "project.save",
+    "export.meshStats", "print.analyze", "print.orientations", "print.placeOnPlate", "print.orient",
 )
 
 
@@ -165,17 +166,42 @@ class AssemblerClient:
     def redo(self) -> Mapping[str, Any]:
         return self.call("history.redo")
 
-    def export(self, fmt: str, *, body_ids: list[str] | None = None) -> bytes:
-        """Returns the exported file bytes (``fmt``: ``stl``, ``3mf`` or ``step``)."""
-        result = self.call(f"export.{fmt}", {"bodyIds": body_ids})
+    def export(self, fmt: str, *, body_ids: list[str] | None = None, resolution: str | None = None, stl_format: str | None = None) -> bytes:
+        """Returns the exported file bytes (``fmt``: ``stl``, ``3mf`` or ``step``).
+
+        ``resolution`` (STL/3MF): ``current`` (display mesh), ``coarse``, ``standard`` or ``fine``;
+        ``stl_format``: ``binary`` (default) or ``ascii``.
+        """
+        params: dict[str, Any] = {"bodyIds": body_ids, "resolution": resolution}
+        if fmt == "stl":
+            params["format"] = stl_format
+        result = self.call(f"export.{fmt}", params)
         return base64.b64decode(result["data"])
 
-    def export_to(self, fmt: str, path: str | Path, *, body_ids: list[str] | None = None) -> Path:
+    def export_to(self, fmt: str, path: str | Path, *, body_ids: list[str] | None = None, resolution: str | None = None, stl_format: str | None = None) -> Path:
         """Writes an export locally (works for both transports; the app endpoint has no file access)."""
         target = Path(path)
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(self.export(fmt, body_ids=body_ids))
+        target.write_bytes(self.export(fmt, body_ids=body_ids, resolution=resolution, stl_format=stl_format))
         return target
+
+    # ---- 3D printing ---------------------------------------------------------------------
+    def mesh_stats(self, *, body_ids: list[str] | None = None, resolution: str | None = None) -> Mapping[str, Any]:
+        """Triangle counts and expected STL sizes at an export resolution."""
+        return self.call("export.meshStats", {"bodyIds": body_ids, "resolution": resolution})
+
+    def print_analyze(self, *, body_ids: list[str] | None = None, settings: Mapping[str, Any] | None = None) -> Mapping[str, Any]:
+        """Printability report (overhangs, walls, holes, validity, material, build volume, findings)."""
+        return self.call("print.analyze", {"bodyIds": body_ids, "settings": dict(settings) if settings else None})
+
+    def print_orientations(self, body_id: str, *, overhang_angle: float | None = None, limit: int | None = None) -> list[Mapping[str, Any]]:
+        return self.call("print.orientations", {"bodyId": body_id, "overhangAngleDeg": overhang_angle, "limit": limit})
+
+    def place_on_plate(self, face: Mapping[str, Any], *, name: str | None = None) -> Mapping[str, Any]:
+        return self.call("print.placeOnPlate", {"face": dict(face), "name": name})
+
+    def print_orient(self, body_id: str, *, rank: int | None = None, down: tuple[float, float, float] | None = None, overhang_angle: float | None = None, name: str | None = None) -> Mapping[str, Any]:
+        return self.call("print.orient", {"bodyId": body_id, "rank": rank, "down": None if down is None else [float(v) for v in down], "overhangAngleDeg": overhang_angle, "name": name})
 
     def import_step(self, path: str | Path) -> Mapping[str, Any]:
         source = Path(path)

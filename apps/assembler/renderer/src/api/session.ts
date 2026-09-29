@@ -24,10 +24,42 @@
  *   changed since `begin` (no silent merge with the user's edits).
  */
 import type { KernelAdapter } from '../kernel/adapter.js';
-import { exportAllBodiesStl, stlBufferForMeshes } from '../kernel/stlExport.js';
+import { MESH_RESOLUTIONS, type MeshResolution } from '../kernel/meshExport.js';
+import { stlAsciiForMeshes, stlBytes } from '../kernel/stlExport.js';
 import { buildThreeMf } from '../kernel/threeMf.js';
-import type { EvaluationResult } from '../kernel/types.js';
+import type { Body, EvaluationResult } from '../kernel/types.js';
 import type { Feature, SketchFeature } from '../model/document.js';
+import type { TransformFeature } from '../model/features.js';
+import { referenceMeshIdOf } from '../model/referenceMesh.js';
+import {
+  analyzePrintability,
+  bodyToPrintInput,
+  type PrintBodyInput,
+  type PrintReport,
+} from '../print/analysis.js';
+import {
+  placementFor,
+  rankOrientations,
+  rotationToDown,
+  type OrientationCandidate,
+  type OrientationMesh,
+  type PlacementTransform,
+} from '../print/orientation.js';
+import {
+  orientationInput,
+  orientFeatureName,
+  placeOnPlateFeature,
+  placementFeature,
+  PlacementError,
+} from '../print/placement.js';
+import {
+  DEFAULT_PRINT_SETTINGS,
+  MATERIAL_PRESETS,
+  sanitizePrintSettings,
+  type PrintSettings,
+} from '../print/settings.js';
+import { candidateJson, printReportJson } from './printApi.js';
+import { resolveFaceInput } from './references.js';
 import { consumedSketchIds } from '../model/modeling.js';
 import { ProjectFormatError, loadProjectFile, saveProjectFile } from '../model/project/format.js';
 import type { AssemblerState, SelectionItem } from '../model/store.js';
@@ -110,6 +142,20 @@ export interface SessionHost {
     /** The text File > Save would write (optionally under another project name). */
     text(projectName?: string): Promise<string>;
   };
+  /**
+   * App only: runs printability jobs off the UI thread (the print worker).
+   * Without it (headless) they run in-process.
+   */
+  printability?: {
+    analyze(bodies: PrintBodyInput[], settings: PrintSettings): Promise<PrintReport>;
+    orient(
+      mesh: OrientationMesh,
+      thresholdDeg: number,
+      faceLabels: string[],
+    ): Promise<OrientationCandidate[]>;
+  };
+  /** App only: the user's print settings (Printability panel), the defaults for agent queries. */
+  printSettings?: () => PrintSettings;
 }
 
 export const HEADLESS_CAPABILITIES: ReadonlySet<Capability> = new Set<Capability>([
@@ -290,6 +336,16 @@ export class AgentSession {
       case 'export.3mf':
       case 'export.step':
         return this.exportBodies(method, p);
+      case 'export.meshStats':
+        return this.meshStats(p);
+      case 'print.analyze':
+        return this.printAnalyze(p);
+      case 'print.orientations':
+        return this.printOrientations(p);
+      case 'print.placeOnPlate':
+        return this.write('print.placeOnPlate', (f, e) => this.placeOnPlate(p, f, e));
+      case 'print.orient':
+        return this.write('print.orient', (f, e) => this.printOrient(p, f, e));
       case 'import.step':
         return this.importStep(p);
       case 'project.new':
@@ -938,14 +994,25 @@ export class AgentSession {
     const invalid = bodies.filter((b) => !b.valid).map((b) => b.id);
     let bytes: Uint8Array;
     let mediaType: string;
-    if (method === 'export.stl') {
-      bytes = new Uint8Array(
-        ids ? stlBufferForMeshes(bodies.map((b) => b.mesh)) : exportAllBodiesStl(bodies),
+    let triangles: number | undefined;
+    if (method === 'export.stl' || method === 'export.3mf') {
+      const meshes = await this.exportMeshes(
+        p,
+        bodies.map((b) => b.id),
       );
-      mediaType = 'model/stl';
-    } else if (method === 'export.3mf') {
-      bytes = buildThreeMf(bodies);
-      mediaType = 'model/3mf';
+      triangles = meshes.reduce((s, m) => s + m.mesh.indices.length / 3, 0);
+      const byId = new Map(meshes.map((m) => [m.id, m.mesh]));
+      const meshed = bodies.map((b) => ({ ...b, mesh: byId.get(b.id) ?? b.mesh }));
+      if (method === 'export.stl') {
+        bytes = stlBytes(
+          meshed.map((b) => ({ name: b.name, mesh: b.mesh })),
+          p.format === 'ascii' ? 'ascii' : 'binary',
+        );
+        mediaType = 'model/stl';
+      } else {
+        bytes = buildThreeMf(meshed, { title: this.store.getState().projectName });
+        mediaType = 'model/3mf';
+      }
     } else {
       await this.kernelReady();
       bytes = await this.kernel.exportStep(this.readFeatures(p), ids ?? undefined);
@@ -954,7 +1021,196 @@ export class AgentSession {
     return {
       ...(await this.deliver(bytes, mediaType, p.path)),
       bodyIds: bodies.map((b) => b.id),
+      ...(triangles !== undefined ? { triangles } : {}),
       ...(invalid.length ? { invalidBodyIds: invalid } : {}),
+    };
+  }
+
+  // ---- 3D printing -----------------------------------------------------------------
+
+  /** Export meshes of `bodyIds` at `p.resolution` (default: the evaluated display meshes). */
+  private async exportMeshes(
+    p: Json,
+    bodyIds: string[],
+  ): Promise<{ id: string; name: string; mesh: Body['mesh'] }[]> {
+    const resolution = (p.resolution as MeshResolution | undefined) ?? 'current';
+    const evaluation = await this.readEvaluation(p);
+    if (resolution === 'current') {
+      return evaluation.bodies
+        .filter((b) => bodyIds.includes(b.id))
+        .map((b) => ({ id: b.id, name: b.name, mesh: b.mesh }));
+    }
+    await this.kernelReady();
+    const preset = MESH_RESOLUTIONS[resolution];
+    try {
+      return await this.kernel.exportMesh(this.readFeatures(p), {
+        bodyIds,
+        tolerance: preset.tolerance,
+        angularTolerance: preset.angularTolerance,
+      });
+    } catch (error) {
+      throw new ApiError(
+        'internal',
+        `Tessellation failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  private async meshStats(p: Json): Promise<Json> {
+    const evaluation = await this.readEvaluation(p);
+    const ids = Array.isArray(p.bodyIds) ? (p.bodyIds as string[]) : null;
+    for (const id of ids ?? []) findBody(evaluation, id);
+    const bodyIds = ids ?? evaluation.bodies.map((b) => b.id);
+    if (bodyIds.length === 0) {
+      throw new ApiError('invalidParams', 'There are no bodies', {
+        hint: 'Create a body first (e.g. a sketch and an extrude).',
+      });
+    }
+    const meshes = await this.exportMeshes(p, bodyIds);
+    const counts = meshes.map((m) => ({
+      id: m.id,
+      name: evaluation.bodies.find((b) => b.id === m.id)?.name ?? m.name,
+      triangles: m.mesh.indices.length / 3,
+    }));
+    const triangles = counts.reduce((s, c) => s + c.triangles, 0);
+    return {
+      resolution: (p.resolution as string | undefined) ?? 'current',
+      bodies: counts,
+      triangles,
+      stlBinaryBytes: 84 + triangles * 50,
+      stlAsciiBytes: stlAsciiForMeshes(meshes.map((m) => ({ name: m.name, mesh: m.mesh })))
+        .byteLength,
+    };
+  }
+
+  private printSettings(input: unknown): PrintSettings {
+    const base = this.host.printSettings?.() ?? DEFAULT_PRINT_SETTINGS;
+    return sanitizePrintSettings({
+      ...base,
+      ...(isRecord(input) ? input : {}),
+      ...(isRecord(input) && typeof input.material === 'string' && input.density === undefined
+        ? {
+            density: MATERIAL_PRESETS.find((m) => m.id === input.material)?.density,
+            costPerKg:
+              input.costPerKg ?? MATERIAL_PRESETS.find((m) => m.id === input.material)?.costPerKg,
+          }
+        : {}),
+    });
+  }
+
+  private async printAnalyze(p: Json): Promise<Json> {
+    const evaluation = await this.readEvaluation(p);
+    const ids = Array.isArray(p.bodyIds) ? (p.bodyIds as string[]) : null;
+    for (const id of ids ?? []) findBody(evaluation, id);
+    const bodies = (ids ? evaluation.bodies.filter((b) => ids.includes(b.id)) : evaluation.bodies)
+      .filter((b) => referenceMeshIdOf(b.id) === null)
+      .map(bodyToPrintInput);
+    const settings = this.printSettings(p.settings);
+    const report = this.host.printability
+      ? await this.host.printability.analyze(bodies, settings)
+      : analyzePrintability(bodies, settings);
+    return printReportJson(report);
+  }
+
+  private async rankedOrientations(
+    p: Json,
+    evaluation: EvaluationResult,
+    features: readonly Feature[],
+  ): Promise<OrientationCandidate[]> {
+    const bodyId = String(p.bodyId);
+    findBody(evaluation, bodyId);
+    const threshold =
+      typeof p.overhangAngleDeg === 'number'
+        ? p.overhangAngleDeg
+        : this.printSettings(undefined).overhangAngleDeg;
+    const input = orientationInput(evaluation, features, bodyId);
+    return this.host.printability
+      ? this.host.printability.orient(input.mesh, threshold, input.faceLabels)
+      : rankOrientations(input.mesh, threshold, {
+          faceLabel: (_key, index) => input.faceLabels[index] ?? `Face ${index + 1} down`,
+        });
+  }
+
+  private async printOrientations(p: Json): Promise<Json[]> {
+    const evaluation = await this.readEvaluation(p);
+    const candidates = await this.rankedOrientations(p, evaluation, this.readFeatures(p));
+    const limit = typeof p.limit === 'number' ? p.limit : 3;
+    return candidates.slice(0, limit).map(candidateJson);
+  }
+
+  private placeOnPlate(p: Json, features: Feature[], evaluation: EvaluationResult): WriteOutcome {
+    const [face] = resolveFaceInput(p.face, evaluation, features, 'face', { single: true });
+    if (!face) throw new ApiError('invalidParams', 'face: no face given');
+    const id = this.store.getState().allocateFeatureId('transform', this.reservedIds());
+    let feature: TransformFeature;
+    try {
+      feature = placeOnPlateFeature(evaluation, features, face.bodyId, face.key, id);
+    } catch (error) {
+      if (error instanceof PlacementError) {
+        throw new ApiError('invalidParams', error.message, {
+          hint: 'Use a planar face ("%PLANE" selector, or faces.list with surface "plane").',
+        });
+      }
+      throw error;
+    }
+    if (typeof p.name === 'string') feature = { ...feature, name: p.name };
+    return {
+      features: [...features, feature],
+      touched: [id],
+      selection: [{ kind: 'body', bodyId: face.bodyId }],
+      result: { featureId: id, bodyId: face.bodyId, transform: paramsOf(feature) },
+    };
+  }
+
+  private async printOrient(
+    p: Json,
+    features: Feature[],
+    evaluation: EvaluationResult,
+  ): Promise<WriteOutcome> {
+    const bodyId = String(p.bodyId);
+    const body = findBody(evaluation, bodyId);
+    if (referenceMeshIdOf(bodyId) !== null) {
+      throw new ApiError('invalidParams', 'Reference meshes cannot be oriented');
+    }
+    let transform: PlacementTransform;
+    let candidate: OrientationCandidate | null = null;
+    if (typeof p.rank === 'number') {
+      const candidates = await this.rankedOrientations(p, evaluation, features);
+      candidate = candidates[p.rank - 1] ?? null;
+      if (!candidate) {
+        throw new ApiError(
+          'invalidParams',
+          `rank ${p.rank}: there are ${candidates.length} candidates`,
+        );
+      }
+      transform = candidate.transform;
+    } else {
+      const down = p.down as [number, number, number];
+      if (Math.hypot(down[0], down[1], down[2]) < 1e-9) {
+        throw new ApiError('invalidParams', 'down: must not be the zero vector');
+      }
+      transform = placementFor(
+        { positions: body.mesh.positions, min: body.min, max: body.max },
+        rotationToDown(down),
+      );
+    }
+    const id = this.store.getState().allocateFeatureId('transform', this.reservedIds());
+    const feature = placementFeature(
+      bodyId,
+      transform,
+      id,
+      typeof p.name === 'string' ? p.name : orientFeatureName(features),
+    );
+    return {
+      features: [...features, feature],
+      touched: [id],
+      selection: [{ kind: 'body', bodyId }],
+      result: {
+        featureId: id,
+        bodyId,
+        transform: paramsOf(feature),
+        ...(candidate ? { candidate: candidateJson(candidate) } : {}),
+      },
     };
   }
 

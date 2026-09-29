@@ -62,6 +62,12 @@ class FakeTransport:
             ]
         if method == "export.3mf":
             return {"data": base64.b64encode(b"PK\x03\x04").decode(), "byteLength": 4}
+        if method == "export.stl":
+            return {"data": base64.b64encode(b"solid x\nendsolid x\n").decode(), "byteLength": 19}
+        if method in ("print.placeOnPlate", "print.orient"):
+            return {"featureId": "feature-transform-9", "bodyId": "body:b"}
+        if method == "print.analyze":
+            return {"totals": {"bodies": 1, "massG": 12.5, "cost": 0.25}, "bodies": [{"bodyId": "body:b"}], "findings": [{"kind": "overhang", "severity": "warning"}]}
         return {}
 
     def close(self) -> None:
@@ -162,6 +168,29 @@ class ModelingLayerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = self.doc.export_3mf(Path(tmp) / "out" / "part.3mf")
             self.assertEqual(path.read_bytes(), b"PK\x03\x04")
+            self.doc.export_stl(Path(tmp) / "part.stl", ascii=True, resolution="fine")
+            self.assertEqual(self.transport.requests[-1], ("export.stl", {"resolution": "fine", "format": "ascii"}))
+
+    def test_print_helpers_are_one_command_each(self) -> None:
+        from himmelcad.assembler import Body, Face
+
+        body = Body(self.doc, "body:b")
+        bottom = Face("body:b", "f:side:0", "side", "plane", (1, 0, 0), (5, 0, 3), 60.0)
+        report = self.doc.printability(overhangAngleDeg=50, material="PETG")
+        self.assertEqual(self.transport.requests[-1], ("print.analyze", {"settings": {"overhangAngleDeg": 50, "material": "PETG"}}))
+        self.assertTrue(report.printable)
+        self.assertEqual(report.mass_g, 12.5)
+        self.assertEqual(len(report.findings_of("overhang")), 1)
+        placed = self.doc.place_on_plate(bottom)
+        self.assertEqual(self.transport.requests[-1], ("print.placeOnPlate", {"face": {"bodyId": "body:b", "key": "f:side:0"}}))
+        self.assertEqual(placed.kind, "transform")
+        self.doc.orient(body)
+        self.assertEqual(self.transport.requests[-1], ("print.orient", {"bodyId": "body:b", "rank": 1}))
+        self.doc.orient(body, down=(0, 1, 0))
+        self.assertEqual(self.transport.requests[-1], ("print.orient", {"bodyId": "body:b", "down": [0.0, 1.0, 0.0]}))
+        self.doc.mesh_stats(resolution="coarse")
+        self.assertEqual(self.transport.requests[-1], ("export.meshStats", {"resolution": "coarse"}))
+        self.assertEqual(self.doc.commands[-3:], ["print.placeOnPlate", "print.orient", "print.orient"])
 
 
 class LoopbackTransportTests(unittest.TestCase):
@@ -264,6 +293,31 @@ class HeadlessIntegrationTests(unittest.TestCase):
             s.set_dimension("d1", 12)
             self.assertAlmostEqual(part.bbox.size[0], 2 * 17, places=6)
             self.assertEqual(doc.errors(), {})
+
+    def test_print_workflow(self) -> None:
+        with Document(AssemblerClient(StdioTransport())) as doc, tempfile.TemporaryDirectory() as tmp:
+            s = doc.sketch("XY")
+            s.rect(30, 20)
+            plate = doc.extrude(s, 6)
+            holes = doc.sketch(plate.face(">Z"))
+            holes.circle(d=1.5)
+            doc.cut(holes, 6)
+            report = doc.printability(minHoleMm=2)
+            self.assertTrue(report.printable)
+            self.assertEqual([h["diameterMm"] for h in report.body(plate)["holes"]], [1.5])
+            self.assertEqual(len(report.findings_of("smallHole")), 1)
+            doc.place_on_plate(plate.face("+X"))
+            self.assertAlmostEqual(plate.bbox.size[2], 30.0, places=6)
+            self.assertAlmostEqual(plate.bbox.min[2], 0.0, places=6)
+            best = doc.orientations(plate)[0]
+            self.assertEqual(best["rank"], 1)
+            doc.orient(plate)
+            self.assertAlmostEqual(plate.bbox.size[2], 6.0, places=6)
+            coarse = doc.mesh_stats(resolution="coarse")["triangles"]
+            fine = doc.mesh_stats(resolution="fine")["triangles"]
+            self.assertGreater(fine, coarse)
+            out = doc.export_stl(Path(tmp) / "plate.stl", ascii=True, resolution="coarse")
+            self.assertEqual(out.read_text().count("facet normal"), coarse)
 
     def test_shape_dimensions_by_role(self) -> None:
         with Document(AssemblerClient(StdioTransport())) as doc:

@@ -24,6 +24,7 @@
  * `apps/assembler/api/agent-api-v1.schema.json` is kept identical by a test.
  */
 import { API_ERROR_CODES } from './errors.js';
+import { MESH_RESOLUTION_SCHEMA, PRINT_METHODS, PRINT_SETTINGS_SCHEMA } from './printApi.js';
 import type { JsonSchema } from './validate.js';
 
 export const API_ID = 'hcasm.agent-api';
@@ -119,6 +120,7 @@ export const DEFS: Record<string, JsonSchema> = {
     ['bodyId', 'select'],
   ),
   FaceInput: { oneOf: [ref('FaceRef'), ref('Selector')] },
+  PrintSettings: PRINT_SETTINGS_SCHEMA,
   EdgeInput: { oneOf: [ref('EdgeRef'), ref('Selector')] },
   Vec2: { type: 'array', items: num, minItems: 2, maxItems: 2 },
   SketchShape: {
@@ -592,6 +594,12 @@ const exportParams = obj({
     description: 'Headless only (capability filesystem.write). Omit to receive base64 bytes.',
   },
 });
+const meshExportParams = (extra: Record<string, JsonSchema>) =>
+  obj({
+    ...(exportParams.properties as Record<string, JsonSchema>),
+    resolution: MESH_RESOLUTION_SCHEMA,
+    ...extra,
+  });
 
 export const METHODS: Record<string, MethodSpec> = {
   'api.hello': {
@@ -915,16 +923,20 @@ export const METHODS: Record<string, MethodSpec> = {
   'export.stl': {
     kind: 'command',
     capability: 'document.read',
-    summary: 'Binary STL of all (or the given) bodies.',
-    params: exportParams,
-    result: '{mediaType, byteLength, data?: base64, path?}',
+    summary:
+      'STL of all (or the given) bodies in one file: binary (default) or ASCII, at the display mesh or a resolution preset.',
+    params: meshExportParams({
+      format: { enum: ['binary', 'ascii'], default: 'binary' },
+    }),
+    result: '{mediaType, byteLength, triangles, data?: base64, path?}',
   },
   'export.3mf': {
     kind: 'command',
     capability: 'document.read',
-    summary: '3MF package (one object per body, named and coloured).',
-    params: exportParams,
-    result: '{mediaType, byteLength, data?: base64, path?}',
+    summary:
+      '3MF package (3MF Core + Materials): one welded, manifold object per body with its name and colour, build items with transforms.',
+    params: meshExportParams({}),
+    result: '{mediaType, byteLength, triangles, data?: base64, path?}',
   },
   'export.step': {
     kind: 'command',
@@ -987,6 +999,7 @@ export const METHODS: Record<string, MethodSpec> = {
     }),
     result: '{text?, path?, byteLength}',
   },
+  ...PRINT_METHODS,
 };
 
 /** The full contract document returned by `api.describe` and checked in as JSON. */
