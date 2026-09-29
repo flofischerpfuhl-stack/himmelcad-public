@@ -533,6 +533,32 @@ export function shapeHash(oc: OpenCascade, raw: RawShape): number {
   return oc.ReplicadShapeHasher.HashCode(raw as never, HASH_MAX);
 }
 
+/**
+ * A point of the face's surface (at the middle of its UV bounds) and the
+ * outward unit normal there (face orientation applied). Replaces replicad's
+ * `face.normalAt(point)`, which projects the point onto the surface and
+ * leaks ~2.5 KB of wasm heap per call.
+ */
+export function surfaceSample(oc: OpenCascade, face: R.Face): { point: Vec3; normal: Vec3 } {
+  const bounds = oc.BRepTools.UVBounds(face.wrapped as never, 0, 0, 0, 0);
+  const u = 0.5 * (bounds.UMin + bounds.UMax);
+  const v = 0.5 * (bounds.VMin + bounds.VMax);
+  const props = new oc.BRepGProp_Face(face.wrapped as never, false);
+  const p = new oc.gp_Pnt();
+  const n = new oc.gp_Vec();
+  try {
+    props.Normal(u, v, p, n);
+    return {
+      point: [p.X(), p.Y(), p.Z()],
+      normal: normalize([n.X(), n.Y(), n.Z()]),
+    };
+  } finally {
+    n.delete();
+    p.delete();
+    props.delete();
+  }
+}
+
 /** `BRepCheck_Analyzer` verdict. */
 export function isValidShape(oc: OpenCascade, shape: Shape3D): boolean {
   const analyzer = new oc.BRepCheck_Analyzer(shape.wrapped as never, true, false, false);

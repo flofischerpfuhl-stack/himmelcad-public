@@ -135,18 +135,24 @@ export class FaceMeshCache {
     entry.face.delete();
   }
 
-  /** Evicts least recently used faces beyond the byte budget. */
-  evict(): void {
-    if (this.bytes <= this.budgetBytes) return;
+  /**
+   * Evicts least recently used faces beyond the byte budget or beyond
+   * `maxFaces` (entries own a handle of their face, which keeps its B-rep
+   * alive: the count follows the faces the checkpoint cache still holds).
+   */
+  evict(maxFaces = Infinity): void {
+    const count = this.size;
+    if (this.bytes <= this.budgetBytes && count <= maxFaces) return;
     const all: [number, FaceMesh][] = [];
     for (const [hash, list] of this.entries) for (const e of list) all.push([hash, e]);
     all.sort((a, b) => a[1].lastUsed - b[1].lastUsed);
+    let remaining = count;
     for (const [hash, entry] of all) {
-      if (this.bytes <= this.budgetBytes * 0.8) break;
+      if (this.bytes <= this.budgetBytes * 0.8 && remaining <= maxFaces * 0.8) break;
       this.remove(hash, entry);
+      remaining -= 1;
     }
   }
-
   clear(): void {
     for (const [hash, list] of [...this.entries]) for (const e of [...list]) this.remove(hash, e);
   }

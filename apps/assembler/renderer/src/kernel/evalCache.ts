@@ -112,6 +112,7 @@ interface Entry {
 interface ShapeRecord {
   refs: number;
   bytes: number;
+  faces: number;
 }
 
 export interface CheckpointCacheOptions {
@@ -128,6 +129,8 @@ export interface CheckpointCacheOptions {
 export interface CheckpointCacheStats {
   entries: number;
   shapes: number;
+  /** Faces of the shapes held (bounds the per-face caches). */
+  faces: number;
   bytes: number;
   budgetBytes: number;
   evicted: number;
@@ -138,6 +141,7 @@ export class CheckpointCache {
   private readonly shapes = new Map<Shape3D, ShapeRecord>();
   private clock = 0;
   private bytes = 0;
+  private faces = 0;
   private evictedTotal = 0;
   private readonly budgetBytes: number;
   private readonly maxEntries: number;
@@ -176,8 +180,9 @@ export class CheckpointCache {
         record.refs += 1;
       } else {
         const bytes = this.options.estimateBytes(body.shape, body.faces);
-        this.shapes.set(body.shape, { refs: 1, bytes });
+        this.shapes.set(body.shape, { refs: 1, bytes, faces: body.faces.length });
         this.bytes += bytes;
+        this.faces += body.faces.length;
       }
     }
     this.entries.set(checkpoint.hash, { checkpoint, lastUsed: ++this.clock });
@@ -212,6 +217,7 @@ export class CheckpointCache {
     return {
       entries: this.entries.size,
       shapes: this.shapes.size,
+      faces: this.faces,
       bytes: this.bytes,
       budgetBytes: this.budgetBytes,
       evicted: this.evictedTotal,
@@ -229,6 +235,7 @@ export class CheckpointCache {
       if (record.refs > 0) continue;
       this.shapes.delete(body.shape);
       this.bytes -= record.bytes;
+      this.faces -= record.faces;
       this.options.onFree(body.shape);
     }
   }

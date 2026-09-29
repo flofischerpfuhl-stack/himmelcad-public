@@ -32,10 +32,7 @@ export class FacePropsCache {
   private count = 0;
   private clock = 0;
 
-  constructor(
-    private readonly oc: OpenCascade,
-    private readonly maxFaces = 60000,
-  ) {}
+  constructor(private readonly oc: OpenCascade) {}
 
   get size(): number {
     return this.count;
@@ -187,13 +184,15 @@ export class FacePropsCache {
   }
 
   /**
-   * Validity of `shape`: full `BRepCheck_Analyzer` when `full`, else a
+   * Validity of `shape`: full `BRepCheck_Analyzer` (`full`), geometric checks of
+   * unchecked faces plus closure (`faces`), or closure only (`closure`, previews:
+   * `BRepCheck` leaks ~16 KB of wasm heap per face in this build). Else a
    * topology-only analysis of the solid plus a geometric check of every
    * face not checked before.
    */
-  valid(shape: Shape3D, topology: Topology, full: boolean): boolean {
+  valid(shape: Shape3D, topology: Topology, mode: 'full' | 'faces' | 'closure'): boolean {
     const oc = this.oc;
-    if (full) {
+    if (mode === 'full') {
       const ok = isValidShape(oc, shape);
       if (ok) for (const e of this.entriesOf(topology)) e.valid = true;
       return ok;
@@ -201,7 +200,7 @@ export class FacePropsCache {
     const entries = this.entriesOf(topology);
     for (const [i, wrapper] of topology.faces.entries()) {
       const e = entries[i]!;
-      if (e.valid === undefined) {
+      if (e.valid === undefined && mode === 'faces') {
         const analyzer = new oc.BRepCheck_Analyzer(wrapper.wrapped as never, true, false, false);
         try {
           e.valid = analyzer.IsValid();
@@ -209,7 +208,7 @@ export class FacePropsCache {
           analyzer.delete();
         }
       }
-      if (!e.valid) return false;
+      if (e.valid === false) return false;
     }
     // Closed solid: every edge bounds exactly two faces, or is the seam of one.
     for (const [edgeIndex, faces] of topology.edgeFaces.entries()) {
@@ -223,14 +222,18 @@ export class FacePropsCache {
     }
     return true;
   }
-  /** Drops least recently used faces beyond the size cap. */
-  evict(): void {
-    if (this.count <= this.maxFaces) return;
+  /**
+   * Drops least recently used faces beyond `maxFaces`. Entries own a handle
+   * of their face, which keeps its B-rep (and triangulation) alive, so the
+   * cap must follow the faces the checkpoint cache still holds.
+   */
+  evict(maxFaces: number): void {
+    if (this.count <= maxFaces) return;
     const all: [number, FaceProps][] = [];
     for (const [hash, list] of this.entries) for (const e of list) all.push([hash, e]);
     all.sort((a, b) => a[1].lastUsed - b[1].lastUsed);
     for (const [hash, e] of all) {
-      if (this.count <= this.maxFaces * 0.8) break;
+      if (this.count <= maxFaces * 0.8) break;
       this.remove(hash, e);
     }
   }

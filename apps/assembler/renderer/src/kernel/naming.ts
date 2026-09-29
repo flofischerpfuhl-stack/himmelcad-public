@@ -350,6 +350,18 @@ export type DistanceProbe = (index: number, point: Vec3) => number;
  * every other piece must be more than twice as far away and farther than
  * `tolerance`. Otherwise the reference is ambiguous.
  */
+function suffixConfirmed(
+  key: string,
+  marker: string,
+  index: number,
+  point: Vec3,
+  probe: DistanceProbe | undefined,
+  diagonal: number,
+): boolean {
+  if (!probe || !key.includes(marker)) return true;
+  return probe(index, point) <= REBIND_POSITION_FRACTION * Math.max(diagonal, 1);
+}
+
 function pickSplitPiece(
   candidates: readonly number[],
   point: Vec3,
@@ -383,8 +395,15 @@ export function resolveFaceRef(
   probe?: DistanceProbe,
 ): Resolution {
   const byKey = faces.map((f, i) => ({ f, i })).filter(({ f }) => faceHasKey(f, ref.key));
-  if (byKey.length === 1) return { ok: true, index: byKey[0]!.i, rebound: false };
-  if (byKey.length > 1) {
+  if (byKey.length === 1) {
+    const index = byKey[0]!.i;
+    // A `#n` piece key that now names a single face: confirm by position (v1
+    // files named coplanar faces of several features `<first>#n`; see
+    // `suffixConfirmed`), else fall through to the geometric fallback.
+    if (suffixConfirmed(ref.key, '#', index, ref.signature.centroid, probe, diagonal)) {
+      return { ok: true, index, rebound: false };
+    }
+  } else if (byKey.length > 1) {
     const exact = byKey.filter(({ f }) => f.key === ref.key);
     if (exact.length === 1) return { ok: true, index: exact[0]!.i, rebound: false };
     if (probe) {
@@ -463,7 +482,12 @@ export function resolveEdgeRef(
       }
     });
   }
-  if (byKey.length === 1) return { ok: true, index: byKey[0]!, rebound: false };
+  if (
+    byKey.length === 1 &&
+    suffixConfirmed(ref.key, '#', byKey[0]!, ref.signature.midpoint, options.probe, diagonal)
+  ) {
+    return { ok: true, index: byKey[0]!, rebound: false };
+  }
   if (byKey.length > 1 && options.edgeKeys) {
     const exact = byKey.filter((i) => options.edgeKeys![i] === ref.key);
     if (exact.length === 1) return { ok: true, index: exact[0]!, rebound: false };
@@ -484,7 +508,7 @@ export function resolveEdgeRef(
       note: `Edge "${ref.key}" now matches ${byKey.length} edges; the one at its recorded position keeps the reference`,
     };
   }
-  if (byKey.length >= 1) {
+  if (byKey.length > 1) {
     byKey.sort(
       (a, b) =>
         distance(edges[a]!.midpoint, ref.signature.midpoint) -

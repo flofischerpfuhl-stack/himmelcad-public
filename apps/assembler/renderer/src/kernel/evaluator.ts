@@ -71,6 +71,7 @@ import {
   buildTopology,
   distanceToShape,
   edgesOf,
+  surfaceSample,
   faceOrigins,
   facesOf,
   heapBytes,
@@ -96,6 +97,9 @@ import { applyModelingFeature, type FeatureKit } from './features/index.js';
 import { rebindRegion } from './regionRebind.js';
 import { FaceMeshCache } from './tessellate.js';
 import { FacePropsCache } from './faceProps.js';
+import { KernelFatalError, isFatalKernelError } from './fatal.js';
+
+export { KernelFatalError, isFatalKernelError };
 import type { HistorySource } from './occt.js';
 
 type OpenCascade = ReturnType<typeof R.getOC>;
@@ -103,26 +107,6 @@ type Shape3D = R.Shape3D;
 
 /** Raised for a feature that cannot be evaluated; caught per feature. */
 class FeatureError extends Error {}
-
-/**
- * The kernel itself failed (wasm abort, out of memory, memory corruption):
- * the OCCT instance is unusable. Never caught per feature â€” the adapter
- * restarts the kernel and re-evaluates the document.
- */
-export class KernelFatalError extends Error {
-  readonly fatal = true;
-}
-
-/** `true` for errors after which the OCCT instance must not be used again. */
-export function isFatalKernelError(error: unknown): boolean {
-  if (error instanceof KernelFatalError) return true;
-  const RuntimeError = (globalThis as { WebAssembly?: { RuntimeError?: new () => Error } })
-    .WebAssembly?.RuntimeError;
-  if (RuntimeError && error instanceof RuntimeError) return true;
-  if (error instanceof RangeError && /memory|allocation/i.test(error.message)) return true;
-  const message = error instanceof Error ? error.message : typeof error === 'string' ? error : '';
-  return /Aborted\(|out of memory|Cannot enlarge memory|memory access out of bounds/i.test(message);
-}
 
 /**
  * Body appearance colors, assigned by creation order. `[0]` is the neutral
@@ -218,6 +202,7 @@ interface ShapeInfo {
   topology?: OwnedTopology;
   diagonal?: number;
   valid?: boolean;
+  validMode?: 'full' | 'faces' | 'closure';
   volume?: number;
   bounds?: [Vec3, Vec3];
   edgeKeys?: { faces: KeyedFace[]; keys: string[] };
@@ -322,25 +307,14 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
     return info.topology;
   }
 
-  function firstVertexOf(face: R.Face): Vec3 | null {
-    const [edge] = edgesOf(oc, face);
-    if (!edge) return null;
-    const p = edge.startPoint;
-    const out: Vec3 = [p.x, p.y, p.z];
-    p.delete();
-    return out;
-  }
-
   function describeFace(face: R.Face): FaceGeom {
     const surface = surfaceKindOf(face.geomType);
     const props = R.measureShapeSurfaceProperties(face);
     const centroid = [...props.centerOfMass] as Vec3;
     const area = props.area;
     props.delete();
-    const samplePoint = firstVertexOf(face) ?? centroid;
-    const rawNormal = face.normalAt(samplePoint);
-    const outward = normalize([rawNormal.x, rawNormal.y, rawNormal.z]);
-    rawNormal.delete();
+    // A point on the surface and the outward normal there (plane offset, cylinder convexity).
+    const { point: samplePoint, normal: outward } = surfaceSample(oc, face);
     let id: SurfaceId;
     let normal: Vec3 | null = null;
     const adaptor = new oc.BRepAdaptor_Surface(face.wrapped, false);
@@ -1074,9 +1048,12 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
       segments: segmentsByEdge.get(i) ?? new Float32Array(0),
     }));
 
-    info.valid ??= timed('validity', () =>
-      faceProps.valid(shape, topology, mesh.facesReused === 0),
-    );
+    // Previews only check closure (`faceProps.ts`); a final evaluation re-checks such a body.
+    const checkMode = q === 'preview' ? 'closure' : mesh.facesReused === 0 ? 'full' : 'faces';
+    if (info.valid === undefined || (info.validMode === 'closure' && checkMode !== 'closure')) {
+      info.valid = timed('validity', () => faceProps.valid(shape, topology, checkMode));
+      info.validMode = checkMode;
+    }
     info.volume ??= timed('volume', () => faceProps.volume(topology));
 
     meshSerial += 1;
@@ -1153,8 +1130,12 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
   }
 
   function evictMeshes(keep: ReadonlySet<Shape3D>): void {
-    faceMeshes.evict();
-    faceProps.evict();
+    // Per-face caches follow the faces the checkpoints hold (plus the tessellated result).
+    let liveFaces = cache.stats().faces;
+    for (const shape of keep) liveFaces += infos.get(shape)?.topology?.faces.length ?? 0;
+    const maxFaces = Math.max(256, 2 * liveFaces);
+    faceMeshes.evict(maxFaces);
+    faceProps.evict(maxFaces);
     if (meshBytes <= meshBudget) return;
     const entries = [...meshes.entries()]
       .filter(([shape]) => !keep.has(shape))
