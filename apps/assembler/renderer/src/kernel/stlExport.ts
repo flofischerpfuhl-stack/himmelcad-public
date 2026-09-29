@@ -83,6 +83,80 @@ export function stlBufferForMeshes(meshes: readonly BodyMesh[], header?: string)
   );
 }
 
+/** STL `solid` name: printable ASCII without whitespace runs (some readers split on spaces). */
+function solidName(name: string): string {
+  const cleaned = name.replace(/[^\x21-\x7e]+/g, '_').replace(/^_+|_+$/g, '');
+  return cleaned || 'body';
+}
+
+/** Shortest decimal that survives a float32 round trip, in `e` notation as STL readers expect. */
+function stlNumber(value: number): string {
+  const v = Math.fround(value);
+  return (Object.is(v, -0) ? 0 : v).toExponential(7);
+}
+
+/**
+ * ASCII STL of one or more meshes: one `solid … endsolid` block per mesh
+ * (named), facet normals from the triangle winding. Millimetres, like the
+ * binary writer.
+ */
+export function stlAsciiForMeshes(meshes: readonly { name: string; mesh: BodyMesh }[]): Uint8Array {
+  const lines: string[] = [];
+  for (const { name, mesh } of meshes) {
+    const solid = solidName(name);
+    lines.push(`solid ${solid}`);
+    const p = mesh.positions;
+    for (let t = 0; t < mesh.indices.length; t += 3) {
+      const a = mesh.indices[t]! * 3;
+      const b = mesh.indices[t + 1]! * 3;
+      const c = mesh.indices[t + 2]! * 3;
+      const ux = p[b]! - p[a]!;
+      const uy = p[b + 1]! - p[a + 1]!;
+      const uz = p[b + 2]! - p[a + 2]!;
+      const vx = p[c]! - p[a]!;
+      const vy = p[c + 1]! - p[a + 1]!;
+      const vz = p[c + 2]! - p[a + 2]!;
+      let nx = uy * vz - uz * vy;
+      let ny = uz * vx - ux * vz;
+      let nz = ux * vy - uy * vx;
+      const len = Math.hypot(nx, ny, nz) || 1;
+      nx /= len;
+      ny /= len;
+      nz /= len;
+      lines.push(`  facet normal ${stlNumber(nx)} ${stlNumber(ny)} ${stlNumber(nz)}`);
+      lines.push('    outer loop');
+      for (const i of [a, b, c]) {
+        lines.push(
+          `      vertex ${stlNumber(p[i]!)} ${stlNumber(p[i + 1]!)} ${stlNumber(p[i + 2]!)}`,
+        );
+      }
+      lines.push('    endloop');
+      lines.push('  endfacet');
+    }
+    lines.push(`endsolid ${solid}`);
+  }
+  return new TextEncoder().encode(`${lines.join('\n')}\n`);
+}
+
+export type StlFormat = 'binary' | 'ascii';
+
+/** STL bytes of the given named meshes (merged into one file). */
+export function stlBytes(
+  meshes: readonly { name: string; mesh: BodyMesh }[],
+  format: StlFormat,
+): Uint8Array {
+  if (format === 'ascii') return stlAsciiForMeshes(meshes);
+  const header = meshes.length === 1 ? meshes[0]!.name : 'HimmelCAD Assembler';
+  return new Uint8Array(
+    meshes.length === 1
+      ? stlBufferForMesh(meshes[0]!.mesh, header)
+      : stlBufferForMeshes(
+          meshes.map((m) => m.mesh),
+          header,
+        ),
+  );
+}
+
 /** STL export for one body, by id. `null` if the body is not in the evaluation. */
 export function exportBodyStl(bodies: readonly Body[], bodyId: string): ArrayBuffer | null {
   const body = bodies.find((b) => b.id === bodyId);

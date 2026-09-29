@@ -33,6 +33,7 @@ import type {
   KernelStatusInfo,
 } from './types.js';
 import type { KernelEvaluator } from './evaluator.js';
+import type { ExportMeshBody, MeshExportOptions } from './meshExport.js';
 import { isFatalKernelError } from './fatal.js';
 
 export interface KernelJob {
@@ -74,6 +75,12 @@ export interface KernelAdapter {
    * queue: it is a user-initiated action, not a continuous evaluation.
    */
   exportStep(features: readonly Feature[], bodyIds?: readonly string[]): Promise<Uint8Array>;
+  /**
+   * One-off export tessellation of the given features' bodies at a chosen
+   * deflection (STL/3MF resolution presets); like {@link exportStep} it
+   * bypasses the evaluation queue.
+   */
+  exportMesh(features: readonly Feature[], options: MeshExportOptions): Promise<ExportMeshBody[]>;
   dispose(): void;
 }
 
@@ -106,7 +113,7 @@ export abstract class QueuedKernelAdapter implements KernelAdapter {
   private activityListeners = new Set<(activity: KernelActivity | null) => void>();
   private currentStatus: KernelStatusInfo = {
     status: 'loading',
-    message: 'Loading CAD kernel…',
+    message: 'Loading CAD kernelâ€¦',
     progress: null,
     loadMs: null,
   };
@@ -206,6 +213,13 @@ export abstract class QueuedKernelAdapter implements KernelAdapter {
     return Promise.reject(new Error('STEP export is not supported by this kernel adapter'));
   }
 
+  exportMesh(
+    _features: readonly Feature[],
+    _options: MeshExportOptions,
+  ): Promise<ExportMeshBody[]> {
+    return Promise.reject(new Error('Mesh export is not supported by this kernel adapter'));
+  }
+
   /** Evaluates one request. Must not throw synchronously for kernel errors. */
   protected abstract run(
     request: EvaluationRequest,
@@ -281,7 +295,7 @@ export const CRASH_WINDOW_MS = 60_000;
 
 /**
  * wasm heap size above which the kernel is restarted when it next runs
- * idle. OCCT in this build leaks inside its own algorithms (40–260 KB per
+ * idle. OCCT in this build leaks inside its own algorithms (40â€“260 KB per
  * boolean, ~16 KB per `BRepCheck` face check, ~27 B per explored sub-shape;
  * wasm memory never shrinks), so a long session is recycled
  * before wasm32 runs out of address space. The document lives in the store;
@@ -327,7 +341,7 @@ export class InProcessKernelAdapter extends QueuedKernelAdapter {
     this.evaluator = null;
     this.setStatus({
       status: 'loading',
-      message: 'Refreshing CAD kernel memory…',
+      message: 'Refreshing CAD kernel memoryâ€¦',
       progress: null,
       loadMs: null,
     });
@@ -392,7 +406,7 @@ export class InProcessKernelAdapter extends QueuedKernelAdapter {
         }
         this.setStatus({
           status: 'loading',
-          message: 'Restarting CAD kernel…',
+          message: 'Restarting CAD kernelâ€¦',
           progress: null,
           loadMs: null,
           notice: crashNotice(detail),
@@ -411,5 +425,14 @@ export class InProcessKernelAdapter extends QueuedKernelAdapter {
   ): Promise<Uint8Array> {
     const evaluator = this.evaluator ?? (await this.ready);
     return evaluator.exportStep(features, bodyIds);
+  }
+
+  override async exportMesh(
+    features: readonly Feature[],
+    options: MeshExportOptions,
+  ): Promise<ExportMeshBody[]> {
+    const evaluator = this.evaluator ?? (await this.ready);
+    if (!evaluator.exportMesh) throw new Error('Mesh export is not supported by this kernel');
+    return evaluator.exportMesh(features, options);
   }
 }

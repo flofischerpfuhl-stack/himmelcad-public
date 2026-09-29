@@ -26,6 +26,7 @@ import {
 } from './adapter.js';
 import type { WireBody, WorkerRequest, WorkerResponse } from './workerProtocol.js';
 import type { Body, BodyMesh, EvaluationRequest, EvaluationResult } from './types.js';
+import type { ExportMeshBody, MeshExportOptions } from './meshExport.js';
 
 interface Pending {
   jobId: number;
@@ -51,6 +52,10 @@ export class WorkerKernelAdapter extends QueuedKernelAdapter {
   private pending: Pending | null = null;
   private nextJobId = 1;
   private readonly exportPending = new Map<number, PendingExport>();
+  private readonly meshPending = new Map<
+    number,
+    { resolve: (bodies: ExportMeshBody[]) => void; reject: (error: Error) => void }
+  >();
   private nextExportJobId = 1;
   /** Meshes of the last result the worker posted, by `meshId`. */
   private meshes = new Map<string, MeshRecord>();
@@ -150,6 +155,14 @@ export class WorkerKernelAdapter extends QueuedKernelAdapter {
       else pending.reject(new Error(message.message));
       return;
     }
+    if (message.type === 'meshResult' || message.type === 'meshFailed') {
+      const pending = this.meshPending.get(message.jobId);
+      if (!pending) return;
+      this.meshPending.delete(message.jobId);
+      if (message.type === 'meshResult') pending.resolve(message.bodies);
+      else pending.reject(new Error(message.message));
+      return;
+    }
     if (message.type === 'progress') {
       if (this.pending?.jobId === message.jobId) this.pending.context.progress(message.progress);
       return;
@@ -197,10 +210,7 @@ export class WorkerKernelAdapter extends QueuedKernelAdapter {
   private crash(detail: string): void {
     this.worker?.terminate();
     this.worker = null;
-    for (const pending of this.exportPending.values()) {
-      pending.reject(new Error(`The CAD kernel stopped while exporting: ${detail}`));
-    }
-    this.exportPending.clear();
+    this.failExports(`The CAD kernel stopped while exporting: ${detail}`);
     if (this.disposed) return;
     const now = Date.now();
     this.crashes = [...this.crashes.filter((t) => now - t < CRASH_WINDOW_MS), now];
@@ -271,6 +281,38 @@ export class WorkerKernelAdapter extends QueuedKernelAdapter {
     });
   }
 
+  override exportMesh(
+    features: readonly Feature[],
+    options: MeshExportOptions,
+  ): Promise<ExportMeshBody[]> {
+    return new Promise((resolve, reject) => {
+      const worker = this.worker;
+      if (!worker) {
+        reject(new Error('CAD kernel worker is not running'));
+        return;
+      }
+      const jobId = this.nextExportJobId++;
+      this.meshPending.set(jobId, { resolve, reject });
+      const message: WorkerRequest = {
+        type: 'exportMesh',
+        jobId,
+        features: [...features],
+        ...(options.bodyIds ? { bodyIds: [...options.bodyIds] } : {}),
+        tolerance: options.tolerance,
+        angularTolerance: options.angularTolerance,
+      };
+      worker.postMessage(message);
+    });
+  }
+
+  /** Fails every outstanding export (the worker that would answer is gone). */
+  private failExports(message: string): void {
+    for (const pending of this.exportPending.values()) pending.reject(new Error(message));
+    this.exportPending.clear();
+    for (const pending of this.meshPending.values()) pending.reject(new Error(message));
+    this.meshPending.clear();
+  }
+
   protected run(request: EvaluationRequest, context: RunContext): Promise<EvaluationResult> {
     return new Promise((resolve, reject) => {
       if (!this.worker) {
@@ -289,8 +331,7 @@ export class WorkerKernelAdapter extends QueuedKernelAdapter {
     this.pending = null;
     this.worker?.terminate();
     this.worker = null;
-    for (const pending of this.exportPending.values()) pending.reject(new Error('cancelled'));
-    this.exportPending.clear();
+    this.failExports('cancelled');
     if (this.disposed) return;
     this.setStatus({
       status: 'loading',
