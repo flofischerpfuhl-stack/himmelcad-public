@@ -1,20 +1,101 @@
-import { resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { promises as fs } from 'node:fs';
+import { extname, join, normalize, resolve } from 'node:path';
 
-import { BrowserWindow, app } from 'electron';
+import { BrowserWindow, app, protocol } from 'electron';
 
+import { attachCloseGuard, registerFileApi } from './fileApi';
 import { ASSEMBLER_PRODUCT_NAME, createMainWindowOptions } from './windowOptions';
 
-const isDev = !app.isPackaged;
-const RENDERER_URL = isDev
-  ? 'http://localhost:5175/'
-  : pathToFileURL(resolve(__dirname, '../renderer/index.html')).href;
+// `app.isPackaged` is only `true` from a real installer build (electron-
+// builder, not yet wired up — see `apps/assembler/README.md` "Packaged
+// build" open item). `ASSEMBLER_FORCE_PRODUCTION=1` lets the production
+// smoke test (`test/electron/production.test.ts`, playwright-core
+// `_electron`) exercise the packaged code path — the `app://` protocol,
+// strict CSP and `dist/renderer` loading — from a plain `electron dist/electron/main.js`
+// launch, without needing a full installer for every verification run.
+const isDev = !app.isPackaged && process.env.ASSEMBLER_FORCE_PRODUCTION !== '1';
+
+/**
+ * Privileged custom protocol serving the packaged renderer, worker and
+ * kernel wasm from `dist/renderer` in production. A packaged `file://`
+ * renderer cannot reliably `fetch()` a co-located `.wasm` or load a module
+ * worker (Chromium restricts both from `file:`); `app://` is a standard,
+ * secure, fetch-capable scheme instead (`assembler/KERNEL-SPIKE.md`,
+ * "Packaged Electron is unverified").
+ */
+const APP_SCHEME = 'app';
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: APP_SCHEME,
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      corsEnabled: true,
+      stream: true,
+      allowServiceWorkers: false,
+    },
+  },
+]);
+
+const RENDERER_URL = isDev ? 'http://localhost:5175/' : `${APP_SCHEME}://assembler/index.html`;
+
+const MIME_TYPES: Record<string, string> = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.mjs': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.wasm': 'application/wasm',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.map': 'application/json; charset=utf-8',
+  '.txt': 'text/plain; charset=utf-8',
+};
+
+// 'unsafe-eval' is required by the Emscripten-generated OCCT glue
+// (`replicad-opencascadejs`), which uses `eval`/`new Function` beyond plain
+// `WebAssembly.instantiate` (found by the production smoke test: without
+// it, the packaged app's kernel fails to load with a CSP violation, even
+// though 'wasm-unsafe-eval' alone is enough in the dev/Vite build). Still
+// `'self'`-only — no remote script origin is ever allowed, so this does not
+// permit loading remote code, only evaluating strings that ship inside the
+// already-`'self'`-scoped bundle.
+const CSP =
+  "default-src 'self'; script-src 'self' 'unsafe-eval' 'wasm-unsafe-eval'; worker-src 'self'; " +
+  "style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; " +
+  "connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none';";
+
+function registerAppProtocol(rendererDir: string): void {
+  protocol.handle(APP_SCHEME, async (request) => {
+    const url = new URL(request.url);
+    let pathname = decodeURIComponent(url.pathname);
+    if (pathname === '' || pathname === '/') pathname = '/index.html';
+    const filePath = normalize(join(rendererDir, pathname));
+    // Containment: never serve a path that escaped `rendererDir` (e.g. via `..`).
+    if (!filePath.startsWith(normalize(rendererDir))) {
+      return new Response('Forbidden', { status: 403 });
+    }
+    try {
+      const data = await fs.readFile(filePath);
+      const type = MIME_TYPES[extname(filePath).toLowerCase()] ?? 'application/octet-stream';
+      return new Response(new Uint8Array(data), {
+        status: 200,
+        headers: { 'Content-Type': type, 'Content-Security-Policy': CSP },
+      });
+    } catch {
+      return new Response('Not found', { status: 404 });
+    }
+  });
+}
 
 app.setName(ASSEMBLER_PRODUCT_NAME);
 
 let mainWindow: BrowserWindow | null = null;
 
 async function createWindow(): Promise<void> {
+  if (!isDev) registerAppProtocol(resolve(__dirname, '../renderer'));
+
   const win = new BrowserWindow(createMainWindowOptions(__dirname));
   mainWindow = win;
 
@@ -23,6 +104,12 @@ async function createWindow(): Promise<void> {
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', (event) => event.preventDefault());
   win.webContents.on('will-redirect', (event) => event.preventDefault());
+
+  registerFileApi(() => mainWindow);
+  attachCloseGuard(win);
+  win.on('closed', () => {
+    if (mainWindow === win) mainWindow = null;
+  });
 
   if (isDev) win.webContents.openDevTools({ mode: 'detach' });
   await win.loadURL(RENDERER_URL);

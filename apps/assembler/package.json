@@ -16,11 +16,12 @@
     "dev": "concurrently -k -n vite,electron -c blue,green \"pnpm dev:vite\" \"pnpm dev:electron\"",
     "dev:vite": "vite",
     "dev:web": "vite --host",
-    "dev:electron": "tsc -p tsconfig.electron.json && wait-on http://localhost:5175 && node ../../scripts/run-electron.mjs .",
-    "build:electron": "tsc -p tsconfig.electron.json",
+    "dev:electron": "tsc -p tsconfig.electron.json && node scripts/postbuild-electron.mjs && wait-on http://localhost:5175 && node ../../scripts/run-electron.mjs .",
+    "build:electron": "tsc -p tsconfig.electron.json && node scripts/postbuild-electron.mjs",
     "build": "vite build && pnpm build:electron",
     "typecheck": "tsc -b tsconfig.json tsconfig.typecheck-electron.json",
-    "test": "tsc -p tsconfig.test.json && node --test .build/tests/apps/assembler/test/windowOptions.test.js .build/tests/apps/assembler/test/model/store.test.js .build/tests/apps/assembler/test/model/commands.test.js .build/tests/apps/assembler/test/model/tools.test.js .build/tests/apps/assembler/test/model/modeling.test.js .build/tests/apps/assembler/test/kernel/adapter.test.js .build/tests/apps/assembler/test/kernel/naming.test.js .build/tests/apps/assembler/test/kernel/evaluator.test.js .build/tests/apps/assembler/test/viewport/math.test.js .build/tests/apps/assembler/test/viewport/camera.test.js .build/tests/apps/assembler/test/viewport/expr.test.js .build/tests/apps/assembler/test/viewport/picking.test.js .build/tests/apps/assembler/test/viewport/toolAnchors.test.js"
+    "test": "tsc -p tsconfig.test.json && node --test .build/tests/apps/assembler/test/windowOptions.test.js .build/tests/apps/assembler/test/model/store.test.js .build/tests/apps/assembler/test/model/commands.test.js .build/tests/apps/assembler/test/model/tools.test.js .build/tests/apps/assembler/test/model/modeling.test.js .build/tests/apps/assembler/test/model/project/format.test.js .build/tests/apps/assembler/test/model/project/projectStore.test.js .build/tests/apps/assembler/test/kernel/adapter.test.js .build/tests/apps/assembler/test/kernel/naming.test.js .build/tests/apps/assembler/test/kernel/evaluator.test.js .build/tests/apps/assembler/test/kernel/stlExport.test.js .build/tests/apps/assembler/test/kernel/threeMf.test.js .build/tests/apps/assembler/test/kernel/stepRoundTrip.test.js .build/tests/apps/assembler/test/viewport/math.test.js .build/tests/apps/assembler/test/viewport/camera.test.js .build/tests/apps/assembler/test/viewport/expr.test.js .build/tests/apps/assembler/test/viewport/picking.test.js .build/tests/apps/assembler/test/viewport/toolAnchors.test.js",
+    "test:electron": "pnpm build && tsc -p tsconfig.test.json && node --test .build/tests/apps/assembler/test/electron/production.test.js"
   },
   "dependencies": {
     "@himmelcad/theme": "workspace:*",
@@ -39,6 +40,7 @@
     "@vitejs/plugin-react": "^4.3.2",
     "concurrently": "^9.0.1",
     "electron": "43.1.0",
+    "playwright-core": "^1.57.0",
     "typescript": "^5.6.2",
     "vite": "^5.4.8",
     "wait-on": "^8.0.1"
