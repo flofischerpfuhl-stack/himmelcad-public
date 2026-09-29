@@ -103,57 +103,94 @@ Geometry validation (hand calculation in `createDemoDocument` and the tests):
 | Hole face area                        | 2π·3·6 = 113.10 mm²                                            | matches (< 1e-3)                      |
 | B-rep validity (`BRepCheck_Analyzer`) | valid                                                          | valid (demo, edits, shell/union case) |
 
-## Stable references — design and limits
+## Stable references — reference scheme v2
 
-Implemented in `kernel/naming.ts`; tests in `test/kernel/naming.test.ts`,
-`test/kernel/evaluator.test.ts`, `test/model/store.test.ts`.
+Implemented in `kernel/naming.ts` (pure), `kernel/occt.ts#faceOrigins`
+(OCCT history), `kernel/regionRebind.ts`; tests in
+`test/kernel/naming.test.ts`, `evaluator.test.ts`, `features.test.ts`,
+`references.test.ts` (adversarial cases), `test/model/store.test.ts`.
+The naming contract of v1 is unchanged — keys, `A|B` edge keys, `#n`/`~n`
+suffixes, aliases, `Missing reference: …` errors — and the demo bracket and
+the features part produce exactly the v1 keys (checked against the v1
+evaluator on the bench parts); only how a result face finds its key changed.
 
-1. **Generated names**: faces created by a feature get `<featureId>:<role>`
-   keys: `:start:<p>`/`:end:<p>` extrude caps, `:side:<p>:<segment>` side
-   faces per profile segment, `:round:<i>`/`:chamfer:<i>` blend face of the
-   i-th referenced edge (found as the new face adjacent to both faces of
-   that edge), `:inner:<key>` shell offsets. A push/pull end face inherits
-   the pushed face's key.
-2. **Propagation by surface identity** through every boolean/fillet/shell/
-   move: a result face on the same underlying surface as an input face
-   (plane normal + offset; cylinder axis + radius + convexity; other kinds
-   by centroid + area) inherits its key. Coplanar faces merged by a fuse →
-   earliest feature's key wins, others become aliases. A split face gets
-   `#n` suffixes.
+1. **Generated names** (as v1): `<feature>:start:<p>`/`:end:<p>` caps,
+   `:side:<p>:<entityId>` sides (sketch entity of the boundary piece),
+   `:round:<i>`/`:chamfer:<i>` blend faces, `:inner:<key>` shell walls,
+   `:cut` split faces, `:new` otherwise; a push/pull end face and an offset
+   face keep the moved face's key.
+2. **Propagation by OCCT history** (new). Booleans (`BRepAlgoAPI_*`,
+   non-destructive, `SimplifyResult` as before), fillet/chamfer
+   (`BRepFilletAPI_*`) and shell (`BRepOffsetAPI_MakeThickSolid`) run
+   through their builders and every result face is named from the
+   builder's history before the builder is deleted:
+   - **identical** to an input face (`IsSame`, the face was not touched):
+     keeps key, aliases and its descriptor (no OCCT query at all);
+   - **Modified** from input faces: inherits their keys — several (coplanar
+     faces merged by the fuse) → earliest feature's key, the others aliases;
+     one input split into several faces → `#n` pieces (centroid order);
+   - **Generated** by a generator: fillet/chamfer faces from
+     `Generated(edge i)` → `:round:i`/`:chamfer:i`, shell walls from
+     `Generated(face)` → `:inner:<key>`;
+   - nothing reported → **surface identity** (v1: plane normal + offset,
+     cylinder axis + radius + convexity, other kinds centroid + area), then
+     the generated name. Revolve/sweep/loft already named from history.
+     Rigid motions (move/rotate/mirror/pattern/align) keep every key by
+     transforming the descriptors; a translation/rotation relocates the same
+     B-rep (instances share geometry and triangulation), detected with
+     `IsPartner`.
 3. **Edges** are keyed by their two face keys (`A|B`, `~n` if ambiguous).
-4. **Resolution**: key/alias first; if nothing carries the key, a strict
-   geometric fallback re-binds only to a _unique_ candidate of the same
-   kind within 1% of the body diagonal and ±5% area/length, and the feature
-   gets a visible warning. Otherwise the feature fails with
-   `Missing reference: …` — never a silent re-bind.
+4. **Resolution**: key/alias first. **Split rule** (new): when several
+   pieces carry an unsuffixed key, the piece nearest to the position
+   recorded in the reference (face centroid / edge midpoint) keeps it —
+   only if every other piece is more than twice as far away — and the
+   feature gets a warning (`Face "…" was split into N faces; the piece at
+its recorded position keeps the reference`); otherwise it fails with
+   `Ambiguous reference: face "…" was split into N faces — re-select the
+face`. Without any key match the strict geometric fallback of v1 applies
+   (unique candidate, same kind, within 1 % of the body diagonal and ±5 %
+   size, warning `re-bound by geometry`), else `Missing reference: …`.
+5. **Redrawn sketch profiles** (new, `regionRebind.ts`): a region key that
+   no longer exists (a boundary line deleted and redrawn gets a new entity
+   id) re-binds to the unique free region bounded by all of the old key's
+   entities that still exist, or — when none survive — to the sketch's
+   only free region; always with a warning, otherwise `Missing reference:
+profile …`. Deterministic: only the document is consulted.
+6. **v1 migration**: v1 named coplanar faces of _different_ features
+   `<first>#n` with all the others as aliases (e.g. the tops of ten bosses
+   on one plate: `boss-0:end:0#1…#10`); v2 names each after its own
+   feature (`boss-3:end:0`). A stored `#n` key that now names a single face
+   must be confirmed by its recorded position (within 1 % of the diagonal),
+   else it takes the geometric fallback — so an old reference never binds a
+   different boss silently.
 
-Results (tests, real kernel):
+Adversarial cases (`test/kernel/references.test.ts`, real kernel):
 
-- Edit base-plate sketch width 80 → 100 (also 120 in the store test): the
-  fillet still resolves by key to the plate-top/upright-front edge, no
-  warning; volume and fillet placement match the hand calculation; a face
-  selected before the edit stays selected.
-- Suppress the upright (Extrude 2) or make it a separate body: the fillet
-  reports `Missing reference: edge "…"`, no re-bind, rest of the history
-  evaluates.
-- Push/pull keeps the moved face's key; chamfer, shell, move and union
-  evaluate valid with keyed faces.
+| Case                                                                                               | Outcome                                                                                                                                         |
+| -------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| Slot inserted before a sketch-on-face splits the referenced top face; recorded centre on one piece | the piece keeps the reference, warning on the sketch; hole cut where it was                                                                     |
+| Same, recorded centre in the slot gap (equidistant)                                                | `Ambiguous reference: face "b:end:0" was split into 2 faces — re-select the face`; downstream extrude reports its missing sketch                |
+| Fillet on the top-front edge, then Offset Face of the front face (+2)                              | both resolve by key, no warning; volume = hand calculation                                                                                      |
+| Offset Face inserted _before_ the fillet                                                           | the edge keeps its key (top merges with the slab top, alias), no warning                                                                        |
+| Pattern count 3 → 5 with a fillet on instance 2 (`body:pat:1`)                                     | resolves by key on the same instance, source untouched; a fillet on instance 3 after count 3 → 2 reports `Missing reference: body "body:pat:2"` |
+| Revolve 90° → 120° → 200° with a fillet on an end-cap edge and a sketch on the start cap           | resolve by key (caps from `FirstShape/LastShape`), no warning; at 360° both report `Missing reference` (no caps)                                |
+| Rectangle side `l3` deleted and redrawn as `l5`                                                    | extrude re-binds `l1+l2+l3+l4` → `l1+l2+l4+l5` (warning); the fillet on the old `…:side:0:l3` edge re-binds by geometry (warning); same solid   |
+| Circle redrawn (`c1` → `c2`), one profile                                                          | re-bound to the only profile (warning); with two circles and no surviving entity: `Missing reference: profile "c1"`                             |
+| v1 key `b1:end:0#2` for the second boss top                                                        | geometric re-bind to `b2:end:0` (warning), not the first boss                                                                                   |
 
-Limits (known, not solved by the spike):
+Limits:
 
-- Free-form surfaces (B-spline, torus corners of multi-edge fillets) only keep
-  their key while unchanged; a later edit that changes them makes references
-  to them fall back to geometry or fail.
-- `#n` order of split faces is positional; a reference to one piece of a
-  split face picks the nearest piece by centroid.
-- Surface identity cannot tell apart two different features that create
-  faces on the _same_ surface later on; the earliest-feature rule decides.
-- ~~Sketch profiles are addressed by index~~ — superseded 2026-09-29:
-  profiles are detected regions with stable keys and side faces are named
-  by sketch entity (`<extrude>:side:<p>:<entityId>`); see `SKETCHING.md`.
-- OCCT's own history (`BRepAlgoAPI_*::Modified/Generated`) is not used; it is
-  available in the bindings and is the next step if surface identity proves
-  too weak (e.g. for variable fillets or drafts).
+- The split rule needs a recorded position that still lies on (or clearly
+  nearest to) the intended piece; after large parameter edits that move the
+  face, a split reference becomes ambiguous rather than guessed.
+- Faces OCCT reports neither as modified nor generated (e.g. torus corner
+  patches of multi-edge fillets, some offset slab walls) still use surface
+  identity or `:new`.
+- Region rebind is topological (surviving entity ids), not geometric: a
+  profile whose every edge was redrawn is only re-bound when it is the
+  single free profile; the references do not store region geometry.
+- Split Body, Offset Face and Delete Face booleans are named by history,
+  their tool faces by position/role as before.
 
 ## Modelling features (2026-09-29)
 
@@ -173,15 +210,15 @@ defaults to a construction line of the profile's sketch that does not cross
 the profile, and sketch lines become pickable axis targets while Revolve or
 Pattern runs.
 
-| Feature                                                                | OCCT route                                                                                                                                        | Naming                                                                                                                                                                                                                          |
-| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Revolve (profile + world/edge/sketch-line axis)                        | `BRepPrimAPI_MakeRevol` per profile, New/Join/Cut via the extrude booleans                                                                        | from OCCT history: `Generated(edge)` → `:side:<p>:<entityId>`, `FirstShape/LastShape` → `:start/:end`; faces OCCT does not report (planar annuli of a full revolve) fall back to the boundary piece lying on the face's surface |
-| Sweep (edge chain, sketch region outline or straight line path)        | `BRepOffsetAPI_MakePipeShell` (corrected Frenet), `MakeSolid`                                                                                     | same scheme (`Generated`, first/last shape)                                                                                                                                                                                     |
-| Loft (≥ 2 profiles, smooth or ruled)                                   | `BRepOffsetAPI_ThruSections` with compatibility check                                                                                             | `GeneratedFace(edge of the first section)`, first/last shape                                                                                                                                                                    |
-| Mirror, Pattern (linear/circular), Transform (move/rotate/copy), Align | `gp_Trsf` (`SetMirror/SetRotation/SetTranslation`) + `BRepBuilderAPI_Transform`                                                                   | the face descriptors are transformed with the same affine map (`rigid.ts`), so in-place motions keep every key; copies are new bodies (`body:<feature>:<n>`) carrying the source keys                                           |
-| Split Body (world plane or planar face)                                | `intersect`/`cut` with a half-space prism                                                                                                         | inherited by surface identity; the new cut faces are `<feature>:cut`; the positive side becomes `body:<feature>`                                                                                                                |
-| Offset Face (planar, cylindrical, other smooth faces)                  | `BRepOffsetAPI_MakeThickSolid::MakeThickSolidBySimple` slab, joined (outward) or cut (inward)                                                     | the offset surface keeps the face's key (like push/pull)                                                                                                                                                                        |
-| Delete Face (holes; fillets/chamfers between two planar faces)         | hole: fuse a cylinder over the face's axial extent; fillet/chamfer: fuse/cut the corner prism between the face and its extended planar neighbours | neighbours re-grow on their own surfaces and keep their keys                                                                                                                                                                    |
+| Feature                                                                | OCCT route                                                                                                                                                   | Naming                                                                                                                                                                                                                          |
+| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Revolve (profile + world/edge/sketch-line axis)                        | `BRepPrimAPI_MakeRevol` per profile, New/Join/Cut via the extrude booleans                                                                                   | from OCCT history: `Generated(edge)` → `:side:<p>:<entityId>`, `FirstShape/LastShape` → `:start/:end`; faces OCCT does not report (planar annuli of a full revolve) fall back to the boundary piece lying on the face's surface |
+| Sweep (edge chain, sketch region outline or straight line path)        | `BRepOffsetAPI_MakePipeShell` (corrected Frenet), `MakeSolid`                                                                                                | same scheme (`Generated`, first/last shape)                                                                                                                                                                                     |
+| Loft (≥ 2 profiles, smooth or ruled)                                   | `BRepOffsetAPI_ThruSections` with compatibility check                                                                                                        | `GeneratedFace(edge of the first section)`, first/last shape                                                                                                                                                                    |
+| Mirror, Pattern (linear/circular), Transform (move/rotate/copy), Align | `gp_Trsf` (`SetMirror/SetRotation/SetTranslation`) + `BRepBuilderAPI_Transform` (rotations/translations relocate the same B-rep; only mirrors copy geometry) | the face descriptors are transformed with the same affine map (`rigid.ts`), so in-place motions keep every key; copies are new bodies (`body:<feature>:<n>`) carrying the source keys                                           |
+| Split Body (world plane or planar face)                                | `intersect`/`cut` with a half-space prism                                                                                                                    | inherited from the boolean history (surface identity as fallback); the new cut faces are `<feature>:cut`; the positive side becomes `body:<feature>`                                                                            |
+| Offset Face (planar, cylindrical, other smooth faces)                  | `BRepOffsetAPI_MakeThickSolid::MakeThickSolidBySimple` slab, joined (outward) or cut (inward)                                                                | the offset surface keeps the face's key (like push/pull)                                                                                                                                                                        |
+| Delete Face (holes; fillets/chamfers between two planar faces)         | hole: fuse a cylinder over the face's axial extent; fillet/chamfer: fuse/cut the corner prism between the face and its extended planar neighbours            | neighbours re-grow on their own surfaces and keep their keys                                                                                                                                                                    |
 
 Measured (same host; Node test `features.test.ts` and the browser worker
 via `feature-measure.mjs`): a part with shaft, revolved groove (cut),
@@ -232,21 +269,151 @@ Limits (with the OCCT reason):
   is re-evaluated by the kernel; the pivot snaps to face centroids, edge
   midpoints and circle centres of the committed geometry.
 
+## Incremental evaluation, memory and robustness (2026-09-29)
+
+**Prefix cache** (`kernel/evalCache.ts`). After every feature the replay
+state — bodies (OCCT shape + keyed face descriptors), sketches, creation
+order, errors/warnings so far — is stored as an immutable checkpoint keyed by
+`h(i) = H(h(i-1), canonical JSON of feature i)` (106-bit cyrb53 pair; keys
+sorted, so equal content hashes equally). A feature's result depends only on
+its own parameters and the state before it, so an evaluation starts from the
+deepest checkpoint its document shares with an earlier one: an edit
+re-evaluates from the first changed feature, a tool preview
+(`features + provisional`) only evaluates the provisional feature (its
+checkpoint is not kept), undo/redo to a known document costs nothing. The
+result is identical to a full replay (tested on three parts, keys, aliases,
+volumes, errors and warnings). Booleans run non-destructively so cached
+input shapes are never modified. Checkpoints share unchanged shapes; shapes
+are reference-counted across checkpoints and **deleted deterministically**
+when the last checkpoint holding them is evicted (LRU, estimated byte budget
+256 MiB, at most 1 000 checkpoints; the document just evaluated is never
+evicted).
+
+**Deterministic memory** (`kernel/occtArena.ts`, `kernel/occt.ts`). replicad
+frees the OCCT object behind a wrapper only when the JS garbage collector
+finalizes the wrapper — rarely, since the JS side is tiny — and its
+`shape.faces`/`shape.edges` getters leak every raw handle they visit
+(keeping whole B-reps alive). The arena wraps the global
+`FinalizationRegistry` (installed before replicad loads) and records every
+registration made while a feature runs; when the feature ends, everything
+not pinned (the bodies' shapes, cached topologies) is deleted. Topology,
+history, meshing and property helpers delete their raw handles themselves.
+Remaining leaks are inside OCCT/its bindings (measured per call, fresh
+process: `BRepAlgoAPI_Fuse` ~40 KB for two boxes and ~260 KB for the demo's
+sketch prisms (~650 KB without non-destructive mode), `BRepCheck_Analyzer` ~72 KB per solid /
+~16 KB per face, `BRepFilletAPI_MakeFillet` ~9 KB, `BRepPrimAPI_MakePrism`
+~3 KB, `BRepBuilderAPI_MakeWire` ~1.4 KB, ~27 B per shape returned by an
+explorer). Therefore: previews check validity by closure only, validity is
+per new face after the first full check, and the adapters **recycle** the
+kernel when its wasm heap passes 1 GiB (restart when idle, warm up with the
+last document; not in a loop for documents that need a big heap).
+
+**Tessellation** (`kernel/tessellate.ts`, `kernel/faceProps.ts`): per body —
+an unchanged body shape reuses its mesh (`Body.meshId` is the same, and the
+worker sends the arrays only once per `meshId`) — and per face: OCCT keeps a
+face's triangulation on the face, faces shared with an earlier result are
+not meshed again, and their extracted arrays, exact boxes (`AddOptimal` per
+face, only when a cheap box sticks out), volume contributions (signed volume
+to the plane z = 0, `VolumePropertiesGK`) and validity are cached. Only the
+new faces go through replicad's C++ extractor (a compound of them); a body
+with mostly new faces is extracted in one pass. Quality: `final` (chordal
+deflection 0.05 % of the body diagonal, clamped 0.005–0.2 mm, angular
+0.15 rad) for committed documents and exports, `preview` (0.2 %, 0.02–0.5 mm,
+0.35 rad) during tool previews; the deflection is snapped down to a power of
+two so small size changes keep face meshes. Unchanged bodies in a preview
+keep their final mesh.
+
+**Robustness** (`kernel/adapter.ts`, `kernel/workerAdapter.ts`,
+`chrome/KernelActivity.tsx`):
+
+- Crash/OOM: a worker error or a fatal kernel error (wasm `RuntimeError`,
+  `Aborted(…)`, `Cannot enlarge memory`) restarts the worker; the status
+  carries a notice ("The CAD kernel stopped unexpectedly (…) and was
+  restarted. Your document is unchanged."), the running job is retried once
+  on the fresh worker, a second crash fails it readably, more than three
+  crashes a minute stop retrying with an error. The document lives in the
+  store: nothing is lost. The in-process adapter (headless, tests) reloads
+  its kernel the same way.
+- Long operations: the running job reports progress between features; after
+  2 s the UI shows "Updating model… Fillet 3 (12 of 58)" with a progress bar
+  and Cancel. Cancel hard-stops the computation (worker restart, bounded by
+  the ~0.4 s reload) and restores the last computed document (the cancelled
+  change stays available as Redo) or ends the tool whose preview was running.
+- Determinism: the same document gives the same names, keys, aliases and
+  rounded geometry in every evaluator, warm or cold (`incremental.test.ts`,
+  demo keys pinned), and in the production app's browser worker vs Node
+  (`test/electron/kernelDeterminism.test.ts` compares the agent API's face,
+  edge and body descriptors as JSON). Meshes may differ between a warm and
+  a cold kernel (face triangulations are reused), names and keys do not.
+
+Measurements (Node 22, this host, `pnpm --filter @himmelcad/assembler
+bench:kernel`; "before" = the same bench on the pre-change head c0d8ecc;
+medians of 5 with parameter values no cache has seen; preview = one drag step
+of a push/pull on a body face):
+
+| Part                                                                                                                     | Full eval (ms) before → after | Edit feature #2 | Edit last feature |          Preview |     Triangles |
+| ------------------------------------------------------------------------------------------------------------------------ | ----------------------------: | --------------: | ----------------: | ---------------: | ------------: |
+| (a) demo bracket, 7 features, 1 body                                                                                     |                     160 → 120 |     97.7 → 83.4 |   76.1 → **26.2** |   112 → **33.1** |           444 |
+| (b) features-branch part, 9 features, 7 bodies                                                                           |                     139 → 119 |       135 → 108 |    123 → **28.4** |   130 → **16.2** | 2 388 → 2 468 |
+| (c) synthetic plate, 60 features (40 patterned holes, 14 fillets, a chamfered outline, shell, 10 bosses, a move), 1 body |                 7 215 → 2 665 |   7 436 → 2 600 |  7 375 → **52.4** | 8 199 → **55.4** |        53 196 |
+
+| Part | Tessellation, full (ms) before → after |       Tessellation, last-feature edit | Triangles final / preview quality |
+| ---- | -------------------------------------: | ------------------------------------: | --------------------------------: |
+| (a)  |                            25.4 → 28.7 |                            15.0 → 9.2 |                         444 / 204 |
+| (b)  |                            69.0 → 62.6 |    64.4 → 12.0 (6 of 7 bodies reused) |                     2 468 / 1 236 |
+| (c)  |                            1 070 → 790 | 1 187 → 35.9 (3 of ~100 faces meshed) |                   53 196 / 14 236 |
+
+(b)'s final triangle count grew slightly because the deflection is now
+snapped down to a power of two. In the production Electron app (browser
+worker, agent API `feature.edit` = validate on the preview channel +
+commit), a last-feature edit of (c) takes 70–83 ms (median 76 ms,
+`kernelDeterminism.test.ts`).
+
+Last-feature edits on the 60-feature plate: **Node 52 ms median (model ~17 ms, tessellation ~36 ms), 76 ms through the app** — the target of
+< 50 ms is **not reached**. Where the time goes (`profile: true`, typical):
+meshing the new fillet face at final quality ~30 ms (a small torus-like
+blend: ~1 900 nodes at 0.15 rad), the fillet itself ~5 ms, topology of the
+~100-face result ~8 ms, prefix hashing ~2 ms, the rest < 10 ms. A coarser
+angular deflection would reach it but lowers the quality of committed meshes,
+which are also what STL/3MF export writes.
+
+Leak session (`bench:kernel -- --leak-only 500`; each of 500 edits of the
+demo bracket is a new document, followed by two previews):
+
+| Edit | wasm heap before (MB) | wasm heap after (MB) | kernel caches after (MB, estimated) | median edit before → after (ms) |
+| ---: | --------------------: | -------------------: | ----------------------------------: | ------------------------------: |
+|    0 |                   100 |                  100 |                                 0.3 |                453 → 407 (cold) |
+|  100 |                   496 |                  127 |                                  13 |                         67 → 20 |
+|  200 |                   947 |                  239 |                                  25 |                         67 → 23 |
+|  300 |                 1 343 |                  413 |                                  38 |                         67 → 27 |
+|  400 |                 1 739 |                  496 |                                  51 |                         67 → 32 |
+|  500 |                 2 003 |                  595 |                                  55 |                         67 → 36 |
+
+Before: ~3.8 MB per edit (the heap would reach wasm32's 4 GB after ~1 000
+edits). After: ~1 MB per edit (3 evaluations), and the _same_ curve with a
+16 MB checkpoint budget — so the growth is not our caches but OCCT's own
+per-operation leakage (the demo's boolean alone leaks ~260 KB per call).
+Recycling at 1 GiB restarts the kernel roughly every 900 such edits.
+Not explained: the median edit time creeps from 20 to 36 ms over the
+session (more live JS objects/GC; the kernel caches stay bounded).
+
 ## Open risks
 
-- **Full replay per change.** Each edit/preview re-runs the whole history
-  (~120 ms for 7 features). Prefix caching of body states in the worker is
-  the obvious next step before long histories.
+- ~~Full replay per change~~ — solved 2026-09-29 by the prefix cache (see
+  above). An edit early in a long history still replays everything after it.
 - **Hard cancel = worker restart** (~0.4 s reload); OCCT operations cannot be
-  interrupted inside a single-threaded wasm call.
+  interrupted inside a single-threaded wasm call. A restart drops the prefix
+  and mesh caches: the next edit replays the whole document.
 - **Packaged Electron is unverified.** Dev Electron loads from the Vite
   server; a packaged `file://` renderer may not allow `fetch()` of the wasm
   or module workers — likely needs a privileged `app://` protocol. The asar
   layout must keep the two LGPL files replaceable.
 - **Fillet/shell robustness** is OCCT's (not Parasolid's); failures surface as
   feature errors. Only the demo-level cases are tested.
-- **Memory**: replicad relies on `FinalizationRegistry` to free OCCT objects;
-  long sessions were not profiled.
+- **Memory**: our side is deterministic now (arena + reference-counted
+  checkpoints); OCCT itself still leaks a little per operation in this wasm
+  build (see above) — handled by recycling the kernel at 1 GiB, not fixed.
+  The checkpoint budget is an _estimate_ (6 KB per face), not a measurement.
 - Kernel-in-browser ≠ final architecture: the Rust feature graph and agent
   API of `PLAN.md` §3/§5 do not exist yet; the feature list lives in the
   TypeScript store.
@@ -256,6 +423,6 @@ Limits (with the OCCT reason):
 Save/Reopen (project file with feature list + schema version), 3MF/STL export
 (the kernel can tessellate/export; a printer-grade 3MF writer is missing),
 the agent command path (same commands via Python/automation), sketch
-constraints/solver (`planeGCS` evaluation), prefix-cached evaluation, a
+constraints/solver (`planeGCS` evaluation), ~~prefix-cached evaluation~~ (done), a
 packaged-Electron check of the worker/wasm path, and the §7 acceptance parts
 (enclosure with lid, bracket with slot, pipe adapter) as end-to-end tests.

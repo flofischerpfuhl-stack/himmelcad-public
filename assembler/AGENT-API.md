@@ -282,8 +282,11 @@ the 3MF files.
   single constraints and dimensions; there is no drag, trim or offset command
   (the UI has them) and no reference (driven) dimension — dimensioning an
   already determined length fails with `sketchConflict` (redundant). Region
-  keys are entity-id based: deleting and redrawing a boundary gives a new key,
-  and a feature referencing the old key reports `Missing reference: profile …`.
+  keys are entity-id based: deleting and redrawing a boundary gives a new key.
+  The kernel re-binds a feature referencing the old key by the region's
+  unchanged edges (or to the sketch's only remaining profile) and reports a
+  warning; otherwise it reports `Missing reference: profile …`
+  (`KERNEL-SPIKE.md` "Reference scheme v2").
   An under-constrained sketch moves where the solver prefers when a dimension
   changes (like the UI); lock or dimension what must stay.
 - **Modelling kinds** (revolve, sweep, loft, mirror, pattern, split,
