@@ -516,6 +516,60 @@ void test('loft: square frustum (ruled) matches the prismatoid volume; three sec
   assert.equal(one.errors.l4, 'Select at least two profiles to loft');
 });
 
+void test('revolve, sweep and loft bodies are named after their creating feature', async () => {
+  // Two extrudes first, so a global body count would call the revolve "Revolve 3".
+  const ring = sketch('s1', 'XZ', 0, { kind: 'rectangle', x: 10, y: 0, width: 10, height: 5 });
+  const disc = sketch('p', 'XY', 50, { kind: 'circle', cx: 0, cy: 0, radius: 2 });
+  const s1 = sketch('a', 'XY', 100, { kind: 'rectangle', x: -5, y: -5, width: 10, height: 10 });
+  const s2 = sketch('b', 'XY', 120, { kind: 'rectangle', x: -3, y: -3, width: 6, height: 6 });
+  const result = await evaluate([
+    ...box('b1', 100, 100, 5, 5, 5),
+    ...box('b2', 200, 100, 5, 5, 5),
+    ring,
+    {
+      ...revolve('r1', { kind: 'sketch', featureId: 's1' }, { kind: 'world', axis: 'Z' }),
+      name: 'Revolve 1',
+    },
+    disc,
+    {
+      ...base('w1'),
+      name: 'Sweep 1',
+      kind: 'sweep',
+      profile: { kind: 'sketch', featureId: 'p' },
+      path: { kind: 'line', start: [0, 0, 50], end: [0, 0, 70] },
+      operation: 'new',
+    },
+    s1,
+    s2,
+    {
+      ...base('l1'),
+      name: 'Loft 1',
+      kind: 'loft',
+      profiles: [
+        { kind: 'sketch', featureId: 'a' },
+        { kind: 'sketch', featureId: 'b' },
+      ],
+      ruled: true,
+      operation: 'new',
+    },
+  ]);
+  assert.deepEqual(result.errors, {});
+  const names = Object.fromEntries(result.bodies.map((b) => [b.createdBy, b.name]));
+  assert.deepEqual(
+    { r1: names.r1, w1: names.w1, l1: names.l1 },
+    { r1: 'Revolve 1', w1: 'Sweep 1', l1: 'Loft 1' },
+  );
+  // An explicit result name still wins.
+  const named = await evaluate([
+    ring,
+    {
+      ...revolve('r2', { kind: 'sketch', featureId: 's1' }, { kind: 'world', axis: 'Z' }),
+      resultBodyName: 'Ring',
+    },
+  ]);
+  assert.equal(only(named).name, 'Ring');
+});
+
 // ---- Mirror, Pattern, Split, Transform, Align ---------------------------------------------
 
 void test('mirror: copies across a world plane or a face, or mirrors in place keeping face keys', async () => {

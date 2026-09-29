@@ -14,7 +14,10 @@ import {
 } from '../../model/features.js';
 import { entityMap, pointPos } from '../../sketch/types.js';
 import { assignEdgeKeys } from '../naming.js';
+import { edgePointAt, takeList, type RawShape } from '../occt.js';
+import { rebindRegion } from '../regionRebind.js';
 import { regionFace, regionPieceName } from '../sketchGeometry.js';
+import type { SketchRegion } from '../../sketch/regions.js';
 import type { BodyStateLike, FeatureKit, ReplayContextLike } from './kit.js';
 import { cross, dot, normalize, sub } from './rigid.js';
 
@@ -62,8 +65,9 @@ export function profileSections(
       edgeKeys[a]! < edgeKeys[b]! ? -1 : edgeKeys[a]! > edgeKeys[b]! ? 1 : 0,
     );
     const clone = face.clone();
-    const segments = clone.edges.map((edge) => {
-      const midpoint = pointOf(edge.pointAt(0.5));
+    const cloneEdges = kit.edgesOf(clone);
+    const segments = cloneEdges.map((edge) => {
+      const midpoint = edgePointAt(kit.oc, edge, 0.5);
       let best = 0;
       let bestDistance = Infinity;
       own.forEach((e, s) => {
@@ -82,7 +86,7 @@ export function profileSections(
         segments,
         normal: geom.normal,
         center: geom.centroid,
-        outline: sampleEdges(clone.edges),
+        outline: sampleEdges(kit, cloneEdges),
       },
     ];
   }
@@ -95,9 +99,18 @@ export function profileSections(
   if (regions.length === 0) kit.fail(`"${sketchFeature.name}" has no closed profile`);
   // Same rule as Extrude: the listed region keys in order, else every region.
   const keys = ref.regions ?? regions.map((r) => r.key);
+  const bound = new Set(keys.filter((key) => regions.some((r) => r.key === key)));
+  const pick = (key: string): SketchRegion => {
+    const found = regions.find((r) => r.key === key);
+    if (found) return found;
+    const rebound = rebindRegion(key, regions, bound, sketchFeature);
+    if (!rebound) kit.fail(`Missing reference: profile "${key}" of "${sketchFeature.name}"`);
+    bound.add(rebound.region.key);
+    ctx.warn(rebound.message);
+    return rebound.region;
+  };
   return keys.map((key, index) => {
-    const region = regions.find((r) => r.key === key);
-    if (!region) kit.fail(`Missing reference: profile "${key}" of "${sketchFeature.name}"`);
+    const region = pick(key);
     if (region.area < MIN_FEATURE_SIZE_MM * MIN_FEATURE_SIZE_MM) {
       kit.fail(`Sketch profile is too small (${region.area.toFixed(4)} mm²)`);
     }
@@ -107,18 +120,19 @@ export function profileSections(
     } catch (error) {
       kit.fail(`Profile "${key}" could not be built: ${kit.describeError(error)}`);
     }
-    const segments = face.edges.map((edge) => {
-      const midpoint = pointOf(edge.pointAt(0.5));
+    const faceEdges = kit.edgesOf(face);
+    const segments = faceEdges.map((edge) => {
+      const midpoint = edgePointAt(kit.oc, edge, 0.5);
       return { edge, segment: regionPieceName(sketch.frame, region, midpoint), midpoint };
     });
-    const evaluated = sketch.profiles.find((p) => p.key === key);
+    const evaluated = sketch.profiles.find((p) => p.key === region.key);
     return {
       face,
       profileIndex: index,
       segments,
       normal: sketch.frame.normal,
       center: evaluated?.center ?? framePoint(sketch.frame, region.sample[0], region.sample[1]),
-      outline: evaluated?.outline ?? sampleEdges(face.edges),
+      outline: evaluated?.outline ?? sampleEdges(kit, faceEdges),
     };
   });
 }
@@ -201,24 +215,16 @@ export function pickTarget(
   return last ? (ctx.bodies.get(last) ?? null) : null;
 }
 
-/** Items of an OCCT shape list. */
-export function listShapes(kit: FeatureKit, list: { delete(): void }): unknown[] {
-  const oc = kit.oc;
-  const copy = new oc.NCollection_List_TopoDS_Shape(list as never);
-  const out: unknown[] = [];
-  while (copy.Size() > 0) {
-    out.push(copy.First());
-    copy.RemoveFirst();
-  }
-  copy.delete();
-  return out;
+/** Items of an OCCT shape list (deletes the list; delete the items when done). */
+export function listShapes(kit: FeatureKit, list: { delete(): void }): RawShape[] {
+  return takeList(kit.oc, list);
 }
 
 /** A few points along each edge, both ends included (world). */
-export function sampleEdges(edges: readonly R.Edge[], perEdge = 9): Vec3[] {
+export function sampleEdges(kit: FeatureKit, edges: readonly R.Edge[], perEdge = 9): Vec3[] {
   const out: Vec3[] = [];
   for (const edge of edges) {
-    for (let i = 0; i < perEdge; i += 1) out.push(pointOf(edge.pointAt(i / (perEdge - 1))));
+    for (let i = 0; i < perEdge; i += 1) out.push(edgePointAt(kit.oc, edge, i / (perEdge - 1)));
   }
   return out;
 }

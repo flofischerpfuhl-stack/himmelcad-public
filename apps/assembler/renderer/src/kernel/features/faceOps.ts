@@ -17,6 +17,7 @@
  *   neighbours is replaced by the sharp corner of the extended neighbours.
  *   Anything else fails with a clear message.
  */
+import '../occtArena.js';
 import * as R from 'replicad';
 
 import { MIN_FEATURE_SIZE_MM, type FaceRef, type Vec3 } from '../../model/document.js';
@@ -69,17 +70,9 @@ export function applyOffsetFace(
     }
     return slab(kit, feature.id, i, r, d);
   });
-  let tool = slabs[0]!;
+  const tool = { id: '', name: '', color: '', createdBy: '', ...slabs[0]! };
   for (const next of slabs.slice(1)) {
-    const fused: Shape3D = tool.shape.fuse(next.shape);
-    const geoms = fused.faces.map((f) => kit.describeFace(f));
-    const keys = assignFaceKeys(
-      geoms,
-      [...tool.faces, ...next.faces],
-      ctx.featureOrder,
-      () => `${feature.id}:new`,
-    );
-    tool = { shape: fused, faces: kit.withKeys(geoms, keys) };
+    kit.combine(tool, next, 'join', feature.id, ctx.featureOrder);
   }
   try {
     kit.combine(body, tool, d > 0 ? 'join' : 'cut', feature.id, ctx.featureOrder);
@@ -105,22 +98,27 @@ function slab(kit: FeatureKit, featureId: string, i: number, r: ResolvedFace, d:
     let offsetShape: R.AnyShape | null = null;
     if (d > 0) {
       offsetShape = R.makeOffset(r.face, d);
-      const offsetFace = (offsetShape as Shape3D).faces[0];
+      const offsetFace = kit.facesOf(offsetShape as Shape3D)[0];
       if (!offsetFace) kit.fail('Offset Face failed: the offset surface is empty');
       base = offsetFace.wrapped;
       value = -d;
     }
     const maker = new oc.BRepOffsetAPI_MakeThickSolid();
-    maker.MakeThickSolidBySimple(base, value);
-    shape = R.cast(maker.Shape()) as Shape3D;
-    maker.delete();
+    try {
+      maker.MakeThickSolidBySimple(base, value);
+      const raw = maker.Shape();
+      shape = R.cast(raw) as Shape3D;
+      raw.delete();
+    } finally {
+      maker.delete();
+    }
   } catch (error) {
     if (kit.isFailure(error)) throw error;
     kit.fail(`Offset Face failed: ${kit.describeError(error)}`);
   }
   if (!(R.measureVolume(shape) > 0))
     kit.fail('Offset Face failed: the offset face turns inside out');
-  const geoms = shape.faces.map((f) => kit.describeFace(f));
+  const geoms = kit.describeShape(shape);
   const offsetIndex = offsetFaceIndex(r.geom, geoms, Math.abs(d));
   let side = 0;
   const keys = assignFaceKeys(geoms, [], new Map(), (index) => {
@@ -197,7 +195,7 @@ export function applyDeleteFace(
 }
 
 function namedTool(kit: FeatureKit, featureId: string, i: number, shape: Shape3D): Tool {
-  const geoms = shape.faces.map((f) => kit.describeFace(f));
+  const geoms = kit.describeShape(shape);
   const keys = assignFaceKeys(geoms, [], new Map(), () => `${featureId}:fill:${i}`);
   return { shape, faces: kit.withKeys(geoms, keys) };
 }
@@ -219,7 +217,10 @@ function healingPatch(
 
   if (id.type === 'cylinder') {
     const axis: Line3 = { point: id.point, dir: id.axis };
-    const samples = sampleEdges(edges.map((e) => topology.edges[e]!));
+    const samples = sampleEdges(
+      kit,
+      edges.map((e) => topology.edges[e]!),
+    );
     const along = samples.map((p) => alongLine(axis, p));
     const t0 = Math.min(...along);
     const t1 = Math.max(...along);
@@ -274,7 +275,7 @@ function healingPatch(
         if (Math.abs(Math.abs(dot(pa.normal, pb.normal)) - 1) < 1e-6) continue; // parallel neighbours
         const dir = normalize(ga.direction);
         const axis: Line3 = { point: ga.midpoint, dir };
-        const samples = sampleEdges([topology.edges[lines[a]!]!, topology.edges[lines[b]!]!]);
+        const samples = sampleEdges(kit, [topology.edges[lines[a]!]!, topology.edges[lines[b]!]!]);
         const along = samples.map((p) => alongLine(axis, p));
         const wedge = cornerWedge(
           kit,

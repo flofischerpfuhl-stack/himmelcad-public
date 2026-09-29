@@ -6,6 +6,7 @@
  * sketch region `p` (the extrude naming; a face profile uses the edge index), `:start:<p>` / `:end:<p>` for the caps; a face OCCT does not
  * report falls back to the segment lying on its surface, else `:new`.
  */
+import '../occtArena.js';
 import * as R from 'replicad';
 
 import {
@@ -16,13 +17,13 @@ import {
 } from '../../model/document.js';
 import type { LoftFeature, RevolveFeature, SweepFeature } from '../../model/features.js';
 import { assignFaceKeys, type FaceGeom, type KeyedFace } from '../naming.js';
+import { edgePointAt, type RawShape } from '../occt.js';
 import type { FeatureKit, ReplayContextLike, Shape3D } from './kit.js';
 import {
   bodyOrFail,
   distance,
   listShapes,
   pickTarget,
-  pointOf,
   profileSections,
   resolveAxis,
   type Line3,
@@ -72,7 +73,7 @@ export function applyRevolve(
       for (const o of [ax, d, p]) o.delete();
     }
     try {
-      const shape = asSolid(kit, R.cast(builder.Shape()), 'Revolve');
+      const shape = asSolid(kit, castRaw(builder.Shape()), 'Revolve');
       const first = full ? null : safeShape(() => builder.FirstShape());
       const last = full ? null : safeShape(() => builder.LastShape());
       return nameGenerated(kit, feature.id, shape, section, {
@@ -85,6 +86,15 @@ export function applyRevolve(
     }
   });
   finishProfileSolid(kit, ctx, feature, fuseTools(kit, ctx, feature.id, tools), 'Revolve');
+}
+
+/** replicad wrapper of a raw builder result (the raw handle is deleted). */
+function castRaw(raw: RawShape): R.AnyShape {
+  try {
+    return R.cast(raw as never);
+  } finally {
+    raw.delete();
+  }
 }
 
 /** A profile that crosses the axis would revolve into a self-intersecting solid. */
@@ -126,7 +136,7 @@ export function applySweep(feature: SweepFeature, ctx: ReplayContextLike, kit: F
       builder.Build();
       if (!builder.IsDone()) kit.fail('Sweep failed: the profile cannot follow this path');
       builder.MakeSolid();
-      const shape = asSolid(kit, R.cast(builder.Shape()), 'Sweep');
+      const shape = asSolid(kit, castRaw(builder.Shape()), 'Sweep');
       return nameGenerated(kit, feature.id, shape, section, {
         generated: (edge) => listShapes(kit, builder.Generated(edge.wrapped)),
         first: safeShape(() => builder.FirstShape()),
@@ -177,7 +187,9 @@ function sweepPath(kit: FeatureKit, ctx: ReplayContextLike, feature: SweepFeatur
 /** Orders edges into a connected chain (endpoint to endpoint). */
 function chainEdges(kit: FeatureKit, edges: R.Edge[]): R.Edge[] {
   if (edges.length < 2) return edges;
-  const ends = edges.map((e) => [pointOf(e.startPoint), pointOf(e.endPoint)] as [Vec3, Vec3]);
+  const ends = edges.map(
+    (e) => [edgePointAt(kit.oc, e, 0), edgePointAt(kit.oc, e, 1)] as [Vec3, Vec3],
+  );
   const tol = 1e-4;
   const touches = (i: number, j: number) =>
     ends[i]!.some((p) => ends[j]!.some((q) => distance(p, q) < tol));
@@ -222,12 +234,12 @@ export function applyLoft(feature: LoftFeature, ctx: ReplayContextLike, kit: Fea
     builder.CheckCompatibility(true);
     builder.Build();
     if (!builder.IsDone()) kit.fail('Loft failed: the profiles cannot be connected');
-    const shape = asSolid(kit, R.cast(builder.Shape()), 'Loft');
+    const shape = asSolid(kit, castRaw(builder.Shape()), 'Loft');
     const first = sections[0]!;
     const tool = nameGenerated(kit, feature.id, shape, first, {
       generated: (edge) => {
         try {
-          return [builder.GeneratedFace(edge.wrapped)];
+          return [builder.GeneratedFace(edge.wrapped) as RawShape];
         } catch {
           return [];
         }
@@ -253,29 +265,28 @@ function nameGenerated(
   shape: Shape3D,
   section: ProfileSection,
   history: {
-    generated: (edge: R.Edge) => unknown[];
-    first: unknown;
-    last: unknown;
+    generated: (edge: R.Edge) => RawShape[];
+    first: RawShape | null;
+    last: RawShape | null;
   },
 ): Tool {
-  const faces = shape.faces;
-  const geoms = faces.map((f) => kit.describeFace(f));
-  const keys: (string | null)[] = faces.map(() => null);
-  const indexOf = (raw: unknown): number => {
-    if (!raw) return -1;
-    return faces.findIndex((f) => f.wrapped.IsSame(raw as never));
-  };
+  const topology = kit.topologyOf(shape);
+  const geoms = kit.describeShape(shape);
+  const keys: (string | null)[] = geoms.map(() => null);
   const p = section.profileIndex;
   for (const [raw, role] of [
     [history.first, 'start'],
     [history.last, 'end'],
   ] as const) {
-    const index = indexOf(raw);
+    if (!raw) continue;
+    const index = topology.faceIndexOf(raw);
+    raw.delete();
     if (index >= 0) keys[index] = `${featureId}:${role}:${p}`;
   }
   for (const { edge, segment } of section.segments) {
     for (const raw of history.generated(edge)) {
-      const index = indexOf(raw);
+      const index = topology.faceIndexOf(raw);
+      raw.delete();
       if (index >= 0 && keys[index] === null) keys[index] = `${featureId}:side:${p}:${segment}`;
     }
   }
@@ -309,19 +320,11 @@ function fuseTools(
 ): Tool {
   const first = tools[0];
   if (!first) kit.fail('Nothing to build: the profile is empty');
-  let tool: Tool = first;
+  const holder = { id: '', name: '', color: '', createdBy: '', ...first };
   for (const next of tools.slice(1)) {
-    const fused: Shape3D = tool.shape.fuse(next.shape);
-    const geoms: FaceGeom[] = fused.faces.map((f) => kit.describeFace(f));
-    const keys = assignFaceKeys(
-      geoms,
-      [...tool.faces, ...next.faces],
-      ctx.featureOrder,
-      () => `${featureId}:new`,
-    );
-    tool = { shape: fused, faces: kit.withKeys(geoms, keys) };
+    kit.combine(holder, next, 'join', featureId, ctx.featureOrder);
   }
-  return tool;
+  return { shape: holder.shape, faces: holder.faces };
 }
 
 /** New body, or join/cut into the target body (the extrude rule). */
@@ -330,6 +333,7 @@ function finishProfileSolid(
   ctx: ReplayContextLike,
   feature: {
     id: string;
+    name: string;
     operation: ExtrudeOperation;
     targetBodyId?: string;
     resultBodyName?: string;
@@ -351,7 +355,8 @@ function finishProfileSolid(
   }
   kit.addBody(ctx, {
     id: bodyIdFor(feature.id),
-    name: feature.resultBodyName ?? `${label} ${ctx.createdCount + 1}`,
+    // Named after its creating feature ("Revolve 1"), not the global body count.
+    name: feature.resultBodyName ?? (feature.name.trim() || label),
     createdBy: feature.id,
     shape: tool.shape,
     faces: tool.faces,
@@ -368,14 +373,34 @@ function asSolid(kit: FeatureKit, shape: R.AnyShape, label: string): Shape3D {
 }
 
 function outerWire(kit: FeatureKit, face: R.Face): R.Wire {
-  // replicad's outerWire()/innerWires() delete the face they are called on.
-  if (face.clone().innerWires().length > 0) kit.fail('Profiles with holes are not supported yet');
+  if (wireCount(kit, face) > 1) kit.fail('Profiles with holes are not supported yet');
+  // replicad's outerWire() deletes the face it is called on.
   return face.clone().outerWire();
 }
 
-function safeShape(get: () => unknown): unknown {
+/** Number of wires of a face (1 = no holes), without replicad's leaking wire getters. */
+function wireCount(kit: FeatureKit, face: R.Face): number {
+  const oc = kit.oc;
+  const explorer = new oc.TopExp_Explorer(
+    face.wrapped as never,
+    oc.TopAbs_ShapeEnum.TopAbs_WIRE as never,
+    oc.TopAbs_ShapeEnum.TopAbs_SHAPE as never,
+  );
+  let count = 0;
   try {
-    return get();
+    for (; explorer.More(); explorer.Next()) {
+      explorer.Current().delete();
+      count += 1;
+    }
+  } finally {
+    explorer.delete();
+  }
+  return count;
+}
+
+function safeShape(get: () => unknown): RawShape | null {
+  try {
+    return (get() as RawShape | null) ?? null;
   } catch {
     return null;
   }

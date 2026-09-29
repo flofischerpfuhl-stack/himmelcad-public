@@ -5,12 +5,19 @@
  * (`./index.ts`). The shapes here are structural mirrors of the
  * evaluator's private types, so the evaluator stays the single owner of
  * body state, profile construction and reference resolution.
+ *
+ * Memory: every OCCT object a feature creates is released when the feature
+ * ends (`../occtArena.ts`) unless it became a body's shape. Use
+ * `topologyOf`/`facesOf`/`edgesOf` instead of replicad's `shape.faces` /
+ * `shape.edges` getters (those leak raw handles) and delete raw OCCT
+ * objects created with `new kit.oc.…` yourself.
  */
 import type * as R from 'replicad';
 
-import type { CurveKind, EdgeRef, FaceRef, SketchFeature, Vec3 } from '../../model/document.js';
+import type { EdgeRef, FaceRef, SketchFeature } from '../../model/document.js';
 import type { SketchRegion } from '../../sketch/regions.js';
 import type { FaceGeom, KeyedFace, KeyedFaceKeys } from '../naming.js';
+import type { HistorySource, RawShape, Topology } from '../occt.js';
 import type { EvaluatedSketch } from '../types.js';
 
 export type OpenCascade = ReturnType<typeof R.getOC>;
@@ -25,19 +32,7 @@ export interface BodyStateLike {
   faces: KeyedFace[];
 }
 
-export interface TopologyLike {
-  faces: R.Face[];
-  edges: R.Edge[];
-  faceEdges: number[][];
-  edgeFaces: number[][];
-  edgeGeoms: {
-    curve: CurveKind;
-    midpoint: Vec3;
-    length: number;
-    direction: Vec3 | null;
-    radius: number | null;
-  }[];
-}
+export type TopologyLike = Topology;
 
 export interface ReplayContextLike {
   bodies: Map<string, BodyStateLike>;
@@ -63,19 +58,24 @@ export interface FeatureKit {
   oc: OpenCascade;
   /** Throws the evaluator's per-feature error (shown on the history card / tool pill). */
   fail(message: string): never;
-  /** `true` for an error raised by {@link fail} (so wrappers don't re-wrap it). */
+  /** `true` for an error raised by {@link fail} or a fatal kernel error (so wrappers don't re-wrap it). */
   isFailure(error: unknown): boolean;
   /** Readable text for an OCCT/JS exception. */
   describeError(error: unknown): string;
   describeFace(face: R.Face): FaceGeom;
+  /** Descriptors of every face of `shape`, in the shape's face order. */
+  describeShape(shape: Shape3D): FaceGeom[];
+  /** Cached topology of `shape` (released with the shape; do not dispose). */
   topologyOf(shape: Shape3D): TopologyLike;
+  facesOf(shape: { wrapped: RawShape }): R.Face[];
+  edgesOf(shape: { wrapped: RawShape }): R.Edge[];
   resolveFace(body: BodyStateLike, ref: FaceRef, warn: (message: string) => void): ResolvedFace;
   resolveEdges(
     body: BodyStateLike,
     refs: readonly EdgeRef[],
     warn: (message: string) => void,
   ): { topology: TopologyLike; indices: number[] };
-  /** Boolean of `tool` into `target` (in place), propagating face keys. */
+  /** Boolean of `tool` into `target` (in place), naming faces from OCCT's history. */
   combine(
     target: BodyStateLike,
     tool: { shape: Shape3D; faces: KeyedFace[] },
@@ -83,6 +83,23 @@ export interface FeatureKit {
     featureId: string,
     featureOrder: ReadonlyMap<string, number>,
   ): void;
+  /**
+   * Keyed faces of an operation result (reference scheme v2): from the
+   * builder's history (`null`: identity and surface identity only), then
+   * `nameNew` for faces nothing explains.
+   */
+  nameResult(
+    result: Shape3D,
+    history: HistorySource | null,
+    inputs: { shape: Shape3D; faces: readonly KeyedFace[]; reversed?: boolean }[],
+    featureOrder: ReadonlyMap<string, number>,
+    nameNew: (
+      index: number,
+      provisional: readonly (KeyedFaceKeys | null)[],
+      topology: TopologyLike,
+    ) => string,
+    generators?: { raw: RawShape; role: string }[],
+  ): KeyedFace[];
   withKeys(geoms: FaceGeom[], keys: KeyedFaceKeys[]): KeyedFace[];
   diagonalOf(shape: Shape3D): number;
   /** Adds a body to the replay (creation order, default colour from the palette unless given). */

@@ -86,7 +86,10 @@ A region's **key** is the sorted ids of the entities bounding its outer loop
 (`l1+l2+l3+l4`), plus a line-side signature only when several regions share
 that set (the two halves of a circle cut by a line: `c1+l1@L` / `@R`). Keys
 survive dimension edits, drags and added holes; they disappear only when the
-region itself does (then the extrude reports `Missing reference: profile …`).
+region itself does (then the kernel re-binds the extrude by the region's
+unchanged edges, or to the sketch's only remaining profile, with a warning —
+else it reports `Missing reference: profile …`; `KERNEL-SPIKE.md` "Reference
+scheme v2").
 
 Extrudes reference `profile: { kind: 'sketch', featureId, regions?: string[] }`
 (absent = every region). Kernel naming (`kernel/sketchGeometry.ts`): caps
@@ -200,7 +203,9 @@ calibration).
   glyphs in dense sketches. No per-constraint delete via right-click (select
   the glyph or the dimension line, then Delete).
 - Region keys use entity ids: deleting and redrawing a boundary line gives a
-  new key (the extrude then reports a missing profile; re-pick the profile).
+  new key. The kernel re-binds the extrude by the unchanged boundary edges
+  (warning on the feature); a region whose every edge was redrawn is only
+  re-bound when it is the sketch's single free profile, else re-pick it.
 - "Fully constrained" per entity costs two solves per point (off the UI
   thread; skipped above 120 points — the global DOF is always shown).
 - planeGCS may converge to a mirrored solution for large dimension jumps

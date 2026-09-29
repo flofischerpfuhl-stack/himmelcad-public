@@ -5,29 +5,30 @@
  * `LICENSES/THIRD_PARTY.md`), reports progress, and evaluates feature lists
  * off the UI thread.
  *
- * Protocol (main -> worker): `{ type: 'evaluate', jobId, features }`.
+ * Protocol (main -> worker): `{ type: 'evaluate', jobId, features, quality }`,
+ * `{ type: 'exportStep', jobId, features, bodyIds? }`.
  * Protocol (worker -> main): `{ type: 'status', status }`,
- * `{ type: 'result', jobId, result }` (typed arrays transferred) or
- * `{ type: 'failed', jobId, message }`.
+ * `{ type: 'progress', jobId, progress }` between features,
+ * `{ type: 'result', jobId, result }`, `{ type: 'failed', jobId, message }`,
+ * `{ type: 'fatal', jobId, message }` when the kernel itself died (wasm
+ * abort, out of memory — the main thread restarts the worker),
+ * `{ type: 'exportResult' | 'exportFailed', … }`.
+ *
+ * Meshes are sent once: a body whose `meshId` was part of the previous
+ * result is sent without its mesh arrays (`meshRef`), and the main thread
+ * takes them from the previous result (`workerAdapter.ts`). The evaluator
+ * keeps its meshes cached for reuse, so arrays are copied, not transferred.
  */
 import wasmUrl from 'replicad-opencascadejs/wasm?url';
 
-import type { Feature } from '../model/document.js';
 import { createEvaluator, type KernelEvaluator } from './evaluator.js';
+import { isFatalKernelError } from './fatal.js';
 import type { EvaluationResult, KernelStatusInfo } from './types.js';
+import type { WireBody, WorkerRequest, WorkerResponse } from './workerProtocol.js';
+
+export type { WireBody, WorkerRequest, WorkerResponse } from './workerProtocol.js';
 
 declare const self: DedicatedWorkerGlobalScope;
-
-export type WorkerRequest =
-  | { type: 'evaluate'; jobId: number; features: Feature[] }
-  | { type: 'exportStep'; jobId: number; features: Feature[]; bodyIds?: string[] };
-
-export type WorkerResponse =
-  | { type: 'status'; status: KernelStatusInfo }
-  | { type: 'result'; jobId: number; result: EvaluationResult }
-  | { type: 'failed'; jobId: number; message: string }
-  | { type: 'exportResult'; jobId: number; bytes: ArrayBuffer }
-  | { type: 'exportFailed'; jobId: number; message: string };
 
 function post(message: WorkerResponse, transfer: Transferable[] = []): void {
   self.postMessage(message, transfer);
@@ -99,6 +100,31 @@ ready.catch((error: unknown) => {
   });
 });
 
+/** Mesh ids of the bodies in the last posted result (the main thread holds their arrays). */
+let sentMeshIds = new Set<string>();
+
+function toWire(result: EvaluationResult): EvaluationResult & { bodies: WireBody[] } {
+  const next = new Set<string>();
+  const bodies = result.bodies.map((body): WireBody => {
+    if (!body.meshId) return body;
+    next.add(body.meshId);
+    if (!sentMeshIds.has(body.meshId)) return body;
+    return {
+      ...body,
+      meshRef: true,
+      mesh: {
+        positions: new Float32Array(0),
+        normals: new Float32Array(0),
+        indices: new Uint32Array(0),
+        triangleFaces: new Uint32Array(0),
+      },
+      edges: body.edges.map((edge) => ({ ...edge, segments: new Float32Array(0) })),
+    };
+  });
+  sentMeshIds = next;
+  return { ...result, bodies };
+}
+
 self.onmessage = (event: MessageEvent<WorkerRequest>) => {
   const message = event.data;
   if (message.type === 'exportStep') {
@@ -109,7 +135,7 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
           post({ type: 'exportResult', jobId: message.jobId, bytes: bytes.buffer }, [bytes.buffer]);
         } catch (error) {
           post({
-            type: 'exportFailed',
+            type: isFatalKernelError(error) ? 'fatal' : 'exportFailed',
             jobId: message.jobId,
             message: error instanceof Error ? error.message : String(error),
           });
@@ -124,26 +150,19 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
     async (evaluator) => {
       let result: EvaluationResult;
       try {
-        result = await evaluator.evaluate(message.features);
+        result = await evaluator.evaluate(message.features, {
+          quality: message.quality ?? 'final',
+          onProgress: (progress) => post({ type: 'progress', jobId: message.jobId, progress }),
+        });
       } catch (error) {
         post({
-          type: 'failed',
+          type: isFatalKernelError(error) ? 'fatal' : 'failed',
           jobId: message.jobId,
           message: error instanceof Error ? error.message : String(error),
         });
         return;
       }
-      const transfer: Transferable[] = [];
-      for (const body of result.bodies) {
-        transfer.push(
-          body.mesh.positions.buffer,
-          body.mesh.normals.buffer,
-          body.mesh.indices.buffer,
-          body.mesh.triangleFaces.buffer,
-        );
-        for (const edge of body.edges) transfer.push(edge.segments.buffer);
-      }
-      post({ type: 'result', jobId: message.jobId, result }, transfer);
+      post({ type: 'result', jobId: message.jobId, result: toWire(result) });
     },
     () => undefined,
   );

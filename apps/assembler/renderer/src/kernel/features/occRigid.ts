@@ -1,4 +1,5 @@
 /** Applies `rigid.ts` motions to OCCT shapes (`gp_Trsf` + `BRepBuilderAPI_Transform`). */
+import '../occtArena.js';
 import * as R from 'replicad';
 
 import type { OpenCascade, Shape3D } from './kit.js';
@@ -34,12 +35,25 @@ function toTrsf(oc: OpenCascade, ops: readonly RigidOp[]) {
   return total;
 }
 
-/** A transformed copy of `shape` (the input is never modified). */
+/**
+ * A transformed copy of `shape` (the input is never modified). Rotations
+ * and translations only set a new location on the same B-rep (no geometry
+ * copy — pattern instances share surfaces and face triangulations with
+ * their source); a mirror duplicates the geometry.
+ */
 export function transformShape(oc: OpenCascade, shape: Shape3D, ops: readonly RigidOp[]): Shape3D {
   const trsf = toTrsf(oc, ops);
-  const builder = new oc.BRepBuilderAPI_Transform(shape.wrapped, trsf, true);
-  const out = R.cast(builder.Shape());
-  builder.delete();
-  trsf.delete();
-  return out as Shape3D;
+  const copyGeometry = ops.some((op) => op.kind === 'mirror');
+  const builder = new oc.BRepBuilderAPI_Transform(shape.wrapped, trsf, copyGeometry, false);
+  try {
+    const raw = builder.Shape();
+    try {
+      return R.cast(raw) as Shape3D;
+    } finally {
+      raw.delete();
+    }
+  } finally {
+    builder.delete();
+    trsf.delete();
+  }
 }
