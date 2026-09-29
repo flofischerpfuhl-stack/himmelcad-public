@@ -20,7 +20,7 @@
     "build:electron": "tsc -p tsconfig.electron.json",
     "build": "vite build && pnpm build:electron",
     "typecheck": "tsc -b tsconfig.json tsconfig.typecheck-electron.json",
-    "test": "tsc -p tsconfig.test.json && node --test .build/tests/apps/assembler/test/windowOptions.test.js .build/tests/apps/assembler/test/model/store.test.js .build/tests/apps/assembler/test/model/commands.test.js .build/tests/apps/assembler/test/model/tools.test.js .build/tests/apps/assembler/test/model/modeling.test.js .build/tests/apps/assembler/test/kernel/adapter.test.js .build/tests/apps/assembler/test/kernel/naming.test.js .build/tests/apps/assembler/test/kernel/evaluator.test.js .build/tests/apps/assembler/test/viewport/math.test.js .build/tests/apps/assembler/test/viewport/camera.test.js .build/tests/apps/assembler/test/viewport/expr.test.js .build/tests/apps/assembler/test/viewport/picking.test.js"
+    "test": "tsc -p tsconfig.test.json && node --test .build/tests/apps/assembler/test/windowOptions.test.js .build/tests/apps/assembler/test/model/store.test.js .build/tests/apps/assembler/test/model/commands.test.js .build/tests/apps/assembler/test/model/tools.test.js .build/tests/apps/assembler/test/model/modeling.test.js .build/tests/apps/assembler/test/kernel/adapter.test.js .build/tests/apps/assembler/test/kernel/naming.test.js .build/tests/apps/assembler/test/kernel/evaluator.test.js .build/tests/apps/assembler/test/viewport/math.test.js .build/tests/apps/assembler/test/viewport/camera.test.js .build/tests/apps/assembler/test/viewport/expr.test.js .build/tests/apps/assembler/test/viewport/picking.test.js .build/tests/apps/assembler/test/viewport/toolAnchors.test.js"
   },
   "dependencies": {
     "@himmelcad/theme": "workspace:*",

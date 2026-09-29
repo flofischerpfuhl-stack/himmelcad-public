@@ -380,6 +380,26 @@ void test('boolean tool: first selected body is the target; operation switch; Do
   assert.equal(store.getState().evaluation.bodies.length, 2);
 });
 
+void test('commands: Circle is recommended on a planar face; section axis/flip need Section View on', async () => {
+  await load(box('a', 0, 0, 40, 30, 10));
+  const circle = findCommand('sketch.circle')!;
+  assert.equal(circle.availability(store.getState()).enabled, true);
+  assert.equal(circle.availability(store.getState()).recommended, false);
+  store.getState().select({ kind: 'face', ...topFace() });
+  assert.equal(circle.availability(store.getState()).recommended, true);
+  const flip = findCommand('modes.sectionFlip')!;
+  assert.equal(flip.availability(store.getState()).enabled, false);
+  store.getState().setSectionEnabled(true);
+  assert.equal(flip.availability(store.getState()).enabled, true);
+  flip.run(store.getState());
+  assert.equal(store.getState().viewState.sectionFlipped, true);
+  findCommand('modes.sectionAxisX')!.run(store.getState());
+  assert.equal(store.getState().viewState.sectionOffset, 20);
+  store.getState().setSectionFlipped(false);
+  store.getState().setSectionEnabled(false);
+  store.getState().setSectionAxis('Z');
+});
+
 void test('section view starts through the centre of the visible model along the chosen axis', async () => {
   await load(createDemoDocument());
   store.getState().setSectionEnabled(true);

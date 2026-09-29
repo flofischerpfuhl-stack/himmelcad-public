@@ -103,8 +103,8 @@ export interface SectionView {
 /** Unit normal of the clip plane: material on its positive side is cut away. */
 export function sectionNormal(section: SectionView): Vec3 {
   const unit = AXIS_UNIT[section.axis];
-  const s = section.flipped ? -1 : 1;
-  return [unit[0] * s, unit[1] * s, unit[2] * s];
+  if (!section.flipped) return unit;
+  return [-unit[0] || 0, -unit[1] || 0, -unit[2] || 0]; // no -0 components
 }
 
 /** Handle at the centre of the (bounded) section plane, pointing to the removed side. */

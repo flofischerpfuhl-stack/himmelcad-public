@@ -29,6 +29,53 @@ stable-reference scheme and open risks: `assembler/KERNEL-SPIKE.md`.
 - `pnpm test` — Node test runner; kernel tests load the real OCCT wasm in
   Node (once per test file).
 
+## Modelling tools
+
+Every tool that adds a feature is a session in the store's tool state
+machine (`collectingReferences -> preview -> numericEditing -> committing`;
+Cancel/Escape from any uncommitted state leaves the document untouched;
+Done is exactly one undo step). Kernel tools (Extrude, Fillet/Chamfer `F`,
+Shell `H`, Union/Subtract/Intersect) preview `features + provisional
+feature` on the kernel's preview channel — one request in flight, newest
+parameters next, stale results dropped. A kernel failure keeps the last
+valid preview, shows the error under the tool pill and disables Done.
+Circle (`C`) and Rectangle (`R`) take their plane from the first click on
+a planar face; Extrude picks New/Join/Cut from face contact (out of a face
+joins, into a body cuts, free-standing is new) until the badge overrides it.
+Escape order: dimension field, placed circle centre, tool, selection.
+
+## Dev automation hook (DEV only)
+
+`pnpm dev:web` / `pnpm dev` builds expose `window.__assembler` for cheap,
+calibration-free screen recordings and UI smoke scripts (Playwright). It is
+installed from `renderer/src/devtools/automationHook.ts` behind
+`import.meta.env.DEV`, is absent from production builds and is **not part
+of the product contract** (agents use the command registry / the future
+automation API). Screen positions are CSS pixels relative to the page
+viewport, directly usable with `page.mouse`.
+
+| Member                            | Returns                                                                                                                                 |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `store`                           | The zustand store (`getState()`, actions).                                                                                              |
+| `project([x, y, z])`              | `{ x, y }` of a world point (mm), or `null` behind the camera.                                                                          |
+| `faceAnchor({ bodyId, faceKey })` | A visible, unoccluded pixel of the face, found in the picking id buffer (largest clearance to other ids), or `null` if hidden/occluded. |
+| `edgeAnchor({ bodyId, edgeKey })` | Same for an edge (its pick ribbon).                                                                                                     |
+| `handleAnchor(kind)`              | Same for a drag handle: `'extrude' \| 'blend' \| 'shell' \| 'section'`.                                                                 |
+| `bodies()`                        | Displayed bodies (the active tool's preview if any): `id`, `name`, `volume`, `min`, `max`.                                              |
+| `faces(bodyId)` / `edges(bodyId)` | Stable references (`faceKey`/`edgeKey`) with readable names (`"Extrude 1 end · plane +Z at …"`, `"Circle Ø6 at …"`) plus geometry.      |
+| `waitForKernelIdle()`             | Resolves when no document/preview evaluation is outstanding and that state has been drawn (so anchors are current).                     |
+
+Example (see `D:\AgentWork\HimmelCAD-Assembler\shots\tool-shots.mjs` on the
+Windows host for a full script):
+
+```js
+const a = window.__assembler;
+const body = a.bodies()[0];
+const edge = a.edges(body.id).find((e) => e.curve === 'line' && e.midpoint[2] === 46);
+const p = a.edgeAnchor(edge); // then: page.mouse.click(p.x, p.y), press 'f'
+await a.waitForKernelIdle();
+```
+
 ## Boundary
 
 Assembler must not depend on Builder: no `apps/builder`, `@himmelcad/agent`,
