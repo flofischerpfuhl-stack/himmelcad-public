@@ -27,11 +27,7 @@ import {
   type SketchFrame,
   type SketchPlaneRef,
 } from '../model/document.js';
-import {
-  makeFaceRef,
-  nextFeatureName,
-  useAssemblerStore,
-} from '../model/store.js';
+import { makeFaceRef, nextFeatureName, useAssemblerStore } from '../model/store.js';
 import { CONSTRAINT_INFO, planConstraint } from './constraintRules.js';
 import { deleteItems, toggleConstruction, type EditResult } from './edits.js';
 import { isPlainNumber } from './expressions.js';
