@@ -1406,7 +1406,11 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
       const tool = get().activeTool;
       if (tool?.kind !== 'boolean' || tool.toolBodyIds.length === 0) return;
       const [first, ...rest] = tool.toolBodyIds;
-      updatePreviewTool({ ...tool, targetBodyId: first!, toolBodyIds: [tool.targetBodyId, ...rest] });
+      updatePreviewTool({
+        ...tool,
+        targetBodyId: first!,
+        toolBodyIds: [tool.targetBodyId, ...rest],
+      });
     },
     toggleBooleanTool: (bodyId) => {
       const tool = get().activeTool;

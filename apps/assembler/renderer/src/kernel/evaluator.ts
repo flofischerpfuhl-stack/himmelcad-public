@@ -818,7 +818,8 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
       options.faces = chamferReferenceFaces(topology, body.faces, unique, feature.flip === true);
       if (feature.mode === 'twoDistances') {
         const d2 = feature.distance2 ?? feature.distance;
-        if (!(d2 >= MIN_FEATURE_SIZE_MM / 10)) throw new FeatureError('Distance 2 must be positive');
+        if (!(d2 >= MIN_FEATURE_SIZE_MM / 10))
+          throw new FeatureError('Distance 2 must be positive');
         options.size2 = d2;
       } else {
         const angle = feature.angle ?? 45;
@@ -1458,7 +1459,8 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
               : new KernelFatalError(`CAD kernel failure: ${describeError(error)}`);
           }
           errors[feature.id] = error instanceof FeatureError ? error.message : describeError(error);
-          if (error instanceof FeatureError && error.refs) replay.errorRefs[feature.id] = error.refs;
+          if (error instanceof FeatureError && error.refs)
+            replay.errorRefs[feature.id] = error.refs;
           restoreBodies(ctx, snapshot);
         }
         // Keep the bodies' shapes, release everything else the feature created.

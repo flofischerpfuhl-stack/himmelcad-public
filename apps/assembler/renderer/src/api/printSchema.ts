@@ -65,7 +65,10 @@ export const PRINT_DEFS: Record<string, JsonSchema> = {
   ThickenSource: {
     oneOf: [
       obj(
-        { kind: { const: 'faces' }, faces: { type: 'array', items: ref('FaceInput'), minItems: 1 } },
+        {
+          kind: { const: 'faces' },
+          faces: { type: 'array', items: ref('FaceInput'), minItems: 1 },
+        },
         ['kind', 'faces'],
       ),
       obj({ kind: { const: 'profile' }, profile: ref('ExtrudeProfile') }, ['kind', 'profile']),
@@ -79,12 +82,16 @@ export const PRINT_DEFS: Record<string, JsonSchema> = {
 };
 
 /** Extra optional params of the existing kinds. */
-export const BLEND_OPTION_PARAMS: Record<'fillet' | 'chamfer' | 'shell' | 'boolean', Record<string, JsonSchema>> = {
+export const BLEND_OPTION_PARAMS: Record<
+  'fillet' | 'chamfer' | 'shell' | 'boolean',
+  Record<string, JsonSchema>
+> = {
   fillet: {
     radius2: {
       type: 'number',
       exclusiveMinimum: 0,
-      description: 'Variable radius: `radius` at the start of each edge chain, `radius2` at its end.',
+      description:
+        'Variable radius: `radius` at the start of each edge chain, `radius2` at its end.',
     },
     rules: { type: 'array', items: ref('EdgeRule') },
   },
@@ -92,13 +99,15 @@ export const BLEND_OPTION_PARAMS: Record<'fillet' | 'chamfer' | 'shell' | 'boole
     mode: {
       enum: ['equal', 'twoDistances', 'distanceAngle'],
       default: 'equal',
-      description: '`twoDistances`: `distance` and `distance2`; `distanceAngle`: `distance` and `angle`.',
+      description:
+        '`twoDistances`: `distance` and `distance2`; `distanceAngle`: `distance` and `angle`.',
     },
     distance2: positive,
     angle: { type: 'number', exclusiveMinimum: 0, maximum: 90, description: 'Degrees.' },
     flip: {
       type: 'boolean',
-      description: 'Measure `distance` on the other face of each edge (default: the face with the smaller key).',
+      description:
+        'Measure `distance` on the other face of each edge (default: the face with the smaller key).',
     },
     rules: { type: 'array', items: ref('EdgeRule') },
   },
@@ -141,10 +150,11 @@ export const PRINT_FEATURE_KIND_SCHEMAS: Record<
     label: 'Emboss',
     summary:
       'Raises (positive depth) or engraves (negative) sketch profiles on a face: projected onto a planar face (sketch parallel to it), or wrapped around a cylinder keeping surface lengths (sketch plane parallel to the axis; wrap centre where the sketch normal through the axis meets the surface).',
-    params: obj(
-      { profile: ref('ExtrudeProfile'), face: ref('FaceInput'), depth: num },
-      ['profile', 'face', 'depth'],
-    ),
+    params: obj({ profile: ref('ExtrudeProfile'), face: ref('FaceInput'), depth: num }, [
+      'profile',
+      'face',
+      'depth',
+    ]),
   },
   draft: {
     label: 'Draft',

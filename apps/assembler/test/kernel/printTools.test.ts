@@ -52,7 +52,12 @@ function sketchOn(
   };
 }
 
-function extrude(id: string, sketchId: string, distance: number, extra: Partial<ExtrudeFeature> = {}): ExtrudeFeature {
+function extrude(
+  id: string,
+  sketchId: string,
+  distance: number,
+  extra: Partial<ExtrudeFeature> = {},
+): ExtrudeFeature {
   return {
     ...base(id),
     kind: 'extrude',
@@ -65,7 +70,15 @@ function extrude(id: string, sketchId: string, distance: number, extra: Partial<
 }
 
 /** Box `x0..x0+w, y0..y0+d, z0..z0+h` (body `body:<id>`). */
-function box(id: string, x0: number, y0: number, w: number, d: number, h: number, z0 = 0): Feature[] {
+function box(
+  id: string,
+  x0: number,
+  y0: number,
+  w: number,
+  d: number,
+  h: number,
+  z0 = 0,
+): Feature[] {
   return [
     sketchOn(`${id}-s`, 'XY', z0, { kind: 'rectangle', x: x0, y: y0, width: w, height: d }),
     extrude(id, `${id}-s`, h),
@@ -146,15 +159,27 @@ void test('hole: simple through, blind, counterbore and countersink against hand
   const s = only(simple, 'body:p');
   near(s.volume, V - 2 * Math.PI * 2.5 ** 2 * 10, 1e-3, 'two through holes');
   assert.equal(s.valid, true);
-  assert.ok(s.faces.some((f) => f.key === 'h:wall:0'), 'hole 0 wall keyed');
-  assert.ok(s.faces.some((f) => f.key === 'h:wall:1'), 'hole 1 wall keyed');
+  assert.ok(
+    s.faces.some((f) => f.key === 'h:wall:0'),
+    'hole 0 wall keyed',
+  );
+  assert.ok(
+    s.faces.some((f) => f.key === 'h:wall:1'),
+    'hole 1 wall keyed',
+  );
   const wall0 = s.faces.find((f) => f.key === 'h:wall:0')!;
   near(wall0.centroid[0], 10, 1e-6, 'hole 0 x');
   near(wall0.area, 2 * Math.PI * 2.5 * 10, 1e-3, 'hole 0 wall area');
 
-  const blind = only(await evaluate([...plate, hole('h', top, { extent: { kind: 'blind', depth: 6 } })]), 'body:p');
+  const blind = only(
+    await evaluate([...plate, hole('h', top, { extent: { kind: 'blind', depth: 6 } })]),
+    'body:p',
+  );
   near(blind.volume, V - Math.PI * 2.5 ** 2 * 6, 1e-3, 'blind hole');
-  assert.ok(blind.faces.some((f) => f.key === 'h:floor:0'), 'blind floor keyed');
+  assert.ok(
+    blind.faces.some((f) => f.key === 'h:floor:0'),
+    'blind floor keyed',
+  );
 
   const cb = only(
     await evaluate([
@@ -175,7 +200,9 @@ void test('hole: simple through, blind, counterbore and countersink against hand
     'counterbore',
   );
   assert.equal(cb.valid, true);
-  assert.ok(cb.faces.some((f) => f.key === 'h:cbore:0') && cb.faces.some((f) => f.key === 'h:cbfloor:0'));
+  assert.ok(
+    cb.faces.some((f) => f.key === 'h:cbore:0') && cb.faces.some((f) => f.key === 'h:cbfloor:0'),
+  );
 
   const cs = only(
     await evaluate([
@@ -241,7 +268,12 @@ void test('hole: placed at sketch points, follows an earlier thickness edit, fil
   // (Pappus: its centroid lies r (10 - 3 pi) / (12 - 3 pi) outside the 2 mm hole radius).
   const rimRemoved =
     (1 - Math.PI / 4) * 0.25 * 2 * Math.PI * (2 + (0.5 * (10 - 3 * Math.PI)) / (12 - 3 * Math.PI));
-  near(b2.volume, 40 * 30 * 14 - removed - rimRemoved, 0.05, 'thicker plate with holes and rim fillet');
+  near(
+    b2.volume,
+    40 * 30 * 14 - removed - rimRemoved,
+    0.05,
+    'thicker plate with holes and rim fillet',
+  );
 });
 
 void test('hole: readable errors for bad sizes and misplaced holes', async () => {
@@ -251,8 +283,19 @@ void test('hole: readable errors for bad sizes and misplaced holes', async () =>
   const side = faceRef(first, planeFace([0, -1, 0], 0));
   const cases: [Partial<HoleFeature>, RegExp][] = [
     [{ diameter: 0 }, /Hole diameter must be at least/],
-    [{ holeType: 'counterbore', counterboreDiameter: 3, counterboreDepth: 2 }, /Counterbore diameter .* must be larger/],
-    [{ extent: { kind: 'blind', depth: 5 }, holeType: 'counterbore', counterboreDiameter: 8, counterboreDepth: 6 }, /must be less than the hole depth/],
+    [
+      { holeType: 'counterbore', counterboreDiameter: 3, counterboreDepth: 2 },
+      /Counterbore diameter .* must be larger/,
+    ],
+    [
+      {
+        extent: { kind: 'blind', depth: 5 },
+        holeType: 'counterbore',
+        counterboreDiameter: 8,
+        counterboreDepth: 6,
+      },
+      /must be less than the hole depth/,
+    ],
     [{ placements: [{ kind: 'point', u: 100, v: 100 }] }, /outside the face/],
     [{ placements: [] }, /Place at least one hole/],
   ];
@@ -262,7 +305,10 @@ void test('hole: readable errors for bad sizes and misplaced holes', async () =>
     near(only(result, 'body:p').volume, 12000, 1e-6, 'body unchanged');
   }
   // A side face works too (planar face, frame of the XZ plane: u = x, v = z).
-  const sideHole = await evaluate([...plate, hole('h', side, { placements: [{ kind: 'point', u: 20, v: 5 }], diameter: 4 })]);
+  const sideHole = await evaluate([
+    ...plate,
+    hole('h', side, { placements: [{ kind: 'point', u: 20, v: 5 }], diameter: 4 }),
+  ]);
   noErrors(sideHole);
   near(only(sideHole, 'body:p').volume, 12000 - Math.PI * 4 * 30, 1e-3, 'hole through the side');
 });
@@ -273,7 +319,13 @@ void test('emboss: raised and engraved profiles on a planar face', async () => {
   const plate = box('p', 0, 0, 40, 30, 5);
   const first = only(await evaluate(plate), 'body:p');
   const top = faceRef(first, planeFace([0, 0, 1], 5));
-  const label = sketchOn('t', { kind: 'face', face: top }, 0, { kind: 'rectangle', x: 5, y: 5, width: 10, height: 4 });
+  const label = sketchOn('t', { kind: 'face', face: top }, 0, {
+    kind: 'rectangle',
+    x: 5,
+    y: 5,
+    width: 10,
+    height: 4,
+  });
   const emboss = (depth: number): EmbossFeature => ({
     ...base('e'),
     kind: 'emboss',
@@ -299,7 +351,10 @@ void test('emboss: raised and engraved profiles on a planar face', async () => {
 });
 
 void test('emboss: wraps a profile around a cylinder keeping surface lengths', async () => {
-  const rod = [sketchOn('c-s', 'XY', 0, { kind: 'circle', cx: 0, cy: 0, radius: 10 }), extrude('c', 'c-s', 30)];
+  const rod = [
+    sketchOn('c-s', 'XY', 0, { kind: 'circle', cx: 0, cy: 0, radius: 10 }),
+    extrude('c', 'c-s', 30),
+  ];
   const first = only(await evaluate(rod), 'body:c');
   const mantle = faceRef(first, (f) => f.surface === 'cylinder');
   // XZ plane (normal +Y) contains the axis: u = x, v = z; wrap centre at +Y.
@@ -323,13 +378,42 @@ void test('emboss: wraps a profile around a cylinder keeping surface lengths', a
   const topFace = b.faces.find((f) => f.key === 'e:top:0');
   assert.ok(topFace, 'raised face keyed');
   near(topFace.area, 0.4 * 11 * 5, 1e-3, 'raised face area (arc at R 11)');
+  // Centred on +Y at mid-height of the label (z 10..15), not somewhere else on the rod.
+  near(topFace.centroid[0], 0, 1e-6, 'centred about the sketch centre line');
+  near(topFace.centroid[2], 12.5, 1e-6, 'label height kept');
+
+  // An off-centre label keeps its position: x -9..-5 at R 10 is -0.9..-0.5 rad from +Y, z 16..24.
+  const rod2 = [
+    sketchOn('c-s', 'XY', 0, { kind: 'circle', cx: 0, cy: 0, radius: 10 }),
+    extrude('c', 'c-s', 40),
+  ];
+  const mantle2 = faceRef(only(await evaluate(rod2), 'body:c'), (f) => f.surface === 'cylinder');
+  const offCentre = sketchOn('t', 'XZ', 0, {
+    kind: 'rectangle',
+    x: -9,
+    y: 16,
+    width: 4,
+    height: 8,
+  });
+  const moved = only(
+    await evaluate([...rod2, offCentre, { ...emboss(1), face: mantle2 }]),
+    'body:c',
+  );
+  const raised = moved.faces.find((f) => f.key === 'e:top:0')!;
+  near(raised.centroid[2], 20, 1e-6, 'z 16..24');
+  const angle = Math.atan2(raised.centroid[0], raised.centroid[1]);
+  near(angle, -0.7, 1e-3, 'wrapped to -0.7 rad from +Y (towards -X)');
+  near(raised.area, 0.4 * 11 * 8, 1e-3, 'surface lengths kept');
 
   const down = only(await evaluate([...rod, label, emboss(-0.8)]), 'body:c');
   near(down.volume, base0 - (0.4 / 2) * (10 ** 2 - 9.2 ** 2) * 5, 1e-3, 'wrapped engrave volume');
 
   // Too wide to wrap from the centre.
   const wide = sketchOn('t', 'XZ', 0, { kind: 'rectangle', x: -40, y: 10, width: 80, height: 5 });
-  assert.match((await evaluate([...rod, wide, emboss(1)])).errors.e ?? '', /does not fit around|more than halfway/);
+  assert.match(
+    (await evaluate([...rod, wide, emboss(1)])).errors.e ?? '',
+    /does not fit around|more than halfway/,
+  );
 });
 
 // ---- Draft ------------------------------------------------------------------------------------
@@ -357,7 +441,10 @@ void test('draft: side faces tilt about the neutral bottom face', async () => {
   assert.equal(b.valid, true);
   near(b.min[0], 0, 1e-6, 'bottom keeps its width');
   // Faces keep their keys (Modified history).
-  assert.ok(b.faces.some((f) => f.key === left.key && f.normal && f.normal[2] > 0.05), 'left face tilted, same key');
+  assert.ok(
+    b.faces.some((f) => f.key === left.key && f.normal && f.normal[2] > 0.05),
+    'left face tilted, same key',
+  );
   const added = only(await evaluate([...block, draft(-5)]), 'body:b');
   near(added.volume, 2000 + 2 * 0.5 * 10 * (10 * t) * 10, 1e-3, 'negative draft adds');
   const flipped = only(await evaluate([...block, draft(5, { flip: true })]), 'body:b');
@@ -367,7 +454,10 @@ void test('draft: side faces tilt about the neutral bottom face', async () => {
   const bad = await evaluate([...block, draft(5, { faces: [top] })]);
   assert.match(bad.errors.d ?? '', /parallel to the neutral plane/);
   assert.deepEqual(bad.errorRefs?.d?.faceKeys, [top.key], 'the offending face is pointed at');
-  assert.match((await evaluate([...block, draft(60)])).errors.d ?? '', /Draft angle must be between/);
+  assert.match(
+    (await evaluate([...block, draft(60)])).errors.d ?? '',
+    /Draft angle must be between/,
+  );
 });
 
 // ---- Rib --------------------------------------------------------------------------------------
@@ -446,24 +536,43 @@ void test('thicken: a planar face, a cylindrical face and a sketch profile', asy
   const both = only(await evaluate([...block, thicken({ direction: 'both' })]), 'body:t');
   near(both.min[2], 9, 1e-6, 'half inside');
   near(both.max[2], 11, 1e-6, 'half outside');
-  const joined = only(await evaluate([...block, thicken({ operation: 'join', targetBodyId: 'body:b' })]), 'body:b');
+  const joined = only(
+    await evaluate([...block, thicken({ operation: 'join', targetBodyId: 'body:b' })]),
+    'body:b',
+  );
   near(joined.volume, 40 * 30 * 12, 1e-3, 'joined');
 
-  const rod = [sketchOn('c-s', 'XY', 0, { kind: 'circle', cx: 0, cy: 0, radius: 10 }), extrude('c', 'c-s', 20)];
+  const rod = [
+    sketchOn('c-s', 'XY', 0, { kind: 'circle', cx: 0, cy: 0, radius: 10 }),
+    extrude('c', 'c-s', 20),
+  ];
   const rodBody = only(await evaluate(rod), 'body:c');
   const mantle = faceRef(rodBody, (f) => f.surface === 'cylinder');
-  const sleeve = only(await evaluate([...rod, thicken({ source: { kind: 'faces', faces: [mantle] }, thickness: 1.5 })]), 'body:t');
+  const sleeve = only(
+    await evaluate([
+      ...rod,
+      thicken({ source: { kind: 'faces', faces: [mantle] }, thickness: 1.5 }),
+    ]),
+    'body:t',
+  );
   near(sleeve.volume, Math.PI * (11.5 ** 2 - 100) * 20, 1e-3, 'sleeve around the rod');
   assert.equal(sleeve.valid, true);
   const liner = only(
-    await evaluate([...rod, thicken({ source: { kind: 'faces', faces: [mantle] }, thickness: 1.5, direction: 'inside' })]),
+    await evaluate([
+      ...rod,
+      thicken({ source: { kind: 'faces', faces: [mantle] }, thickness: 1.5, direction: 'inside' }),
+    ]),
     'body:t',
   );
   near(liner.volume, Math.PI * (100 - 8.5 ** 2) * 20, 1e-3, 'liner inside the rod surface');
 
   const s = sketchOn('s', 'XY', 50, { kind: 'rectangle', x: 0, y: 0, width: 10, height: 10 });
   const fromProfile = only(
-    await evaluate([...block, s, thicken({ source: { kind: 'profile', profile: { kind: 'sketch', featureId: 's' } } })]),
+    await evaluate([
+      ...block,
+      s,
+      thicken({ source: { kind: 'profile', profile: { kind: 'sketch', featureId: 's' } } }),
+    ]),
     'body:t',
   );
   near(fromProfile.volume, 200, 1e-3, 'sketch profile thickened');
@@ -475,24 +584,53 @@ void test('fillet/chamfer variants: variable radius, two distances, distance-ang
   const block = box('b', 0, 0, 20, 10, 10);
   const first = only(await evaluate(block), 'body:b');
   // Top front edge (along X, length 20).
-  const edge = edgeWhere(first, (e) => e.curve === 'line' && Math.abs(e.midpoint[2] - 10) < 1e-6 && Math.abs(e.midpoint[1]) < 1e-6);
-  const variable: FilletFeature = { ...base('f'), kind: 'fillet', edges: [edge], radius: 1, radius2: 3 };
+  const edge = edgeWhere(
+    first,
+    (e) =>
+      e.curve === 'line' && Math.abs(e.midpoint[2] - 10) < 1e-6 && Math.abs(e.midpoint[1]) < 1e-6,
+  );
+  const variable: FilletFeature = {
+    ...base('f'),
+    kind: 'fillet',
+    edges: [edge],
+    radius: 1,
+    radius2: 3,
+  };
   const vr = only(await evaluate([...block, variable]), 'body:b');
   // Linear radius law: removed (1 - pi/4) * integral r^2 = (1 - pi/4) L (r1^2 + r1 r2 + r2^2) / 3 (approximately).
-  near(vr.volume, 2000 - (1 - Math.PI / 4) * 20 * (1 + 3 + 9) / 3, 1.2, 'variable fillet');
+  near(vr.volume, 2000 - ((1 - Math.PI / 4) * 20 * (1 + 3 + 9)) / 3, 1.2, 'variable fillet');
   assert.equal(vr.valid, true);
 
-  const chamfer = (extra: Partial<ChamferFeature>): ChamferFeature => ({ ...base('c'), kind: 'chamfer', edges: [edge], distance: 1, ...extra });
-  near(only(await evaluate([...block, chamfer({ mode: 'twoDistances', distance2: 2 })]), 'body:b').volume, 2000 - 0.5 * 1 * 2 * 20, 1e-6, 'two distances');
-  const flipped = only(await evaluate([...block, chamfer({ mode: 'twoDistances', distance2: 2, flip: true })]), 'body:b');
+  const chamfer = (extra: Partial<ChamferFeature>): ChamferFeature => ({
+    ...base('c'),
+    kind: 'chamfer',
+    edges: [edge],
+    distance: 1,
+    ...extra,
+  });
+  near(
+    only(await evaluate([...block, chamfer({ mode: 'twoDistances', distance2: 2 })]), 'body:b')
+      .volume,
+    2000 - 0.5 * 1 * 2 * 20,
+    1e-6,
+    'two distances',
+  );
+  const flipped = only(
+    await evaluate([...block, chamfer({ mode: 'twoDistances', distance2: 2, flip: true })]),
+    'body:b',
+  );
   near(flipped.volume, 1980, 1e-6, 'flipped two distances (same volume)');
   near(
-    only(await evaluate([...block, chamfer({ mode: 'distanceAngle', angle: 30 })]), 'body:b').volume,
+    only(await evaluate([...block, chamfer({ mode: 'distanceAngle', angle: 30 })]), 'body:b')
+      .volume,
     2000 - 0.5 * 1 * Math.tan(Math.PI / 6) * 20,
     1e-6,
     'distance-angle',
   );
-  assert.match((await evaluate([...block, chamfer({ mode: 'distanceAngle', angle: 95 })])).errors.c ?? '', /angle must be between/);
+  assert.match(
+    (await evaluate([...block, chamfer({ mode: 'distanceAngle', angle: 95 })])).errors.c ?? '',
+    /angle must be between/,
+  );
 });
 
 void test('fillet by rule: all concave edges of an L-bracket, all edges of a face; failing edge highlighted', async () => {
@@ -502,7 +640,13 @@ void test('fillet by rule: all concave edges of an L-bracket, all edges of a fac
     extrude('u', 'u-s', 30, { operation: 'join', targetBodyId: 'body:p' }),
   ];
   const plain = only(await evaluate(bracket), 'body:p');
-  const concave: FilletFeature = { ...base('f'), kind: 'fillet', edges: [], radius: 2, rules: [{ kind: 'concave', bodyId: 'body:p' }] };
+  const concave: FilletFeature = {
+    ...base('f'),
+    kind: 'fillet',
+    edges: [],
+    radius: 2,
+    rules: [{ kind: 'concave', bodyId: 'body:p' }],
+  };
   const r = await evaluate([...bracket, concave]);
   noErrors(r);
   const b = only(r, 'body:p');
@@ -513,16 +657,42 @@ void test('fillet by rule: all concave edges of an L-bracket, all edges of a fac
   const box1 = box('b', 0, 0, 20, 10, 10);
   const first = only(await evaluate(box1), 'body:b');
   const top = faceRef(first, planeFace([0, 0, 1], 10));
-  const faceRule: FilletFeature = { ...base('f'), kind: 'fillet', edges: [], radius: 1, rules: [{ kind: 'faceEdges', face: top }] };
+  const faceRule: FilletFeature = {
+    ...base('f'),
+    kind: 'fillet',
+    edges: [],
+    radius: 1,
+    rules: [{ kind: 'faceEdges', face: top }],
+  };
   const rounded = only(await evaluate([...box1, faceRule]), 'body:b');
   assert.equal(rounded.valid, true);
-  assert.ok(rounded.faces.filter((f) => f.key.startsWith('f:round:')).length >= 4, 'the four top edges are rounded');
-  const convex: FilletFeature = { ...base('f'), kind: 'fillet', edges: [], radius: 1, rules: [{ kind: 'convex', bodyId: 'body:b' }] };
-  assert.equal(only(await evaluate([...box1, convex]), 'body:b').valid, true, 'all convex edges of a box');
+  assert.ok(
+    rounded.faces.filter((f) => f.key.startsWith('f:round:')).length >= 4,
+    'the four top edges are rounded',
+  );
+  const convex: FilletFeature = {
+    ...base('f'),
+    kind: 'fillet',
+    edges: [],
+    radius: 1,
+    rules: [{ kind: 'convex', bodyId: 'body:b' }],
+  };
+  assert.equal(
+    only(await evaluate([...box1, convex]), 'body:b').valid,
+    true,
+    'all convex edges of a box',
+  );
 
   // A radius larger than the part: the error names the edge(s).
-  const edge = edgeWhere(first, (e) => e.curve === 'line' && Math.abs(e.midpoint[2] - 10) < 1e-6 && Math.abs(e.midpoint[1]) < 1e-6);
-  const tooBig = await evaluate([...box1, { ...base('f'), kind: 'fillet', edges: [edge], radius: 12 } satisfies FilletFeature]);
+  const edge = edgeWhere(
+    first,
+    (e) =>
+      e.curve === 'line' && Math.abs(e.midpoint[2] - 10) < 1e-6 && Math.abs(e.midpoint[1]) < 1e-6,
+  );
+  const tooBig = await evaluate([
+    ...box1,
+    { ...base('f'), kind: 'fillet', edges: [edge], radius: 12 } satisfies FilletFeature,
+  ]);
   assert.match(tooBig.errors.f ?? '', /^Fillet failed: .*smaller radius/);
   assert.deepEqual(tooBig.errorRefs?.f?.edgeKeys, [edge.key], 'the failing edge is pointed at');
   near(only(tooBig, 'body:b').volume, 2000, 1e-9, 'body unchanged');
@@ -549,19 +719,29 @@ void test('shell: outward, per-face wall thickness', async () => {
   near(outward.volume, 22 * 12 * 11 - 2000, 1e-3, 'outward: the body becomes the cavity');
   near(outward.min[0], -1, 1e-6, 'grows outwards');
   assert.equal(outward.valid, true);
-  const thick = await evaluate([...block, shell({ faceThickness: [{ face: left, thickness: 3 }] })]);
+  const thick = await evaluate([
+    ...block,
+    shell({ faceThickness: [{ face: left, thickness: 3 }] }),
+  ]);
   noErrors(thick);
   const t = only(thick, 'body:b');
   near(t.volume, 2000 - 16 * 8 * 9, 1e-3, 'left wall 3 mm, others 1 mm');
   assert.equal(t.valid, true);
-  const openWall = await evaluate([...block, shell({ faceThickness: [{ face: top, thickness: 3 }] })]);
+  const openWall = await evaluate([
+    ...block,
+    shell({ faceThickness: [{ face: top, thickness: 3 }] }),
+  ]);
   assert.match(openWall.errors.s ?? '', /open face has no wall/);
 });
 
 // ---- Boolean polish ---------------------------------------------------------------------------------
 
 void test('boolean: keep tools, several tools, duplicate tool refused', async () => {
-  const doc = [...box('a', 0, 0, 20, 20, 10), ...box('t1', 5, 5, 4, 4, 20, -5), ...box('t2', 12, 12, 4, 4, 20, -5)];
+  const doc = [
+    ...box('a', 0, 0, 20, 20, 10),
+    ...box('t1', 5, 5, 4, 4, 20, -5),
+    ...box('t2', 12, 12, 4, 4, 20, -5),
+  ];
   const sub = (extra: Partial<BooleanFeature>): BooleanFeature => ({
     ...base('x'),
     kind: 'boolean',
@@ -571,7 +751,10 @@ void test('boolean: keep tools, several tools, duplicate tool refused', async ()
     ...extra,
   });
   const consumed = await evaluate([...doc, sub({})]);
-  assert.deepEqual(consumed.bodies.map((b) => b.id), ['body:a']);
+  assert.deepEqual(
+    consumed.bodies.map((b) => b.id),
+    ['body:a'],
+  );
   near(only(consumed, 'body:a').volume, 4000 - 2 * 16 * 10, 1e-6, 'two pockets');
   const kept = await evaluate([...doc, sub({ keepTools: true })]);
   assert.deepEqual(kept.bodies.map((b) => b.id).sort(), ['body:a', 'body:t1', 'body:t2']);

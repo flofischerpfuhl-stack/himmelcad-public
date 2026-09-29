@@ -1015,8 +1015,35 @@ export function Viewport(props: ViewportProps): JSX.Element {
         return;
       }
       if (tool?.kind === 'feature') {
+        const ray = rayAtClient(clientX, clientY);
+        const toolRay = ray
+          ? {
+              origin: [ray.origin[0], ray.origin[1], ray.origin[2]] as [number, number, number],
+              direction: [ray.direction[0], ray.direction[1], ray.direction[2]] as [
+                number,
+                number,
+                number,
+              ],
+            }
+          : undefined;
         // Clicking empty space finishes (once complete); clicks edit the tool's references.
         if (!pick) {
+          // …except a click into a through hole of the Hole tool, which removes that hole.
+          const draft = tool.draft;
+          if (draft.kind === 'hole' && draft.face && toolRay) {
+            const face = draft.face;
+            const before = draft;
+            store.updateFeatureDraft((d, evaluation) =>
+              acceptPick(
+                d,
+                { kind: 'face', bodyId: face.bodyId, faceKey: face.key, ray: toolRay },
+                evaluation,
+                store.features,
+              ),
+            );
+            const after = useAssemblerStore.getState().activeTool;
+            if (after?.kind === 'feature' && after.draft !== before) return;
+          }
           store.commit();
           return;
         }
@@ -1034,8 +1061,14 @@ export function Viewport(props: ViewportProps): JSX.Element {
           // Where a face was clicked (e.g. a hole position): the ray on the face's plane.
           const point = item.kind === 'face' ? facePickPoint(item, clientX, clientY) : null;
           const toolPick =
-            point && item.kind === 'face'
-              ? { ...item, point: [point[0], point[1], point[2]] as [number, number, number] }
+            item.kind === 'face'
+              ? {
+                  ...item,
+                  ...(point
+                    ? { point: [point[0], point[1], point[2]] as [number, number, number] }
+                    : {}),
+                  ...(toolRay ? { ray: toolRay } : {}),
+                }
               : item;
           store.updateFeatureDraft((draft, evaluation) =>
             acceptPick(draft, toolPick, evaluation, store.features),
@@ -1081,7 +1114,7 @@ export function Viewport(props: ViewportProps): JSX.Element {
       if (!item) return;
       store.select(item, { additive });
     },
-    [pickAt, selectionFromPick, queryContext, candidateNames, facePickPoint],
+    [pickAt, selectionFromPick, queryContext, candidateNames, facePickPoint, rayAtClient],
   );
 
   const contextMenuAt = useCallback(

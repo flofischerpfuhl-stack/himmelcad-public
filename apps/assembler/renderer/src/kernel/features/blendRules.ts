@@ -77,11 +77,7 @@ function insideAny(kit: FeatureKit, solids: readonly RawShape[], point: Vec3): b
   const vertex = R.makeVertex(point);
   try {
     return solids.some((solid) => {
-      const dist = new oc.BRepExtrema_DistShapeShape(
-        vertex.wrapped as never,
-        solid as never,
-        1e-7,
-      );
+      const dist = new oc.BRepExtrema_DistShapeShape(vertex.wrapped as never, solid as never, 1e-7);
       try {
         return dist.IsDone() && dist.InnerSolution();
       } finally {
@@ -136,7 +132,8 @@ export function ruleEdgeIndices(
   let convexity: EdgeConvexity[] | null = null;
   for (const rule of rules) {
     if (rule.kind === 'faceEdges') {
-      if (rule.face.bodyId !== body.id) kit.fail('All edges of one feature must belong to the same body');
+      if (rule.face.bodyId !== body.id)
+        kit.fail('All edges of one feature must belong to the same body');
       const { index } = kit.resolveFace(body, rule.face, warn);
       for (const e of topology.faceEdges[index] ?? []) {
         const faces = topology.edgeFaces[e] ?? [];

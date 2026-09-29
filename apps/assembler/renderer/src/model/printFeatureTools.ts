@@ -84,7 +84,13 @@ export type PrintDraft =
 
 export type PrintDraftKind = PrintDraft['kind'];
 
-export const PRINT_DRAFT_KINDS: readonly PrintDraftKind[] = ['hole', 'emboss', 'draft', 'rib', 'thicken'];
+export const PRINT_DRAFT_KINDS: readonly PrintDraftKind[] = [
+  'hole',
+  'emboss',
+  'draft',
+  'rib',
+  'thicken',
+];
 
 export function isPrintDraftKind(kind: string): kind is PrintDraftKind {
   return (PRINT_DRAFT_KINDS as readonly string[]).includes(kind);
@@ -146,7 +152,8 @@ function sketchFeatureOf(features: readonly Feature[], id: string): SketchFeatur
   return f?.kind === 'sketch' ? f : undefined;
 }
 
-const isPlanar = (ref: FaceRef) => ref.signature.surface === 'plane' && ref.signature.normal !== null;
+const isPlanar = (ref: FaceRef) =>
+  ref.signature.surface === 'plane' && ref.signature.normal !== null;
 
 /** Hole centres a sketch offers: circle and arc centres, and free points (not curve vertices). */
 export function sketchHolePoints(sketch: SketchFeature): HolePlacement[] {
@@ -199,7 +206,8 @@ export function placementWorld(
   const evaluated = evaluation.sketches.find((s) => s.featureId === placement.featureId);
   if (!sketch || !evaluated) return null;
   const entity = sketch.entities.find((e) => e.id === placement.entityId);
-  const pointId = entity?.kind === 'circle' || entity?.kind === 'arc' ? entity.center : placement.entityId;
+  const pointId =
+    entity?.kind === 'circle' || entity?.kind === 'arc' ? entity.center : placement.entityId;
   const point = sketch.entities.find((e) => e.id === pointId);
   if (point?.kind !== 'point') return null;
   const world = framePoint(evaluated.frame, point.x, point.y);
@@ -265,7 +273,8 @@ export function createPrintDraft(kind: PrintDraftKind, ctx: PrintDraftContext): 
       if (!face) {
         return {
           ok: false,
-          reason: 'Select a planar face (then click to place holes), or a sketch with points on a face.',
+          reason:
+            'Select a planar face (then click to place holes), or a sketch with points on a face.',
         };
       }
       if (placements.length === 0) {
@@ -295,7 +304,8 @@ export function createPrintDraft(kind: PrintDraftKind, ctx: PrintDraftContext): 
         (s): s is Extract<SelectionItem, { kind: 'sketchProfile' }> => s.kind === 'sketchProfile',
       );
       const sketchId = profileItem?.featureId ?? sketchIds[0];
-      if (!sketchId) return { ok: false, reason: 'Select the sketch profiles to emboss, then a face.' };
+      if (!sketchId)
+        return { ok: false, reason: 'Select the sketch profiles to emboss, then a face.' };
       const profile: ProfileRef = {
         kind: 'sketch',
         featureId: sketchId,
@@ -303,8 +313,9 @@ export function createPrintDraft(kind: PrintDraftKind, ctx: PrintDraftContext): 
       };
       const sketch = sketchFeatureOf(ctx.features, sketchId);
       const face =
-        selectedFaces(ctx).find((f) => f.signature.surface === 'plane' || f.signature.surface === 'cylinder') ??
-        (sketch?.plane.kind === 'face' ? sketch.plane.face : null);
+        selectedFaces(ctx).find(
+          (f) => f.signature.surface === 'plane' || f.signature.surface === 'cylinder',
+        ) ?? (sketch?.plane.kind === 'face' ? sketch.plane.face : null);
       return { ok: true, draft: { kind: 'emboss', profile, face, depth: DEFAULT_EMBOSS_DEPTH_MM } };
     }
     case 'draft': {
@@ -315,17 +326,34 @@ export function createPrintDraft(kind: PrintDraftKind, ctx: PrintDraftContext): 
       }
       const body = bodyOf(ctx.evaluation, faces[0]!.bodyId);
       const neutral: PlaneRef = { kind: 'plane', plane: 'XY', offset: round(body?.min[2] ?? 0) };
-      const sides = faces.filter((f) => !f.signature.normal || Math.abs(f.signature.normal[2]) < 1 - 1e-6);
+      const sides = faces.filter(
+        (f) => !f.signature.normal || Math.abs(f.signature.normal[2]) < 1 - 1e-6,
+      );
       if (sides.length === 0) {
         return { ok: false, reason: 'Select side faces (not the top or bottom) to draft.' };
       }
-      return { ok: true, draft: { kind: 'draft', faces: sides, neutral, angle: DEFAULT_DRAFT_ANGLE, flip: false } };
+      return {
+        ok: true,
+        draft: { kind: 'draft', faces: sides, neutral, angle: DEFAULT_DRAFT_ANGLE, flip: false },
+      };
     }
     case 'rib': {
-      const sketchId = selectedSketchIds(ctx).find((id) => sketchLines(ctx.features, id).length > 0);
-      const anyLines = ctx.features.some((f) => f.kind === 'sketch' && sketchLines(ctx.features, f.id).length > 0);
-      if (!sketchId && !anyLines) return { ok: false, reason: 'Draw the rib line in a sketch first.' };
-      if (ctx.evaluation.bodies.length === 0) return { ok: false, reason: 'A rib needs a body to attach to.' };
+      const sketchId = selectedSketchIds(ctx).find(
+        (id) => sketchLines(ctx.features, id).length > 0,
+      );
+      const anyLines = ctx.features.some(
+        (f) => f.kind === 'sketch' && sketchLines(ctx.features, f.id).length > 0,
+      );
+      if (!sketchId && !anyLines)
+        return { ok: false, reason: 'Draw the rib line in a sketch first.' };
+      if (ctx.evaluation.bodies.length === 0)
+        return { ok: false, reason: 'A rib needs a body to attach to.' };
+      // The body to join: a selected one, else the most recently created (explicit, so it stays put).
+      const picked = ctx.selection.find((s) => s.kind === 'body' || s.kind === 'face');
+      const targetBodyId =
+        picked && (picked.kind === 'body' || picked.kind === 'face')
+          ? picked.bodyId
+          : ctx.evaluation.bodies[ctx.evaluation.bodies.length - 1]!.id;
       return {
         ok: true,
         draft: {
@@ -334,6 +362,7 @@ export function createPrintDraft(kind: PrintDraftKind, ctx: PrintDraftContext): 
           entityIds: sketchId ? sketchLines(ctx.features, sketchId) : [],
           thickness: DEFAULT_RIB_THICKNESS_MM,
           flip: false,
+          targetBodyId,
         },
       };
     }
@@ -384,14 +413,22 @@ export function createPrintDraft(kind: PrintDraftKind, ctx: PrintDraftContext): 
 /** Non-construction straight lines of a sketch (rib candidates). */
 function sketchLines(features: readonly Feature[], sketchId: string): string[] {
   const sketch = sketchFeatureOf(features, sketchId);
-  return sketch ? sketch.entities.filter((e) => e.kind === 'line' && !e.construction).map((e) => e.id) : [];
+  return sketch
+    ? sketch.entities.filter((e) => e.kind === 'line' && !e.construction).map((e) => e.id)
+    : [];
 }
 
 // ---- picks while the tool runs ----------------------------------------------------------------
 
 export type PrintToolPick =
   | { kind: 'body'; bodyId: string }
-  | { kind: 'face'; bodyId: string; faceKey: string; point?: Vec3 }
+  | {
+      kind: 'face';
+      bodyId: string;
+      faceKey: string;
+      point?: Vec3;
+      ray?: { origin: Vec3; direction: Vec3 };
+    }
   | { kind: 'edge'; bodyId: string; edgeKey: string }
   | { kind: 'sketchProfile'; featureId: string; regionKey?: string }
   | { kind: 'sketchLine'; featureId: string; entityId: string };
@@ -416,27 +453,36 @@ export function acceptPrintPick(
         const face = draft.face ?? (sketch.plane.kind === 'face' ? sketch.plane.face : null);
         return { ...draft, face, placements: points };
       }
+      if (pick.kind !== 'face') return draft;
+      // A click on (or into) one of the holes removes it (keeping one): the pointer ray is
+      // intersected with the hole face's plane, whatever it hit (the preview's hole wall, or nothing).
+      const current = draft.face ? faceFrameOf(evaluation, draft.face) : null;
+      if (draft.face && current && pick.bodyId === draft.face.bodyId) {
+        const onPlane = pick.ray ? rayPlane(pick.ray, current.point, current.normal) : pick.point;
+        if (onPlane) {
+          const near = draft.placements.findIndex((p) => {
+            const w = placementWorld(evaluation, features, draft.face!, p);
+            const reach = Math.max(REMOVE_RADIUS_MM, holeOuterDiameter(draft) / 2);
+            return w !== null && Math.hypot(...sub(w, onPlane)) < reach;
+          });
+          if (near >= 0) {
+            if (draft.placements.length === 1) return draft;
+            return { ...draft, placements: draft.placements.filter((_, i) => i !== near) };
+          }
+        }
+      }
       if (!faceRef || !isPlanar(faceRef)) return draft;
-      const body = bodyOf(evaluation, faceRef.bodyId);
-      const f = body ? faceOf(body, faceRef.key) : undefined;
-      const normal = f?.normal ?? faceRef.signature.normal!;
-      const centroid = f?.centroid ?? faceRef.signature.centroid;
-      const frame = frameForFace(normal, centroid);
-      const point = pick.kind === 'face' && pick.point ? pick.point : centroid;
-      const uv = frameUv(frame, point);
+      const frame = faceFrameOf(evaluation, faceRef);
+      if (!frame) return draft;
+      const point =
+        (pick.ray ? rayPlane(pick.ray, frame.point, frame.normal) : null) ??
+        pick.point ??
+        frame.point;
+      const uv = frameUv(frameForFace(frame.normal, frame.point), point);
       const placement: HolePlacement = { kind: 'point', u: round(uv.u), v: round(uv.v) };
       if (!draft.face || draft.face.bodyId !== faceRef.bodyId || draft.face.key !== faceRef.key) {
         // Another face: start over there.
         return { ...draft, face: faceRef, placements: [placement] };
-      }
-      // Same face: a click near a placement removes it (keeping one), else adds one.
-      const near = draft.placements.findIndex((p) => {
-        const w = placementWorld(evaluation, features, draft.face!, p);
-        return w !== null && Math.hypot(...sub(w, point)) < Math.max(REMOVE_RADIUS_MM, draft.diameter / 2);
-      });
-      if (near >= 0) {
-        if (draft.placements.length === 1) return draft;
-        return { ...draft, placements: draft.placements.filter((_, i) => i !== near) };
       }
       return { ...draft, placements: [...draft.placements, placement] };
     }
@@ -451,7 +497,10 @@ export function acceptPrintPick(
           },
         };
       }
-      if (faceRef && (faceRef.signature.surface === 'plane' || faceRef.signature.surface === 'cylinder')) {
+      if (
+        faceRef &&
+        (faceRef.signature.surface === 'plane' || faceRef.signature.surface === 'cylinder')
+      ) {
         return { ...draft, face: faceRef };
       }
       return draft;
@@ -468,7 +517,9 @@ export function acceptPrintPick(
       if (present && draft.faces.length === 1) return draft;
       return {
         ...draft,
-        faces: present ? draft.faces.filter((f) => f.key !== faceRef.key) : [...draft.faces, faceRef],
+        faces: present
+          ? draft.faces.filter((f) => f.key !== faceRef.key)
+          : [...draft.faces, faceRef],
       };
     }
     case 'rib': {
@@ -508,6 +559,21 @@ export function acceptPrintPick(
       return { ...draft, source: { kind: 'faces', faces: next } };
     }
   }
+}
+
+/** Where a ray meets the plane through `point` with `normal`, or null when parallel. */
+function rayPlane(ray: { origin: Vec3; direction: Vec3 }, point: Vec3, normal: Vec3): Vec3 | null {
+  const denom = dot(normal, ray.direction);
+  if (Math.abs(denom) < 1e-9) return null;
+  const t = dot(normal, sub(point, ray.origin)) / denom;
+  return add(ray.origin, scale(ray.direction, t));
+}
+
+/** Largest diameter of a hole at the face (counterbore/countersink included). */
+function holeOuterDiameter(draft: HoleDraft): number {
+  if (draft.holeType === 'counterbore') return draft.counterboreDiameter ?? draft.diameter;
+  if (draft.holeType === 'countersink') return draft.countersinkDiameter ?? draft.diameter;
+  return draft.diameter;
 }
 
 function neutralNormal(evaluation: EvaluationResult, plane: PlaneRef): Vec3 | null {
@@ -553,7 +619,13 @@ export function printDraftToFeature(
     }
     case 'emboss':
       if (!draft.profile || !draft.face) return null;
-      return { ...common, kind: 'emboss', profile: draft.profile, face: draft.face, depth: draft.depth };
+      return {
+        ...common,
+        kind: 'emboss',
+        profile: draft.profile,
+        face: draft.face,
+        depth: draft.depth,
+      };
     case 'draft':
       if (draft.faces.length === 0) return null;
       return {
@@ -595,7 +667,11 @@ export function printDraftToFeature(
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
-export function printDraftMeta(draft: PrintDraft): { label: string; shortcut: string; prompt: string } {
+export function printDraftMeta(draft: PrintDraft): {
+  label: string;
+  shortcut: string;
+  prompt: string;
+} {
   switch (draft.kind) {
     case 'hole':
       return {
@@ -684,7 +760,10 @@ export function printDraftBadges(draft: PrintDraft): PrintDraftBadge[] {
           ],
           (d, v) => ({
             ...d,
-            extent: v === 'through' ? { kind: 'through' } : { kind: 'blind', depth: Math.max(5, d.diameter * 2) },
+            extent:
+              v === 'through'
+                ? { kind: 'through' }
+                : { kind: 'blind', depth: Math.max(5, d.diameter * 2) },
           }),
         ),
         holeBadge(
@@ -697,7 +776,11 @@ export function printDraftBadges(draft: PrintDraft): PrintDraftBadge[] {
           (d, v) =>
             v === 'custom'
               ? { ...d, sizing: 'custom' }
-              : applyHoleSizing({ ...d, size: v, sizing: d.sizing === 'custom' ? 'clearanceNormal' : d.sizing }),
+              : applyHoleSizing({
+                  ...d,
+                  size: v,
+                  sizing: d.sizing === 'custom' ? 'clearanceNormal' : d.sizing,
+                }),
         ),
         holeBadge(
           'Hole fit',
@@ -735,7 +818,9 @@ export function printDraftBadges(draft: PrintDraft): PrintDraftBadge[] {
             { value: 'engrave', label: 'Engrave' },
           ],
           apply: (d, v) =>
-            d.kind === 'emboss' ? { ...d, depth: (v === 'engrave' ? -1 : 1) * Math.abs(d.depth) } : d,
+            d.kind === 'emboss'
+              ? { ...d, depth: (v === 'engrave' ? -1 : 1) * Math.abs(d.depth) }
+              : d,
         },
       ];
     case 'draft':
@@ -831,7 +916,10 @@ function positive(value: number, min = MIN_FEATURE_SIZE_MM): number {
   return Number.isFinite(value) ? Math.max(min, Math.abs(value)) : min;
 }
 
-function faceFrameOf(evaluation: EvaluationResult, ref: FaceRef): { point: Vec3; normal: Vec3 } | null {
+function faceFrameOf(
+  evaluation: EvaluationResult,
+  ref: FaceRef,
+): { point: Vec3; normal: Vec3 } | null {
   const body = bodyOf(evaluation, ref.bodyId);
   const face = body ? faceOf(body, ref.key) : undefined;
   if (!face) return null;
@@ -841,7 +929,11 @@ function faceFrameOf(evaluation: EvaluationResult, ref: FaceRef): { point: Vec3;
   const v = body.mesh.indices[t * 3]! * 3;
   return {
     point: [body.mesh.positions[v]!, body.mesh.positions[v + 1]!, body.mesh.positions[v + 2]!],
-    normal: normalize([body.mesh.normals[v]!, body.mesh.normals[v + 1]!, body.mesh.normals[v + 2]!]),
+    normal: normalize([
+      body.mesh.normals[v]!,
+      body.mesh.normals[v + 1]!,
+      body.mesh.normals[v + 2]!,
+    ]),
   };
 }
 
@@ -857,7 +949,14 @@ export function printDraftHandles(
       const frame = faceFrameOf(evaluation, draft.face);
       if (!at || !frame) return [];
       const n = frame.normal;
-      const side = frameForFace(n, at).u;
+      const inPlane = frameForFace(n, at);
+      const side = inPlane.u;
+      // Head chips (counterbore/countersink) stack on the other side of the first hole.
+      const head = (diameter: number | undefined, row: number): Vec3 =>
+        add(
+          add(add(at, scale(n, 0.5)), scale(side, -((diameter ?? 0) / 2 + 9))),
+          scale(inPlane.v, -6 * row),
+        );
       const out: PrintHandle[] = [
         {
           kind: 'chip',
@@ -866,8 +965,9 @@ export function printDraftHandles(
           prefix: 'Ø',
           unit: 'mm',
           value: draft.diameter,
-          at: add(add(at, scale(n, 2)), scale(side, draft.diameter / 2 + 3)),
-          apply: (d, v) => (d.kind === 'hole' ? { ...d, diameter: positive(v), sizing: 'custom' } : d),
+          at: add(add(at, scale(n, 0.5)), scale(side, draft.diameter / 2 + 8)),
+          apply: (d, v) =>
+            d.kind === 'hole' ? { ...d, diameter: positive(v), sizing: 'custom' } : d,
         },
       ];
       if (draft.extent.kind === 'blind') {
@@ -880,7 +980,8 @@ export function printDraftHandles(
           base: at,
           dir: scale(n, -1),
           length: Math.max(draft.extent.depth, STEM_MM),
-          apply: (d, v) => (d.kind === 'hole' ? { ...d, extent: { kind: 'blind', depth: positive(v) } } : d),
+          apply: (d, v) =>
+            d.kind === 'hole' ? { ...d, extent: { kind: 'blind', depth: positive(v) } } : d,
         });
       }
       if (draft.holeType === 'counterbore') {
@@ -891,7 +992,7 @@ export function printDraftHandles(
           prefix: 'CB Ø',
           unit: 'mm',
           value: draft.counterboreDiameter ?? 0,
-          at: add(add(at, scale(n, 6)), scale(side, -((draft.counterboreDiameter ?? 0) / 2 + 3))),
+          at: head(draft.counterboreDiameter, 0),
           apply: (d, v) =>
             d.kind === 'hole' ? { ...d, counterboreDiameter: positive(v), sizing: 'custom' } : d,
         });
@@ -902,7 +1003,7 @@ export function printDraftHandles(
           prefix: 'CB depth',
           unit: 'mm',
           value: draft.counterboreDepth ?? 0,
-          at: add(add(at, scale(n, 10)), scale(side, -((draft.counterboreDiameter ?? 0) / 2 + 3))),
+          at: head(draft.counterboreDiameter, 1),
           apply: (d, v) =>
             d.kind === 'hole' ? { ...d, counterboreDepth: positive(v), sizing: 'custom' } : d,
         });
@@ -915,7 +1016,7 @@ export function printDraftHandles(
           prefix: 'CS Ø',
           unit: 'mm',
           value: draft.countersinkDiameter ?? 0,
-          at: add(add(at, scale(n, 6)), scale(side, -((draft.countersinkDiameter ?? 0) / 2 + 3))),
+          at: head(draft.countersinkDiameter, 0),
           apply: (d, v) =>
             d.kind === 'hole' ? { ...d, countersinkDiameter: positive(v), sizing: 'custom' } : d,
         });
@@ -926,7 +1027,7 @@ export function printDraftHandles(
           prefix: 'CS',
           unit: 'deg',
           value: draft.countersinkAngle ?? 90,
-          at: add(add(at, scale(n, 10)), scale(side, -((draft.countersinkDiameter ?? 0) / 2 + 3))),
+          at: head(draft.countersinkDiameter, 1),
           apply: (d, v) =>
             d.kind === 'hole' ? { ...d, countersinkAngle: Math.min(150, Math.max(30, v)) } : d,
         });
@@ -1001,7 +1102,11 @@ export function printDraftHandles(
         const centre = profileCentre(evaluation, draft.source.profile);
         const sketch =
           draft.source.profile.kind === 'sketch'
-            ? evaluation.sketches.find((s) => s.featureId === (draft.source as { profile: { featureId: string } }).profile.featureId)
+            ? evaluation.sketches.find(
+                (s) =>
+                  s.featureId ===
+                  (draft.source as { profile: { featureId: string } }).profile.featureId,
+              )
             : undefined;
         if (centre && sketch) frame = { point: centre, normal: sketch.frame.normal };
       }
@@ -1017,7 +1122,8 @@ export function printDraftHandles(
           base: frame.point,
           dir: along,
           length: STEM_MM + draft.thickness,
-          apply: (d, v) => (d.kind === 'thicken' ? { ...d, thickness: positive(v, MIN_FEATURE_SIZE_MM / 10) } : d),
+          apply: (d, v) =>
+            d.kind === 'thicken' ? { ...d, thickness: positive(v, MIN_FEATURE_SIZE_MM / 10) } : d,
         },
       ];
     }
@@ -1029,7 +1135,9 @@ function profileCentre(evaluation: EvaluationResult, profile: ProfileRef | null)
   const sketch = evaluation.sketches.find((s) => s.featureId === profile.featureId);
   if (!sketch) return null;
   const regions = profile.regions;
-  const profiles = regions ? sketch.profiles.filter((p) => regions.includes(p.key)) : sketch.profiles;
+  const profiles = regions
+    ? sketch.profiles.filter((p) => regions.includes(p.key))
+    : sketch.profiles;
   if (profiles.length === 0) return null;
   const c: Vec3 = [0, 0, 0];
   for (const p of profiles) for (let i = 0; i < 3; i += 1) c[i]! += p.center[i]! / profiles.length;
@@ -1054,7 +1162,10 @@ export function printDraftGuides(
   evaluation: EvaluationResult,
   features: readonly Feature[] = [],
 ): { lines: [Vec3, Vec3][]; planes: [Vec3, Vec3, Vec3, Vec3][] } {
-  const out: { lines: [Vec3, Vec3][]; planes: [Vec3, Vec3, Vec3, Vec3][] } = { lines: [], planes: [] };
+  const out: { lines: [Vec3, Vec3][]; planes: [Vec3, Vec3, Vec3, Vec3][] } = {
+    lines: [],
+    planes: [],
+  };
   if (draft.kind === 'hole' && draft.face) {
     const frame = faceFrameOf(evaluation, draft.face);
     if (!frame) return out;
@@ -1074,7 +1185,10 @@ export function printDraftGuides(
     if (body) {
       const plane = frameForPlane(draft.neutral.plane, draft.neutral.offset);
       const centre = scale(add(body.min, body.max), 0.5);
-      const onPlane = sub(centre, scale(plane.normal, dot(sub(centre, plane.origin), plane.normal)));
+      const onPlane = sub(
+        centre,
+        scale(plane.normal, dot(sub(centre, plane.origin), plane.normal)),
+      );
       const half = Math.max(10, Math.hypot(...sub(body.max, body.min)) * 0.65);
       const c = (a: number, b: number): Vec3 =>
         add(onPlane, add(scale(plane.u, a * half), scale(plane.v, b * half)));

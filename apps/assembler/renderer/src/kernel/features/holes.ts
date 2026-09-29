@@ -13,12 +13,7 @@
 import '../occtArena.js';
 import * as R from 'replicad';
 
-import {
-  MIN_FEATURE_SIZE_MM,
-  frameForFace,
-  framePoint,
-  type Vec3,
-} from '../../model/document.js';
+import { MIN_FEATURE_SIZE_MM, frameForFace, framePoint, type Vec3 } from '../../model/document.js';
 import { MAX_HOLES, type HoleFeature, type HolePlacement } from '../../model/printFeatures.js';
 import { entityMap, pointPos } from '../../sketch/types.js';
 import { assignFaceKeys, type FaceGeom, type KeyedFace } from '../naming.js';
@@ -192,9 +187,12 @@ export function applyHole(feature: HoleFeature, ctx: ReplayContextLike, kit: Fea
 
   const into = scale(n, -1);
   const radial = frame.u;
-  const tools = centres.map((centre, i) => holeTool(kit, feature.id, i, centre, into, radial, section));
+  const tools = centres.map((centre, i) =>
+    holeTool(kit, feature.id, i, centre, into, radial, section),
+  );
   const holder = { id: '', name: '', color: '', createdBy: '', ...tools[0]! };
-  for (const next of tools.slice(1)) kit.combine(holder, next, 'join', feature.id, ctx.featureOrder);
+  for (const next of tools.slice(1))
+    kit.combine(holder, next, 'join', feature.id, ctx.featureOrder);
 
   // A hole whose centre is off the face is almost always a mistake: say which.
   const outside = centres
@@ -213,7 +211,13 @@ export function applyHole(feature: HoleFeature, ctx: ReplayContextLike, kit: Fea
     );
   }
   try {
-    kit.combine(body, { shape: holder.shape, faces: holder.faces }, 'cut', feature.id, ctx.featureOrder);
+    kit.combine(
+      body,
+      { shape: holder.shape, faces: holder.faces },
+      'cut',
+      feature.id,
+      ctx.featureOrder,
+    );
   } catch (error) {
     if (kit.isFailure(error)) throw error;
     kit.fail(`Hole failed: ${kit.describeError(error)}`);
@@ -224,7 +228,11 @@ export function applyHole(feature: HoleFeature, ctx: ReplayContextLike, kit: Fea
 function pointFaceDistance(kit: FeatureKit, point: Vec3, face: R.Face): number {
   const oc = kit.oc;
   const vertex = R.makeVertex(point);
-  const dist = new oc.BRepExtrema_DistShapeShape(vertex.wrapped as never, face.wrapped as never, 1e-7);
+  const dist = new oc.BRepExtrema_DistShapeShape(
+    vertex.wrapped as never,
+    face.wrapped as never,
+    1e-7,
+  );
   try {
     return dist.IsDone() ? dist.Value() : Infinity;
   } finally {
@@ -254,8 +262,11 @@ function holeTool(
   }
   if (!(R.measureVolume(shape) > 0)) kit.fail(`Hole ${i + 1} could not be built`);
   const geoms = kit.describeShape(shape);
-  const keys = assignFaceKeys(geoms, [], new Map(), (index) =>
-    `${featureId}:${holeFaceRole(geoms[index]!, centre, into, section)}:${i}`,
+  const keys = assignFaceKeys(
+    geoms,
+    [],
+    new Map(),
+    (index) => `${featureId}:${holeFaceRole(geoms[index]!, centre, into, section)}:${i}`,
   );
   return { shape, faces: kit.withKeys(geoms, keys) };
 }

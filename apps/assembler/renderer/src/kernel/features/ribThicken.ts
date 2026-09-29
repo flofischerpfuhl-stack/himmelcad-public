@@ -133,7 +133,9 @@ export function applyRib(feature: RibFeature, ctx: ReplayContextLike, kit: Featu
       const mid = scale(add(a, b), 0.5);
       const side = ribSide(kit, solids, mid, across, diagonal, feature.flip);
       if (side === 0) {
-        kit.fail('The rib line does not face the body in the sketch plane; move the line next to the body');
+        kit.fail(
+          'The rib line does not face the body in the sketch plane; move the line next to the body',
+        );
       }
       const w = scale(across, side);
       // The strip: the line extended both ways, swept away from itself towards the body.
@@ -174,7 +176,13 @@ export function applyRib(feature: RibFeature, ctx: ReplayContextLike, kit: Featu
   const holder = holderOf(ribs[0]!);
   for (const next of ribs.slice(1)) kit.combine(holder, next, 'join', feature.id, ctx.featureOrder);
   try {
-    kit.combine(body, { shape: holder.shape, faces: holder.faces }, 'join', feature.id, ctx.featureOrder);
+    kit.combine(
+      body,
+      { shape: holder.shape, faces: holder.faces },
+      'join',
+      feature.id,
+      ctx.featureOrder,
+    );
   } catch (error) {
     if (kit.isFailure(error)) throw error;
     kit.fail(`Rib failed: ${kit.describeError(error)}`);
@@ -227,20 +235,32 @@ export function applyThicken(
     const source = bodyOrFail(kit, ctx, bodyId);
     for (const ref of refs) faces.push(kit.resolveFace(source, ref, ctx.warn).face.clone());
   } else {
-    for (const section of profileSections(kit, ctx, feature.source.profile)) faces.push(section.face);
+    for (const section of profileSections(kit, ctx, feature.source.profile))
+      faces.push(section.face);
   }
   // Offsets of the two sides from the face, along its normal.
   const [low, high] =
-    feature.direction === 'outside' ? [0, t] : feature.direction === 'inside' ? [-t, 0] : [-t / 2, t / 2];
+    feature.direction === 'outside'
+      ? [0, t]
+      : feature.direction === 'inside'
+        ? [-t, 0]
+        : [-t / 2, t / 2];
   const tools = faces.map((face, i) => thickenFace(kit, feature.id, i, face, low, high));
   const holder = holderOf(tools[0]!);
-  for (const next of tools.slice(1)) kit.combine(holder, next, 'join', feature.id, ctx.featureOrder);
+  for (const next of tools.slice(1))
+    kit.combine(holder, next, 'join', feature.id, ctx.featureOrder);
   const tool: Tool = { shape: holder.shape, faces: holder.faces };
 
   const target = feature.operation === 'new' ? null : pickTarget(kit, ctx, feature.targetBodyId);
   if (feature.operation !== 'new' && target) {
     try {
-      kit.combine(target, tool, feature.operation === 'cut' ? 'cut' : 'join', feature.id, ctx.featureOrder);
+      kit.combine(
+        target,
+        tool,
+        feature.operation === 'cut' ? 'cut' : 'join',
+        feature.id,
+        ctx.featureOrder,
+      );
     } catch (error) {
       if (kit.isFailure(error)) throw error;
       kit.fail(`Thicken failed: ${kit.describeError(error)}`);
@@ -273,7 +293,8 @@ function thickenFace(
     // Thicken the upper surface back down (MakeThickSolidBySimple turns
     // positive offsets inside out), trying the other sign for faces whose
     // orientation disagrees.
-    const upper = high > 1e-9 ? (R.makeOffset(face, high) as unknown as { wrapped: RawShape }) : face;
+    const upper =
+      high > 1e-9 ? (R.makeOffset(face, high) as unknown as { wrapped: RawShape }) : face;
     const upperFace = high > 1e-9 ? kit.facesOf(upper)[0] : face;
     if (!upperFace) kit.fail('Thicken failed: the offset surface is empty');
     const span = high - low;

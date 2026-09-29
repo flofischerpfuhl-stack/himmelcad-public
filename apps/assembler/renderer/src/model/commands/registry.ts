@@ -638,7 +638,9 @@ function fuzzyScore(query: string, command: Command): number | null {
   let best: number | null = null;
   for (const field of fields) {
     if (!field) continue;
-    const score = subsequenceScore(query, field);
+    let score = subsequenceScore(query, field);
+    // The command's own name beats an equally good keyword of another command ("hole" -> Hole, not Circle).
+    if (score !== null && field === command.label) score += 0.5;
     if (score !== null && (best === null || score > best)) best = score;
   }
   return best;

@@ -116,7 +116,10 @@ void test('agent API: hole with a selector face, defaults, edit and readable err
     }),
     'featureFailed',
   );
-  assert.match(rejected.message, /Counterbore diameter \(2 mm\) must be larger than the hole \(3 mm\)/);
+  assert.match(
+    rejected.message,
+    /Counterbore diameter \(2 mm\) must be larger than the hole \(3 mm\)/,
+  );
   assert.equal(store.getState().features.length, count);
 });
 
@@ -126,12 +129,17 @@ void test('agent API: fillet by rule, variable radius, chamfer modes, shell and 
     kind: 'fillet',
     params: { radius: 1, rules: [{ kind: 'faceEdges', face: { bodyId, select: '>Z' } }] },
   });
-  const f = await call<{ params: Json; error?: string }>('feature.get', { featureId: byRule.featureId });
+  const f = await call<{ params: Json; error?: string }>('feature.get', {
+    featureId: byRule.featureId,
+  });
   assert.equal(f.error, undefined);
   assert.deepEqual(f.params.edges, [], 'edges default to []');
   const rules = f.params.rules as { kind: string; face: { key: string; signature: unknown } }[];
   assert.equal(rules[0]!.kind, 'faceEdges');
-  assert.ok(rules[0]!.face.key && rules[0]!.face.signature, 'selector resolved to a stable face ref');
+  assert.ok(
+    rules[0]!.face.key && rules[0]!.face.signature,
+    'selector resolved to a stable face ref',
+  );
   await fails(call('feature.create', { kind: 'fillet', params: { radius: 1 } }), 'invalidParams');
   await call('feature.delete', { featureId: byRule.featureId });
 
@@ -145,7 +153,10 @@ void test('agent API: fillet by rule, variable radius, chamfer modes, shell and 
     },
   });
   assert.ok(Math.abs((await volume(bodyId)) - (2000 - 20)) < 1e-6, 'two-distance chamfer');
-  await call('feature.edit', { featureId: chamfer.featureId, params: { mode: 'distanceAngle', angle: 30 } });
+  await call('feature.edit', {
+    featureId: chamfer.featureId,
+    params: { mode: 'distanceAngle', angle: 30 },
+  });
   assert.ok(Math.abs((await volume(bodyId)) - (2000 - 0.5 * Math.tan(Math.PI / 6) * 20)) < 1e-6);
   await call('feature.delete', { featureId: chamfer.featureId });
 
@@ -173,14 +184,20 @@ void test('agent API: fillet by rule, variable radius, chamfer modes, shell and 
     },
   });
   const bodies = await call<{ id: string }[]>('bodies.list');
-  assert.ok(bodies.some((b) => b.id === `body:${cutter.featureId}`), 'tool body kept');
+  assert.ok(
+    bodies.some((b) => b.id === `body:${cutter.featureId}`),
+    'tool body kept',
+  );
 });
 
 void test('agent API: emboss, draft, rib and thicken', async () => {
   const bodyId = await plate(40, 30, 5);
   const label = await call<{ featureId: string }>('feature.create', {
     kind: 'sketch',
-    params: { plane: { kind: 'plane', plane: 'XY', offset: 5 }, profiles: [{ kind: 'rectangle', x: 5, y: 5, width: 10, height: 4 }] },
+    params: {
+      plane: { kind: 'plane', plane: 'XY', offset: 5 },
+      profiles: [{ kind: 'rectangle', x: 5, y: 5, width: 10, height: 4 }],
+    },
   });
   await call('feature.create', {
     kind: 'emboss',
@@ -203,7 +220,10 @@ void test('agent API: emboss, draft, rib and thicken', async () => {
   });
   const drafted = 6000 - 40 * 0.6 - 0.5 * 5 * 5 * Math.tan((5 * Math.PI) / 180) * 30;
   const draftedActual = await volume(bodyId);
-  assert.ok(Math.abs(draftedActual - drafted) < 1e-3, `drafted: expected ${drafted}, got ${draftedActual}`);
+  assert.ok(
+    Math.abs(draftedActual - drafted) < 1e-3,
+    `drafted: expected ${drafted}, got ${draftedActual}`,
+  );
 
   const t = await call<{ featureId: string }>('feature.create', {
     kind: 'thicken',
@@ -217,11 +237,19 @@ void test('agent API: emboss, draft, rib and thicken', async () => {
   // Rib: an upright, then a gusset line in the YZ plane at x = 20.
   const up = await call<{ featureId: string }>('feature.create', {
     kind: 'sketch',
-    params: { plane: { kind: 'plane', plane: 'XY', offset: 5 }, profiles: [{ kind: 'rectangle', x: 0, y: 25, width: 40, height: 5 }] },
+    params: {
+      plane: { kind: 'plane', plane: 'XY', offset: 5 },
+      profiles: [{ kind: 'rectangle', x: 0, y: 25, width: 40, height: 5 }],
+    },
   });
   await call('feature.create', {
     kind: 'extrude',
-    params: { profile: { kind: 'sketch', featureId: up.featureId }, distance: 20, operation: 'join', targetBodyId: bodyId },
+    params: {
+      profile: { kind: 'sketch', featureId: up.featureId },
+      distance: 20,
+      operation: 'join',
+      targetBodyId: bodyId,
+    },
   });
   const ribSketch = await call<{ featureId: string }>('feature.create', {
     kind: 'sketch',
@@ -238,7 +266,12 @@ void test('agent API: emboss, draft, rib and thicken', async () => {
   const before = await volume(bodyId);
   await call('feature.create', {
     kind: 'rib',
-    params: { sketchId: ribSketch.featureId, entityIds: line.lineIds, thickness: 2, targetBodyId: bodyId },
+    params: {
+      sketchId: ribSketch.featureId,
+      entityIds: line.lineIds,
+      thickness: 2,
+      targetBodyId: bodyId,
+    },
   });
   assert.ok(Math.abs((await volume(bodyId)) - (before + 0.5 * 15 * 15 * 2)) < 1e-3, 'gusset');
 });

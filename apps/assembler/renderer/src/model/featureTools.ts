@@ -568,8 +568,17 @@ export function createDraft(kind: FeatureDraftKind, ctx: DraftContext): DraftSta
 
 export type ToolPick =
   | { kind: 'body'; bodyId: string }
-  /** `point`: where the face was clicked (world), when the viewport knows it. */
-  | { kind: 'face'; bodyId: string; faceKey: string; point?: Vec3 }
+  /**
+   * `point`: where the face was clicked (world), when the viewport knows it;
+   * `ray`: the pointer ray (tools that place things on their own plane, e.g. Hole).
+   */
+  | {
+      kind: 'face';
+      bodyId: string;
+      faceKey: string;
+      point?: Vec3;
+      ray?: { origin: Vec3; direction: Vec3 };
+    }
   | { kind: 'edge'; bodyId: string; edgeKey: string }
   | { kind: 'sketchProfile'; featureId: string; regionKey?: string }
   /** A straight sketch line (construction lines included): an axis or direction. */
@@ -1068,10 +1077,10 @@ export function draftBadges(draft: FeatureDraft): DraftBadge[] {
       return [
         {
           ariaLabel: 'Clearance',
-          value: PRINT_CLEARANCES.find((c) => Math.abs(draft.distance + c) < 1e-9)?.toString() ?? '',
+          value:
+            PRINT_CLEARANCES.find((c) => Math.abs(draft.distance + c) < 1e-9)?.toString() ?? '',
           options: PRINT_CLEARANCES.map((c) => ({ value: String(c), label: `−${c}` })),
-          apply: (d, value) =>
-            d.kind === 'offsetFace' ? { ...d, distance: -Number(value) } : d,
+          apply: (d, value) => (d.kind === 'offsetFace' ? { ...d, distance: -Number(value) } : d),
         },
       ];
     default:

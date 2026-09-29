@@ -24,7 +24,8 @@ function checkers(r: Rec, path: string, h: FormatHelpers) {
       if (!isNumber(r[field])) h.fail(`${path}.${field}`, 'expected a number');
     },
     optionalNum(field: string) {
-      if (r[field] !== undefined && !isNumber(r[field])) h.fail(`${path}.${field}`, 'expected a number');
+      if (r[field] !== undefined && !isNumber(r[field]))
+        h.fail(`${path}.${field}`, 'expected a number');
     },
     bool(field: string) {
       if (typeof r[field] !== 'boolean') h.fail(`${path}.${field}`, 'expected a boolean');
@@ -38,7 +39,8 @@ function checkers(r: Rec, path: string, h: FormatHelpers) {
       if (!isString(r[field])) h.fail(`${path}.${field}`, 'expected a string');
     },
     optionalStr(field: string) {
-      if (r[field] !== undefined && !isString(r[field])) h.fail(`${path}.${field}`, 'expected a string');
+      if (r[field] !== undefined && !isString(r[field]))
+        h.fail(`${path}.${field}`, 'expected a string');
     },
     oneOf(field: string, values: readonly string[]) {
       if (!values.includes(r[field] as string)) {
@@ -72,7 +74,8 @@ function profile(v: unknown, p: string, h: FormatHelpers): void {
 function plane(v: unknown, p: string, h: FormatHelpers): void {
   if (!isRecord(v)) h.fail(p, 'expected an object');
   if (v.kind === 'plane') {
-    if (!['XY', 'XZ', 'YZ'].includes(v.plane as string)) h.fail(`${p}.plane`, 'expected XY, XZ or YZ');
+    if (!['XY', 'XZ', 'YZ'].includes(v.plane as string))
+      h.fail(`${p}.plane`, 'expected XY, XZ or YZ');
     if (!isNumber(v.offset)) h.fail(`${p}.offset`, 'expected a number');
   } else if (v.kind === 'face') {
     h.faceRef(v.face, `${p}.face`);

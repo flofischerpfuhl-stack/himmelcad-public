@@ -64,7 +64,8 @@ export function applyEmboss(feature: EmbossFeature, ctx: ReplayContextLike, kit:
     );
   }
   const holder = { id: '', name: '', color: '', createdBy: '', ...tools[0]! };
-  for (const next of tools.slice(1)) kit.combine(holder, next, 'join', feature.id, ctx.featureOrder);
+  for (const next of tools.slice(1))
+    kit.combine(holder, next, 'join', feature.id, ctx.featureOrder);
   try {
     kit.combine(
       body,
@@ -137,7 +138,8 @@ function wrappedTools(
   const sketchFeature = ctx.sketchFeatures.get(ref.featureId);
   const sketch = ctx.sketches.get(ref.featureId);
   const regions = ctx.sketchRegions.get(ref.featureId);
-  if (!sketchFeature || !sketch || !regions) kit.fail(`Missing reference: sketch "${ref.featureId}"`);
+  if (!sketchFeature || !sketch || !regions)
+    kit.fail(`Missing reference: sketch "${ref.featureId}"`);
   if (regions.length === 0) kit.fail(`"${sketchFeature.name}" has no closed profile`);
   const frame = sketch.frame;
   const axis = normalize(cylinder.axis);
@@ -175,13 +177,17 @@ function wrappedTools(
       );
     }
     if (Math.max(Math.abs(extent.minS), Math.abs(extent.maxS)) >= Math.PI * radius * 0.99) {
-      kit.fail('The profile wraps more than halfway around the cylinder from its centre; move it towards the sketch centre line');
+      kit.fail(
+        'The profile wraps more than halfway around the cylinder from its centre; move it towards the sketch centre line',
+      );
     }
     // Outer surface of the tool and radial thickness (overlapping the body by `lead`).
     const outer = depth > 0 ? radius + depth : radius + lead;
     const thickness = depth > 0 ? depth + lead : -depth + lead;
     if (outer - thickness <= MIN_FEATURE_SIZE_MM / 10) {
-      kit.fail(`Engraving ${fmt(-depth)} mm deep would cut through the cylinder (radius ${fmt(radius)} mm)`);
+      kit.fail(
+        `Engraving ${fmt(-depth)} mm deep would cut through the cylinder (radius ${fmt(radius)} mm)`,
+      );
     }
     let shape: Shape3D;
     try {
@@ -232,13 +238,17 @@ function wrappedFace(
   }
   let drawing = loopDrawing(region.outer, unroll);
   for (const hole of region.holes) drawing = drawing.cut(loopDrawing(hole, unroll));
-  const onSurface = drawing.stretch(1 / radius, [1, 0], [0, 0]).translate(Math.PI, 0);
+  // `stretch` is an affinity about an axis: [0, 1] keeps z and scales the arc length s to radians.
+  const onSurface = drawing.stretch(1 / radius, [0, 1], [0, 0]).translate(Math.PI, 0);
   const sketch = onSurface.sketchOnFace(base, 'native') as R.Sketch | R.CompoundSketch;
   return sketch.face();
 }
 
 /** A closed loop as a replicad drawing in unrolled (s, z) coordinates. */
-function loopDrawing(loop: RegionLoop, unroll: (u: number, v: number) => [number, number]): R.Drawing {
+function loopDrawing(
+  loop: RegionLoop,
+  unroll: (u: number, v: number) => [number, number],
+): R.Drawing {
   const map = (p: readonly [number, number]): [number, number] => unroll(p[0], p[1]);
   const [only] = loop.pieces;
   if (loop.pieces.length === 1 && only && only.curve.kind === 'arc' && isFullCircle(only.curve)) {
@@ -252,7 +262,8 @@ function loopDrawing(loop: RegionLoop, unroll: (u: number, v: number) => [number
   for (const piece of loop.pieces) {
     const end = map(piece.end ?? pointAt(piece.curve, 1));
     if (piece.curve.kind === 'line') pen = pen.lineTo(end);
-    else if (piece.curve.kind === 'arc') pen = pen.threePointsArcTo(end, map(pointAt(piece.curve, 0.5)));
+    else if (piece.curve.kind === 'arc')
+      pen = pen.threePointsArcTo(end, map(pointAt(piece.curve, 0.5)));
     else {
       // Unknown curve kinds (future sketch curves): a fine polyline through the curve.
       for (let i = 1; i < 32; i += 1) pen = pen.lineTo(map(pointAt(piece.curve, i / 32)));

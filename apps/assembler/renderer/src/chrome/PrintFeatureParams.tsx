@@ -80,7 +80,13 @@ function RefRow({
   );
 }
 
-function HoleParams({ feature, state }: { feature: HoleFeature; state: AssemblerState }): JSX.Element {
+function HoleParams({
+  feature,
+  state,
+}: {
+  feature: HoleFeature;
+  state: AssemblerState;
+}): JSX.Element {
   const edit = useEdit(state, feature.id);
   const setType = (holeType: HoleFeature['holeType']) => {
     const size = feature.thread ?? 'M3';
@@ -196,7 +202,10 @@ function HoleParams({ feature, state }: { feature: HoleFeature; state: Assembler
           value={feature.thread ?? ''}
           options={[
             { value: '', label: 'None' },
-            ...METRIC_HOLE_SIZES.map((s) => ({ value: s.thread, label: `${s.thread} (label only)` })),
+            ...METRIC_HOLE_SIZES.map((s) => ({
+              value: s.thread,
+              label: `${s.thread} (label only)`,
+            })),
           ]}
           onChange={(event) => edit({ thread: event.currentTarget.value || undefined })}
         />
@@ -226,14 +235,21 @@ export function PrintFeatureParams({
             onCommit={(v) => edit({ depth: v })}
           />
           <span className={styles.paramNote}>
-            {feature.face.signature.surface === 'cylinder' ? 'Wrapped around a cylinder' : 'On a planar face'}
+            {feature.face.signature.surface === 'cylinder'
+              ? 'Wrapped around a cylinder'
+              : 'On a planar face'}
           </span>
         </div>
       );
     case 'draft':
       return (
         <div className={styles.params}>
-          <ExpressionField label="Angle" value={feature.angle} unit="°" onCommit={(v) => edit({ angle: v })} />
+          <ExpressionField
+            label="Angle"
+            value={feature.angle}
+            unit="°"
+            onCommit={(v) => edit({ angle: v })}
+          />
           <div>
             <span className={styles.paramLabel}>Pull direction</span>
             <Select
@@ -275,7 +291,9 @@ export function PrintFeatureParams({
               onChange={(event) => edit({ flip: event.currentTarget.value === 'flip' })}
             />
           </div>
-          <span className={styles.paramNote}>{plural(feature.entityIds.length, 'sketch line')}</span>
+          <span className={styles.paramNote}>
+            {plural(feature.entityIds.length, 'sketch line')}
+          </span>
         </div>
       );
     case 'thicken':
@@ -326,8 +344,7 @@ export function BlendParams({
   const edit = useEdit(state, feature.id);
   const rules = feature.rules ?? [];
   const total = feature.edges.length + rules.length;
-  const removeEdge = (key: string) =>
-    edit({ edges: feature.edges.filter((e) => e.key !== key) });
+  const removeEdge = (key: string) => edit({ edges: feature.edges.filter((e) => e.key !== key) });
   const removeRule = (index: number) => {
     const next = rules.filter((_, i) => i !== index);
     edit({ rules: next.length > 0 ? next : undefined });
@@ -361,7 +378,8 @@ export function BlendParams({
               ]}
               onChange={(event) =>
                 edit({
-                  radius2: event.currentTarget.value === 'variable' ? feature.radius * 2 : undefined,
+                  radius2:
+                    event.currentTarget.value === 'variable' ? feature.radius * 2 : undefined,
                 })
               }
             />
@@ -405,7 +423,10 @@ export function BlendParams({
                 const mode = event.currentTarget.value;
                 edit({
                   mode: mode === 'equal' ? undefined : mode,
-                  distance2: mode === 'twoDistances' ? (feature.distance2 ?? feature.distance * 2) : undefined,
+                  distance2:
+                    mode === 'twoDistances'
+                      ? (feature.distance2 ?? feature.distance * 2)
+                      : undefined,
                   angle: mode === 'distanceAngle' ? (feature.angle ?? 45) : undefined,
                 });
               }}
@@ -421,7 +442,9 @@ export function BlendParams({
                   { value: 'first', label: 'Distance 1 on face A' },
                   { value: 'flip', label: 'Distance 1 on face B' },
                 ]}
-                onChange={(event) => edit({ flip: event.currentTarget.value === 'flip' || undefined })}
+                onChange={(event) =>
+                  edit({ flip: event.currentTarget.value === 'flip' || undefined })
+                }
               />
             </div>
           ) : null}
@@ -544,10 +567,14 @@ export function BooleanParams({
             { value: 'consume', label: 'Consumed' },
             { value: 'keep', label: 'Kept' },
           ]}
-          onChange={(event) => edit({ keepTools: event.currentTarget.value === 'keep' || undefined })}
+          onChange={(event) =>
+            edit({ keepTools: event.currentTarget.value === 'keep' || undefined })
+          }
         />
       </div>
-      <span className={styles.paramNote}>{plural(feature.toolBodyIds.length, 'tool body', 'tool bodies')}</span>
+      <span className={styles.paramNote}>
+        {plural(feature.toolBodyIds.length, 'tool body', 'tool bodies')}
+      </span>
     </div>
   );
 }

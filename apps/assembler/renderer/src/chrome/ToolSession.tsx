@@ -48,12 +48,18 @@ function toolMeta(tool: ToolSessionState): ToolMeta {
       };
     case 'feature':
       return draftMeta(tool.draft);
-    case 'edgeBlend':
+    case 'edgeBlend': {
+      const size = tool.blend === 'fillet' ? 'radius' : 'distance';
+      const picked = `${tool.edges.length} ${tool.edges.length === 1 ? 'edge' : 'edges'}`;
       return {
         label: tool.blend === 'fillet' ? 'Fillet' : 'Chamfer',
         shortcut: 'F',
-        prompt: `Drag the arrow or type a ${tool.blend === 'fillet' ? 'radius' : 'distance'}. ${tool.edges.length} ${tool.edges.length === 1 ? 'edge' : 'edges'}; click edges to add or remove.`,
+        prompt:
+          tool.rules && tool.rules.length > 0
+            ? `Drag the arrow or type a ${size}. Edges by rule${tool.edges.length > 0 ? ` + ${picked}` : ''}; click edges to add more.`
+            : `Drag the arrow or type a ${size}. ${picked}; click edges to add or remove.`,
       };
+    }
     case 'shell':
       return {
         label: 'Shell',
@@ -188,9 +194,7 @@ function BlendVariantControls({
           { value: 'twoDistances', label: 'Two distances' },
           { value: 'distanceAngle', label: 'Distance + angle' },
         ]}
-        onChange={(v) =>
-          state.setBlendOptions({ chamferMode: v === 'equal' ? undefined : v })
-        }
+        onChange={(v) => state.setBlendOptions({ chamferMode: v === 'equal' ? undefined : v })}
       />
       {mode === 'twoDistances' ? (
         <PillNumber

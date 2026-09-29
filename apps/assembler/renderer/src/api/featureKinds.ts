@@ -280,7 +280,10 @@ function normalise(
         out.source = { kind: 'faces', faces };
         dedupeByKey(out.source as Json, 'faces');
       } else if (source?.kind === 'profile') {
-        out.source = { kind: 'profile', profile: profileRef(source.profile, 'params.source.profile') };
+        out.source = {
+          kind: 'profile',
+          profile: profileRef(source.profile, 'params.source.profile'),
+        };
       }
       return out;
     }

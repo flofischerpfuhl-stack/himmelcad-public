@@ -18,10 +18,18 @@ import {
   draftHandles,
   type FeatureDraft,
 } from '../../renderer/src/model/featureTools.js';
-import { holePreset, METRIC_HOLE_SIZES, fitDiameter } from '../../renderer/src/model/printFeatures.js';
+import {
+  holePreset,
+  METRIC_HOLE_SIZES,
+  fitDiameter,
+} from '../../renderer/src/model/printFeatures.js';
 import { loadProjectFile, saveProjectFile } from '../../renderer/src/model/project/format.js';
 import { useAssemblerStore, type ToolSession } from '../../renderer/src/model/store.js';
-import { addPolyline, sketchFromLegacyProfiles, type LegacySketchProfile } from '../../renderer/src/sketch/builders.js';
+import {
+  addPolyline,
+  sketchFromLegacyProfiles,
+  type LegacySketchProfile,
+} from '../../renderer/src/sketch/builders.js';
 import { EMPTY_SKETCH } from '../../renderer/src/sketch/types.js';
 import { errorHighlightOf } from '../../renderer/src/viewport/errorHighlight.js';
 import { createNodeKernelAdapter } from '../kernel/nodeKernel.js';
@@ -29,8 +37,19 @@ import { createNodeKernelAdapter } from '../kernel/nodeKernel.js';
 const store = useAssemblerStore;
 store.getState().attachKernel(createNodeKernelAdapter());
 
-function sketch(id: string, plane: SketchFeature['plane'], profiles: LegacySketchProfile[]): SketchFeature {
-  return { id, name: id, suppressed: false, kind: 'sketch', plane, ...sketchFromLegacyProfiles(profiles).sketch };
+function sketch(
+  id: string,
+  plane: SketchFeature['plane'],
+  profiles: LegacySketchProfile[],
+): SketchFeature {
+  return {
+    id,
+    name: id,
+    suppressed: false,
+    kind: 'sketch',
+    plane,
+    ...sketchFromLegacyProfiles(profiles).sketch,
+  };
 }
 
 function box(id: string, x: number, y: number, w: number, d: number, h: number): Feature[] {
@@ -44,7 +63,12 @@ function box(id: string, x: number, y: number, w: number, d: number, h: number):
     symmetric: false,
     operation: 'new',
   };
-  return [sketch(`${id}-s`, { kind: 'plane', plane: 'XY', offset: 0 }, [{ kind: 'rectangle', x, y, width: w, height: d }]), extrude];
+  return [
+    sketch(`${id}-s`, { kind: 'plane', plane: 'XY', offset: 0 }, [
+      { kind: 'rectangle', x, y, width: w, height: d },
+    ]),
+    extrude,
+  ];
 }
 
 async function load(features: Feature[]) {
@@ -65,7 +89,10 @@ function body(id: string) {
   return b;
 }
 
-function selectFace(bodyId: string, predicate: (f: ReturnType<typeof body>['faces'][number]) => boolean) {
+function selectFace(
+  bodyId: string,
+  predicate: (f: ReturnType<typeof body>['faces'][number]) => boolean,
+) {
   const face = body(bodyId).faces.find(predicate);
   assert.ok(face, 'face found');
   store.getState().select({ kind: 'face', bodyId, faceKey: face.key });
@@ -76,12 +103,17 @@ const top = (z: number) => (f: ReturnType<typeof body>['faces'][number]) =>
   f.normal?.[2] === 1 && Math.abs(f.centroid[2] - z) < 1e-6;
 
 void test('metric hole table: sizes only, fits add their allowance', () => {
-  assert.deepEqual(METRIC_HOLE_SIZES.map((s) => s.thread), ['M2', 'M2.5', 'M3', 'M4', 'M5', 'M6', 'M8', 'M10']);
+  assert.deepEqual(
+    METRIC_HOLE_SIZES.map((s) => s.thread),
+    ['M2', 'M2.5', 'M3', 'M4', 'M5', 'M6', 'M8', 'M10'],
+  );
   for (const s of METRIC_HOLE_SIZES) {
     assert.ok(s.tapDrill < Number(s.thread.slice(1)), `${s.thread} tap drill below nominal`);
     assert.ok(s.clearanceFine > Number(s.thread.slice(1)), `${s.thread} clearance above nominal`);
     assert.ok(s.clearanceFine < s.clearanceNormal && s.clearanceNormal < s.clearanceCoarse);
-    assert.ok(s.counterboreDiameter > s.clearanceCoarse && s.countersinkDiameter > s.clearanceCoarse);
+    assert.ok(
+      s.counterboreDiameter > s.clearanceCoarse && s.countersinkDiameter > s.clearanceCoarse,
+    );
   }
   assert.equal(holePreset('M3', 'clearanceNormal', 'simple')?.diameter, 3.4);
   assert.equal(holePreset('M3', 'tapDrill', 'simple')?.diameter, 2.5);
@@ -105,9 +137,11 @@ void test('hole tool: starts on a face, clicks add and remove holes, presets and
 
   // Click two more positions, then click the first again to remove it.
   const click = (x: number, y: number) =>
-    store.getState().updateFeatureDraft((draft, evaluation) =>
-      acceptFacePick(draft, evaluation, face.key, [x, y, 10]),
-    );
+    store
+      .getState()
+      .updateFeatureDraft((draft, evaluation) =>
+        acceptFacePick(draft, evaluation, face.key, [x, y, 10]),
+      );
   click(5, 5);
   click(35, 25);
   t = tool('feature');
@@ -119,7 +153,11 @@ void test('hole tool: starts on a face, clicks add and remove holes, presets and
   // Presets: M4 tap drill, then a printed press fit for a 4 mm pin.
   const badges = () => draftBadges(tool('feature').draft);
   const apply = (label: string, value: string) =>
-    store.getState().updateFeatureDraft((d, ev) => badges().find((b) => b.ariaLabel === label)!.apply(d, value, ev));
+    store.getState().updateFeatureDraft((d, ev) =>
+      badges()
+        .find((b) => b.ariaLabel === label)!
+        .apply(d, value, ev),
+    );
   apply('Hole size', 'M4');
   apply('Hole fit', 'tapDrill');
   t = tool('feature');
@@ -129,7 +167,11 @@ void test('hole tool: starts on a face, clicks add and remove holes, presets and
   assert.equal(t.draft.kind === 'hole' && t.draft.diameter, 4);
   apply('Hole type', 'counterbore');
   apply('Cosmetic thread', 'on');
-  const diameterChip = draftHandles(tool('feature').draft, store.getState().evaluation, store.getState().features).find((h) => h.id === 'diameter');
+  const diameterChip = draftHandles(
+    tool('feature').draft,
+    store.getState().evaluation,
+    store.getState().features,
+  ).find((h) => h.id === 'diameter');
   assert.ok(diameterChip, 'diameter chip');
   await store.getState().whenSettled();
   assert.equal(tool('feature').previewError, null);
@@ -182,10 +224,27 @@ function acceptFacePick(
 void test('hole tool: from a sketch of points on the face; cancel restores', async () => {
   await load(box('p', 0, 0, 40, 30, 10));
   const face = body('body:p').faces.find(top(10))!;
-  const marks = sketch('m', { kind: 'face', face: { bodyId: 'body:p', key: face.key, signature: { surface: 'plane', normal: [0, 0, 1], centroid: face.centroid, area: face.area, adjacentFaces: 4 } } }, [
-    { kind: 'circle', cx: 8, cy: 8, radius: 1 },
-    { kind: 'circle', cx: 32, cy: 22, radius: 1 },
-  ]);
+  const marks = sketch(
+    'm',
+    {
+      kind: 'face',
+      face: {
+        bodyId: 'body:p',
+        key: face.key,
+        signature: {
+          surface: 'plane',
+          normal: [0, 0, 1],
+          centroid: face.centroid,
+          area: face.area,
+          adjacentFaces: 4,
+        },
+      },
+    },
+    [
+      { kind: 'circle', cx: 8, cy: 8, radius: 1 },
+      { kind: 'circle', cx: 32, cy: 22, radius: 1 },
+    ],
+  );
   await load([...box('p', 0, 0, 40, 30, 10), marks]);
   store.getState().select({ kind: 'feature', featureId: 'm' });
   findCommand('tools.hole')!.run(store.getState());
@@ -202,11 +261,15 @@ void test('hole tool: from a sketch of points on the face; cancel restores', asy
 
 void test('emboss, thicken, draft and rib tools start from the selection and commit', async () => {
   const plate = box('p', 0, 0, 40, 30, 5);
-  const label = sketch('t', { kind: 'plane', plane: 'XY', offset: 5 }, [{ kind: 'rectangle', x: 5, y: 5, width: 10, height: 4 }]);
+  const label = sketch('t', { kind: 'plane', plane: 'XY', offset: 5 }, [
+    { kind: 'rectangle', x: 5, y: 5, width: 10, height: 4 },
+  ]);
   await load([...plate, label]);
   const face = body('body:p').faces.find(top(5))!;
   store.getState().select({ kind: 'sketchProfile', featureId: 't' });
-  store.getState().select({ kind: 'face', bodyId: 'body:p', faceKey: face.key }, { additive: true });
+  store
+    .getState()
+    .select({ kind: 'face', bodyId: 'body:p', faceKey: face.key }, { additive: true });
   const emboss = findCommand('tools.emboss')!;
   assert.equal(emboss.availability(store.getState()).enabled, true);
   emboss.run(store.getState());
@@ -222,7 +285,9 @@ void test('emboss, thicken, draft and rib tools start from the selection and com
   await store.getState().whenSettled();
   store.getState().commit();
   await store.getState().whenSettled();
-  const thick = store.getState().evaluation.bodies.find((b) => b.id.startsWith('body:feature-thicken'));
+  const thick = store
+    .getState()
+    .evaluation.bodies.find((b) => b.id.startsWith('body:feature-thicken'));
   assert.ok(thick, 'thicken body created');
 
   // Draft the side faces of a block (default: 3 degrees about its bottom).
@@ -235,19 +300,41 @@ void test('emboss, thicken, draft and rib tools start from the selection and com
   store.getState().commit();
   await store.getState().whenSettled();
   const t3 = Math.tan((3 * Math.PI) / 180);
-  assert.ok(Math.abs(body('body:b').volume - (2000 - 0.5 * 10 * 10 * t3 * 10)) < 1e-3, 'drafted 3°');
+  assert.ok(
+    Math.abs(body('body:b').volume - (2000 - 0.5 * 10 * 10 * t3 * 10)) < 1e-3,
+    'drafted 3°',
+  );
 
   // Rib from a sketch line selected by its History card.
   const bracket: Feature[] = [
     ...box('p', 0, 0, 40, 30, 5),
-    sketch('u-s', { kind: 'plane', plane: 'XY', offset: 5 }, [{ kind: 'rectangle', x: 0, y: 25, width: 40, height: 5 }]),
-    { id: 'u', name: 'u', suppressed: false, kind: 'extrude', profile: { kind: 'sketch', featureId: 'u-s' }, distance: 30, symmetric: false, operation: 'join', targetBodyId: 'body:p' },
+    sketch('u-s', { kind: 'plane', plane: 'XY', offset: 5 }, [
+      { kind: 'rectangle', x: 0, y: 25, width: 40, height: 5 },
+    ]),
+    {
+      id: 'u',
+      name: 'u',
+      suppressed: false,
+      kind: 'extrude',
+      profile: { kind: 'sketch', featureId: 'u-s' },
+      distance: 30,
+      symmetric: false,
+      operation: 'join',
+      targetBodyId: 'body:p',
+    },
   ];
   const line = addPolyline(EMPTY_SKETCH, [
     [25, 25],
     [5, 5],
   ]);
-  const ribSketch: SketchFeature = { id: 'r-s', name: 'r-s', suppressed: false, kind: 'sketch', plane: { kind: 'plane', plane: 'YZ', offset: 20 }, ...line.sketch };
+  const ribSketch: SketchFeature = {
+    id: 'r-s',
+    name: 'r-s',
+    suppressed: false,
+    kind: 'sketch',
+    plane: { kind: 'plane', plane: 'YZ', offset: 20 },
+    ...line.sketch,
+  };
   await load([...bracket, ribSketch]);
   const plain = body('body:p').volume;
   store.getState().select({ kind: 'feature', featureId: 'r-s' });
@@ -261,7 +348,10 @@ void test('emboss, thicken, draft and rib tools start from the selection and com
 
 void test('fillet tool: variable radius, rules; a failing radius highlights the edge and blocks Done', async () => {
   await load(box('b', 0, 0, 20, 10, 10));
-  const edge = body('body:b').edges.find((e) => e.curve === 'line' && Math.abs(e.midpoint[2] - 10) < 1e-6 && Math.abs(e.midpoint[1]) < 1e-6)!;
+  const edge = body('body:b').edges.find(
+    (e) =>
+      e.curve === 'line' && Math.abs(e.midpoint[2] - 10) < 1e-6 && Math.abs(e.midpoint[1]) < 1e-6,
+  )!;
   store.getState().select({ kind: 'edge', bodyId: 'body:b', edgeKey: edge.key });
   store.getState().beginEdgeBlend('fillet');
   store.getState().setBlendSize(1);
@@ -290,8 +380,20 @@ void test('fillet tool: variable radius, rules; a failing radius highlights the 
   // All concave edges of a body, from the command.
   await load([
     ...box('p', 0, 0, 40, 30, 5),
-    sketch('u-s', { kind: 'plane', plane: 'XY', offset: 5 }, [{ kind: 'rectangle', x: 0, y: 25, width: 40, height: 5 }]),
-    { id: 'u', name: 'u', suppressed: false, kind: 'extrude', profile: { kind: 'sketch', featureId: 'u-s' }, distance: 30, symmetric: false, operation: 'join', targetBodyId: 'body:p' },
+    sketch('u-s', { kind: 'plane', plane: 'XY', offset: 5 }, [
+      { kind: 'rectangle', x: 0, y: 25, width: 40, height: 5 },
+    ]),
+    {
+      id: 'u',
+      name: 'u',
+      suppressed: false,
+      kind: 'extrude',
+      profile: { kind: 'sketch', featureId: 'u-s' },
+      distance: 30,
+      symmetric: false,
+      operation: 'join',
+      targetBodyId: 'body:p',
+    },
   ]);
   store.getState().select({ kind: 'body', bodyId: 'body:p' });
   findCommand('tools.filletConcave')!.run(store.getState());
@@ -334,7 +436,13 @@ void test('shell tool: faces toggle while it runs, outward walls; boolean keeps 
   await store.getState().whenSettled();
   store.getState().commit();
   await store.getState().whenSettled();
-  assert.deepEqual(store.getState().evaluation.bodies.map((x) => x.id).sort(), ['body:a', 'body:t']);
+  assert.deepEqual(
+    store
+      .getState()
+      .evaluation.bodies.map((x) => x.id)
+      .sort(),
+    ['body:a', 'body:t'],
+  );
   const last = store.getState().features.at(-1)!;
   assert.equal(last.kind === 'boolean' && last.keepTools, true);
 });

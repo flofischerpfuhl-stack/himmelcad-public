@@ -46,10 +46,10 @@ export function applyDraft(feature: DraftFeature, ctx: ReplayContextLike, kit: F
       });
     }
     if (r.geom.normal && Math.abs(dot(r.geom.normal, pull)) > 1 - 1e-6) {
-      kit.fail(
-        'A face parallel to the neutral plane cannot be drafted; pick the side faces',
-        { bodyId: body.id, faceKeys: [r.geom.key] },
-      );
+      kit.fail('A face parallel to the neutral plane cannot be drafted; pick the side faces', {
+        bodyId: body.id,
+        faceKeys: [r.geom.key],
+      });
     }
   }
 
