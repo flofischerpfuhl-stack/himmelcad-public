@@ -1,7 +1,9 @@
 # HimmelCAD Assembler – aktueller Umsetzungsvorschlag
 
-Stand: 28. September 2026. **Planungsdokument, keine Implementierungszusage
-oder Behauptung fertiger Funktionen.**
+Stand: Phase 0 in progress (2026-09-29). **Planungsdokument, keine
+Implementierungszusage oder Behauptung fertiger Funktionen.** Die
+Produktgrenze steht jetzt in [ADR 0033](../docs/adr/0033-assembler-product-boundary.md);
+die gepinnte Fork-Basis steht in [FORK-BASE.md](FORK-BASE.md).
 
 **Zuerst [OWNER-INTENT.md](OWNER-INTENT.md) lesen:** Dort stehen Florians
 Originalintention, Bedingungen und Vorschläge mit Originalaussagen und Status.
@@ -294,14 +296,24 @@ Assembler als reservierten Namen. Diese Ablage fügt keine Runtime und keinen
 Produktcode hinzu. Vor Implementierung sind folgende Folgeänderungen gemeinsam
 mit dem betroffenen Architekturstand nachzuführen:
 
-1. Produktbezogene Assembler-Ausnahme zum gemeinsamen Renderer und gegebenenfalls
-   zum Dokumentkern als nachvollziehbare ADR festhalten; bestehende Builder-/PhotoLab-
-   Entscheidungen nicht rückwirkend umschreiben.
-2. Dependency-Policy entsprechend der bereits besprochenen bedingten LGPL-
-   Zulässigkeit aktualisieren. Exakte Komponenten, Versionen, Link-Art,
-   Dritt-Lizenzen, Notices und Quell-/Relinkpflichten dokumentieren.
-3. Assembler-Produktstatus aktualisieren, sobald konkrete Implementierung startet;
-   dieser Auftrag dient zunächst der Ablage des Plans und der Recherche.
+1. **Erledigt (2026-09-29):** Produktbezogene Assembler-Ausnahme zum
+   gemeinsamen Renderer als nachvollziehbare ADR festgehalten:
+   [ADR 0033](../docs/adr/0033-assembler-product-boundary.md). Bestehende
+   Builder-/PhotoLab-Entscheidungen wurden nicht rückwirkend umgeschrieben;
+   ADR 0033 engt ADR 0016/0017/0032 nur für Assembler ein. Der Dokumentkern
+   bleibt keine Voraussetzung (ADR 0033 Abschnitt 3).
+2. **Erledigt (2026-09-29):** Dependency-Policy entsprechend der bedingten
+   LGPL-Zulässigkeit aktualisiert:
+   [docs/DEPENDENCY-POLICY.md](../docs/DEPENDENCY-POLICY.md) Abschnitt
+   „Conditionally allowed: LGPL“. Exakte Komponenten, Versionen, Link-Art,
+   Dritt-Lizenzen, Notices und Quell-/Relinkpflichten sind dort als
+   Bedingungen je Komponente festgehalten; es ist noch keine konkrete
+   LGPL-Komponente zugelassen.
+3. **In Bearbeitung:** Assembler-Produktstatus aktualisiert auf „Phase 0 in
+   progress (2026-09-29)“ in [README.md](README.md) und diesem Dokument;
+   die Fork-Basis ist in [FORK-BASE.md](FORK-BASE.md) gepinnt. Die
+   tatsächliche Implementierung (Fork, CAD-Kernel, UI-Hülle) läuft noch nicht;
+   diese Ablage bleibt zunächst bei Plan, Dokumentation und Recherche.
 
 Dies sind Umsetzungspunkte, keine erneute Genehmigungsanforderung für die bereits
 beauftragte Planung. Offene technische Entscheidungen werden zuerst am

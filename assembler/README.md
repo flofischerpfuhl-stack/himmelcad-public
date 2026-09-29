@@ -3,7 +3,9 @@
 Planungs- und Recherchebereich für ein eigenständiges, agentenfreundliches CAD
 für 3D-Druck mit möglichst Shapr3D-naher Bedienung.
 
-**Stand: 28. September 2026. Dokumentation, noch keine Implementierung.**
+**Stand: Phase 0 in progress (2026-09-29).** Produktgrenze, Lizenzbedingungen
+und Fork-Basis sind festgehalten; es gibt noch keinen CAD-Kernel, nur eine
+geplante Shapr3D-nahe UI-Hülle.
 
 ## Einstieg
 
@@ -11,6 +13,11 @@ für 3D-Druck mit möglichst Shapr3D-naher Bedienung.
   Florians Ziele mit Originalaussagen, getrennt von Vorschlägen und Annahmen.
 - [Aktueller Umsetzungsvorschlag](PLAN.md): Produktumfang, Renderer-Fork, CAD-Unterbau,
   Agent-Schnittstelle, Umsetzungsschritte, Abnahme und Tokenbudget.
+- [ADR 0033](../docs/adr/0033-assembler-product-boundary.md): verbindliche
+  Produktgrenze (eigener Renderer-Fork, eigene CAD-Historie, gemeinsamer
+  Command-Vertrag).
+- [FORK-BASE.md](FORK-BASE.md): gepinnte Commit-Basis und Crate-Liste für den
+  künftigen Renderer-Fork.
 - [Recherchepaket](research/2026-09-28/README.md): Lesereihenfolge,
   Evidenzgrenzen und Medienablage.
 - [Gesamtbericht als Markdown](research/2026-09-28/Report.md) oder

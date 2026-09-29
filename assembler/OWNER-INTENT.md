@@ -83,3 +83,11 @@ exact fork scope, agent API and empirically calibrated token budget. Resolve
 technical choices through evidence within these goals. A change to the owner's
 actual goals or conditions requires explicit owner direction; simply improving
 an implementation proposal does not.
+
+## Owner decision 2026-09-29 — implementation started
+
+The owner started implementation on 2026-09-29, choosing "Phase 0 + UI shell"
+for this session: the documentation follow-ups of PLAN.md §9 (product
+boundary ADR, dependency-policy update, fork-base pin) plus a Shapr3D-like UI
+shell without a CAD kernel. This is a scope choice for the current session,
+not a revision of U1–U11 above.

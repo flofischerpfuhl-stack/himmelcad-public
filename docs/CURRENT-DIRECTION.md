@@ -41,8 +41,21 @@ older priorities.
 
 ## Scope freezes
 
-Himmel:CAD ChronoGit, Assembler, and TestFlight remain reserved names. Do not
-implement their product surfaces without an explicit owner decision.
+Himmel:CAD ChronoGit and TestFlight remain reserved names. Do not implement
+their product surfaces without an explicit owner decision.
+
+## Owner decision 2026-09-29 — Assembler starts as Phase 0 plus a UI shell
+
+Himmel:CAD Assembler (a local desktop CAD for 3D-printable parts, Shapr3D-like
+in function, UI and interaction) is no longer a reserved name. Product
+boundary and license conditions: ADR 0033 and `docs/DEPENDENCY-POLICY.md`
+"Conditionally allowed: LGPL". Current state: `assembler/README.md`.
+
+Current scope for this session is Phase 0 (product boundary, dependency
+policy, render-core fork base pinned in `assembler/FORK-BASE.md`) plus a
+Shapr3D-like UI shell with no CAD kernel behind it. This does not change
+existing priorities above: Builder remains the flagship product unless the
+owner decides otherwise.
 
 Allowed future-compatible foundations are limited to capabilities already
 needed by active products: stable IDs, immutable objects, journaled commands,

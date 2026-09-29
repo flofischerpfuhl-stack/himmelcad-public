@@ -48,6 +48,8 @@ conflict must be removed rather than documented twice.
 
 - PhotoLab: `photolab/PHOTOLAB-CONCEPT.md` and the focused `docs/photolab-*`
   specifications.
+- Assembler: `assembler/README.md`, `assembler/OWNER-INTENT.md`,
+  `assembler/PLAN.md`, and the product boundary in ADR 0033.
 - Cap: `docs/himmelcap/README.md`.
 - Viewer integration: `packages/@himmelcad/viewer/README.md`.
 - Shared UI integration: `packages/@himmelcad/ui/README.md`.
