@@ -125,7 +125,9 @@ function selectionEquals(a: SelectionItem, b: SelectionItem): boolean {
     case 'edge':
       return b.kind === 'edge' && a.bodyId === b.bodyId && a.edgeKey === b.edgeKey;
     case 'sketchProfile':
-      return b.kind === 'sketchProfile' && a.featureId === b.featureId;
+      return (
+        b.kind === 'sketchProfile' && a.featureId === b.featureId && a.regionKey === b.regionKey
+      );
     case 'feature':
       return false;
   }
@@ -512,34 +514,58 @@ export function buildScene(input: SceneInput): BuiltScene {
 
   // ---- Sketches ---------------------------------------------------------
   for (const sketch of input.sketches) {
-    const selected = isSelected(input.selection, {
-      kind: 'sketchProfile',
-      featureId: sketch.featureId,
-    });
-    const hovered =
-      !selected &&
-      input.hover?.kind === 'sketchProfile' &&
-      input.hover.featureId === sketch.featureId;
-    const color = selected
-      ? input.colors.selection
-      : hovered
-        ? input.colors.hover
-        : input.colors.sketchOutline;
-    const fillColor = selected || hovered ? color : input.colors.sketchOutline;
-    const fillAlphaValue = selected ? 0.18 : hovered ? 0.12 : 0.06;
+    // A whole-sketch selection/hover (no region key) highlights every region.
+    const matches = (item: SelectionItem | null, regionKey: string): boolean =>
+      item?.kind === 'sketchProfile' &&
+      item.featureId === sketch.featureId &&
+      (item.regionKey === undefined || item.regionKey === regionKey);
     const outline = { positions: [] as number[], colors: [] as number[] };
     const fill = { positions: [] as number[], colors: [] as number[] };
-    const hit: number[] = [];
-    for (const profile of sketch.profiles) {
-      const points = profile.outline;
-      for (let i = 0; i < points.length; i += 1) {
-        const a = points[i]!;
-        const b = points[(i + 1) % points.length]!;
-        pushFlatLine(outline, a, b, color, 0.9);
-        // Profiles are convex (rectangle, circle): a fan from the centre fills them.
-        pushFlatTri(fill, profile.center, a, b, fillColor, fillAlphaValue);
-        hit.push(...profile.center, ...a, ...b);
+    // Curves (open ones and construction geometry included) in the plain sketch colour.
+    for (const curve of sketch.curves ?? []) {
+      for (let i = 0; i + 1 < curve.points.length; i += 1) {
+        pushFlatLine(
+          outline,
+          curve.points[i]!,
+          curve.points[i + 1]!,
+          input.colors.sketchOutline,
+          curve.construction ? 0.45 : 0.9,
+        );
       }
+    }
+    for (const profile of sketch.profiles) {
+      const selected = input.selection.some((item) => matches(item, profile.key));
+      const hovered = !selected && matches(input.hover, profile.key);
+      const color = selected
+        ? input.colors.selection
+        : hovered
+          ? input.colors.hover
+          : input.colors.sketchOutline;
+      const fillAlphaValue = selected ? 0.18 : hovered ? 0.12 : 0.06;
+      if (selected || hovered) {
+        for (const loop of [profile.outline, ...profile.holes]) {
+          for (let i = 0; i < loop.length; i += 1) {
+            pushFlatLine(outline, loop[i]!, loop[(i + 1) % loop.length]!, color, 0.95);
+          }
+        }
+      }
+      const tris = profile.triangles;
+      for (let t = 0; t + 8 < tris.length; t += 9) {
+        pushFlatTri(
+          fill,
+          [tris[t]!, tris[t + 1]!, tris[t + 2]!],
+          [tris[t + 3]!, tris[t + 4]!, tris[t + 5]!],
+          [tris[t + 6]!, tris[t + 7]!, tris[t + 8]!],
+          color,
+          fillAlphaValue,
+        );
+      }
+      const id = pickTable.add({
+        kind: 'sketchProfile',
+        featureId: sketch.featureId,
+        regionKey: profile.key,
+      });
+      idBatches.push({ positions: new Float32Array(tris), id, mode: 'triangles' });
     }
     flat.push({
       positions: new Float32Array(outline.positions),
@@ -553,8 +579,6 @@ export function buildScene(input: SceneInput): BuiltScene {
       mode: 'triangles',
       depthTest: true,
     });
-    const id = pickTable.add({ kind: 'sketchProfile', featureId: sketch.featureId });
-    idBatches.push({ positions: new Float32Array(hit), id, mode: 'triangles' });
   }
 
   // ---- Extrude tool arrow handle (drawn on top, no depth test) -------------

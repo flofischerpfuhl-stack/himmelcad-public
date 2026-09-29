@@ -1,0 +1,185 @@
+.root {
+  position: absolute;
+  inset: 0;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.selectTool {
+  cursor: default;
+}
+
+.svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.region {
+  fill: var(--hc-accent-base);
+  fill-opacity: 0.12;
+  fill-rule: evenodd;
+  stroke: none;
+}
+
+.grid {
+  stroke: var(--hc-fg-subtle);
+  stroke-opacity: 0.18;
+  stroke-width: 1;
+}
+
+.gridMajor {
+  stroke-opacity: 0.32;
+}
+
+.axisU {
+  stroke: var(--hc-axis-x);
+  stroke-width: 1.5;
+}
+
+.axisV {
+  stroke: var(--hc-axis-y);
+  stroke-width: 1.5;
+}
+
+.curve {
+  fill: none;
+  stroke: var(--hc-geometry-support);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.determined {
+  stroke: var(--hc-success);
+}
+
+.construction {
+  stroke-dasharray: 7 5;
+  stroke-width: 1.5;
+  stroke-opacity: 0.85;
+}
+
+.hovered {
+  stroke-width: 3.5;
+}
+
+.selected {
+  stroke: var(--hc-geometry-selection);
+  stroke-width: 3;
+}
+
+.conflict {
+  stroke: var(--hc-geometry-prohibited);
+  stroke-width: 3;
+}
+
+.point {
+  fill: var(--hc-bg-island);
+  stroke: var(--hc-geometry-support);
+  stroke-width: 1.5;
+}
+
+.pointDetermined {
+  stroke: var(--hc-success);
+  fill: var(--hc-success);
+}
+
+.pointSelected {
+  stroke: var(--hc-geometry-selection);
+  fill: var(--hc-geometry-selection);
+}
+
+.preview {
+  fill: none;
+  stroke: var(--hc-geometry-active-preview);
+  stroke-width: 2;
+  stroke-dasharray: 6 4;
+}
+
+.previewPoint {
+  fill: var(--hc-geometry-active-preview);
+}
+
+.highlight {
+  fill: none;
+  stroke: var(--hc-geometry-active-preview);
+  stroke-width: 4;
+  stroke-opacity: 0.8;
+}
+
+.guide {
+  stroke: var(--hc-geometry-active-preview);
+  stroke-width: 1;
+  stroke-dasharray: 3 4;
+}
+
+.snap {
+  fill: var(--hc-geometry-active-preview);
+  stroke: var(--hc-bg-void);
+  stroke-width: 1;
+}
+
+.hint {
+  font-family: var(--hc-font-ui);
+  font-size: 11px;
+  fill: var(--hc-geometry-active-preview);
+  paint-order: stroke;
+  stroke: var(--hc-bg-void);
+  stroke-width: 3px;
+}
+
+.dimLine {
+  fill: none;
+  stroke: var(--hc-fg-muted);
+  stroke-width: 1;
+}
+
+.dimLineConflict {
+  stroke: var(--hc-geometry-prohibited);
+}
+
+.dimLineSelected {
+  stroke: var(--hc-geometry-selection);
+}
+
+.dimHit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 10;
+  pointer-events: stroke;
+  cursor: pointer;
+}
+
+.glyph {
+  pointer-events: all;
+  cursor: pointer;
+}
+
+.glyphBox {
+  fill: var(--hc-bg-chip);
+  stroke: var(--hc-border-default);
+  stroke-width: 1;
+}
+
+.glyphText {
+  font-family: var(--hc-font-ui);
+  font-size: 10px;
+  font-weight: 600;
+  fill: var(--hc-fg-default);
+  text-anchor: middle;
+  dominant-baseline: central;
+}
+
+.glyphSelected .glyphBox {
+  stroke: var(--hc-geometry-selection);
+  stroke-width: 2;
+}
+
+.glyphConflict .glyphBox {
+  stroke: var(--hc-geometry-prohibited);
+  stroke-width: 2;
+}

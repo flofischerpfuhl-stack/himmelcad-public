@@ -12,6 +12,7 @@ import { ToolSession } from './chrome/ToolSession.js';
 import { TopBar } from './chrome/TopBar.js';
 import { useGlobalKeyboard } from './chrome/useGlobalKeyboard.js';
 import { useAssemblerStore, type SelectionItem } from './model/store.js';
+import { SketchChrome } from './sketch/ui/SketchChrome.js';
 import { Viewport } from './viewport/Viewport.js';
 import styles from './App.module.css';
 
@@ -62,6 +63,7 @@ export function App(): JSX.Element {
         <HistoryPanel state={state} onContextMenu={openContextMenuAt} />
       ) : null}
       <ToolSession state={state} />
+      <SketchChrome />
       {state.viewState.sectionEnabled ? <SectionControls state={state} /> : null}
       <StatusStrip state={state} />
 

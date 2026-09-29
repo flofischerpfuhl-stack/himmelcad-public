@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import { useProjectStore } from '../../../renderer/src/model/project/projectStore.js';
 import { useAssemblerStore } from '../../../renderer/src/model/store.js';
+import { sketchFromLegacyProfiles } from '../../../renderer/src/sketch/builders.js';
 
 // These tests exercise the dirty-flag state machine only (New/confirm/cancel
 // transitions and the features-change subscription); Open/Save/Export go
@@ -29,7 +30,8 @@ void test('a feature-history change marks the project dirty', () => {
         suppressed: false,
         kind: 'sketch',
         plane: { kind: 'plane', plane: 'XY', offset: 0 },
-        profiles: [{ kind: 'rectangle', x: 0, y: 0, width: 10, height: 10 }],
+        ...sketchFromLegacyProfiles([{ kind: 'rectangle', x: 0, y: 0, width: 10, height: 10 }])
+          .sketch,
       },
     ],
     { projectName: 'Edited' },
@@ -53,7 +55,7 @@ void test('requestNew proceeds immediately when clean, but asks for confirmation
         suppressed: false,
         kind: 'sketch',
         plane: { kind: 'plane', plane: 'XY', offset: 0 },
-        profiles: [{ kind: 'circle', cx: 0, cy: 0, radius: 5 }],
+        ...sketchFromLegacyProfiles([{ kind: 'circle', cx: 0, cy: 0, radius: 5 }]).sketch,
       },
     ],
     { projectName: 'Edited again' },
@@ -76,7 +78,8 @@ void test('cancelPending leaves the document and dirty flag untouched', () => {
         suppressed: false,
         kind: 'sketch',
         plane: { kind: 'plane', plane: 'XY', offset: 0 },
-        profiles: [{ kind: 'rectangle', x: 0, y: 0, width: 5, height: 5 }],
+        ...sketchFromLegacyProfiles([{ kind: 'rectangle', x: 0, y: 0, width: 5, height: 5 }])
+          .sketch,
       },
     ],
     { projectName: 'Kept' },
@@ -100,7 +103,8 @@ void test('confirmDiscard proceeds with the pending action and clears dirty', ()
         suppressed: false,
         kind: 'sketch',
         plane: { kind: 'plane', plane: 'XY', offset: 0 },
-        profiles: [{ kind: 'rectangle', x: 0, y: 0, width: 5, height: 5 }],
+        ...sketchFromLegacyProfiles([{ kind: 'rectangle', x: 0, y: 0, width: 5, height: 5 }])
+          .sketch,
       },
     ],
     { projectName: 'ToDiscard' },

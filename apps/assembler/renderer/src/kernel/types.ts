@@ -84,16 +84,29 @@ export interface Body {
   edges: EdgeInfo[];
 }
 
-/** A sketch after evaluation: its frame and the 3D outline of every profile. */
+/**
+ * A sketch after evaluation: its frame, every closed profile (detected
+ * region) and every curve, in world coordinates.
+ */
 export interface EvaluatedSketch {
   featureId: string;
   frame: SketchFrame;
   profiles: {
-    kind: 'rectangle' | 'circle';
-    /** Closed outline in world coordinates (first point not repeated). */
+    /** Stable region key (`sketch/regions.ts`), what extrudes reference. */
+    key: string;
+    /** Closed outer outline in world coordinates (first point not repeated). */
     outline: Vec3[];
+    /** Closed hole outlines. */
+    holes: Vec3[][];
+    /** Triangulated region (holes excluded): flat `x, y, z` triples, 3 vertices per triangle. */
+    triangles: number[];
+    /** A point inside the region (not in a hole). */
     center: Vec3;
+    /** Net area, mm². */
+    area: number;
   }[];
+  /** Every curve (construction included) as a world polyline. */
+  curves: { entityId: string; construction: boolean; points: Vec3[] }[];
 }
 
 export interface EvaluationStats {

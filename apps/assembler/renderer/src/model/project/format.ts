@@ -23,11 +23,17 @@ import {
   type SetAppearanceFeature,
   type ShellFeature,
   type SketchFeature,
-  type SketchProfile,
 } from '../document.js';
+import { migrateSketchesV1ToV2 } from '../../sketch/migration.js';
+import { validateSketchData } from '../../sketch/validation.js';
 
 export const PROJECT_FORMAT_ID = 'himmelcad-assembler';
-export const CURRENT_SCHEMA_VERSION = 1;
+/**
+ * Schema history: 1 = rectangle/circle sketch profiles; 2 = constrained
+ * sketches (entities, constraints, dimensions) and region-keyed extrude
+ * profiles (`sketch/migration.ts` migrates 1 → 2).
+ */
+export const CURRENT_SCHEMA_VERSION = 2;
 
 /** View-only state worth restoring on Open; never affects geometry or undo history. */
 export interface ProjectViewState {
@@ -43,7 +49,8 @@ export interface ProjectViewState {
 
 export interface ProjectFileV1 {
   format: typeof PROJECT_FORMAT_ID;
-  schemaVersion: 1;
+  /** Always the current schema once loaded (older files are migrated). */
+  schemaVersion: typeof CURRENT_SCHEMA_VERSION;
   /** `@himmelcad/assembler` package version that wrote the file, for diagnostics only. */
   appVersion: string;
   /** Always `"mm"` for Phase 1 — the app has no other unit. */
@@ -128,24 +135,6 @@ function validateEdgeRef(v: unknown, path: string): EdgeRef {
   return v as unknown as EdgeRef;
 }
 
-function validateProfile(v: unknown, path: string): SketchProfile {
-  if (!isRecord(v)) fail(path, 'expected an object');
-  const r = v as Record<string, unknown>;
-  if (r.kind === 'rectangle') {
-    for (const field of ['x', 'y', 'width', 'height']) {
-      if (!isNumber(r[field])) fail(`${path}.${field}`, 'expected a number');
-    }
-    return v as unknown as SketchProfile;
-  }
-  if (r.kind === 'circle') {
-    for (const field of ['cx', 'cy', 'radius']) {
-      if (!isNumber(r[field])) fail(`${path}.${field}`, 'expected a number');
-    }
-    return v as unknown as SketchProfile;
-  }
-  fail(`${path}.kind`, `unknown sketch profile kind "${String(r.kind)}"`);
-}
-
 function validateBase(r: Record<string, unknown>, path: string): void {
   if (!isString(r.id) || r.id === '') fail(`${path}.id`, 'expected a non-empty string');
   if (!isString(r.name)) fail(`${path}.name`, 'expected a string');
@@ -172,10 +161,8 @@ function validateFeature(v: unknown, index: number): Feature {
       } else {
         fail(`${path}.plane.kind`, 'expected "plane" or "face"');
       }
-      if (!Array.isArray(r.profiles) || r.profiles.length === 0) {
-        fail(`${path}.profiles`, 'expected a non-empty array');
-      }
-      r.profiles.forEach((p, i) => validateProfile(p, `${path}.profiles[${i}]`));
+      const sketchError = validateSketchData(r);
+      if (sketchError) fail(`${path}.${sketchError.path}`, sketchError.message);
       return r as unknown as SketchFeature;
     }
     case 'extrude': {
@@ -183,6 +170,12 @@ function validateFeature(v: unknown, index: number): Feature {
       if (!isRecord(profile)) fail(`${path}.profile`, 'expected an object');
       if (profile.kind === 'sketch') {
         if (!isString(profile.featureId)) fail(`${path}.profile.featureId`, 'expected a string');
+        if (
+          profile.regions !== undefined &&
+          (!Array.isArray(profile.regions) || !profile.regions.every(isString))
+        ) {
+          fail(`${path}.profile.regions`, 'expected an array of region keys');
+        }
       } else if (profile.kind === 'face') {
         validateFaceRef(profile.face, `${path}.profile.face`);
       } else {
@@ -281,7 +274,7 @@ function validateV1Body(raw: Record<string, unknown>): ProjectFileV1 {
   }
   return {
     format: PROJECT_FORMAT_ID,
-    schemaVersion: 1,
+    schemaVersion: CURRENT_SCHEMA_VERSION,
     appVersion: raw.appVersion,
     units: 'mm',
     projectName: raw.projectName,
@@ -296,9 +289,11 @@ function validateV1Body(raw: Record<string, unknown>): ProjectFileV1 {
 
 type Migration = (body: Record<string, unknown>) => Record<string, unknown>;
 
-/** One entry per schema version this app can read; `n` migrates a v`n` body to v`n+1`. Only v1 exists so far (identity). */
+/** One entry per schema version this app can read; `n` migrates a v`n` body to v`n+1`. */
 const MIGRATIONS: Record<number, Migration> = {
-  1: (body) => body, // no-op: v1 is both the oldest and the current schema.
+  // v1 -> v2: rectangle/circle profiles become constrained sketches; extrude
+  // profile indices become region keys; index-based face keys are renamed.
+  1: (body) => ({ ...body, features: migrateSketchesV1ToV2(body.features) }),
 };
 
 /**

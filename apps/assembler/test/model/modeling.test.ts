@@ -105,7 +105,7 @@ void test('measure: body size and volume, hole diameter, arc radius, edge length
   assert.equal(
     measureSelection(result, [
       { kind: 'face', bodyId: PLATE, faceKey: 'feature-extrude-1:start:0' },
-      { kind: 'face', bodyId: PLATE, faceKey: 'feature-extrude-2:side:0:0' },
+      { kind: 'face', bodyId: PLATE, faceKey: 'feature-extrude-2:side:0:l1' },
     ]),
     'Distance: faces are not parallel',
   );

@@ -14,6 +14,7 @@ import { Menu, MenuItem } from '@himmelcad/ui';
 import { findCommand } from '../model/commands/registry.js';
 import { consumedSketchIds, isSketchVisible } from '../model/modeling.js';
 import type { AssemblerState, SelectionItem } from '../model/store.js';
+import { useSketchStore } from '../sketch/session.js';
 import panelStyles from './Panel.module.css';
 import styles from './ItemsPanel.module.css';
 
@@ -218,6 +219,7 @@ function SketchRow({ row, state, selected, onSelect, onContextMenu }: RowProps):
     <div
       className={`${styles.row} ${selected ? styles.rowSelected : ''} ${visible ? '' : styles.rowHidden}`}
       onClick={(event) => onSelect(event)}
+      onDoubleClick={() => useSketchStore.getState().begin({ featureId })}
       onMouseEnter={() => state.setHover(row.item)}
       onMouseLeave={() => state.setHover(null)}
       onContextMenu={(event) => {

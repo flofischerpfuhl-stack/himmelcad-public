@@ -9,6 +9,9 @@ import {
 } from '../../renderer/src/model/document.js';
 import type { Body, EvaluationResult } from '../../renderer/src/kernel/types.js';
 import { edgeSignatureOf, faceSignatureOf } from '../../renderer/src/kernel/naming.js';
+import { addRectangle } from '../../renderer/src/sketch/builders.js';
+import { EMPTY_SKETCH } from '../../renderer/src/sketch/types.js';
+import { circle, rect, sketchFeature } from '../sketch/fixtures.js';
 import { loadNodeKernel } from './nodeKernel.js';
 
 const PLATE = 'body:feature-extrude-1';
@@ -22,12 +25,13 @@ function bracketVolume(plateWidth: number): number {
   return plate + upright + fillet - hole;
 }
 
+/** The plate sketch with another width (same entity ids, as the solver would leave it). */
 function withSketch1Width(features: Feature[], width: number): Feature[] {
   return features.map((f) =>
     f.id === 'feature-sketch-1' && f.kind === 'sketch'
       ? ({
           ...f,
-          profiles: [{ kind: 'rectangle', x: 0, y: 0, width, height: 50 }],
+          ...addRectangle(EMPTY_SKETCH, [0, 0], [width, 50], { position: true, size: true }).sketch,
         } as SketchFeature)
       : f,
   );
@@ -73,7 +77,7 @@ void test('demo bracket evaluates to one valid B-rep body matching the hand calc
   const round = bracket.faces.find((f) => f.key === 'feature-fillet-3:round:0');
   assert.equal(round?.surface, 'cylinder');
   assert.ok(Math.abs(round.area - (Math.PI * 4 * 80) / 2) < 1e-3, `fillet area ${round.area}`);
-  const hole = bracket.faces.find((f) => f.key === 'feature-extrude-5:side:0:0');
+  const hole = bracket.faces.find((f) => f.key === 'feature-extrude-5:side:0:c1');
   assert.equal(hole?.surface, 'cylinder');
   assert.ok(Math.abs(hole.area - 2 * Math.PI * 3 * 6) < 1e-3, `hole area ${hole.area}`);
   // Keys are unique within the body.
@@ -143,7 +147,7 @@ void test('stable references: editing the base-plate sketch width keeps the fill
   assert.ok(round.centroid[2] > 6 && round.centroid[2] < 10, `fillet centroid z ${round.centroid}`);
   assert.deepEqual(roundFaceEdgesTouch(before)?.key, roundFaceEdgesTouch(after)?.key);
   // The hole sketched on the plate's top face followed the face through the edit.
-  assert.ok(bracket.faces.some((f) => f.key === 'feature-extrude-5:side:0:0'));
+  assert.ok(bracket.faces.some((f) => f.key === 'feature-extrude-5:side:0:c1'));
 });
 
 void test('stable references: removing the referenced face yields a Missing reference error, not a re-bind', async () => {
@@ -214,24 +218,19 @@ void test('face push/pull keeps the face identity; chamfer, shell, move and bool
   assert.ok(grown.faces.some((f) => f.key === 'feature-chamfer-11:chamfer:0'));
   assert.equal(grown.valid, true);
 
+  const boxSketch = sketchFeature('feature-sketch-1', [rect(0, 0, 20, 20), circle(40, 10, 5)]);
   const box: Feature[] = [
-    {
-      id: 'feature-sketch-1',
-      name: 'Sketch 1',
-      suppressed: false,
-      kind: 'sketch',
-      plane: { kind: 'plane', plane: 'XY', offset: 0 },
-      profiles: [
-        { kind: 'rectangle', x: 0, y: 0, width: 20, height: 20 },
-        { kind: 'circle', cx: 40, cy: 10, radius: 5 },
-      ],
-    },
+    boxSketch.feature,
     {
       id: 'feature-extrude-2',
       name: 'Extrude 1',
       suppressed: false,
       kind: 'extrude',
-      profile: { kind: 'sketch', featureId: 'feature-sketch-1', profileIndex: 0 },
+      profile: {
+        kind: 'sketch',
+        featureId: 'feature-sketch-1',
+        regions: [boxSketch.regionKeys[0]!],
+      },
       distance: 20,
       symmetric: false,
       operation: 'new',
@@ -241,7 +240,11 @@ void test('face push/pull keeps the face identity; chamfer, shell, move and bool
       name: 'Extrude 2',
       suppressed: false,
       kind: 'extrude',
-      profile: { kind: 'sketch', featureId: 'feature-sketch-1', profileIndex: 1 },
+      profile: {
+        kind: 'sketch',
+        featureId: 'feature-sketch-1',
+        regions: [boxSketch.regionKeys[1]!],
+      },
       distance: 10,
       symmetric: true,
       operation: 'new',

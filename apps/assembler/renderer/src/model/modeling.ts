@@ -32,14 +32,13 @@ const PLANE_TOLERANCE_MM = 1e-4;
 export function findSketchContact(
   evaluation: EvaluationResult,
   sketchFeatureId: string,
-  profileIndex?: number,
+  regions?: readonly string[],
 ): SketchContact | null {
   const sketch = evaluation.sketches.find((s) => s.featureId === sketchFeatureId);
   if (!sketch) return null;
-  const profiles =
-    profileIndex !== undefined
-      ? sketch.profiles.slice(profileIndex, profileIndex + 1)
-      : sketch.profiles;
+  const profiles = regions
+    ? sketch.profiles.filter((p) => regions.includes(p.key))
+    : sketch.profiles;
   const samples: Vec3[] = [];
   for (const profile of profiles) {
     samples.push(profile.center);
