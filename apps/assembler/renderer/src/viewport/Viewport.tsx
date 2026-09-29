@@ -24,17 +24,42 @@ import {
 import { setViewportProbe } from './automation.js';
 import { findAnchorPixel } from './automation.js';
 import {
+  BOX_FILTER_LABEL,
+  BOX_FILTERS,
+  boxFilterForKey,
+  boxModeFor,
+  mergeSelection,
+  nextBoxFilter,
+  normalizeRect,
+  type BoxFilter,
+} from './boxSelect.js';
+import {
   DEFAULT_POSE,
   fitPose,
+  isOrthographic,
   lerpPose,
   orbit as orbitPose,
   pan as panPose,
+  poseFromDirection,
   presetPose,
+  rollBy,
   viewProjectionMatrix,
+  withFov,
   zoomTowards,
   type CameraPose,
   type CameraPresetName,
 } from './camera.js';
+import { cameraTargetBounds, faceFrameBounds } from './cameraTargets.js';
+import { navigationPreset, resolveDrag } from './navigation.js';
+import { PickCandidatesPopup } from './PickCandidatesPopup.js';
+import type { PickCandidate } from './pickCandidates.js';
+import { SelectionBox } from './SelectionBox.js';
+import { SelectThroughChip } from './SelectThroughChip.js';
+import { boxSelectionIn, candidatesAt, type ViewportQueryContext } from './viewportQueries.js';
+import { isAmbiguous } from './pickCandidates.js';
+import { usePreferences } from '../model/preferences.js';
+import { setCameraPoseProbe, useWorkspaceStore, type CameraCommand } from '../model/workspace.js';
+import { displayBodyName, useItemsStore } from '../model/items.js';
 import { DimensionLabel } from './DimensionLabel.js';
 import { ViewportRenderer } from './gl.js';
 import {
@@ -279,7 +304,9 @@ type DragMode =
       turned: number;
       start: number;
     }
-  | { kind: 'pivot' };
+  | { kind: 'pivot' }
+  /** Left drag from empty canvas: box selection (Shift adds). */
+  | { kind: 'box'; additive: boolean };
 
 interface PointerGesture {
   button: number;
@@ -289,6 +316,57 @@ interface PointerGesture {
   lastY: number;
   moved: boolean;
   mode: DragMode;
+  pointerType: string;
+}
+
+/** Live box-selection rectangle (host-relative CSS px). */
+interface BoxState {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+  filter: BoxFilter;
+}
+
+/** Touch gesture: one finger orbits (long-press: menu, long-press + drag: box), two fingers pan and pinch-zoom. */
+interface TouchGesture {
+  mode: 'pending' | 'orbit' | 'pinch' | 'longPress' | 'box' | 'done';
+  startX: number;
+  startY: number;
+  lastX: number;
+  lastY: number;
+  timer: ReturnType<typeof setTimeout> | null;
+  pinch: { cx: number; cy: number; dist: number } | null;
+}
+
+const LONG_PRESS_MS = 500;
+const TOUCH_SLOP_PX = 10;
+/** Pointer radius for overlapping-pick candidates, CSS px (mouse / touch). */
+const PICK_RADIUS_PX = 4;
+const TOUCH_PICK_RADIUS_PX = 12;
+
+function reduceMotion(): boolean {
+  return (
+    typeof window !== 'undefined' &&
+    (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false)
+  );
+}
+
+/** Centroid and spread of the first two touch points. */
+function pinchOf(touches: Map<number, { x: number; y: number }>): {
+  cx: number;
+  cy: number;
+  dist: number;
+} {
+  const [a, b] = [...touches.values()];
+  if (!a || !b) return { cx: 0, cy: 0, dist: 0 };
+  return { cx: (a.x + b.x) / 2, cy: (a.y + b.y) / 2, dist: Math.hypot(a.x - b.x, a.y - b.y) };
+}
+
+/** The pose projection settings ask for (`0` = orthographic). */
+function preferredFov(): number {
+  const prefs = usePreferences.getState();
+  return prefs.projection === 'orthographic' ? 0 : prefs.fov;
 }
 
 type HandleHover =
@@ -342,7 +420,7 @@ export function Viewport(props: ViewportProps): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rendererRef = useRef<ViewportRenderer | null>(null);
   const colorsRef = useRef<ViewportColors | null>(null);
-  const poseRef = useRef<CameraPose>(DEFAULT_POSE);
+  const poseRef = useRef<CameraPose>(withFov(DEFAULT_POSE, preferredFov()));
   const animRef = useRef<{
     from: CameraPose;
     to: CameraPose;
@@ -417,7 +495,11 @@ export function Viewport(props: ViewportProps): JSX.Element {
       ) {
         didInitialFitRef.current = true;
         const aspect = host.clientWidth / Math.max(1, host.clientHeight);
-        poseRef.current = fitPose(stateRef.current.evaluation.bodies, DEFAULT_POSE, aspect);
+        poseRef.current = fitPose(
+          stateRef.current.evaluation.bodies,
+          withFov(DEFAULT_POSE, preferredFov()),
+          aspect,
+        );
       }
       dirtyRef.current = true;
     });
@@ -433,9 +515,40 @@ export function Viewport(props: ViewportProps): JSX.Element {
     if (didInitialFitRef.current || !host || firstBodies.length === 0) return;
     if (host.clientWidth === 0 || host.clientHeight === 0) return;
     didInitialFitRef.current = true;
-    poseRef.current = fitPose(firstBodies, DEFAULT_POSE, host.clientWidth / host.clientHeight);
+    poseRef.current = fitPose(
+      firstBodies,
+      withFov(DEFAULT_POSE, preferredFov()),
+      host.clientWidth / host.clientHeight,
+    );
     dirtyRef.current = true;
   }, [firstBodies]);
+
+  // ---- Camera transitions ---------------------------------------------------
+  /** Moves the camera to `next`: animated (ease-out, 300 ms) unless reduced motion or turned off. */
+  const animateTo = useCallback((next: CameraPose, duration = 300) => {
+    if (reduceMotion() || !usePreferences.getState().animateCamera) {
+      animRef.current = null;
+      poseRef.current = next;
+    } else {
+      animRef.current = { from: poseRef.current, to: next, start: performance.now(), duration };
+    }
+    dirtyRef.current = true;
+  }, []);
+
+  const hostAspect = useCallback((): number => {
+    const host = hostRef.current;
+    return host ? host.clientWidth / Math.max(1, host.clientHeight) : 1;
+  }, []);
+
+  /** Bodies drawn right now (hidden and isolated-away bodies excluded). */
+  const visibleBodies = useCallback((): Body[] => {
+    const s = useAssemblerStore.getState();
+    const hidden = new Set(s.hiddenBodyIds);
+    const isolated = s.isolatedBodyIds ? new Set(s.isolatedBodyIds) : null;
+    return sceneModel(s).bodies.filter(
+      (b) => !hidden.has(b.id) && (!isolated || isolated.has(b.id)),
+    );
+  }, []);
 
   // ---- Camera preset requests ----------------------------------------------
   const lastCameraNonce = useRef<number | null>(null);
@@ -443,23 +556,100 @@ export function Viewport(props: ViewportProps): JSX.Element {
     const request = state.viewState.cameraRequest;
     if (!request || request.nonce === lastCameraNonce.current) return;
     lastCameraNonce.current = request.nonce;
-    const host = hostRef.current;
-    const aspect = host ? host.clientWidth / Math.max(1, host.clientHeight) : 1;
     const current = poseRef.current;
     const next =
       request.preset === 'fit'
-        ? fitPose(state.evaluation.bodies, current, aspect)
+        ? fitPose(visibleBodies(), current, hostAspect())
         : presetPose(request.preset, current);
-    const reduceMotion =
-      typeof window !== 'undefined' &&
-      window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-    if (reduceMotion) {
-      poseRef.current = next;
-    } else {
-      animRef.current = { from: current, to: next, start: performance.now(), duration: 300 };
-    }
+    animateTo(next);
+  }, [state.viewState.cameraRequest, animateTo, visibleBodies, hostAspect]);
+
+  // ---- Workspace camera commands (home, fit selection, cube edges/corners, roll, saved views, look at face)
+  const cameraCommand = useWorkspaceStore((s) => s.cameraCommand);
+  const lastWorkspaceCameraNonce = useRef<number | null>(null);
+  const applyCameraCommand = useCallback(
+    (command: CameraCommand) => {
+      const current = poseRef.current;
+      const aspect = hostAspect();
+      const s = useAssemblerStore.getState();
+      let next: CameraPose | null = null;
+      switch (command.kind) {
+        case 'home':
+          next = fitPose(visibleBodies(), presetPose('iso', current), aspect);
+          break;
+        case 'fitAll':
+          next = fitPose(visibleBodies(), current, aspect);
+          break;
+        case 'fitSelection': {
+          const bounds = cameraTargetBounds(sceneModel(s), s.selection);
+          next = fitPose(bounds.length > 0 ? bounds : visibleBodies(), current, aspect);
+          break;
+        }
+        case 'direction':
+          next = poseFromDirection(command.direction, current);
+          break;
+        case 'roll':
+          next = rollBy(current, command.degrees);
+          break;
+        case 'pose':
+          // A saved view keeps its framing; the projection stays the one chosen in Settings.
+          next = withFov({ ...command.pose }, current.fov ?? preferredFov());
+          break;
+        case 'lookAtFace': {
+          const body = sceneModel(s).bodies.find((b) => b.id === command.bodyId);
+          const face = body ? findFace(body, command.faceKey) : undefined;
+          if (!body || !face) return;
+          const oriented = face.normal ? poseFromDirection(face.normal, current) : current;
+          const bounds = faceFrameBounds(body, face.key);
+          next = bounds ? fitPose([bounds], oriented, aspect) : oriented;
+          break;
+        }
+      }
+      if (next) animateTo(next);
+    },
+    [animateTo, visibleBodies, hostAspect],
+  );
+  useEffect(() => {
+    if (!cameraCommand || cameraCommand.nonce === lastWorkspaceCameraNonce.current) return;
+    lastWorkspaceCameraNonce.current = cameraCommand.nonce;
+    applyCameraCommand(cameraCommand.command);
+  }, [cameraCommand, applyCameraCommand]);
+
+  // ---- Projection / field of view / theme / pointer settings --------------------------------
+  const projection = usePreferences((p) => p.projection);
+  const fovSetting = usePreferences((p) => p.fov);
+  const theme = usePreferences((p) => p.theme);
+  useEffect(() => {
+    const fov = projection === 'orthographic' ? 0 : fovSetting;
+    if ((poseRef.current.fov ?? 45) === fov) return;
+    animRef.current = null;
+    poseRef.current = withFov(poseRef.current, fov);
     dirtyRef.current = true;
-  }, [state.viewState.cameraRequest, state.evaluation.bodies]);
+  }, [projection, fovSetting]);
+  useEffect(() => {
+    colorsRef.current = readViewportColors();
+    dirtyRef.current = true;
+  }, [theme]);
+
+  // The live camera, for "Save view".
+  useEffect(() => {
+    setCameraPoseProbe(() => poseRef.current);
+    return () => setCameraPoseProbe(null);
+  }, []);
+
+  const selectThrough = useWorkspaceStore((s) => s.selectThrough);
+  const [box, setBox] = useState<BoxState | null>(null);
+  const boxRef = useRef<BoxState | null>(null);
+  boxRef.current = box;
+  const [popup, setPopup] = useState<{ x: number; y: number; candidates: PickCandidate[] } | null>(
+    null,
+  );
+  /** Last pointer type seen: touch enlarges pick tolerances and edge hit ribbons. */
+  const coarseRef = useRef(
+    typeof window !== 'undefined' && (window.matchMedia?.('(pointer: coarse)').matches ?? false),
+  );
+  const touchesRef = useRef(new Map<number, { x: number; y: number }>());
+  const touchRef = useRef<TouchGesture | null>(null);
 
   const activeTool = state.activeTool;
   const model = useMemo(() => sceneModel(state), [state]);
@@ -575,6 +765,7 @@ export function Viewport(props: ViewportProps): JSX.Element {
               pickable: !pivotDragging,
             }
           : null,
+        hitScale: coarseRef.current ? 2 : 1,
       });
       renderer.render(built.frame);
       renderer.renderPicking(built.frame.viewProj, built.idBatches, built.frame.clip);
@@ -709,20 +900,328 @@ export function Viewport(props: ViewportProps): JSX.Element {
     [extrudeAnchor, moveAnchor, pickAt, rayAtClient],
   );
 
+  // ---- Selection helpers (box, overlapping picks) ------------------------------
+  const queryContext = useCallback((): ViewportQueryContext | null => {
+    const renderer = rendererRef.current;
+    const host = hostRef.current;
+    const table = lastPickTableRef.current;
+    if (!renderer || !host || !table) return null;
+    return {
+      renderer,
+      table,
+      width: host.clientWidth,
+      height: host.clientHeight,
+      dpr: sizeRef.current.dpr,
+      pose: poseRef.current,
+      bodies: visibleBodies(),
+      sketches: sceneModel(useAssemblerStore.getState()).sketches,
+    };
+  }, [visibleBodies]);
+
+  const candidateNames = useCallback(() => {
+    const s = useAssemblerStore.getState();
+    const meta = useItemsStore.getState();
+    return {
+      bodyName: (bodyId: string) => {
+        const body = s.evaluation.bodies.find((b) => b.id === bodyId);
+        return body ? displayBodyName(body, meta) : bodyId;
+      },
+      sketchName: (featureId: string) =>
+        s.features.find((f) => f.id === featureId)?.name ?? 'Sketch',
+    };
+  }, []);
+
+  const [popupAdditive, setPopupAdditive] = useState(false);
+
+  /** A click (mouse/pen button 0, or a touch tap) in the viewport. */
+  const handleClick = useCallback(
+    (clientX: number, clientY: number, additive: boolean, touch: boolean) => {
+      const now = performance.now();
+      const last = lastClickRef.current;
+      const isDouble =
+        !!last &&
+        now - last.time < DOUBLE_CLICK_MS &&
+        Math.hypot(clientX - last.x, clientY - last.y) < (touch ? 24 : 8);
+      lastClickRef.current = { time: now, x: clientX, y: clientY };
+
+      const store = useAssemblerStore.getState();
+      const tool = store.activeTool;
+      const pick = pickAt(clientX, clientY);
+      if (tool?.kind === 'edgeBlend' || tool?.kind === 'shell' || tool?.kind === 'boolean') {
+        // Adaptive tools: clicking empty space finishes (Shapr3D); edges add/remove.
+        if (!pick) store.commit();
+        else if (pick.kind === 'edge' && tool.kind === 'edgeBlend') {
+          store.toggleBlendEdge(pick.bodyId, pick.edgeKey);
+        }
+        return;
+      }
+      if (tool?.kind === 'feature') {
+        // Clicking empty space finishes (once complete); clicks edit the tool's references.
+        if (!pick) {
+          store.commit();
+          return;
+        }
+        if (pick.kind === 'sketchLine') {
+          store.updateFeatureDraft((draft, evaluation) => acceptPick(draft, pick, evaluation));
+          return;
+        }
+        const item = selectionFromPick(pick, isDouble);
+        if (item && item.kind !== 'feature') {
+          store.updateFeatureDraft((draft, evaluation) => acceptPick(draft, item, evaluation));
+        }
+        return;
+      }
+      const ws = useWorkspaceStore.getState();
+      if (!isDouble && !tool) {
+        // Overlapping geometry (or Select Through): let the user choose.
+        const ctx = queryContext();
+        const host = hostRef.current;
+        if (ctx && host) {
+          const rect = host.getBoundingClientRect();
+          const x = clientX - rect.left;
+          const y = clientY - rect.top;
+          const candidates = candidatesAt(ctx, x, y, {
+            radius: touch ? TOUCH_PICK_RADIUS_PX : PICK_RADIUS_PX,
+            selectThrough: ws.selectThrough,
+            names: candidateNames(),
+          });
+          if (isAmbiguous(candidates, ws.selectThrough)) {
+            setPopupAdditive(additive);
+            setPopup({ x, y, candidates });
+            return;
+          }
+          if (!pick && candidates.length === 1) {
+            store.select(candidates[0]!.item, { additive });
+            return;
+          }
+        }
+      }
+      if (!pick) {
+        if (!additive) store.clearSelection();
+        return;
+      }
+      // Double-clicking a sketch opens it in sketch mode (Shapr3D).
+      if (isDouble && pick.kind === 'sketchProfile') {
+        useSketchStore.getState().begin({ featureId: pick.featureId });
+        return;
+      }
+      const item = selectionFromPick(pick, isDouble);
+      if (!item) return;
+      store.select(item, { additive });
+    },
+    [pickAt, selectionFromPick, queryContext, candidateNames],
+  );
+
+  const contextMenuAt = useCallback(
+    (clientX: number, clientY: number) => {
+      const pick = pickAt(clientX, clientY);
+      props.onContextMenu?.({ clientX, clientY, target: selectionFromPick(pick, false) });
+    },
+    [pickAt, props, selectionFromPick],
+  );
+
+  /** Finishes a box drag: selects what the rectangle encloses (drag right) or touches (drag left). */
+  const finishBox = useCallback(
+    (additive: boolean) => {
+      const current = boxRef.current;
+      setBox(null);
+      if (!current) return;
+      const ctx = queryContext();
+      if (!ctx) return;
+      const rect = normalizeRect(current.x0, current.y0, current.x1, current.y1);
+      const mode = boxModeFor(current.x0, current.x1);
+      const result = boxSelectionIn(
+        ctx,
+        rect,
+        mode,
+        current.filter,
+        useWorkspaceStore.getState().selectThrough,
+      );
+      const store = useAssemblerStore.getState();
+      store.setSelection(mergeSelection(store.selection, result, additive));
+    },
+    [queryContext],
+  );
+
+  const updateBox = useCallback((startX: number, startY: number, x: number, y: number) => {
+    const host = hostRef.current;
+    if (!host) return;
+    const rect = host.getBoundingClientRect();
+    setBox((previous) => ({
+      x0: startX - rect.left,
+      y0: startY - rect.top,
+      x1: x - rect.left,
+      y1: y - rect.top,
+      filter: previous?.filter ?? 'all',
+    }));
+  }, []);
+
+  // While a box is dragged: Tab cycles the filter, A/B/F/E pick one, Escape cancels.
+  const boxActive = box !== null;
+  useEffect(() => {
+    if (!boxActive) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        gestureRef.current = null;
+        if (touchRef.current) touchRef.current.mode = 'done';
+        setBox(null);
+        return;
+      }
+      const current = boxRef.current;
+      if (!current) return;
+      let next: BoxFilter | null = null;
+      if (event.key === 'Tab') next = nextBoxFilter(current.filter, event.shiftKey);
+      else if (!event.ctrlKey && !event.metaKey && !event.altKey) next = boxFilterForKey(event.key);
+      if (!next) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      const filter = next;
+      setBox((b) => (b ? { ...b, filter } : b));
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [boxActive]);
+
+  // ---- Touch: one finger orbits, two fingers pan + pinch-zoom, tap selects (taps add up),
+  // double tap selects the body, long press opens the context menu, long press + drag boxes.
+  const onTouchDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    coarseRef.current = true;
+    hostRef.current?.setPointerCapture(event.pointerId);
+    animRef.current = null;
+    const touches = touchesRef.current;
+    touches.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    const current = touchRef.current;
+    if (touches.size === 1) {
+      const gesture: TouchGesture = {
+        mode: 'pending',
+        startX: event.clientX,
+        startY: event.clientY,
+        lastX: event.clientX,
+        lastY: event.clientY,
+        timer: null,
+        pinch: null,
+      };
+      gesture.timer = setTimeout(() => {
+        if (touchRef.current === gesture && gesture.mode === 'pending') gesture.mode = 'longPress';
+      }, LONG_PRESS_MS);
+      touchRef.current = gesture;
+    } else if (touches.size === 2 && current) {
+      if (current.timer) clearTimeout(current.timer);
+      if (current.mode === 'box') setBox(null);
+      current.mode = 'pinch';
+      current.pinch = pinchOf(touches);
+    }
+  }, []);
+
+  const onTouchMove = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      const touches = touchesRef.current;
+      const gesture = touchRef.current;
+      const host = hostRef.current;
+      if (!touches.has(event.pointerId) || !gesture || !host) return;
+      touches.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      if (gesture.mode === 'pinch' && touches.size >= 2 && gesture.pinch) {
+        const next = pinchOf(touches);
+        const previous = gesture.pinch;
+        poseRef.current = panPose(
+          poseRef.current,
+          next.cx - previous.cx,
+          next.cy - previous.cy,
+          host.clientHeight,
+        );
+        if (previous.dist > 0 && next.dist > 0) {
+          const ray = rayAtClient(next.cx, next.cy);
+          const anchor = ray
+            ? rayPlaneIntersect(ray.origin, ray.direction, poseRef.current.target, [0, 0, 1])
+            : null;
+          poseRef.current = zoomTowards(poseRef.current, previous.dist / next.dist, anchor);
+        }
+        gesture.pinch = next;
+        dirtyRef.current = true;
+        return;
+      }
+      if (touches.size !== 1) return;
+      const dx = event.clientX - gesture.lastX;
+      const dy = event.clientY - gesture.lastY;
+      gesture.lastX = event.clientX;
+      gesture.lastY = event.clientY;
+      const moved =
+        Math.hypot(event.clientX - gesture.startX, event.clientY - gesture.startY) > TOUCH_SLOP_PX;
+      if (gesture.mode === 'pending' && moved) {
+        if (gesture.timer) clearTimeout(gesture.timer);
+        gesture.mode = 'orbit';
+      } else if (gesture.mode === 'longPress' && moved) {
+        gesture.mode = 'box';
+      }
+      if (gesture.mode === 'orbit') {
+        poseRef.current = orbitPose(poseRef.current, dx, dy);
+        dirtyRef.current = true;
+      } else if (gesture.mode === 'box') {
+        updateBox(gesture.startX, gesture.startY, event.clientX, event.clientY);
+      }
+    },
+    [rayAtClient, updateBox],
+  );
+
+  const onTouchUp = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>, cancelled: boolean) => {
+      const touches = touchesRef.current;
+      touches.delete(event.pointerId);
+      const gesture = touchRef.current;
+      if (!gesture) return;
+      if (touches.size > 0) {
+        // Lifting one of two fingers ends the pinch; the remaining finger does nothing.
+        if (gesture.mode === 'pinch') gesture.mode = 'done';
+        return;
+      }
+      if (gesture.timer) clearTimeout(gesture.timer);
+      touchRef.current = null;
+      if (cancelled) {
+        setBox(null);
+        return;
+      }
+      if (gesture.mode === 'pending') handleClick(event.clientX, event.clientY, true, true);
+      else if (gesture.mode === 'longPress') contextMenuAt(event.clientX, event.clientY);
+      else if (gesture.mode === 'box') finishBox(true);
+    },
+    [contextMenuAt, finishBox, handleClick],
+  );
+
   // ---- Pointer handlers -----------------------------------------------------
   const onPointerDown = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
       const host = hostRef.current;
       if (!host) return;
+      if (popup) setPopup(null);
+      if (event.pointerType === 'touch') {
+        onTouchDown(event);
+        return;
+      }
+      coarseRef.current = false;
       host.setPointerCapture(event.pointerId);
       animRef.current = null;
 
+      const preset = navigationPreset(usePreferences.getState().navigationPreset);
+      const action = resolveDrag(preset, event.button, {
+        shift: event.shiftKey,
+        ctrl: event.ctrlKey || event.metaKey,
+        alt: event.altKey,
+      });
       let mode: DragMode = { kind: 'none' };
-      if (event.button === 2 && !event.shiftKey) mode = { kind: 'orbit' };
-      else if (event.button === 1 || (event.button === 2 && event.shiftKey)) mode = { kind: 'pan' };
+      if (action === 'orbit') mode = { kind: 'orbit' };
+      else if (action === 'pan') mode = { kind: 'pan' };
       else if (event.button === 0) {
         const handleHit = findHandleHit(event.clientX, event.clientY);
         if (handleHit) mode = handleHit;
+        else if (
+          !useAssemblerStore.getState().activeTool &&
+          pickAt(event.clientX, event.clientY) === null
+        ) {
+          // Dragging from empty canvas draws a selection box.
+          mode = { kind: 'box', additive: event.shiftKey };
+        }
       }
       gestureRef.current = {
         button: event.button,
@@ -732,14 +1231,19 @@ export function Viewport(props: ViewportProps): JSX.Element {
         lastY: event.clientY,
         moved: false,
         mode,
+        pointerType: event.pointerType,
       };
       if (mode.kind === 'pivot') dirtyRef.current = true;
     },
-    [findHandleHit],
+    [findHandleHit, pickAt, onTouchDown, popup],
   );
 
   const onPointerMove = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
+      if (event.pointerType === 'touch') {
+        onTouchMove(event);
+        return;
+      }
       const store = useAssemblerStore.getState();
       const gesture = gestureRef.current;
       if (!gesture) {
@@ -797,7 +1301,9 @@ export function Viewport(props: ViewportProps): JSX.Element {
       const host = hostRef.current;
       const height = host?.clientHeight ?? 800;
       const mode = gesture.mode;
-      if (mode.kind === 'orbit') {
+      if (mode.kind === 'box') {
+        updateBox(gesture.startX, gesture.startY, event.clientX, event.clientY);
+      } else if (mode.kind === 'orbit') {
         poseRef.current = orbitPose(poseRef.current, dx, dy);
         dirtyRef.current = true;
       } else if (mode.kind === 'pan') {
@@ -867,79 +1373,40 @@ export function Viewport(props: ViewportProps): JSX.Element {
         }
       }
     },
-    [pickAt, rayAtClient, selectionFromPick],
+    [pickAt, rayAtClient, selectionFromPick, onTouchMove, updateBox],
   );
 
   const onPointerUp = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
+      if (event.pointerType === 'touch') {
+        onTouchUp(event, false);
+        return;
+      }
       const gesture = gestureRef.current;
       gestureRef.current = null;
       if (!gesture) return;
       if (gesture.mode.kind === 'pivot') dirtyRef.current = true; // gizmo handles come back
 
-      if (gesture.moved) return; // a real drag never selects/opens the context menu
+      if (gesture.mode.kind === 'box') {
+        if (gesture.moved) {
+          finishBox(gesture.mode.additive);
+          return;
+        }
+        setBox(null);
+      } else if (gesture.moved) {
+        return; // a real drag never selects/opens the context menu
+      }
 
       if (gesture.button === 2) {
-        const pick = pickAt(event.clientX, event.clientY);
-        props.onContextMenu?.({
-          clientX: event.clientX,
-          clientY: event.clientY,
-          target: selectionFromPick(pick, false),
-        });
+        contextMenuAt(event.clientX, event.clientY);
         return;
       }
       if (gesture.button !== 0) return;
-      if (gesture.mode.kind !== 'none') return; // a handle click without a drag
+      if (gesture.mode.kind !== 'none' && gesture.mode.kind !== 'box') return; // a handle click
 
-      const now = performance.now();
-      const last = lastClickRef.current;
-      const isDouble =
-        !!last &&
-        now - last.time < DOUBLE_CLICK_MS &&
-        Math.hypot(event.clientX - last.x, event.clientY - last.y) < 8;
-      lastClickRef.current = { time: now, x: event.clientX, y: event.clientY };
-
-      const store = useAssemblerStore.getState();
-      const tool = store.activeTool;
-      const pick = pickAt(event.clientX, event.clientY);
-      if (tool?.kind === 'edgeBlend' || tool?.kind === 'shell' || tool?.kind === 'boolean') {
-        // Adaptive tools: clicking empty space finishes (Shapr3D); edges add/remove.
-        if (!pick) store.commit();
-        else if (pick.kind === 'edge' && tool.kind === 'edgeBlend') {
-          store.toggleBlendEdge(pick.bodyId, pick.edgeKey);
-        }
-        return;
-      }
-      if (tool?.kind === 'feature') {
-        // Clicking empty space finishes (once complete); clicks edit the tool's references.
-        if (!pick) {
-          store.commit();
-          return;
-        }
-        if (pick.kind === 'sketchLine') {
-          store.updateFeatureDraft((draft, evaluation) => acceptPick(draft, pick, evaluation));
-          return;
-        }
-        const item = selectionFromPick(pick, isDouble);
-        if (item && item.kind !== 'feature') {
-          store.updateFeatureDraft((draft, evaluation) => acceptPick(draft, item, evaluation));
-        }
-        return;
-      }
-      if (!pick) {
-        store.clearSelection();
-        return;
-      }
-      // Double-clicking a sketch opens it in sketch mode (Shapr3D).
-      if (isDouble && pick.kind === 'sketchProfile') {
-        useSketchStore.getState().begin({ featureId: pick.featureId });
-        return;
-      }
-      const item = selectionFromPick(pick, isDouble);
-      if (!item) return;
-      store.select(item, { additive: event.shiftKey });
+      handleClick(event.clientX, event.clientY, event.shiftKey, false);
     },
-    [pickAt, props, selectionFromPick],
+    [contextMenuAt, finishBox, handleClick, onTouchUp],
   );
 
   const onWheel = useCallback(
@@ -956,9 +1423,47 @@ export function Viewport(props: ViewportProps): JSX.Element {
     [rayAtClient],
   );
 
-  const onCubePreset = useCallback((preset: CameraPresetName | 'iso') => {
+  const onCubePreset = useCallback((preset: CameraPresetName) => {
     stateRef.current.requestCamera(preset);
   }, []);
+  const sendCamera = useCallback(
+    (command: CameraCommand) => useWorkspaceStore.getState().sendCamera(command),
+    [],
+  );
+  const onPopupHover = useCallback(
+    (candidate: PickCandidate | null) =>
+      useAssemblerStore.getState().setHover(candidate ? candidate.item : null),
+    [],
+  );
+  const onPopupClose = useCallback(() => setPopup(null), []);
+
+  // Space over a face (or with one face selected): look straight at it and frame it (Shapr3D).
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== ' ' || event.ctrlKey || event.metaKey || event.altKey || event.repeat) {
+        return;
+      }
+      const target = event.target;
+      if (
+        target instanceof HTMLElement &&
+        (target.isContentEditable ||
+          ['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON', 'A'].includes(target.tagName) ||
+          target.closest('[role="menu"],[role="dialog"]'))
+      ) {
+        return;
+      }
+      if (useSketchStore.getState().session) return;
+      const s = useAssemblerStore.getState();
+      if (s.activeTool?.phase === 'numericEditing') return;
+      const only = s.selection.length === 1 ? s.selection[0] : undefined;
+      const face = s.hover?.kind === 'face' ? s.hover : only?.kind === 'face' ? only : null;
+      if (!face || face.kind !== 'face') return;
+      event.preventDefault();
+      applyCameraCommand({ kind: 'lookAtFace', bodyId: face.bodyId, faceKey: face.faceKey });
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [applyCameraCommand]);
 
   const onCubeOrbitDrag = useCallback((dxPixels: number, dyPixels: number) => {
     animRef.current = null;
@@ -1120,8 +1625,13 @@ export function Viewport(props: ViewportProps): JSX.Element {
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
-      onPointerCancel={() => {
+      onPointerCancel={(event) => {
+        if (event.pointerType === 'touch') {
+          onTouchUp(event, true);
+          return;
+        }
         gestureRef.current = null;
+        setBox(null);
       }}
       onWheel={onWheel}
       onContextMenu={(event) => event.preventDefault()}
@@ -1133,11 +1643,58 @@ export function Viewport(props: ViewportProps): JSX.Element {
         aria-label="3D modeling viewport"
       />
       <ViewCube
-        yawRadians={poseRef.current.yaw}
-        pitchRadians={poseRef.current.pitch}
+        pose={poseRef.current}
         onPreset={onCubePreset}
+        onDirection={(direction) => sendCamera({ kind: 'direction', direction })}
+        onHome={() => sendCamera({ kind: 'home' })}
+        onFit={() => sendCamera({ kind: 'fitAll' })}
+        onRoll={(degrees) => sendCamera({ kind: 'roll', degrees })}
         onOrbitDrag={onCubeOrbitDrag}
+        orthographic={isOrthographic(poseRef.current)}
+        onToggleProjection={() => {
+          const prefs = usePreferences.getState();
+          prefs.setPreference(
+            'projection',
+            prefs.projection === 'orthographic' ? 'perspective' : 'orthographic',
+          );
+        }}
+        onSaveView={() => useWorkspaceStore.getState().saveCurrentView()}
       />
+      {selectThrough ? (
+        <SelectThroughChip onTurnOff={() => useWorkspaceStore.getState().setSelectThrough(false)} />
+      ) : null}
+      {box ? (
+        <SelectionBox
+          x0={box.x0}
+          y0={box.y0}
+          x1={box.x1}
+          y1={box.y1}
+          mode={boxModeFor(box.x0, box.x1)}
+          filterLabel={BOX_FILTER_LABEL[box.filter]}
+          filters={BOX_FILTERS.map((f) => ({
+            label:
+              f === 'all' ? 'All' : f === 'bodies' ? 'Bodies' : f === 'faces' ? 'Faces' : 'Edges',
+            key: f === 'all' ? 'A' : f[0]!.toUpperCase(),
+            active: f === box.filter,
+          }))}
+          hint="Tab cycles"
+        />
+      ) : null}
+      {popup ? (
+        <PickCandidatesPopup
+          x={popup.x}
+          y={popup.y}
+          hostWidth={hostRef.current?.clientWidth ?? 0}
+          hostHeight={hostRef.current?.clientHeight ?? 0}
+          candidates={popup.candidates}
+          onHover={onPopupHover}
+          onChoose={(candidate) => {
+            useAssemblerStore.getState().select(candidate.item, { additive: popupAdditive });
+            setPopup(null);
+          }}
+          onClose={onPopupClose}
+        />
+      ) : null}
       {sketch.session ? <SketchOverlay api={sketch.api} tick={tick} /> : null}
       {overlay?.handleChips.map(({ handle, screen }) => {
         if (!screen) return null;

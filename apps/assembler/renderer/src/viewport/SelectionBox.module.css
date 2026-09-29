@@ -1,0 +1,71 @@
+.box {
+  position: absolute;
+  pointer-events: none;
+  z-index: var(--hc-z-sticky);
+  box-sizing: border-box;
+}
+
+/*
+ * Left → right: only fully enclosed geometry — solid accent outline.
+ * Right → left: everything touched — dashed selection-orange outline.
+ * No translucent washes (design system); the outline style carries the meaning,
+ * the strip below repeats it in words.
+ */
+.window {
+  border: 1.5px solid var(--hc-accent-base);
+}
+
+.crossing {
+  border: 1.5px dashed var(--hc-geometry-selection);
+}
+
+.strip {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 6px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 4px;
+  white-space: nowrap;
+  background: var(--hc-bg-island);
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-md);
+  box-shadow: var(--hc-shadow-popover);
+  font-family: var(--hc-font-ui);
+  font-size: 11px;
+  color: var(--hc-fg-muted);
+}
+
+.mode {
+  padding: 0 4px;
+  font-weight: 600;
+  color: var(--hc-fg-default);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border-radius: var(--hc-radius-sm);
+  border: 1px solid transparent;
+}
+
+.chipActive {
+  color: var(--hc-fg-strong);
+  border-color: var(--hc-accent-base);
+  background: var(--hc-press-bg);
+}
+
+.key {
+  font-family: var(--hc-font-mono);
+  font-size: 10px;
+  color: var(--hc-fg-subtle);
+}
+
+.hint {
+  padding: 0 4px;
+  color: var(--hc-fg-subtle);
+}

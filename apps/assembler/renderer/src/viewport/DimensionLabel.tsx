@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 
 import { registerEscapeRung } from '@himmelcad/ui';
 
+import { usePreferences } from '../model/preferences.js';
 import { parseExpression } from './expr.js';
 import styles from './DimensionLabel.module.css';
 
@@ -57,7 +58,11 @@ export function DimensionLabel(props: DimensionLabelProps): JSX.Element {
   const closingRef = useRef(false);
   const lastRequest = useRef<number | null>(props.editRequest?.nonce ?? null);
   const { onBeginEdit } = props;
-  const unit = props.unit ?? 'mm';
+  // Settings › Display units: length values show (and are typed) in inches; stored in mm.
+  const displayUnits = usePreferences((p) => p.units);
+  const inches = (props.unit ?? 'mm') === 'mm' && displayUnits === 'in' && !props.onCommitText;
+  const unit: 'mm' | '°' | '' | 'in' = inches ? 'in' : (props.unit ?? 'mm');
+  const shown = inches ? props.value / MM_PER_INCH : props.value;
 
   useEffect(() => {
     const request = props.editRequest;
@@ -78,7 +83,7 @@ export function DimensionLabel(props: DimensionLabelProps): JSX.Element {
   }, [editing, selectAll]);
 
   const beginEdit = () => {
-    setText(props.editText ?? formatValue(props.value, unit));
+    setText(props.editText ?? formatValue(shown, unit));
     setSelectAll(true);
     setEditing(true);
     props.onBeginEdit();
@@ -88,8 +93,14 @@ export function DimensionLabel(props: DimensionLabelProps): JSX.Element {
     if (props.onCommitText) {
       if (text.trim() !== '') props.onCommitText(text);
     } else {
-      const parsed = parseExpression(text.replace(/\s*(mm|°|deg)\s*$/i, ''));
-      if (parsed !== null && Number.isFinite(parsed)) props.onCommit(parsed);
+      // An explicit "mm" or "in"/'"' suffix wins; bare numbers are in the display unit.
+      const explicitMm = /mm\s*$/i.test(text);
+      const explicitIn = /(in|")\s*$/i.test(text);
+      const parsed = parseExpression(text.replace(/\s*(mm|in|"|°|deg)\s*$/i, ''));
+      if (parsed !== null && Number.isFinite(parsed)) {
+        const toMm = (inches && !explicitMm) || (explicitIn && unit !== '°');
+        props.onCommit(toMm ? parsed * MM_PER_INCH : parsed);
+      }
     }
     setEditing(false);
     props.onCancelEdit();
@@ -119,7 +130,8 @@ export function DimensionLabel(props: DimensionLabelProps): JSX.Element {
   // click meant for the label/input.
   const stopPointer = (event: React.PointerEvent | React.MouseEvent) => event.stopPropagation();
   const prefix = props.prefix ? `${props.prefix} ` : '';
-  const unitName = unit === '°' ? 'degrees' : unit === '' ? '' : 'millimeters';
+  const unitName =
+    unit === '°' ? 'degrees' : unit === '' ? '' : unit === 'in' ? 'inches' : 'millimeters';
 
   if (!editing) {
     return (
@@ -129,9 +141,9 @@ export function DimensionLabel(props: DimensionLabelProps): JSX.Element {
         style={{ left: props.x, top: props.y }}
         onClick={beginEdit}
         onPointerDown={stopPointer}
-        aria-label={`${props.label}: ${props.display ?? `${formatValue(props.value, '')}${unitName ? ` ${unitName}` : ''}`}, click to edit`}
+        aria-label={`${props.label}: ${props.display ?? `${formatValue(shown, '')}${unitName ? ` ${unitName}` : ''}`}, click to edit`}
       >
-        {props.display ?? `${prefix}${formatValue(props.value, unit)}`}
+        {props.display ?? `${prefix}${formatValue(shown, unit)}`}
       </button>
     );
   }
@@ -174,8 +186,11 @@ export function DimensionLabel(props: DimensionLabelProps): JSX.Element {
   );
 }
 
-function formatValue(value: number, unit: 'mm' | '°' | ''): string {
-  const rounded = Math.round(value * 100) / 100;
+const MM_PER_INCH = 25.4;
+
+function formatValue(value: number, unit: 'mm' | '°' | '' | 'in'): string {
+  const scale = unit === 'in' ? 1000 : 100;
+  const rounded = Math.round(value * scale) / scale;
   if (unit === '°') return `${rounded}°`;
   return unit ? `${rounded} ${unit}` : String(rounded);
 }
