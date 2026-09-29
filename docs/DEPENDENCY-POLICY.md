@@ -26,9 +26,9 @@ or compatible source.
 
 LGPL does not blanket-conflict with BUSL-1.1 distribution or with the
 AGPL-3.0-or-later conversion, so it is not banned outright (owner intent U11
-in `assembler/OWNER-INTENT.md`). No LGPL component is admitted by this
-policy change; a component enters only when every condition below is checked
-and recorded for it by name.
+in `assembler/OWNER-INTENT.md`). This policy admits no LGPL component by
+itself; a component enters only when every condition below is checked and
+recorded for it by name (see the list after condition 7).
 
 1. **Record it precisely, before it ships.** Exact component, version, LGPL
    variant (2.1-only, 2.1-or-later, 3.0, or a variant with a special exception
@@ -57,8 +57,15 @@ and recorded for it by name.
 7. **Enforcement stays per-component, never blanket.** `deny.toml` and
    `scripts/check-licenses.mjs` gain an explicit exception for a concrete
    admitted component (name, version, license variant) when it is actually
-   admitted. Neither file grants a general LGPL allowance. As of this
-   change, no LGPL component is admitted, so neither file needs an edit yet.
+   admitted. Neither file grants a general LGPL allowance.
+
+Admitted so far (each recorded in `LICENSES/THIRD_PARTY.md` "Conditionally
+admitted LGPL components"):
+
+- `replicad-opencascadejs` 1.1.0 (OCCT 8.0.1, LGPL-2.1-only with the Open
+  CASCADE exception), a runtime-loaded WebAssembly module in the Assembler
+  CAD-kernel worker; admitted 2026-09-29 with an exception in
+  `scripts/check-licenses.mjs` (no crate, so `deny.toml` is unchanged).
 
 ## Usually compatible inputs
 

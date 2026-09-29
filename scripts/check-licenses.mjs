@@ -47,6 +47,35 @@ const OVERRIDES = {
   khroma: 'MIT', // https://github.com/fabiospampinato/khroma/blob/master/license
 };
 
+// LGPL components admitted one by one under docs/DEPENDENCY-POLICY.md
+// "Conditionally allowed: LGPL" (condition 7). Never a general LGPL
+// allowance: name, exact version and license expression must all match,
+// and each entry must have its record in LICENSES/THIRD_PARTY.md
+// ("Conditionally admitted LGPL components").
+const ADMITTED_LGPL = [
+  {
+    // OCCT 8.0.1 (+ Open CASCADE exception 1.0) compiled to WebAssembly,
+    // runtime-loaded by the Assembler CAD-kernel worker.
+    name: 'replicad-opencascadejs',
+    version: '1.1.0',
+    license: 'LGPL-2.1-only',
+  },
+];
+
+function isAdmittedLgpl(pkg) {
+  const versions = String(pkg.version ?? '')
+    .split(',')
+    .map((v) => v.trim())
+    .filter(Boolean);
+  return ADMITTED_LGPL.some(
+    (entry) =>
+      entry.name === pkg.name &&
+      entry.license === pkg.license &&
+      versions.length > 0 &&
+      versions.every((v) => v === entry.version),
+  );
+}
+
 function alternatives(expression) {
   return expression
     .replace(/[()]/g, ' ')
@@ -103,6 +132,8 @@ function* pnpmPackages() {
   const out = execFileSync('pnpm', ['licenses', 'list', '--json', '--prod'], {
     encoding: 'utf8',
     maxBuffer: 64 * 1024 * 1024,
+    // pnpm is a .cmd/.ps1 shim on Windows, which execFile cannot spawn directly.
+    shell: process.platform === 'win32',
   });
   for (const [license, pkgs] of Object.entries(JSON.parse(out))) {
     for (const pkg of pkgs) {
@@ -137,7 +168,7 @@ for (const pkg of packages) {
   const key = `${pkg.name}@${pkg.version}`;
   if (seen.has(key)) continue;
   seen.add(key);
-  if (!isAllowed(pkg.license)) violations.push(pkg);
+  if (!isAllowed(pkg.license) && !isAdmittedLgpl(pkg)) violations.push(pkg);
 }
 
 if (violations.length) {

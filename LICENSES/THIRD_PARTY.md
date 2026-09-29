@@ -41,9 +41,69 @@ entry below explicitly says they are used in the product build.
 | `electron-builder`   | `26.15.6`  | MIT     | https://github.com/electron-userland/electron-builder | Reproducible Linux and Windows desktop packaging.                 |
 | `electron-updater`   | `6.8.9`    | MIT     | https://github.com/electron-userland/electron-builder | Update discovery and installation for NSIS and AppImage packages. |
 
+| `replicad` | `1.1.0` | MIT | https://replicad.xyz | Assembler CAD-kernel worker: B-rep modelling API over OCCT (bundled into the worker chunk). Transitives `flatbush` 4.6.2 (ISC), `flatqueue` 3.1.0 (ISC), `opentype.js` 1.3.4 (MIT), `tiny-inflate` 1.0.3 (MIT), `string.prototype.codepointat` 0.2.1 (MIT). |
+
 (The full production Node tree is enumerated by `pnpm licenses list --prod`
 and gated in CI by `node scripts/check-licenses.mjs --pnpm`. The list above
 covers the load-bearing runtime entries.)
+
+## Conditionally admitted LGPL components
+
+Admitted per `docs/DEPENDENCY-POLICY.md` "Conditionally allowed: LGPL",
+conditions 1–7, by name and version only. Anything else under LGPL stays
+excluded.
+
+### `replicad-opencascadejs` 1.1.0 — OCCT 8.0.1 as WebAssembly (Assembler)
+
+Admitted 2026-09-29 for the Assembler Phase 1 CAD-kernel spike
+(`assembler/KERNEL-SPIKE.md`). Recorded from the published package contents
+(npm tarball `replicad-opencascadejs-1.1.0.tgz`, integrity
+`sha512-s0KHR5V+ivsOE4nZXfuoW70lW0/rldkb3ZDY34LpXOQRFLQN5qVydQm3BRo7boZPdFkkAZBERJ+NzB0DYxrivw==`),
+not from memory.
+
+| Field                   | Value                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Component               | npm `replicad-opencascadejs` `1.1.0` (author Steve Genoud; `gitHead` `e4b05f67dc4e2393a876ce8c5064a9c93db05bf1`), a custom opencascade.js build containing only the bindings replicad needs.                                                                                                                                                                                                                                                                                                                                         |
+| Contents                | Open CASCADE Technology **8.0.1** (tag `V8_0_1`, commit `b8f597c677811d1f9f4d8a97f5ae2825c0353a42`) plus opencascade.js bindings (`taucad/opencascade.js` commit `ebd263f15337b440b391492af073662707e86482`, Docker image `ghcr.io/taucad/opencascade.js:canary-ebd263f1-single-threaded`), compiled with Emscripten 5.0.1. The wasm strings report "Open CASCADE 8.0"; the pin comes from opencascade.js `DEPS.json` at that commit.                                                                                                |
+| License variant         | Package: `LGPL-2.1-only` (package.json; `LICENSE` = full LGPL 2.1 text). OCCT itself: LGPL 2.1 **with the Open CASCADE exception version 1.0** (`OCCT_LGPL_EXCEPTION.txt` at `V8_0_1`; the exception only adds permissions). opencascade.js bindings: LGPL-2.1. Emscripten runtime/system libraries inside the wasm: MIT or NCSA (Emscripten), MIT (musl), Apache-2.0 WITH LLVM-exception (libc++/libc++abi). A string scan of the shipped wasm found no FreeType or RapidJSON code (both are optional opencascade.js dependencies). |
+| Shipped files           | Only the single-threaded variant: `dist/replicad_single.wasm` (22,980,267 bytes, SHA-256 `4c9f22e9f3828dca6f3c95405934cdbe624e593c35266f47f392ab337478dbde`, copied unchanged to `assets/replicad_single-<hash>.wasm`) and its Emscripten loader `dist/replicad_single.js` (emitted as its own chunk `assets/replicad_single-<hash>.js`, minified by the app build). The multi-threaded variant is not shipped.                                                                                                                      |
+| Link type               | **Runtime-loaded WebAssembly module in a Web Worker.** No static linking: the Assembler worker dynamically `import()`s the loader chunk and fetches the `.wasm` at runtime (`apps/assembler/renderer/src/kernel/kernel.worker.ts`); Assembler code talks to it only through replicad and the app-owned `KernelAdapter` interface. It is the LGPL "library"; the Assembler bundle is the "work that uses the library".                                                                                                                |
+| Source availability     | Exact build inputs are public: OCCT `V8_0_1`, opencascade.js commit above, replicad build configuration `packages/replicad-opencascadejs/build-source/` at commit `e4b05f67…` (https://github.com/sgenoud/replicad). Himmel:CAD makes **no modifications**. If a release ever ships a modified build, its source and build configuration must be published under LGPL-2.1 with that release (condition 3).                                                                                                                           |
+| How a user replaces it  | Rebuild (build configuration + opencascade.js Docker toolchain) and overwrite the two files `assets/replicad_single-<hash>.wasm` and `assets/replicad_single-<hash>.js` in the installed app, keeping file names; the replacement must export the bindings replicad uses. Packaged-Electron layout (asar vs. unpacked) must keep these two files replaceable — to be checked when Assembler packaging is added.                                                                                                                      |
+| Notices shipped         | `apps/assembler/renderer/public/licenses/` → `licenses/` in the app: `THIRD-PARTY-NOTICES.txt` (prominent OCCT notice required by the exception, component/version/source/replacement text), `LGPL-2.1.txt`, `OCCT-LGPL-EXCEPTION.txt`, and the MIT/ISC texts of replicad and its transitives. Help → About summarizes them.                                                                                                                                                                                                         |
+| Product-terms check (4) | `LICENSE`/`LICENSING.md` contain no clause forbidding modification or reverse engineering of third-party libraries (searched 2026-09-29). Any future EULA must keep the LGPL-2.1 §6 permissions.                                                                                                                                                                                                                                                                                                                                     |
+| License gate            | `scripts/check-licenses.mjs` `ADMITTED_LGPL` entry for exactly `replicad-opencascadejs@1.1.0` / `LGPL-2.1-only`. No Rust crate is involved, so `deny.toml` is unchanged.                                                                                                                                                                                                                                                                                                                                                             |
+
+**AGPL-3.0-or-later compatibility check for an LGPL-2.1-only component
+(condition 6).** _Engineering analysis, not legal advice; confirm with
+counsel before the first AGPL-converted release that ships this component._
+
+1. The Assembler bundle is a "work that uses the Library" (LGPL-2.1 §5).
+   LGPL-2.1 §6 lets such a work be distributed under terms of the
+   distributor's choice if those terms permit modification of the work for
+   the customer's own use and reverse engineering for debugging, and the
+   library can be replaced — §6(b) is met because the library is a separate,
+   runtime-loaded unit (see "Link type"). AGPL-3.0 grants modification and
+   imposes no reverse-engineering ban, so distributing the Assembler code
+   under AGPL-3.0-or-later while the OCCT module stays under LGPL-2.1 raises
+   no conflict: each part keeps its own license.
+2. AGPL-3.0 §1 counts libraries the work is "specifically designed to
+   require" as part of its Corresponding Source. The LGPL permits
+   redistributing the library's source, and the exact sources are public
+   (above), so the AGPL source obligation can be satisfied without
+   relicensing the library.
+3. As a fallback, LGPL-2.1 §3 allows a copy to be converted to the GNU GPL
+   version 2 "or, if you wish, a newer version", i.e. GPL-3.0, which AGPL-3.0
+   §13 allows to be combined with; the FSF lists LGPL-2.1 as GPLv3-compatible
+   on that basis. The Open CASCADE exception only adds permissions and does
+   not restrict either route.
+4. AGPL §13 (network use) applies to the Assembler work, not to the LGPL
+   library; the LGPL does not restrict it.
+
+Conclusion: no conflict found between this LGPL-2.1-only component (with
+the OCCT exception) and a future AGPL-3.0-or-later distribution of
+Assembler, provided the separate-module/replaceability conditions above
+stay true.
 
 ## Development and test Node dependencies
 
@@ -201,7 +261,10 @@ Allowed licenses:
 Forbidden licenses for incorporated product code:
 
 - GPL
-- LGPL, except as a separately loaded external plugin after explicit ADR
+- LGPL, except components admitted by name under
+  `docs/DEPENDENCY-POLICY.md` "Conditionally allowed: LGPL" (currently only
+  `replicad-opencascadejs` 1.1.0, see "Conditionally admitted LGPL
+  components" above)
 - AGPL
 - SSPL
 - unknown/proprietary dependencies without written permission

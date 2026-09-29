@@ -1,0 +1,66 @@
+Himmel:CAD Assembler - third-party notices
+===========================================
+
+Himmel:CAD Assembler's own code is licensed under the Business Source
+License 1.1 (see LICENSE and LICENSING.md of the Himmel:CAD repository).
+The components below keep their own licenses. Their license texts ship in
+this folder.
+
+
+Open CASCADE Technology
+-----------------------
+
+This application makes use of, and is based on facilities provided by, the
+Open CASCADE Technology software (https://dev.opencascade.org).
+
+- Component: Open CASCADE Technology (OCCT) 8.0.1
+  (https://github.com/Open-Cascade-SAS/OCCT, tag V8_0_1,
+  commit b8f597c677811d1f9f4d8a97f5ae2825c0353a42)
+- License: GNU Lesser General Public License version 2.1 with the
+  Open CASCADE exception version 1.0
+  (LGPL-2.1.txt, OCCT-LGPL-EXCEPTION.txt)
+- Compiled to WebAssembly with the opencascade.js bindings
+  (https://github.com/taucad/opencascade.js,
+  commit ebd263f15337b440b391492af073662707e86482, LGPL-2.1) by the npm
+  package replicad-opencascadejs 1.1.0 (LGPL-2.1-only; build configuration
+  https://github.com/sgenoud/replicad/tree/e4b05f67dc4e2393a876ce8c5064a9c93db05bf1/packages/replicad-opencascadejs).
+
+How this library is used, and how to replace it
+-----------------------------------------------
+
+The OCCT/opencascade.js library is not linked into the application code.
+It consists of exactly two files next to the application code:
+
+  assets/replicad_single-<hash>.wasm   (WebAssembly module, unmodified from
+                                        replicad-opencascadejs 1.1.0
+                                        dist/replicad_single.wasm,
+                                        SHA-256 4c9f22e9f3828dca6f3c95405934cdbe
+                                        624e593c35266f47f392ab337478dbde)
+  assets/replicad_single-<hash>.js     (its Emscripten loader, from
+                                        dist/replicad_single.js, minified by
+                                        the application build)
+
+The WebAssembly module also contains the Emscripten 5.0.1 runtime and
+system libraries it was compiled with (Emscripten: MIT or NCSA; musl libc:
+MIT; LLVM libc++/libc++abi: Apache-2.0 WITH LLVM-exception).
+
+Both files are loaded at runtime by the CAD-kernel Web Worker. You may modify
+the library, rebuild it (the build configuration above plus the
+opencascade.js Docker toolchain reproduce it), and replace these two files
+with your build, keeping their file names. A replacement must export the
+same bindings replicad uses. You may reverse-engineer the application to
+the extent needed to debug such modifications. The corresponding source
+code is available from the URLs above; Himmel:CAD makes no modifications to
+it.
+
+
+Other runtime components (bundled into the application code)
+-------------------------------------------------------------
+
+- replicad 1.1.0 - MIT (replicad-MIT.txt) - https://replicad.xyz
+- flatbush 4.6.2 - ISC (flatbush-ISC.txt)
+- flatqueue 3.1.0 - ISC (flatqueue-ISC.txt)
+- opentype.js 1.3.4 - MIT (opentype.js-MIT.txt)
+- tiny-inflate 1.0.3 - MIT (tiny-inflate-MIT.txt)
+- string.prototype.codepointat 0.2.1 - MIT
+  (string.prototype.codepointat-MIT.txt)
