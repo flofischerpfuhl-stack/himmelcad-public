@@ -66,6 +66,9 @@ admitted LGPL components"):
   CASCADE exception), a runtime-loaded WebAssembly module in the Assembler
   CAD-kernel worker; admitted 2026-09-29 with an exception in
   `scripts/check-licenses.mjs` (no crate, so `deny.toml` is unchanged).
+- `@salusoft89/planegcs` 1.2.0 (FreeCAD planeGCS, LGPL-2.0-or-later), a
+  runtime-loaded WebAssembly module + JS chunk in the Assembler sketch-solver
+  worker; admitted 2026-09-29 with an exception in `scripts/check-licenses.mjs`.
 
 ## Usually compatible inputs
 

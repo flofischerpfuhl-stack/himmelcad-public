@@ -86,8 +86,18 @@ const WORKER_CSP =
 // content hash change across builds does not need this list updated.
 const WORKER_CSP_FILE_PREFIXES = ['kernel.worker-', 'replicad_single-'];
 
+// The sketch solver worker (`renderer/src/sketch/solver.worker.ts`) and the
+// LGPL planeGCS glue chunk it imports (`planegcs-<hash>.js`) instantiate
+// WebAssembly but never `eval`: only 'wasm-unsafe-eval', no 'unsafe-eval'.
+const SOLVER_CSP =
+  "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; " +
+  "style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; " +
+  "connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none';";
+const SOLVER_CSP_FILE_PREFIXES = ['solver.worker-', 'planegcs-'];
+
 function cspFor(filePath: string): string {
   const base = filePath.replace(/\\/g, '/').split('/').pop() ?? '';
+  if (SOLVER_CSP_FILE_PREFIXES.some((prefix) => base.startsWith(prefix))) return SOLVER_CSP;
   return WORKER_CSP_FILE_PREFIXES.some((prefix) => base.startsWith(prefix))
     ? WORKER_CSP
     : DOCUMENT_CSP;

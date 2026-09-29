@@ -60,6 +60,14 @@ const ADMITTED_LGPL = [
     version: '1.1.0',
     license: 'LGPL-2.1-only',
   },
+  {
+    // FreeCAD's planeGCS 2D constraint solver compiled to WebAssembly (with
+    // its TypeScript wrapper), runtime-loaded by the Assembler sketch-solver
+    // worker.
+    name: '@salusoft89/planegcs',
+    version: '1.2.0',
+    license: 'LGPL-2.0-or-later',
+  },
 ];
 
 function isAdmittedLgpl(pkg) {

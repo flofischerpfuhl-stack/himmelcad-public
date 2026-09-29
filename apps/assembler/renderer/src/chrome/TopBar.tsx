@@ -263,6 +263,11 @@ function HelpMenu(): JSX.Element {
           Modelling API: replicad (MIT).
         </p>
         <p>
+          Sketch constraints are solved by FreeCAD&apos;s planeGCS (LGPL 2.0 or later), compiled to
+          WebAssembly by @salusoft89/planegcs and loaded at runtime as a separate, replaceable
+          module.
+        </p>
+        <p>
           License texts, source locations and replacement instructions ship with the application in
           <code> licenses/THIRD-PARTY-NOTICES.txt</code>.
         </p>

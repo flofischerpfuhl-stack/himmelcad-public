@@ -19,6 +19,12 @@ const WORKER_CSP =
   "style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; " +
   "connect-src 'self' ws: http://localhost:5175;";
 
+// The sketch solver worker (planeGCS) instantiates WebAssembly but never evals.
+const SOLVER_CSP =
+  "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; " +
+  "style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; " +
+  "connect-src 'self' ws: http://localhost:5175;";
+
 function kernelWorkerCsp(): Plugin {
   return {
     name: 'assembler-kernel-worker-csp',
@@ -27,6 +33,8 @@ function kernelWorkerCsp(): Plugin {
         const url = req.url ?? '';
         if (/kernel\.worker|replicad[-_]opencascadejs|replicad_single/i.test(url)) {
           res.setHeader('Content-Security-Policy', WORKER_CSP);
+        } else if (/solver\.worker|planegcs/i.test(url)) {
+          res.setHeader('Content-Security-Policy', SOLVER_CSP);
         }
         next();
       });
@@ -46,6 +54,14 @@ export default defineConfig({
   // The CAD kernel worker is an ES module worker (see renderer/src/kernel/kernel.worker.ts).
   worker: {
     format: 'es',
+    rollupOptions: {
+      output: {
+        // The LGPL planeGCS glue + wrapper stay one separately replaceable
+        // chunk (`planegcs-<hash>.js`, next to `planegcs-<hash>.wasm`).
+        manualChunks: (id: string) =>
+          id.includes('@salusoft89/planegcs') ? 'planegcs' : undefined,
+      },
+    },
   },
   build: {
     outDir: '../dist/renderer',

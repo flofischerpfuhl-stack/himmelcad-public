@@ -54,6 +54,47 @@ code is available from the URLs above; Himmel:CAD makes no modifications to
 it.
 
 
+FreeCAD planeGCS (sketch constraint solver)
+-------------------------------------------
+
+- Component: planeGCS, the 2D geometric constraint solver of FreeCAD
+  (https://github.com/FreeCAD/FreeCAD/tree/main/src/Mod/Sketcher/App/planegcs),
+  Copyright (c) 2011 Konstantinos Poulios and the FreeCAD contributors.
+- License: GNU Library General Public License version 2 or (at your option)
+  any later version (LGPL-2.0-or-later); the LGPL 2.1 text ships as
+  LGPL-2.1.txt. Its WebAssembly bindings and TypeScript wrapper
+  (Copyright (c) 2023 Miroslav Sery, Jiri Hon, Salusoft89) are under
+  LGPL-2.1-or-later.
+- Compiled to WebAssembly by the npm package @salusoft89/planegcs 1.2.0
+  (https://github.com/Salusoft89/planegcs, commit
+  ee9b156da9827a91a56a888a53520f63d5cffaa6; Docker image
+  emscripten/emsdk:3.1.45 with the distribution's Eigen 3 and Boost headers).
+- The WebAssembly module also contains header-only code of Eigen 3
+  (MPL-2.0; its ordering methods adapt LGPL-2.1-or-later CSparse code,
+  MPL-2.0.txt), Boost.Graph/Boost smart pointers (BSL-1.0, BSL-1.0.txt) and
+  the Emscripten runtime (MIT or NCSA; musl libc: MIT; LLVM libc++/libc++abi:
+  Apache-2.0 WITH LLVM-exception).
+
+This library is not linked into the application code either. It consists of
+two files loaded at runtime by the sketch-solver Web Worker:
+
+  assets/planegcs-<hash>.wasm   (unmodified from @salusoft89/planegcs 1.2.0
+                                 dist/planegcs_dist/planegcs.wasm,
+                                 SHA-256 039601df53b11cd06d0f8626cd2e9422
+                                 b07aca31b18db9ba437b7d26cf5594c5)
+  assets/planegcs-<hash>.js     (its Emscripten loader and the package's
+                                 TypeScript wrapper, minified by the
+                                 application build)
+
+You may modify the library, rebuild it (`npm run build:all` in the
+repository above) and replace these two files with your build, keeping
+their file names; the replacement must keep the package's JavaScript API
+(init_planegcs_module, GcsWrapper). You may reverse-engineer the
+application to the extent needed to debug such modifications. The
+corresponding source code is available from the URLs above; Himmel:CAD
+makes no modifications to it.
+
+
 Other runtime components (bundled into the application code)
 -------------------------------------------------------------
 
