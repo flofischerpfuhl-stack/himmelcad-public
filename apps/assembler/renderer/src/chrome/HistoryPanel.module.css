@@ -132,6 +132,118 @@
   padding: 2px 4px;
 }
 
+/* Below the rollback marker: not evaluated. */
+.cardRolledBack .cardHeader {
+  opacity: 0.45;
+}
+
+.cardRolledBack .name {
+  font-style: italic;
+}
+
+.headerButtonActive {
+  color: var(--hc-accent-base);
+  background: var(--hc-press-bg);
+}
+
+.dropZone {
+  position: relative;
+}
+
+.dropBefore::before,
+.dropAfter::after {
+  content: '';
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--hc-accent-base);
+  z-index: 1;
+}
+
+.dropBefore::before {
+  top: -2px;
+}
+
+.dropAfter::after {
+  bottom: -2px;
+}
+
+.marker {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 22px;
+  margin: 2px 0;
+  padding: 0 var(--hc-space-2);
+  border-radius: var(--hc-radius-sm);
+  cursor: grab;
+  color: var(--hc-fg-subtle);
+  font-family: var(--hc-font-ui);
+  font-size: 11px;
+}
+
+.marker:hover {
+  background: var(--hc-hover-bg);
+}
+
+.markerGrip {
+  flex-shrink: 0;
+}
+
+.markerLine {
+  flex: 1;
+  height: 0;
+  border-top: 2px solid var(--hc-border-strong);
+}
+
+.markerActive {
+  color: var(--hc-warning-fg);
+}
+
+.markerActive .markerLine {
+  flex: 0 0 16px;
+  border-top-color: var(--hc-warning);
+}
+
+.markerLabel {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.markerLabelQuiet {
+  flex-shrink: 0;
+}
+
+.markerButton {
+  flex-shrink: 0;
+  height: 20px;
+  padding: 0 8px;
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-sm);
+  background: var(--hc-bg-island-hi);
+  color: var(--hc-fg-default);
+  font-family: var(--hc-font-ui);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.markerButton:hover {
+  background: var(--hc-hover-bg);
+}
+
+@media (pointer: coarse) {
+  .cardHeader {
+    min-height: 40px;
+  }
+  .marker {
+    min-height: 34px;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .cardHeader {
     transition: none;

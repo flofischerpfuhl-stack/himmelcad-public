@@ -282,6 +282,8 @@ export interface AssemblerState {
   selection: SelectionItem[];
   hover: SelectionItem | null;
   select: (item: SelectionItem, options?: { additive?: boolean }) => void;
+  /** Replaces the whole selection at once (box selection, pick lists). */
+  setSelection: (items: SelectionItem[]) => void;
   toggle: (item: SelectionItem) => void;
   clearSelection: () => void;
   setHover: (item: SelectionItem | null) => void;
@@ -358,6 +360,17 @@ export interface AssemblerState {
   setHistoryDelegate: (delegate: HistoryDelegate | null) => void;
   syncHistory: () => void;
 
+  /**
+   * History rollback marker: the id of the first feature that is rolled back
+   * (not evaluated, greyed in History), or `null` when the whole history is
+   * active. New features are inserted at the marker. View state: not saved,
+   * not undo-tracked; cleared when its feature disappears (then the next
+   * surviving feature takes over), on load and by agent commits.
+   */
+  rollbackBefore: string | null;
+  /** Moves the rollback marker (`null` = roll forward to the end). Ignored while a tool runs. */
+  setRollback: (featureId: string | null) => void;
+
   editFeatureParams: (featureId: string, patch: FeaturePatch) => void;
   setSuppressed: (featureId: string, suppressed: boolean) => void;
   renameFeature: (featureId: string, name: string) => void;
@@ -404,7 +417,12 @@ export interface AssemblerState {
    */
   commitDocumentChange: (
     nextFeatures: Feature[],
-    options?: { selection?: SelectionItem[]; evaluation?: EvaluationResult },
+    options?: {
+      selection?: SelectionItem[];
+      evaluation?: EvaluationResult;
+      /** UI edits (colour, reorder) keep the History rollback marker; agent commits lift it. */
+      keepRollback?: boolean;
+    },
   ) => boolean;
   /** A fresh feature id (`feature-<kind>-<n>`) from the same counter the UI tools use, unique in `features`. */
   allocateFeatureId: (kind: string, reserved?: ReadonlySet<string>) => string;
@@ -672,8 +690,16 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
   let settledWaiters: (() => void)[] = [];
   /** Nested undo scope (a sketch session) while set; see `setHistoryDelegate`. */
   let historyDelegate: HistoryDelegate | null = null;
-  /** The feature array the shown `evaluation` belongs to (restored by `cancelKernelWork`). */
-  let lastEvaluatedFeatures: Feature[] | null = null;
+  /**
+   * The document the shown `evaluation` belongs to (restored by `cancelKernelWork`):
+   * the full feature list and the History rollback marker (the evaluated array itself
+   * is only the slice above the marker, so it must never be committed as the document).
+   */
+  let lastEvaluatedDocument: { features: Feature[]; rollbackBefore: string | null } | null = null;
+  function recordEvaluatedDocument(): void {
+    const { features, rollbackBefore } = get();
+    lastEvaluatedDocument = { features, rollbackBefore };
+  }
   let unsubscribeActivity: (() => void) | null = null;
   let activityTimer: ReturnType<typeof setTimeout> | null = null;
   /** The running job's activity, published to the state only once it runs long. */
@@ -742,18 +768,43 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
     notifySettled();
   }
 
+  /**
+   * `features` up to the rollback marker, identity-stable per (features, marker) so
+   * the result cache also answers a bar moved back to a position seen before. The
+   * kernel's prefix cache keys on feature content and order, so a rolled-back or
+   * reordered list never reuses a checkpoint of another order.
+   */
+  const activeSlices = new WeakMap<Feature[], Map<string, Feature[]>>();
+  function activeFeatures(): Feature[] {
+    const { features, rollbackBefore } = get();
+    if (!rollbackBefore) return features;
+    const index = features.findIndex((f) => f.id === rollbackBefore);
+    if (index < 0) return features;
+    let slices = activeSlices.get(features);
+    if (!slices) {
+      slices = new Map();
+      activeSlices.set(features, slices);
+    }
+    let slice = slices.get(rollbackBefore);
+    if (!slice) {
+      slice = features.slice(0, index);
+      slices.set(rollbackBefore, slice);
+    }
+    return slice;
+  }
+
   /** Requests evaluation of the current `features`. Stale results (older revisions) are dropped. */
   function evaluateDocument(): void {
     documentRevision += 1;
     const revision = documentRevision;
-    const features = get().features;
+    const features = activeFeatures();
     if (documentJob) {
       kernel?.cancel(documentJob.id);
       documentJob = null;
     }
     const cached = resultCache.get(features);
     if (cached) {
-      lastEvaluatedFeatures = features;
+      recordEvaluatedDocument();
       applyEvaluation(cached);
       return;
     }
@@ -766,7 +817,7 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
       documentJob = null;
       if (outcome.kind === 'done') {
         resultCache.set(features, outcome.result);
-        lastEvaluatedFeatures = features;
+        recordEvaluatedDocument();
         applyEvaluation(outcome.result);
       } else if (outcome.kind === 'failed') {
         set({ evaluationPending: false, kernelMessage: outcome.message });
@@ -804,7 +855,7 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
     const job = kernel.evaluate({
       channel: 'preview',
       revision,
-      features: [...get().features, provisional],
+      features: [...activeFeatures(), provisional],
       quality: 'preview',
     });
     previewJob = job;
@@ -884,7 +935,17 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
   }
 
   function setFeatures(nextFeatures: Feature[], extra: Partial<AssemblerState> = {}): void {
-    set({ features: nextFeatures, ...extra });
+    const previous = get();
+    let rollbackBefore = previous.rollbackBefore;
+    if (rollbackBefore && !nextFeatures.some((f) => f.id === rollbackBefore)) {
+      // The marker's feature is gone: the next surviving later feature takes over.
+      const ids = new Set(nextFeatures.map((f) => f.id));
+      const from = previous.features.findIndex((f) => f.id === rollbackBefore);
+      rollbackBefore =
+        (from >= 0 ? previous.features.slice(from + 1).find((f) => ids.has(f.id))?.id : null) ??
+        null;
+    }
+    set({ features: nextFeatures, rollbackBefore, ...extra });
     evaluateDocument();
     notifySettled();
   }
@@ -894,6 +955,21 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
     past = [...past, state.features];
     future = [];
     endPreview();
+    const marker = state.rollbackBefore;
+    const prev = state.features;
+    const markerIndex = marker ? prev.findIndex((f) => f.id === marker) : -1;
+    if (
+      markerIndex >= 0 &&
+      nextFeatures.length > prev.length &&
+      prev.every((f, i) => nextFeatures[i] === f)
+    ) {
+      // Rolled back: appended features go in at the marker, before the rolled-back steps.
+      nextFeatures = [
+        ...prev.slice(0, markerIndex),
+        ...nextFeatures.slice(prev.length),
+        ...prev.slice(markerIndex),
+      ];
+    }
     setFeatures(nextFeatures, {
       ...(selectionOverride ? { selection: selectionOverride } : {}),
       history: { canUndo: true, canRedo: false },
@@ -934,18 +1010,40 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
       }
       kernel.cancel(activity.jobId, { hard: true });
       if (documentJob?.id === activity.jobId) documentJob = null;
-      const restore = lastEvaluatedFeatures;
+      const restore = lastEvaluatedDocument;
       const state = get();
-      if (!historyDelegate && restore && restore !== state.features && !state.activeTool) {
-        const viaUndo = past[past.length - 1] === restore;
-        if (viaUndo) get().undo();
-        else commitFeatures(restore);
-        set({
-          kernelNotice: `Computation cancelled: the last computed state was restored. ${
-            viaUndo ? 'Redo' : 'Undo'
-          } applies the change again.`,
-        });
-        return;
+      if (!historyDelegate && restore && !state.activeTool) {
+        const featuresChanged = restore.features !== state.features;
+        const markerChanged = restore.rollbackBefore !== state.rollbackBefore;
+        if (featuresChanged || markerChanged) {
+          // Restore features and marker together (not via `commitFeatures`, whose
+          // insert-at-marker rule would misplace a restored list while rolled back).
+          const viaUndo = featuresChanged && past[past.length - 1] === restore.features;
+          if (viaUndo) {
+            past = past.slice(0, -1);
+            future = [...future, state.features];
+          } else if (featuresChanged) {
+            past = [...past, state.features];
+            future = [];
+          }
+          const marker =
+            restore.rollbackBefore && restore.features.some((f) => f.id === restore.rollbackBefore)
+              ? restore.rollbackBefore
+              : null;
+          set({
+            features: restore.features,
+            rollbackBefore: marker,
+            history: { canUndo: past.length > 0, canRedo: future.length > 0 },
+            kernelNotice: featuresChanged
+              ? `Computation cancelled: the last computed state was restored. ${
+                  viaUndo ? 'Redo' : 'Undo'
+                } applies the change again.`
+              : 'Computation cancelled: the History rollback bar was moved back.',
+          });
+          evaluateDocument();
+          notifySettled();
+          return;
+        }
       }
       set({
         evaluationPending: false,
@@ -1027,6 +1125,7 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
         return { selection: [...s.selection, item] };
       });
     },
+    setSelection: (items) => set({ selection: [...items] }),
     toggle: (item) =>
       set((s) => {
         const exists = s.selection.some((existing) => selectionKeysEqual(existing, item));
@@ -1423,6 +1522,17 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
       });
     },
 
+    rollbackBefore: null,
+    setRollback: (featureId) => {
+      const state = get();
+      if (state.activeTool) return;
+      const next = featureId && state.features.some((f) => f.id === featureId) ? featureId : null;
+      if (next === state.rollbackBefore) return;
+      set({ rollbackBefore: next });
+      evaluateDocument();
+      notifySettled();
+    },
+
     editFeatureParams: (featureId, patch) => {
       const state = get();
       const next = state.features.map((f) =>
@@ -1526,12 +1636,15 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
         isolatedBodyIds: null,
         sketchVisibility: {},
         evaluation: EMPTY_EVALUATION,
+        rollbackBefore: null,
       });
       setFeatures(features);
     },
 
     commitDocumentChange: (nextFeatures, options) => {
       if (get().activeTool !== null) return false;
+      // Agent commands always act on the full history: a UI rollback marker is lifted first.
+      if (get().rollbackBefore !== null && !options?.keepRollback) set({ rollbackBefore: null });
       if (options?.evaluation) resultCache.set(nextFeatures, options.evaluation);
       commitFeatures(nextFeatures, options?.selection);
       return true;

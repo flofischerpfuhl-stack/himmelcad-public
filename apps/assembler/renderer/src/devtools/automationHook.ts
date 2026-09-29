@@ -10,7 +10,11 @@
  */
 import type { Body, EdgeInfo, EvaluationResult, FaceInfo } from '../kernel/types.js';
 import type { Feature } from '../model/document.js';
+import { useItemsStore } from '../model/items.js';
+import { usePreferences } from '../model/preferences.js';
 import { isPreviewTool, useAssemblerStore } from '../model/store.js';
+import { currentCameraPose, useWorkspaceStore } from '../model/workspace.js';
+import type { CameraPose } from '../viewport/camera.js';
 import { getViewportProbe, type ScreenPoint } from '../viewport/automation.js';
 import type { ToolHandleKind } from '../viewport/picking.js';
 import { sketchAutomation, type SketchAutomation } from './sketchAutomation.js';
@@ -55,6 +59,14 @@ export interface AssemblerAutomation {
   edges(bodyId: string): EdgeListing[];
   /** Resolves once no kernel evaluation/preview is outstanding and that state is drawn. */
   waitForKernelIdle(): Promise<void>;
+  /** Workspace view state: Select Through, saved views, camera commands, overlays. */
+  workspaceStore: typeof useWorkspaceStore;
+  /** Item names and folders. */
+  itemsStore: typeof useItemsStore;
+  /** User preferences (theme, units, navigation preset, projection …). */
+  preferences: typeof usePreferences;
+  /** The live camera pose. */
+  cameraPose(): CameraPose | null;
 }
 
 declare global {
@@ -176,6 +188,10 @@ export function installAutomationHook(store: typeof useAssemblerStore): void {
         length: edge.length,
         radius: edge.radius ?? null,
       })),
+    workspaceStore: useWorkspaceStore,
+    itemsStore: useItemsStore,
+    preferences: usePreferences,
+    cameraPose: () => currentCameraPose(),
     waitForKernelIdle: async () => {
       await store.getState().whenSettled();
       // Let React commit and the viewport draw (and pick-render) the settled state.

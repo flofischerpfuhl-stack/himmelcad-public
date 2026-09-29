@@ -7,6 +7,7 @@ import '@himmelcad/theme/reset.css';
 import './assembler.css';
 
 import { App } from './App.js';
+import { installPreferenceEffects } from './chrome/preferenceEffects.js';
 import { installAutomationBridge } from './api/app/automationStore.js';
 import { installAutomationHook } from './devtools/automationHook.js';
 import { WorkerKernelAdapter } from './kernel/workerAdapter.js';
@@ -18,6 +19,9 @@ import { WorkerSketchSolver } from './sketch/workerSolver.js';
 // Dev-only automation hook for screen recordings (`window.__assembler`, see
 // `devtools/automationHook.ts`). Never present in production builds.
 if (import.meta.env.DEV) installAutomationHook(useAssemblerStore);
+
+// Theme and grid defaults from the user's preferences (Settings dialog).
+installPreferenceEffects();
 
 // OCCT (WebAssembly) runs in its own worker; the UI stays responsive while it loads.
 const kernelAdapter = new WorkerKernelAdapter(

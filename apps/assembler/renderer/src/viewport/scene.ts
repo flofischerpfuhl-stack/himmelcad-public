@@ -8,7 +8,12 @@
 import type { Body, EvaluatedSketch } from '../kernel/types.js';
 import type { Bounds3 } from '../model/modeling.js';
 import type { DisplayMode, SectionAxis, SelectionItem } from '../model/store.js';
-import { FOV_Y_RADIANS, eyeOf, viewProjectionMatrix, type CameraPose } from './camera.js';
+import {
+  billboardEye,
+  viewProjectionMatrix,
+  worldPerPixel as cameraWorldPerPixel,
+  type CameraPose,
+} from './camera.js';
 import {
   buildEdgeRibbon,
   buildPolylineRibbon,
@@ -113,6 +118,8 @@ export interface SceneInput {
   guides?: { lines: readonly [Vec3, Vec3][]; planes: readonly [Vec3, Vec3, Vec3, Vec3][] } | null;
   /** Move/Rotate gizmo centre (the rotation pivot), draggable onto geometry. */
   pivot?: { point: Vec3; hovered: boolean; pickable?: boolean } | null;
+  /** Multiplies the edge pick widths (e.g. 2 for touch/coarse pointers). Default 1. */
+  hitScale?: number;
 }
 
 /** An angle handle: arc about `axis` through `center`, from `ref` by `value` degrees. */
@@ -210,7 +217,10 @@ function pushFlatQuad(
 export function buildScene(input: SceneInput): BuiltScene {
   const pickTable = new PickTable();
   const viewProj = viewProjectionMatrix(input.pose, input.aspect);
-  const eye = eyeOf(input.pose);
+  // Orthographic views: a far eye along the view direction (parallel rays) for ribbons/billboards.
+  const eye = billboardEye(input.pose);
+  const hitScale = input.hitScale ?? 1;
+  const edgeHitWidth = (distance: number): number => baseEdgeHitWidth(distance) * hitScale;
 
   const lit: TriBatch[] = [];
   const flat: FlatBatch[] = [];
@@ -221,7 +231,7 @@ export function buildScene(input: SceneInput): BuiltScene {
   const dpr = input.dpr ?? 1;
   const cssHeight = Math.max(1, input.viewportHeightPx / dpr);
   const worldPerPixel = (distance: number): number =>
-    (2 * distance * Math.tan(FOV_Y_RADIANS / 2)) / cssHeight;
+    cameraWorldPerPixel(input.pose, distance, cssHeight);
   const thickEdges = (
     segments: Float32Array,
     color: readonly [number, number, number],
@@ -1083,7 +1093,7 @@ function pushBillboardQuad(
   pushFlatQuad(target, corners, color, alpha);
 }
 
-function edgeHitWidth(distance: number): number {
+function baseEdgeHitWidth(distance: number): number {
   // A rough constant-ish screen width: scale with camera distance so the
   // ribbon stays a small, roughly fixed number of pixels wide regardless of zoom.
   return Math.max(0.15, distance * 0.006);

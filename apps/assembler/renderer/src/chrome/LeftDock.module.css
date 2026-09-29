@@ -87,6 +87,39 @@
   opacity: 0.85;
 }
 
+/* Settings › Toolbar labels › Always: caption under the icon. */
+.labelled {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.caption {
+  max-width: 38px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--hc-font-ui);
+  font-size: 9px;
+  line-height: 1.1;
+}
+
+.iconButton:has(.labelled) {
+  width: 40px;
+  height: 44px;
+}
+
+@media (pointer: coarse) {
+  .iconButton {
+    width: 44px;
+    height: 44px;
+  }
+  .modeButton {
+    min-height: 40px;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .iconButton {
     transition: none;

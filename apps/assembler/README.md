@@ -96,6 +96,20 @@ can be dragged onto a face centroid, an edge midpoint or a circle centre
 `move` feature, anything else a `transform` feature. Every new feature has
 a History card with editable parameters.
 
+## Selection, navigation and workspace
+
+Box selection from empty canvas (drag right: enclosed, drag left: touched;
+Tab or A/B/F/E filter while dragging; also in sketch mode), a pick list for
+overlapping geometry, Select Through (`Ctrl+Shift+S`; Save As is
+`Ctrl+Shift+Alt+S`), a view cube with face/edge/corner views, roll arrows
+and a menu, perspective/orthographic, zoom to selection (`Z`), look at face
+(pointer over a face + Space), up to 8 saved views, navigation presets,
+Items folders/renaming/colour, History filter, rollback marker and
+validated reordering, the shortcut sheet (hold Ctrl or `?`), Settings
+(`Ctrl+,`) and touch/pen gestures. Decisions (e.g. names/folders are item
+properties, colour is a `setAppearance` step) and limits:
+`assembler/SELECTION-NAVIGATION.md`.
+
 ## Agent API (UI, Python and agents share one command layer)
 
 `renderer/src/api/` implements the canonical command/query contract
@@ -137,9 +151,14 @@ viewport, directly usable with `page.mouse`.
 | `dimensionChip(name)`             | Centre of the value chip of dimension `name` (e.g. `"d1"`), or `null`.                                                                                                                                                               |
 | `waitForSketchIdle()`             | Resolves when no sketch edit/drag solve is pending, the document settled and the frame is drawn.                                                                                                                                     |
 | `sketchStore`                     | The sketch-mode zustand store (`begin`, `dispatch`, `setTool`, …).                                                                                                                                                                   |
+| `workspaceStore`                  | Workspace view state: Select Through, saved views, `sendCamera({ kind: 'home' \| 'fitAll' \| 'fitSelection' \| 'direction' \| 'roll' \| 'pose' \| 'lookAtFace' })`, overlays.                                                        |
+| `itemsStore` / `preferences`      | Item names and folders; user preferences (theme, units, navigation preset, projection, `animateCamera` — set `false` for deterministic shots).                                                                                       |
+| `cameraPose()`                    | The live camera pose (`yaw`, `pitch`, `roll`, `fov`, `target`, `distance`).                                                                                                                                                          |
 
-Example (see `D:\AgentWork\HimmelCAD-Assembler\shots\tool-shots.mjs` on the
-Windows host for a full script):
+The view cube's cells carry `data-cell="<face>:<i>:<j>"` (e.g. `front:1:1` =
+the Front-Right-Top corner) for DOM-anchored clicks. Example (see
+`D:\AgentWork\HimmelCAD-Assembler\shots\tool-shots.mjs` and `n-shots.mjs` on
+the Windows host for full scripts):
 
 ```js
 const a = window.__assembler;

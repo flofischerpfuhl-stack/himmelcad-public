@@ -46,6 +46,19 @@ export interface ProjectViewState {
     items?: boolean;
     history?: boolean;
   };
+  /** Saved camera views (up to 8, `model/workspace.ts` `SavedView`); malformed entries are dropped on load. */
+  savedViews?: unknown[];
+}
+
+/**
+ * Items organisation (`model/items.ts`): body display names and folders.
+ * Optional and additive — files without it load unchanged, older apps
+ * ignore it (no schema bump needed: it never affects geometry).
+ */
+export interface ProjectItems {
+  names: Record<string, string>;
+  folders: { id: string; name: string; collapsed: boolean }[];
+  parent: Record<string, string>;
 }
 
 export interface ProjectFileV1 {
@@ -59,6 +72,7 @@ export interface ProjectFileV1 {
   projectName: string;
   features: Feature[];
   viewState?: ProjectViewState;
+  items?: ProjectItems;
   createdAt: string;
   modifiedAt: string;
 }
@@ -280,6 +294,7 @@ function validateV1Body(raw: Record<string, unknown>): ProjectFileV1 {
   if (raw.viewState !== undefined && !isRecord(raw.viewState)) {
     fail('viewState', 'expected an object');
   }
+  const items = raw.items !== undefined ? validateItems(raw.items) : undefined;
   return {
     format: PROJECT_FORMAT_ID,
     schemaVersion: CURRENT_SCHEMA_VERSION,
@@ -288,9 +303,40 @@ function validateV1Body(raw: Record<string, unknown>): ProjectFileV1 {
     projectName: raw.projectName,
     features,
     ...(raw.viewState !== undefined ? { viewState: raw.viewState as ProjectViewState } : {}),
+    ...(items ? { items } : {}),
     createdAt: raw.createdAt,
     modifiedAt: raw.modifiedAt,
   };
+}
+
+function validateStringRecord(v: unknown, path: string): Record<string, string> {
+  if (!isRecord(v)) fail(path, 'expected an object');
+  for (const [key, value] of Object.entries(v)) {
+    if (!isString(value)) fail(`${path}.${key}`, 'expected a string');
+  }
+  return v as Record<string, string>;
+}
+
+function validateItems(v: unknown): ProjectItems {
+  if (!isRecord(v)) fail('items', 'expected an object');
+  const names = validateStringRecord(v.names ?? {}, 'items.names');
+  const parent = validateStringRecord(v.parent ?? {}, 'items.parent');
+  const folders = v.folders ?? [];
+  if (!Array.isArray(folders)) fail('items.folders', 'expected an array');
+  const ids = new Set<string>();
+  const checked = folders.map((f, i) => {
+    const path = `items.folders[${i}]`;
+    if (!isRecord(f)) fail(path, 'expected an object');
+    if (!isString(f.id) || f.id === '') fail(`${path}.id`, 'expected a non-empty string');
+    if (ids.has(f.id)) fail(`${path}.id`, `duplicate folder id "${f.id}"`);
+    ids.add(f.id);
+    if (!isString(f.name)) fail(`${path}.name`, 'expected a string');
+    if (f.collapsed !== undefined && !isBoolean(f.collapsed)) {
+      fail(`${path}.collapsed`, 'expected a boolean');
+    }
+    return { id: f.id, name: f.name, collapsed: f.collapsed === true };
+  });
+  return { names, folders: checked, parent };
 }
 
 // ---- migration -----------------------------------------------------------------
@@ -371,6 +417,7 @@ export function saveProjectFile(input: {
   features: Feature[];
   appVersion: string;
   viewState?: ProjectViewState;
+  items?: ProjectItems;
   createdAt: string;
   modifiedAt?: string;
 }): string {
@@ -382,6 +429,7 @@ export function saveProjectFile(input: {
     projectName: input.projectName,
     features: input.features,
     ...(input.viewState ? { viewState: input.viewState } : {}),
+    ...(input.items ? { items: input.items } : {}),
     createdAt: input.createdAt,
     modifiedAt: input.modifiedAt ?? new Date().toISOString(),
   };

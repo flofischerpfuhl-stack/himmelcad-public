@@ -16,7 +16,16 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { registerEscapeRung } from '@himmelcad/ui';
 
 import { useAssemblerStore } from '../../model/store.js';
+import { boxModeFor, normalizeRect } from '../../viewport/boxSelect.js';
 import { DimensionLabel } from '../../viewport/DimensionLabel.js';
+import { SelectionBox } from '../../viewport/SelectionBox.js';
+import {
+  SKETCH_BOX_FILTERS,
+  nextSketchBoxFilter,
+  sketchBoxFilterForKey,
+  sketchBoxSelect,
+  type SketchBoxFilter,
+} from './sketchBoxSelect.js';
 import { constraintInfo } from '../constraintRules.js';
 import { entityCurve, sampleCurve } from '../geometry.js';
 import {
@@ -87,7 +96,23 @@ interface DragGesture {
   hit: SketchHit | null;
   additive: boolean;
   moved: boolean;
+  /** Started on empty space with the Select tool: a selection box. */
+  box: boolean;
 }
+
+interface SketchBox {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+  filter: SketchBoxFilter;
+}
+
+const SKETCH_FILTER_CHIPS: Record<SketchBoxFilter, { label: string; key: string }> = {
+  all: { label: 'All', key: 'A' },
+  curves: { label: 'Curves', key: 'E' },
+  points: { label: 'Points', key: 'P' },
+};
 
 function isTextTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
@@ -133,7 +158,39 @@ export function SketchOverlay({
     field: ValueField;
   } | null>(null);
   const dragRef = useRef<DragGesture | null>(null);
+  const [box, setBox] = useState<SketchBox | null>(null);
+  const boxRef = useRef<SketchBox | null>(null);
+  boxRef.current = box;
   void tick;
+
+  // While a box is dragged: Tab cycles the filter, A/E/P choose it, Escape cancels.
+  const boxActive = box !== null;
+  useEffect(() => {
+    if (!boxActive) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        dragRef.current = null;
+        setBox(null);
+        return;
+      }
+      const current = boxRef.current;
+      if (!current) return;
+      const next =
+        event.key === 'Tab'
+          ? nextSketchBoxFilter(current.filter, event.shiftKey)
+          : event.ctrlKey || event.metaKey || event.altKey
+            ? null
+            : sketchBoxFilterForKey(event.key);
+      if (!next) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      setBox((b) => (b ? { ...b, filter: next } : b));
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [boxActive]);
 
   const display: SketchData | null = session ? (session.dragPreview ?? session.sketch) : null;
   const regions = useMemo(() => (display ? detectRegions(display) : []), [display]);
@@ -279,6 +336,20 @@ export function SketchOverlay({
       hit: target,
       additive: event.shiftKey,
       moved: false,
+      box: target === null,
+    };
+  };
+
+  /** Box corners relative to the overlay (the same space as `api.toScreen`). */
+  const boxFromDrag = (drag: DragGesture, clientX: number, clientY: number): SketchBox | null => {
+    const rect = rootRef.current?.getBoundingClientRect();
+    if (!rect) return null;
+    return {
+      x0: drag.startClient[0] - rect.left,
+      y0: drag.startClient[1] - rect.top,
+      x1: clientX - rect.left,
+      y1: clientY - rect.top,
+      filter: boxRef.current?.filter ?? 'all',
     };
   };
 
@@ -298,6 +369,7 @@ export function SketchOverlay({
           store.beginDrag(drag.pointIds);
         }
       }
+      if (drag.moved && drag.box) setBox(boxFromDrag(drag, event.clientX, event.clientY));
       if (drag.moved && uv && drag.pointIds.length > 0) {
         const delta: Vec2 = [uv[0] - drag.startUv[0], uv[1] - drag.startUv[1]];
         useSketchStore
@@ -320,6 +392,27 @@ export function SketchOverlay({
     if (!drag || drag.pointerId !== event.pointerId) return;
     event.stopPropagation();
     const store = useSketchStore.getState();
+    if (drag.moved && drag.box) {
+      const current = boxRef.current;
+      setBox(null);
+      const s = store.session;
+      if (!current || !s) return;
+      const ids = sketchBoxSelect(
+        s.dragPreview ?? s.sketch,
+        normalizeRect(current.x0, current.y0, current.x1, current.y1),
+        boxModeFor(current.x0, current.x1),
+        current.filter,
+        api.toScreen,
+      );
+      // Shift adds (the session's additive select toggles, so skip what is selected already).
+      if (drag.additive) {
+        store.select(
+          ids.filter((id) => !s.selection.includes(id)),
+          { additive: true },
+        );
+      } else store.select(ids);
+      return;
+    }
     if (drag.moved && drag.pointIds.length > 0) {
       void store.endDrag();
       return;
@@ -458,6 +551,21 @@ export function SketchOverlay({
       onDoubleClick={onDoubleClick}
       onContextMenu={(event) => event.preventDefault()}
     >
+      {box ? (
+        <SelectionBox
+          x0={box.x0}
+          y0={box.y0}
+          x1={box.x1}
+          y1={box.y1}
+          mode={boxModeFor(box.x0, box.x1)}
+          filterLabel={SKETCH_FILTER_CHIPS[box.filter].label}
+          filters={SKETCH_BOX_FILTERS.map((f) => ({
+            ...SKETCH_FILTER_CHIPS[f],
+            active: f === box.filter,
+          }))}
+          hint="Tab cycles"
+        />
+      ) : null}
       <svg className={styles.svg} aria-hidden>
         {gridLines.map((g, i) => (
           <path

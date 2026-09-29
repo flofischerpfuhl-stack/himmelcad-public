@@ -9,6 +9,9 @@ import { Boxes, Crosshair, Layers, Scan, Search } from 'lucide-react';
 import { Tooltip } from '@himmelcad/ui';
 
 import { findCommand } from '../model/commands/registry.js';
+import { usePreferences } from '../model/preferences.js';
+
+type SketchIconType = (typeof GROUP_ICON)['sketch'];
 import { AdaptiveToolbar } from './AdaptiveToolbar.js';
 import { CommandGroupMenu } from './CommandGroupMenu.js';
 import { GROUP_ICON } from './icons.js';
@@ -21,6 +24,17 @@ export interface LeftDockProps {
 }
 
 export function LeftDock({ state, onOpenSearch }: LeftDockProps): JSX.Element {
+  const labels = usePreferences((p) => p.labels);
+  const tip = (text: string) => (labels === 'hover' ? text : undefined);
+  const trigger = (Icon: SketchIconType, text: string) =>
+    labels === 'always' ? (
+      <span className={styles.labelled}>
+        <Icon size={16} />
+        <span className={styles.caption}>{text}</span>
+      </span>
+    ) : (
+      <Icon size={16} />
+    );
   const showAdaptive = state.selection.length > 0 && !state.activeTool;
   const SketchIcon = GROUP_ICON.sketch;
   const AddIcon = GROUP_ICON.add;
@@ -68,34 +82,34 @@ export function LeftDock({ state, onOpenSearch }: LeftDockProps): JSX.Element {
             label="Sketch"
             group="sketch"
             getState={() => state}
-            tooltip="Sketch"
+            tooltip={tip('Sketch')}
             triggerClassName={styles.iconButton}
-            trigger={<SketchIcon size={16} />}
+            trigger={trigger(SketchIcon, 'Sketch')}
           />
           <CommandGroupMenu
             label="Add"
             group="add"
             getState={() => state}
-            tooltip="Add"
+            tooltip={tip('Add')}
             triggerClassName={styles.iconButton}
-            trigger={<AddIcon size={16} />}
+            trigger={trigger(AddIcon, 'Add')}
             emptyHint="No Add commands in Phase 0"
           />
           <CommandGroupMenu
             label="Transform"
             group="transform"
             getState={() => state}
-            tooltip="Transform"
+            tooltip={tip('Transform')}
             triggerClassName={styles.iconButton}
-            trigger={<TransformIcon size={16} />}
+            trigger={trigger(TransformIcon, 'Transform')}
           />
           <CommandGroupMenu
             label="Tools"
             group="tools"
             getState={() => state}
-            tooltip="Tools"
+            tooltip={tip('Tools')}
             triggerClassName={styles.iconButton}
-            trigger={<ToolsIcon size={16} />}
+            trigger={trigger(ToolsIcon, 'Tools')}
           />
         </div>
       )}

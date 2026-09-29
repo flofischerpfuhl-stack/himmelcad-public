@@ -1,0 +1,152 @@
+/**
+ * Body colour (Items row menu, context menu, command search "Colour…").
+ * A colour is a `setAppearance` History step (see `model/items.ts`): one
+ * undo step, kept through later edits, written to STEP/3MF. Picking
+ * another swatch right after updates that same step instead of stacking
+ * new ones.
+ */
+import { useEffect, useState } from 'react';
+
+import { Button, Dialog } from '@himmelcad/ui';
+
+import { BODY_PALETTE, normalizeHexColour, withBodyColour } from '../model/appearance.js';
+import { nextFeatureName, useAssemblerStore } from '../model/store.js';
+import { displayBodyName, useItemsStore } from '../model/items.js';
+import { useWorkspaceStore } from '../model/workspace.js';
+import styles from './ColourDialog.module.css';
+
+/** Applies `color` to `bodyIds` as one undo step; `false` if refused (a tool is running). */
+export function applyBodyColour(bodyIds: readonly string[], color: string): boolean {
+  const s = useAssemblerStore.getState();
+  const markerIndex = s.rollbackBefore
+    ? s.features.findIndex((f) => f.id === s.rollbackBefore)
+    : -1;
+  const activeCount = markerIndex >= 0 ? markerIndex : s.features.length;
+  const reserved = new Set<string>();
+  const base = nextFeatureName('Appearance', s.features);
+  const baseNumber = Number(base.split(' ').pop()) || 1;
+  const next = withBodyColour(s.features, activeCount, bodyIds, color, (index) => {
+    const id = s.allocateFeatureId('appearance', reserved);
+    reserved.add(id);
+    return { id, name: `Appearance ${baseNumber + index}` };
+  });
+  return s.commitDocumentChange(next, { keepRollback: true, selection: s.selection });
+}
+
+export function ColourDialog(): JSX.Element | null {
+  const bodyIds = useWorkspaceStore((s) => s.colourDialogBodyIds);
+  const bodies = useAssemblerStore((s) => s.evaluation.bodies);
+  const meta = useItemsStore();
+  const [custom, setCustom] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const targets = bodies.filter((b) => bodyIds?.includes(b.id));
+  const current =
+    targets.length > 0 && targets.every((b) => b.color === targets[0]!.color)
+      ? targets[0]!.color.toUpperCase()
+      : null;
+
+  // The field follows the bodies' colour (on open and after each applied colour).
+  useEffect(() => {
+    setCustom(current ?? '');
+  }, [bodyIds, current]);
+
+  const close = () => {
+    setError(null);
+    useWorkspaceStore.getState().setColourDialog(null);
+  };
+  if (!bodyIds) return null;
+
+  const apply = (color: string) => {
+    if (!applyBodyColour(bodyIds, color)) {
+      setError('Finish the running tool first.');
+      return;
+    }
+    setError(null);
+    setCustom(color);
+  };
+
+  const title =
+    targets.length === 1
+      ? `Colour of ${displayBodyName(targets[0]!, meta)}`
+      : `Colour of ${targets.length} bodies`;
+
+  return (
+    <Dialog
+      open
+      onClose={close}
+      title={title}
+      actions={
+        <Button variant="primary" onClick={close}>
+          Done
+        </Button>
+      }
+    >
+      <div className={styles.body}>
+        <div className={styles.palette} role="listbox" aria-label="Palette">
+          {BODY_PALETTE.map((swatch) => {
+            const active = current === swatch.color.toUpperCase();
+            return (
+              <button
+                key={swatch.color}
+                type="button"
+                role="option"
+                aria-selected={active}
+                aria-label={swatch.name}
+                title={swatch.name}
+                className={`${styles.swatch} ${active ? styles.swatchActive : ''}`}
+                style={{ background: swatch.color }}
+                onClick={() => apply(swatch.color)}
+              />
+            );
+          })}
+        </div>
+        <form
+          className={styles.custom}
+          onSubmit={(event) => {
+            event.preventDefault();
+            const color = normalizeHexColour(custom);
+            if (!color) {
+              setError('Enter a colour as #RRGGBB.');
+              return;
+            }
+            apply(color);
+          }}
+        >
+          <label className={styles.customLabel} htmlFor="hc-colour-hex">
+            Custom
+          </label>
+          <span
+            className={styles.preview}
+            style={{ background: normalizeHexColour(custom) ?? 'transparent' }}
+            aria-hidden
+          />
+          <input
+            id="hc-colour-hex"
+            className={styles.hex}
+            value={custom}
+            placeholder="#RRGGBB"
+            spellCheck={false}
+            onChange={(event) => setCustom(event.currentTarget.value)}
+          />
+          <input
+            type="color"
+            className={styles.picker}
+            aria-label="Pick a colour"
+            value={normalizeHexColour(custom)?.toLowerCase() ?? '#c9cdd3'}
+            onChange={(event) => apply(event.currentTarget.value.toUpperCase())}
+          />
+          <Button type="submit" size="small">
+            Apply
+          </Button>
+        </form>
+        {error ? (
+          <p className={styles.error} role="alert">
+            {error}
+          </p>
+        ) : (
+          <p className={styles.note}>Saved as a History step; exported to STEP and 3MF.</p>
+        )}
+      </div>
+    </Dialog>
+  );
+}

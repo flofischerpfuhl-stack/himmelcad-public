@@ -11,14 +11,16 @@ import {
   Dialog,
   Menu,
   MenuItem,
+  MenuSeparator,
+  MenuSubmenu,
   Tooltip,
   consumeEscapeBlurCommitSuppression,
   registerEscapeRung,
   revertEscapeField,
 } from '@himmelcad/ui';
 
-import { COMMANDS } from '../model/commands/registry.js';
 import { onCloseRequested } from '../model/project/persistence.js';
+import { useWorkspaceStore } from '../model/workspace.js';
 import { useProjectStore } from '../model/project/projectStore.js';
 import { CommandGroupMenu } from './CommandGroupMenu.js';
 import type { AssemblerState } from '../model/store.js';
@@ -116,6 +118,7 @@ export function TopBar({ state }: { state: AssemblerState }): JSX.Element {
           getState={() => state}
           trigger="View"
           triggerClassName={styles.menuTrigger}
+          extraItems={<SavedViewItems />}
         />
         <HelpMenu />
       </nav>
@@ -191,10 +194,38 @@ export function TopBar({ state }: { state: AssemblerState }): JSX.Element {
   );
 }
 
+/** Saved views (up to 8) at the end of the View menu: go to a view, or delete one. */
+function SavedViewItems(): JSX.Element | null {
+  const views = useWorkspaceStore((s) => s.savedViews);
+  if (views.length === 0) return null;
+  return (
+    <>
+      <MenuSeparator />
+      {views.map((view, index) => (
+        <MenuItem
+          key={`${view.name}:${index}`}
+          onSelect={() => useWorkspaceStore.getState().restoreView(index)}
+        >
+          {view.name}
+        </MenuItem>
+      ))}
+      <MenuSubmenu label="Delete saved view" ariaLabel="Delete saved view">
+        {views.map((view, index) => (
+          <MenuItem
+            key={`${view.name}:${index}`}
+            onSelect={() => useWorkspaceStore.getState().deleteView(index)}
+          >
+            {view.name}
+          </MenuItem>
+        ))}
+      </MenuSubmenu>
+    </>
+  );
+}
+
 function HelpMenu(): JSX.Element {
   const [open, setOpen] = useState(false);
-  const [dialog, setDialog] = useState<'shortcuts' | 'about' | null>(null);
-  const shortcuts = COMMANDS.filter((c) => c.shortcut !== undefined);
+  const [dialog, setDialog] = useState<'about' | null>(null);
 
   return (
     <>
@@ -216,11 +247,19 @@ function HelpMenu(): JSX.Element {
           >
             <MenuItem
               onSelect={() => {
-                setDialog('shortcuts');
+                useWorkspaceStore.getState().setShortcutOverlay(true);
                 setOpen(false);
               }}
             >
               Keyboard shortcuts
+            </MenuItem>
+            <MenuItem
+              onSelect={() => {
+                useWorkspaceStore.getState().setSettingsOpen(true);
+                setOpen(false);
+              }}
+            >
+              Settings…
             </MenuItem>
             <MenuItem
               onSelect={() => {
@@ -233,23 +272,6 @@ function HelpMenu(): JSX.Element {
           </Menu>
         ) : null}
       </div>
-      <Dialog
-        open={dialog === 'shortcuts'}
-        onClose={() => setDialog(null)}
-        title="Keyboard shortcuts"
-      >
-        <ul style={{ margin: 0, padding: 0, listStyle: 'none', display: 'grid', gap: 6 }}>
-          {shortcuts.map((command) => (
-            <li
-              key={command.id}
-              style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}
-            >
-              <span>{command.label}</span>
-              <code>{command.shortcut}</code>
-            </li>
-          ))}
-        </ul>
-      </Dialog>
       <Dialog
         open={dialog === 'about'}
         onClose={() => setDialog(null)}

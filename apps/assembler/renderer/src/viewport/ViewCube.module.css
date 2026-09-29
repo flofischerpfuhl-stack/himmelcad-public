@@ -13,10 +13,15 @@
   right: 36px;
   width: 96px;
   height: 96px;
-  perspective: 500px;
   z-index: var(--hc-z-floating);
   user-select: none;
   -webkit-user-select: none;
+}
+
+.stage {
+  position: absolute;
+  inset: 0;
+  perspective: 500px;
 }
 
 .cube {
@@ -28,46 +33,104 @@
 
 .face {
   position: absolute;
+  left: 0;
+  top: 0;
   width: 96px;
   height: 96px;
+  display: grid;
+  grid-template-columns: 18px 1fr 18px;
+  grid-template-rows: 18px 1fr 18px;
+  background: var(--hc-bg-island);
+  border: 1px solid var(--hc-border-strong);
+  box-shadow: var(--hc-shadow-chip);
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  box-sizing: border-box;
+}
+
+.faceCentre,
+.edge,
+.corner {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--hc-bg-island);
-  border: 1px solid var(--hc-border-strong);
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
   color: var(--hc-fg-muted);
   font-family: var(--hc-font-ui);
   font-size: 11px;
   letter-spacing: 0.02em;
-  box-shadow: var(--hc-shadow-chip);
+  cursor: pointer;
+  outline: none;
 }
 
-.face:hover {
+.faceCentre:hover,
+.edge:hover,
+.corner:hover {
   color: var(--hc-fg-strong);
-  border-color: var(--hc-border-accent);
+  background: var(--hc-press-bg);
+}
+
+.faceCentre:hover {
+  box-shadow: inset 0 0 0 1px var(--hc-border-accent);
+}
+
+.faceCentre:focus-visible,
+.edge:focus-visible,
+.corner:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--hc-focus-ring);
+}
+
+.roll {
+  position: absolute;
+  top: -22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-sm);
+  background: var(--hc-bg-island);
+  box-shadow: var(--hc-shadow-chip);
+  color: var(--hc-fg-muted);
+  cursor: pointer;
+}
+
+.roll:hover {
+  color: var(--hc-fg-strong);
   background: var(--hc-bg-island-hi);
 }
 
-.faceFront {
-  transform: translateZ(48px);
-}
-.faceBack {
-  transform: rotateY(180deg) translateZ(48px);
-}
-.faceRight {
-  transform: rotateY(90deg) translateZ(48px);
-}
-.faceLeft {
-  transform: rotateY(-90deg) translateZ(48px);
-}
-.faceTop {
-  transform: rotateX(90deg) translateZ(48px);
-}
-.faceBottom {
-  transform: rotateX(-90deg) translateZ(48px);
+.roll:focus-visible {
+  outline: 2px solid var(--hc-focus-ring);
+  outline-offset: 1px;
 }
 
-.edgeHit {
-  position: absolute;
-  background: transparent;
+.rollLeft {
+  left: -22px;
+}
+
+.rollRight {
+  right: -22px;
+}
+
+@media (pointer: coarse) {
+  .face {
+    grid-template-columns: 24px 1fr 24px;
+    grid-template-rows: 24px 1fr 24px;
+  }
+  .roll {
+    width: 32px;
+    height: 32px;
+    top: -30px;
+  }
+  .rollLeft {
+    left: -30px;
+  }
+  .rollRight {
+    right: -30px;
+  }
 }

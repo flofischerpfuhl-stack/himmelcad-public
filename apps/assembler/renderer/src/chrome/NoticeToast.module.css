@@ -1,0 +1,18 @@
+.host {
+  position: absolute;
+  left: 50%;
+  bottom: 56px;
+  transform: translateX(-50%);
+  z-index: var(--hc-z-toast);
+  max-width: min(560px, calc(100vw - 48px));
+  pointer-events: auto;
+}
+
+/* Above KernelActivity's islands (bottom 64px, ~40px each incl. gap). */
+.host[data-raised='1'] {
+  bottom: 112px;
+}
+
+.host[data-raised='2'] {
+  bottom: 160px;
+}

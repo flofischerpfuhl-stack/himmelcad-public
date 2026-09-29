@@ -2,24 +2,61 @@
   display: flex;
   align-items: center;
   gap: var(--hc-space-2);
-  padding: 6px var(--hc-space-2);
+  min-height: 28px;
+  padding: 0 var(--hc-space-2);
+  border: 1px solid transparent;
   border-radius: var(--hc-radius-sm);
   cursor: pointer;
   color: var(--hc-fg-default);
   transition: background var(--hc-motion-fast);
+  box-sizing: border-box;
 }
 
 .row:hover {
   background: var(--hc-hover-bg);
 }
 
+.row:focus-visible {
+  outline: none;
+  border-color: var(--hc-focus-ring);
+}
+
 .rowSelected {
   background: var(--hc-press-bg);
-  border: 1px solid var(--hc-selection-accent-border);
-  padding: 5px 7px;
+  border-color: var(--hc-selection-accent-border);
 }
 
 .rowHidden {
+  color: var(--hc-fg-subtle);
+}
+
+.rowHidden .swatch {
+  opacity: 0.45;
+}
+
+/* "Reveal in Items": the revealed row is outlined for a moment (the class is removed after 1.6 s). */
+.rowFlash {
+  border-color: var(--hc-accent-base);
+  background: var(--hc-press-bg);
+}
+
+.rowDrop {
+  border-color: var(--hc-accent-base);
+  border-style: dashed;
+}
+
+.bodyDrop {
+  box-shadow: inset 0 0 0 1px var(--hc-accent-base);
+}
+
+.folderRow {
+  font-weight: 500;
+}
+
+.chevron {
+  display: flex;
+  width: 12px;
+  flex-shrink: 0;
   color: var(--hc-fg-subtle);
 }
 
@@ -27,6 +64,22 @@
   display: flex;
   color: var(--hc-fg-muted);
   flex-shrink: 0;
+}
+
+.swatch {
+  width: 12px;
+  height: 12px;
+  padding: 0;
+  flex-shrink: 0;
+  border: 1px solid var(--hc-border-strong);
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.swatch:hover,
+.swatch:focus-visible {
+  outline: 2px solid var(--hc-focus-ring);
+  outline-offset: 1px;
 }
 
 .name {
@@ -37,6 +90,25 @@
   white-space: nowrap;
   font-family: var(--hc-font-ui);
   font-size: 12px;
+}
+
+.nameInput {
+  flex: 1;
+  min-width: 0;
+  height: 22px;
+  padding: 0 4px;
+  background: var(--hc-bg-input);
+  border: 1px solid var(--hc-focus-ring);
+  border-radius: var(--hc-radius-sm);
+  color: var(--hc-fg-default);
+  font-family: var(--hc-font-ui);
+  font-size: 12px;
+  outline: none;
+}
+
+.childCount {
+  font-size: 10px;
+  color: var(--hc-fg-subtle);
 }
 
 .rowButton {
@@ -58,8 +130,41 @@
   color: var(--hc-fg-default);
 }
 
+.rowButton:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 .rowButtonActive {
   color: var(--hc-accent-base);
+}
+
+.filters {
+  display: flex;
+  gap: 2px;
+  padding: var(--hc-space-1) var(--hc-space-2) 0;
+}
+
+.filter {
+  flex: 1;
+  height: 24px;
+  border: 1px solid transparent;
+  border-radius: var(--hc-radius-sm);
+  background: transparent;
+  color: var(--hc-fg-muted);
+  font-family: var(--hc-font-ui);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.filter:hover {
+  background: var(--hc-hover-bg);
+}
+
+.filterActive {
+  background: var(--hc-press-bg);
+  border-color: var(--hc-border-strong);
+  color: var(--hc-fg-strong);
 }
 
 .sectionLabel {
@@ -68,6 +173,24 @@
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--hc-fg-subtle);
+}
+
+/* Touch: bigger rows and buttons. */
+@media (pointer: coarse) {
+  .row {
+    min-height: 40px;
+  }
+  .rowButton {
+    width: 34px;
+    height: 34px;
+  }
+  .swatch {
+    width: 18px;
+    height: 18px;
+  }
+  .filter {
+    height: 34px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

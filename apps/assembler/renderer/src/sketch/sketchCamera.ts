@@ -40,11 +40,12 @@ export function poseLookingAlong(
 ): CameraPose {
   const [x, y, z] = direction as [number, number, number];
   if (Math.abs(z) > 0.999) {
-    // Near the poles the orbit camera's screen-up is (cos yaw, sin yaw, 0).
+    // Near the poles the orbit camera's screen-up is -(cos yaw, sin yaw, 0) looking
+    // down and +(cos yaw, sin yaw, 0) looking up (see `viewport/camera.ts` `cameraBasis`).
     return {
       target: [...center],
       distance,
-      yaw: Math.atan2(up[1]!, up[0]!),
+      yaw: z > 0 ? Math.atan2(-up[1]!, -up[0]!) : Math.atan2(up[1]!, up[0]!),
       pitch: Math.sign(z) * NEAR_POLE_PITCH,
     };
   }

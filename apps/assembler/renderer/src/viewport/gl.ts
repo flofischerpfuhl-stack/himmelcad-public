@@ -432,6 +432,59 @@ export class ViewportRenderer {
     return { width: this.idWidth, height: this.idHeight, pixels };
   }
 
+  /**
+   * Distinct ids inside a rectangle of the id framebuffer (framebuffer pixels,
+   * top-left origin), each with its smallest squared pixel distance to
+   * (`cx`, `cy`) — used for box selection and overlapping-pick candidates.
+   */
+  readPickIdsInRect(
+    x0: number,
+    y0: number,
+    x1: number,
+    y1: number,
+    cx = (x0 + x1) / 2,
+    cy = (y0 + y1) / 2,
+  ): Map<number, number> {
+    const gl = this.gl;
+    const out = new Map<number, number>();
+    if (!this.idFbo) return out;
+    const left = Math.max(0, Math.floor(Math.min(x0, x1)));
+    const right = Math.min(this.idWidth - 1, Math.ceil(Math.max(x0, x1)));
+    const top = Math.max(0, Math.floor(Math.min(y0, y1)));
+    const bottom = Math.min(this.idHeight - 1, Math.ceil(Math.max(y0, y1)));
+    if (right < left || bottom < top) return out;
+    const width = right - left + 1;
+    const height = bottom - top + 1;
+    const pixels = new Uint8Array(width * height * 4);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.idFbo);
+    gl.readPixels(
+      left,
+      this.idHeight - 1 - bottom,
+      width,
+      height,
+      gl.RGBA,
+      gl.UNSIGNED_BYTE,
+      pixels,
+    );
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    for (let row = 0; row < height; row += 1) {
+      // readPixels rows are bottom-up.
+      const y = bottom - row;
+      for (let col = 0; col < width; col += 1) {
+        const o = (row * width + col) * 4;
+        const id =
+          (pixels[o]! | (pixels[o + 1]! << 8) | (pixels[o + 2]! << 16) | (pixels[o + 3]! << 24)) >>>
+          0;
+        if (id === 0) continue;
+        const x = left + col;
+        const d = (x - cx) * (x - cx) + (y - cy) * (y - cy);
+        const previous = out.get(id);
+        if (previous === undefined || d < previous) out.set(id, d);
+      }
+    }
+    return out;
+  }
+
   /** Reads back one pixel from the id framebuffer (in framebuffer pixel coordinates, top-left origin flipped to bottom-left internally). */
   readPickPixel(xPx: number, yPx: number): number {
     const gl = this.gl;

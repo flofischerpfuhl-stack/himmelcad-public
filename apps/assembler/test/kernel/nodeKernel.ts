@@ -9,16 +9,22 @@ import init from 'replicad-opencascadejs';
 import { createEvaluator, type KernelEvaluator } from '../../renderer/src/kernel/evaluator.js';
 import { InProcessKernelAdapter } from '../../renderer/src/kernel/adapter.js';
 
-let loading: Promise<{ evaluator: KernelEvaluator; loadMs: number }> | null = null;
+type OpenCascade = Awaited<ReturnType<typeof init>>;
 
-export function loadNodeKernel(): Promise<{ evaluator: KernelEvaluator; loadMs: number }> {
+let loading: Promise<{ evaluator: KernelEvaluator; loadMs: number; oc: OpenCascade }> | null = null;
+
+export function loadNodeKernel(): Promise<{
+  evaluator: KernelEvaluator;
+  loadMs: number;
+  oc: OpenCascade;
+}> {
   loading ??= (async () => {
     const require = createRequire(import.meta.url);
     const wasmPath = require.resolve('replicad-opencascadejs/wasm');
     const start = performance.now();
     const oc = await init({ locateFile: () => wasmPath });
     const loadMs = performance.now() - start;
-    return { evaluator: createEvaluator(oc), loadMs };
+    return { evaluator: createEvaluator(oc), loadMs, oc };
   })();
   return loading;
 }

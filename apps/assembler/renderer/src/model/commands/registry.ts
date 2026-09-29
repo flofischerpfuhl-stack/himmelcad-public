@@ -13,6 +13,8 @@ import { useProjectStore } from '../project/projectStore.js';
 import { FEATURE_COMMANDS } from './featureCommands.js';
 import { isPlanarFace, makeFaceRef, type AssemblerState, type SelectionItem } from '../store.js';
 import { SKETCH_COMMANDS } from './sketchCommands.js';
+import { useWorkspaceStore } from '../workspace.js';
+import { WORKSPACE_COMMANDS } from './workspaceCommands.js';
 
 /** Read access to the store snapshot and its actions. Commands never mutate `ctx` directly — they call its action methods. */
 export type CommandContext = AssemblerState;
@@ -49,6 +51,12 @@ export interface Command {
    * fillet/chamfer, shell, revolve): disabled until the CAD kernel is ready.
    */
   requiresKernel?: boolean;
+  /**
+   * `false` keeps a global command (settings, projection, Select Through …)
+   * out of the adaptive toolbar and the selection context menu; it stays in
+   * menus, search and shortcuts. Default `true`.
+   */
+  adaptive?: boolean;
   availability: (ctx: CommandContext) => CommandAvailability;
   run: (ctx: CommandContext) => void;
 }
@@ -296,9 +304,13 @@ export const COMMANDS: readonly Command[] = [
     label,
     group: 'view' as const,
     shortcut,
-    keywords: ['view', 'camera', preset],
+    keywords: ['view', 'camera', preset, ...(preset === 'iso' ? ['home', 'reset'] : [])],
     availability: (): CommandAvailability => alwaysEnabled,
-    run: (ctx: CommandContext) => ctx.requestCamera(preset),
+    run: (ctx: CommandContext) => {
+      // Ctrl+1 is Shapr3D's "Reset": the isometric home view, fitted.
+      if (preset === 'iso') useWorkspaceStore.getState().sendCamera({ kind: 'home' });
+      else ctx.requestCamera(preset);
+    },
   })),
   {
     id: 'view.zoomToFit',
@@ -308,6 +320,7 @@ export const COMMANDS: readonly Command[] = [
     availability: () => alwaysEnabled,
     run: (ctx) => ctx.requestCamera('fit'),
   },
+  ...WORKSPACE_COMMANDS,
   {
     id: 'modes.section',
     label: 'Section View',
@@ -451,7 +464,8 @@ export const COMMANDS: readonly Command[] = [
     id: 'file.saveAs',
     label: 'Save As…',
     group: 'file',
-    shortcut: 'Ctrl+Shift+S',
+    // Ctrl+Shift+S is Select Through (Shapr3D mapping).
+    shortcut: 'Ctrl+Shift+Alt+S',
     keywords: ['project', 'persist', 'copy'],
     availability: () => alwaysEnabled,
     run: () => void useProjectStore.getState().saveAs(),
@@ -555,7 +569,8 @@ function toResultAvailability(availability: CommandAvailability): CommandAvailab
  * (§2): the adaptive toolbar must not reflow on mouse-over.
  */
 export function resolveAdaptive(ctx: CommandContext): Command[] {
-  return COMMANDS.map((command) => ({ command, availability: command.availability(ctx) }))
+  return COMMANDS.filter((command) => command.adaptive !== false)
+    .map((command) => ({ command, availability: command.availability(ctx) }))
     .filter((entry) => entry.availability.enabled)
     .sort((a, b) => {
       const aRecommended = a.availability.recommended ? 1 : 0;

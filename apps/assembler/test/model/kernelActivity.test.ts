@@ -157,3 +157,35 @@ void test('a kernel crash notice reaches the store', async () => {
   kernel.markReady('The CAD kernel stopped unexpectedly (boom) and was restarted.');
   assert.match(store.getState().kernelNotice ?? '', /stopped unexpectedly/);
 });
+
+void test('Cancel while the History is rolled back keeps the rolled-back steps and the bar', async () => {
+  store.getState().loadDocument([sketch('r1', 10), sketch('r2', 20), sketch('r3', 30)]);
+  await finishRunning();
+  const loaded = store.getState().features;
+  store.getState().setRollback('r2');
+  await finishRunning();
+  assert.equal(store.getState().evaluation.warnings.tag, '1 features', 'only r1 is evaluated');
+
+  // A long edit above the bar, then Cancel: the full document (all three) comes back.
+  const edited = [sketch('r1', 15), loaded[1]!, loaded[2]!];
+  assert.ok(store.getState().commitDocumentChange(edited, { keepRollback: true }));
+  await sleep(40);
+  assert.ok(store.getState().kernelActivity);
+  store.getState().cancelKernelWork();
+  assert.equal(store.getState().features, loaded, 'no rolled-back step is lost');
+  assert.equal(store.getState().rollbackBefore, 'r2');
+  assert.equal(store.getState().history.canRedo, true);
+  await sleep(10);
+
+  // A long evaluation after moving the bar only (to a position never computed): Cancel moves it back.
+  store.getState().setRollback('r3');
+  await sleep(40);
+  assert.ok(store.getState().kernelActivity);
+  store.getState().cancelKernelWork();
+  assert.equal(store.getState().features, loaded);
+  assert.equal(store.getState().rollbackBefore, 'r2');
+  assert.match(store.getState().kernelNotice ?? '', /rollback bar/);
+  await sleep(10);
+  assert.equal(store.getState().evaluation.warnings.tag, '1 features');
+  store.getState().dismissKernelNotice();
+});

@@ -65,6 +65,18 @@
   background: var(--hc-hover-bg);
 }
 
+.headerButton:focus-visible {
+  outline: 2px solid var(--hc-focus-ring);
+  outline-offset: 1px;
+}
+
+@media (pointer: coarse) {
+  .headerButton {
+    width: 36px;
+    height: 36px;
+  }
+}
+
 .body {
   overflow-y: auto;
   padding: var(--hc-space-1);
