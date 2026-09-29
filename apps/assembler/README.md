@@ -116,6 +116,25 @@ validated reordering, the shortcut sheet (hold Ctrl or `?`), Settings
 properties, colour is a `setAppearance` step) and limits:
 `assembler/SELECTION-NAVIGATION.md`.
 
+## 3D printing (Print mode, build plate, exports, slicer handoff)
+
+`P` (or "Print" in the left dock's mode group) opens the Printability
+panel: overhang map (default 45° from vertical, build direction +Z), sampled
+wall thickness (default 0.8 mm), small holes/pins, B-rep validity and
+watertight mesh per body, volume/mass/cost (PLA/PETG/ABS/TPU presets) and a
+printer build volume (Bambu X1/P1, Prusa MK4, Ender-3, custom) drawn as a
+translucent box. The analysis runs in its own worker with progress and
+Cancel and re-runs after every document change; clicking a finding selects
+and frames its faces. Place on Plate (a flat face → −Z on Z = 0) and Auto
+Orient (top 3 candidates by overhang area and height, ghost preview) commit
+one editable `transform` step. Export STL… (binary/ASCII, per body/all,
+coarse/standard/fine re-tessellation with a triangle preview), 3MF (welded
+manifold objects, names, colours, item transforms) and Open in Slicer
+(detected or added Bambu Studio / OrcaSlicer / PrusaSlicer / Cura, temp 3MF,
+`spawn` without a shell; the browser build downloads). Code in
+`renderer/src/print/`, `electron/slicer*.ts`; methods, thresholds and limits:
+`assembler/PRINTING.md`.
+
 ## Files, reference meshes and the Windows installer
 
 - `.hcasm` projects (schema 2, `model/project/format.ts`) also carry the
@@ -192,6 +211,7 @@ viewport, directly usable with `page.mouse`.
 | `workspaceStore`                  | Workspace view state: Select Through, saved views, `sendCamera({ kind: 'home' \| 'fitAll' \| 'fitSelection' \| 'direction' \| 'roll' \| 'pose' \| 'lookAtFace' })`, overlays.                                                        |
 | `itemsStore` / `preferences`      | Item names and folders; user preferences (theme, units, navigation preset, projection, `animateCamera` — set `false` for deterministic shots).                                                                                       |
 | `cameraPose()`                    | The live camera pose (`yaw`, `pitch`, `roll`, `fov`, `target`, `distance`).                                                                                                                                                          |
+| `printStore`                      | Print mode: `setEnabled`, `settings`/`updateSettings`, `status`/`progress`/`report`, `focusFinding`, `startPlacePicking`, `startAutoOrient`/`applyOrientation` (`D:\AgentWork\HimmelCAD-Assembler\shots\pr-shots.mjs`).              |
 
 The view cube's cells carry `data-cell="<face>:<i>:<j>"` (e.g. `front:1:1` =
 the Front-Right-Top corner) for DOM-anchored clicks. Example (see

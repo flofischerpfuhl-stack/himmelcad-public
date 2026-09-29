@@ -58,7 +58,8 @@ small in-repo validator (no new dependency).
 | Sketches     | `sketch.addProfile` (dimensioned rectangle/circle), `sketch.addPolyline`, `sketch.addArc`, `sketch.addConstraint`, `sketch.addDimension`, `sketch.setDimension`, `sketch.deleteItems` |
 | Transactions | `transaction.begin`, `transaction.preview`, `transaction.commit`, `transaction.cancel`                                                                                                |
 | History      | `history.undo`, `history.redo`                                                                                                                                                        |
-| Files        | `export.stl`, `export.3mf`, `export.step`, `import.step`, `project.new`, `project.open`, `project.save`                                                                               |
+| Files        | `export.stl` (`format` binary/ascii, `resolution`), `export.3mf` (`resolution`), `export.step`, `export.meshStats`, `import.step`, `project.new`, `project.open`, `project.save`      |
+| 3D printing  | `print.analyze` (query), `print.orientations` (query), `print.placeOnPlate`, `print.orient` (one transform step each) — see `assembler/PRINTING.md`                                   |
 | View         | `selection.set` (not undoable)                                                                                                                                                        |
 
 Design rules:
@@ -194,6 +195,12 @@ with Document.headless() as doc:              # or Document.connect_app('{"url":
     turned.polyline([(5, 0), (15, 0), (15, 4), (9, 4), (9, 10), (5, 10)])  # sketch.addPolyline
     axis = turned.line((0, -2), (0, 12), construction=True)                  # centre line
     doc.revolve(turned, axis)                                                # feature.create revolve
+
+    report = doc.printability(material="PETG", minHoleMm=2)   # print.analyze (query)
+    assert report.printable, report.findings_of("thinWall")
+    doc.place_on_plate(plate.face("+X"))                      # print.placeOnPlate: one transform step
+    doc.orient(plate)                                         # print.orient rank 1 (least overhang, then lowest)
+    doc.export_stl("plate.stl", ascii=True, resolution="fine")  # export.stl with options
 ```
 
 - Every modelling call is exactly one canonical command (`doc.log`,
