@@ -53,18 +53,45 @@ const MIME_TYPES: Record<string, string> = {
   '.txt': 'text/plain; charset=utf-8',
 };
 
+// The main document never calls `eval`/`new Function`, nor does it
+// instantiate WebAssembly directly (the kernel and its wasm only ever load
+// inside the dedicated worker below) — so the main document keeps a strict
+// CSP with neither 'unsafe-eval' nor 'wasm-unsafe-eval'.
+const DOCUMENT_CSP =
+  "default-src 'self'; script-src 'self'; worker-src 'self'; " +
+  "style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; " +
+  "connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none';";
+
 // 'unsafe-eval' is required by the Emscripten-generated OCCT glue
 // (`replicad-opencascadejs`), which uses `eval`/`new Function` beyond plain
 // `WebAssembly.instantiate` (found by the production smoke test: without
-// it, the packaged app's kernel fails to load with a CSP violation, even
-// though 'wasm-unsafe-eval' alone is enough in the dev/Vite build). Still
-// `'self'`-only — no remote script origin is ever allowed, so this does not
-// permit loading remote code, only evaluating strings that ship inside the
-// already-`'self'`-scoped bundle.
-const CSP =
+// it, the packaged app's kernel fails to load with a CSP violation). Scoped
+// to only the kernel Web Worker script and the LGPL Emscripten glue chunk it
+// dynamically imports (`renderer/src/kernel/kernel.worker.ts`) — a worker
+// loaded from a URL takes the CSP of its own response, not the document's,
+// so this does not weaken the main document's CSP above. Still `'self'`-only
+// — no remote script origin is ever allowed, so this does not permit loading
+// remote code, only evaluating strings that ship inside the already-`'self'`
+// -scoped bundle.
+const WORKER_CSP =
   "default-src 'self'; script-src 'self' 'unsafe-eval' 'wasm-unsafe-eval'; worker-src 'self'; " +
   "style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; " +
   "connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none';";
+
+// Vite build output for the kernel worker (`kernel.worker-<hash>.js`) and
+// the LGPL Emscripten glue chunk it dynamically imports
+// (`replicad_single-<hash>.js`) — both need `WORKER_CSP`; every other file
+// (the main document, the React app bundle, styles, fonts, the .wasm binary
+// itself) gets the strict `DOCUMENT_CSP`. Matched by filename prefix so a
+// content hash change across builds does not need this list updated.
+const WORKER_CSP_FILE_PREFIXES = ['kernel.worker-', 'replicad_single-'];
+
+function cspFor(filePath: string): string {
+  const base = filePath.replace(/\\/g, '/').split('/').pop() ?? '';
+  return WORKER_CSP_FILE_PREFIXES.some((prefix) => base.startsWith(prefix))
+    ? WORKER_CSP
+    : DOCUMENT_CSP;
+}
 
 function registerAppProtocol(rendererDir: string): void {
   protocol.handle(APP_SCHEME, async (request) => {
@@ -81,7 +108,7 @@ function registerAppProtocol(rendererDir: string): void {
       const type = MIME_TYPES[extname(filePath).toLowerCase()] ?? 'application/octet-stream';
       return new Response(new Uint8Array(data), {
         status: 200,
-        headers: { 'Content-Type': type, 'Content-Security-Policy': CSP },
+        headers: { 'Content-Type': type, 'Content-Security-Policy': cspFor(filePath) },
       });
     } catch {
       return new Response('Not found', { status: 404 });

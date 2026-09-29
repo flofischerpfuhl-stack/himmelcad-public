@@ -49,6 +49,46 @@ void test('production build: kernel reaches ready, the demo part renders, Save/R
   const url = window.url();
   assert.match(url, /^app:\/\/assembler\//, `renderer URL is ${url}`);
 
+  // `electron/main.ts`'s CSP narrowing: the main document's own CSP header
+  // must not grant `'unsafe-eval'` (only the kernel Web Worker and the LGPL
+  // Emscripten glue chunk it loads get that, via their own response CSP —
+  // see `cspFor`/`WORKER_CSP` in `main.ts`). Re-fetch the already-loaded
+  // document from inside the page (same `app://` origin, same protocol
+  // handler response) instead of racing a `response` event listener against
+  // the initial navigation.
+  const documentCsp = await window.evaluate(async (href) => {
+    const response = await fetch(href);
+    return response.headers.get('content-security-policy');
+  }, url);
+  assert.ok(documentCsp, 'main document response carried a Content-Security-Policy header');
+  assert.doesNotMatch(
+    documentCsp ?? '',
+    /unsafe-eval/,
+    `main document CSP must not grant 'unsafe-eval': ${documentCsp}`,
+  );
+
+  // `eval`/`new Function` must actually be blocked in the main renderer by
+  // that CSP, not just absent from the header text. `page.evaluate()` goes
+  // through CDP `Runtime.evaluate`, which Playwright/Chromium deliberately
+  // run with `allowUnsafeEvalBlockedByCSP: true` (devtools-console
+  // ergonomics) — it would "succeed" even under a strict CSP and prove
+  // nothing. `webContents.executeJavaScript` from the main process does not
+  // get that bypass, so it actually exercises the page's CSP.
+  const evalResult = await app.evaluate(async ({ BrowserWindow }) => {
+    const win = BrowserWindow.getAllWindows()[0];
+    if (!win) throw new Error('no BrowserWindow open in main process');
+    try {
+      await win.webContents.executeJavaScript("new Function('return 1')()");
+      return { threw: false, message: null };
+    } catch (error) {
+      return { threw: true, message: error instanceof Error ? error.message : String(error) };
+    }
+  });
+  assert.ok(
+    evalResult.threw,
+    `eval must be blocked by CSP in the main renderer, but new Function() ran: ${JSON.stringify(evalResult)}`,
+  );
+
   // While the kernel loads or on error, `StatusStrip` renders a
   // `role="status"` element whose text starts with the kernel message
   // ("Loading CAD kernel…" / "CAD kernel failed to load: …" / "CAD kernel
