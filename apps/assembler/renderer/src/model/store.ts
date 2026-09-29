@@ -366,6 +366,21 @@ export interface AssemblerState {
    * history, selection, hover and visibility state.
    */
   loadDocument: (features: Feature[], options?: { projectName?: string }) => void;
+
+  /**
+   * Commits a complete next feature list as exactly one undo step, through
+   * the same path every UI tool's Done uses (`commitFeatures`). Used by the
+   * canonical agent command layer (`api/`) for created features and for
+   * multi-command transactions. `evaluation`, when given, must be the kernel
+   * result of exactly `nextFeatures` (seeds the result cache so the commit
+   * does not re-evaluate). Rejected (returns `false`) while a UI tool is active.
+   */
+  commitDocumentChange: (
+    nextFeatures: Feature[],
+    options?: { selection?: SelectionItem[]; evaluation?: EvaluationResult },
+  ) => boolean;
+  /** A fresh feature id (`feature-<kind>-<n>`) from the same counter the UI tools use, unique in `features`. */
+  allocateFeatureId: (kind: string, reserved?: ReadonlySet<string>) => string;
 }
 
 // ---- reference helpers (pure) -------------------------------------------------
@@ -1395,6 +1410,19 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
         evaluation: EMPTY_EVALUATION,
       });
       setFeatures(features);
+    },
+
+    commitDocumentChange: (nextFeatures, options) => {
+      if (get().activeTool !== null) return false;
+      if (options?.evaluation) resultCache.set(nextFeatures, options.evaluation);
+      commitFeatures(nextFeatures, options?.selection);
+      return true;
+    },
+    allocateFeatureId: (kind, reserved) => {
+      const taken = new Set(get().features.map((f) => f.id));
+      let id = createFeatureId(kind);
+      while (taken.has(id) || reserved?.has(id)) id = createFeatureId(kind);
+      return id;
     },
   };
 });
