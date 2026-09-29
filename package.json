@@ -15,6 +15,7 @@
   },
   "scripts": {
     "build": "pnpm -r --filter \"./packages/**\" --filter \"./apps/**\" build",
+    "dev:assembler": "pnpm --filter @himmelcad/assembler dev",
     "dev:builder": "pnpm --filter @himmelcad/builder dev",
     "dev:photolab": "pnpm --filter @himmelcad/photolab dev",
     "dev:weltview": "pnpm --filter @himmelcad/weltview dev",

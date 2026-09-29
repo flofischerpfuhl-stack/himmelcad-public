@@ -1,0 +1,26 @@
+.frame {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  height: 100vh;
+  width: 100vw;
+  background: var(--hc-bg-void);
+  color: var(--hc-fg-default);
+  text-align: center;
+}
+
+.title {
+  font-family: var(--hc-font-display);
+  font-size: 22px;
+  color: var(--hc-fg-strong);
+  margin: 0;
+}
+
+.subtitle {
+  font-family: var(--hc-font-ui);
+  font-size: 14px;
+  color: var(--hc-fg-muted);
+  margin: 0;
+}

@@ -1,0 +1,16 @@
+/* Assembler renderer shell — reads only shared HimmelCAD tokens.
+ * No product-specific colors, shadows, radii, or fonts here yet: the real
+ * ribbon/entity-tree/viewport shell is designed in a follow-up pass. */
+
+html,
+body,
+#hc-root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--hc-bg-void);
+  color: var(--hc-fg-default);
+  font-family: var(--hc-font-ui);
+}
