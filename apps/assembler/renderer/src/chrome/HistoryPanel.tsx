@@ -7,7 +7,7 @@
  * style and the message.
  */
 import { AlertTriangle, ChevronDown, ChevronRight, MoreHorizontal } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 
 import {
   Menu,
@@ -20,8 +20,8 @@ import {
 
 import { featureKindIcon } from './icons.js';
 import { ExpressionField } from './ExpressionField.js';
-import type { AssemblerState } from '../model/store.js';
-import type { Feature } from '../model/mockDocument.js';
+import type { AssemblerState, FeaturePatch } from '../model/store.js';
+import type { ExtrudeOperation, Feature, SketchProfile } from '../model/document.js';
 import panelStyles from './Panel.module.css';
 import styles from './HistoryPanel.module.css';
 
@@ -106,6 +106,7 @@ function HistoryCard({
 }: HistoryCardProps): JSX.Element {
   const Icon = featureKindIcon(feature.kind);
   const error = state.evaluation.errors[feature.id];
+  const warning = state.evaluation.warnings[feature.id];
   const selected = state.selection.some(
     (item) => item.kind === 'feature' && item.featureId === feature.id,
   );
@@ -209,6 +210,12 @@ function HistoryCard({
           {error}
         </div>
       ) : null}
+      {!error && warning ? (
+        <div className={styles.warningMessage}>
+          <AlertTriangle size={12} />
+          {warning}
+        </div>
+      ) : null}
       {expanded ? <FeatureParams feature={feature} state={state} /> : null}
     </div>
   );
@@ -221,41 +228,78 @@ function FeatureParams({
   feature: Feature;
   state: AssemblerState;
 }): JSX.Element {
-  if (feature.kind === 'sketchRect') {
+  const edit = (patch: FeaturePatch) => state.editFeatureParams(feature.id, patch);
+
+  if (feature.kind === 'sketch') {
+    const setProfile = (index: number, profile: SketchProfile) =>
+      edit({ profiles: feature.profiles.map((p, i) => (i === index ? profile : p)) });
     return (
       <div className={styles.params}>
-        <ExpressionField
-          label="Width"
-          value={feature.width}
-          unit="mm"
-          onCommit={(v) => state.editFeatureParams(feature.id, { width: v })}
-        />
-        <ExpressionField
-          label="Height"
-          value={feature.height}
-          unit="mm"
-          onCommit={(v) => state.editFeatureParams(feature.id, { height: v })}
-        />
-        <ExpressionField
-          label="X"
-          value={feature.x}
-          unit="mm"
-          onCommit={(v) => state.editFeatureParams(feature.id, { x: v })}
-        />
-        <ExpressionField
-          label="Y"
-          value={feature.y}
-          unit="mm"
-          onCommit={(v) => state.editFeatureParams(feature.id, { y: v })}
-        />
-        <div className={styles.paramsFull}>
-          <ExpressionField
-            label="Plane offset"
-            value={feature.offset}
-            unit="mm"
-            onCommit={(v) => state.editFeatureParams(feature.id, { offset: v })}
-          />
-        </div>
+        {feature.profiles.map((profile, index) =>
+          profile.kind === 'rectangle' ? (
+            <Fragment key={index}>
+              <ExpressionField
+                label="Width"
+                value={profile.width}
+                unit="mm"
+                onCommit={(v) => setProfile(index, { ...profile, width: v })}
+              />
+              <ExpressionField
+                label="Height"
+                value={profile.height}
+                unit="mm"
+                onCommit={(v) => setProfile(index, { ...profile, height: v })}
+              />
+              <ExpressionField
+                label="X"
+                value={profile.x}
+                unit="mm"
+                onCommit={(v) => setProfile(index, { ...profile, x: v })}
+              />
+              <ExpressionField
+                label="Y"
+                value={profile.y}
+                unit="mm"
+                onCommit={(v) => setProfile(index, { ...profile, y: v })}
+              />
+            </Fragment>
+          ) : (
+            <Fragment key={index}>
+              <ExpressionField
+                label="Center X"
+                value={profile.cx}
+                unit="mm"
+                onCommit={(v) => setProfile(index, { ...profile, cx: v })}
+              />
+              <ExpressionField
+                label="Center Y"
+                value={profile.cy}
+                unit="mm"
+                onCommit={(v) => setProfile(index, { ...profile, cy: v })}
+              />
+              <div className={styles.paramsFull}>
+                <ExpressionField
+                  label="Diameter"
+                  value={profile.radius * 2}
+                  unit="mm"
+                  onCommit={(v) => setProfile(index, { ...profile, radius: v / 2 })}
+                />
+              </div>
+            </Fragment>
+          ),
+        )}
+        {feature.plane.kind === 'plane' ? (
+          <div className={styles.paramsFull}>
+            <ExpressionField
+              label="Plane offset"
+              value={feature.plane.offset}
+              unit="mm"
+              onCommit={(v) =>
+                feature.plane.kind === 'plane' && edit({ plane: { ...feature.plane, offset: v } })
+              }
+            />
+          </div>
+        ) : null}
       </div>
     );
   }
@@ -267,35 +311,69 @@ function FeatureParams({
           label="Distance"
           value={feature.distance}
           unit="mm"
-          onCommit={(v) => state.editFeatureParams(feature.id, { distance: v })}
+          onCommit={(v) => edit({ distance: v })}
         />
+        <div>
+          <span className={styles.paramLabel}>Direction</span>
+          <Select
+            aria-label="Extrude direction"
+            value={feature.symmetric ? 'both' : 'one'}
+            options={[
+              { value: 'one', label: 'One side' },
+              { value: 'both', label: 'Both sides' },
+            ]}
+            onChange={(event) => edit({ symmetric: event.currentTarget.value === 'both' })}
+          />
+        </div>
         {feature.profile.kind === 'sketch' ? (
           <div className={styles.paramsFull}>
-            <span
-              style={{
-                display: 'block',
-                fontSize: 11,
-                color: 'var(--hc-fg-muted)',
-                marginBottom: 2,
-              }}
-            >
-              Operation
-            </span>
+            <span className={styles.paramLabel}>Operation</span>
             <Select
               aria-label="Extrude operation"
               value={feature.operation}
               options={[
                 { value: 'new', label: 'New body' },
                 { value: 'join', label: 'Join' },
+                { value: 'cut', label: 'Cut' },
               ]}
               onChange={(event) =>
-                state.editFeatureParams(feature.id, {
-                  operation: event.currentTarget.value as 'new' | 'join',
-                })
+                edit({ operation: event.currentTarget.value as ExtrudeOperation })
               }
             />
           </div>
         ) : null}
+      </div>
+    );
+  }
+
+  if (feature.kind === 'fillet' || feature.kind === 'chamfer') {
+    return (
+      <div className={styles.params}>
+        <ExpressionField
+          label={feature.kind === 'fillet' ? 'Radius' : 'Distance'}
+          value={feature.kind === 'fillet' ? feature.radius : feature.distance}
+          unit="mm"
+          onCommit={(v) => edit(feature.kind === 'fillet' ? { radius: v } : { distance: v })}
+        />
+        <span className={styles.paramNote}>
+          {feature.edges.length} {feature.edges.length === 1 ? 'edge' : 'edges'}
+        </span>
+      </div>
+    );
+  }
+
+  if (feature.kind === 'shell') {
+    return (
+      <div className={styles.params}>
+        <ExpressionField
+          label="Thickness"
+          value={feature.thickness}
+          unit="mm"
+          onCommit={(v) => edit({ thickness: v })}
+        />
+        <span className={styles.paramNote}>
+          {feature.faces.length} open {feature.faces.length === 1 ? 'face' : 'faces'}
+        </span>
       </div>
     );
   }
@@ -307,19 +385,19 @@ function FeatureParams({
           label="dX"
           value={feature.dx}
           unit="mm"
-          onCommit={(v) => state.editFeatureParams(feature.id, { dx: v })}
+          onCommit={(v) => edit({ dx: v })}
         />
         <ExpressionField
           label="dY"
           value={feature.dy}
           unit="mm"
-          onCommit={(v) => state.editFeatureParams(feature.id, { dy: v })}
+          onCommit={(v) => edit({ dy: v })}
         />
         <ExpressionField
           label="dZ"
           value={feature.dz}
           unit="mm"
-          onCommit={(v) => state.editFeatureParams(feature.id, { dz: v })}
+          onCommit={(v) => edit({ dz: v })}
         />
       </div>
     );

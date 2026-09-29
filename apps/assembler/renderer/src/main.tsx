@@ -7,6 +7,7 @@ import '@himmelcad/theme/reset.css';
 import './assembler.css';
 
 import { App } from './App.js';
+import { WorkerKernelAdapter } from './kernel/workerAdapter.js';
 import { useAssemblerStore } from './model/store.js';
 
 declare global {
@@ -22,6 +23,15 @@ declare global {
 if (import.meta.env.DEV) {
   window.__assembler = { store: useAssemblerStore };
 }
+
+// OCCT (WebAssembly) runs in its own worker; the UI stays responsive while it loads.
+useAssemblerStore
+  .getState()
+  .attachKernel(
+    new WorkerKernelAdapter(
+      () => new Worker(new URL('./kernel/kernel.worker.ts', import.meta.url), { type: 'module' }),
+    ),
+  );
 
 const rootEl = document.getElementById('hc-root');
 if (!rootEl) throw new Error('Missing #hc-root mount point');

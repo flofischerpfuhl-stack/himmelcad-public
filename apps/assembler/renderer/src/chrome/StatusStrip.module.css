@@ -12,4 +12,35 @@
   font-size: 12px;
   color: var(--hc-fg-muted);
   pointer-events: none;
+  display: flex;
+  align-items: center;
+  gap: var(--hc-space-2);
+  white-space: nowrap;
+}
+
+.error {
+  color: var(--hc-warning-fg);
+  border-color: var(--hc-warning);
+}
+
+.progress {
+  position: relative;
+  width: 96px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--hc-border-default);
+  overflow: hidden;
+}
+
+.progressFill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--hc-accent-base);
+  transition: width var(--hc-motion-fast);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .progressFill {
+    transition: none;
+  }
 }

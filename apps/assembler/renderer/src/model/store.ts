@@ -1,50 +1,70 @@
 /**
- * Application-state store for the HimmelCAD Assembler Phase 0 UI shell.
+ * Application-state store for HimmelCAD Assembler.
  *
- * This is the single source of truth the viewport, panels, adaptive
- * toolbar, command search and context menu are all built on top of. It
- * owns:
+ * The single source of truth the viewport, panels, adaptive toolbar,
+ * command search and context menu are built on. It owns:
  *
  * - the document (`features`) and its derived {@link EvaluationResult}
- *   (`evaluation`), recomputed on every change;
+ *   (`evaluation`), computed asynchronously by the CAD kernel behind a
+ *   {@link KernelAdapter} (OCCT in a Web Worker in the app, in-process in
+ *   tests). Every document change bumps a revision; results of older
+ *   revisions are discarded, so the viewport never shows geometry that is
+ *   newer or older than the document it claims to be. Until a result
+ *   arrives, `evaluation` keeps the last completed result and
+ *   `evaluationPending` is `true`. Results are cached per feature-array
+ *   identity, so undo/redo back to a known state is instant;
  * - transactional undo/redo of `features` (one committed tool operation or
  *   one parameter edit = exactly one undo step);
- * - selection/hover, which are pruned to only reference geometry that
- *   still resolves after every re-evaluation;
+ * - selection/hover by stable naming keys (see `kernel/naming.ts`), re-mapped
+ *   or pruned after every re-evaluation;
  * - view-only state (visibility, camera requests, display mode, panels)
  *   that is deliberately **not** part of the undo history;
  * - the explicit tool state machine
  *   (`collectingReferences -> preview -> numericEditing -> committing`,
- *   with `cancel()` valid from any uncommitted state) for the three real
- *   tools implemented in Phase 0: `sketchRectangle`, `extrude`, `move`.
+ *   with `cancel()` valid from any uncommitted state) for the interactive
+ *   tools `sketchRectangle`, `extrude`, `move`, plus one-step commands for
+ *   fillet/chamfer, shell and body booleans.
  *
- * Built on zustand (same library/version as `@himmelcad/ui`'s
- * `useLayoutStore`). Usable both as a React hook (`useAssemblerStore()`)
- * and imperatively (`useAssemblerStore.getState()` /
- * `useAssemblerStore.setState()`), which is how `commands/registry.ts`
- * and the test suite drive it without rendering React.
+ * Built on zustand. Usable as a React hook (`useAssemblerStore()`) and
+ * imperatively (`useAssemblerStore.getState()`), which is how
+ * `commands/registry.ts` and the tests drive it.
  */
 import { create } from 'zustand';
 
-import type {
-  Body,
-  EdgeId,
-  EvaluationResult,
-  ExtrudeFeature,
-  ExtrudeProfileRef,
-  FaceSide,
-  Feature,
-  MoveFeature,
-  Plane,
-  SketchRectFeature,
-} from './mockDocument.js';
-import { createDemoDocument, evaluate, planeForFace } from './mockDocument.js';
+import type { KernelAdapter, KernelJob } from '../kernel/adapter.js';
+import { baseEdgeKey, baseFaceKey, edgeSignatureOf, faceSignatureOf } from '../kernel/naming.js';
+import {
+  EMPTY_EVALUATION,
+  type Body,
+  type EvaluationResult,
+  type KernelStatus,
+} from '../kernel/types.js';
+import {
+  createDemoDocument,
+  frameForFace,
+  frameForPlane,
+  type BooleanFeature,
+  type ChamferFeature,
+  type EdgeRef,
+  type ExtrudeFeature,
+  type ExtrudeOperation,
+  type ExtrudeProfileRef,
+  type FaceRef,
+  type Feature,
+  type FilletFeature,
+  type MoveFeature,
+  type Plane,
+  type ShellFeature,
+  type SketchFeature,
+  type SketchFrame,
+  type SketchPlaneRef,
+} from './document.js';
 
 /** One selectable/hoverable thing in the viewport or a panel. */
 export type SelectionItem =
   | { kind: 'body'; bodyId: string }
-  | { kind: 'face'; bodyId: string; side: FaceSide }
-  | { kind: 'edge'; bodyId: string; edge: EdgeId }
+  | { kind: 'face'; bodyId: string; faceKey: string }
+  | { kind: 'edge'; bodyId: string; edgeKey: string }
   | { kind: 'sketchProfile'; featureId: string }
   | { kind: 'feature'; featureId: string };
 
@@ -58,24 +78,30 @@ interface ToolSessionBase {
 /** `R` — draws a rectangle on a plane, or on a selected planar body face. */
 export interface SketchRectangleTool extends ToolSessionBase {
   kind: 'sketchRectangle';
-  plane: Plane;
-  offset: number;
+  plane: SketchPlaneRef;
+  /** Resolved frame the rectangle is drawn in. */
+  frame: SketchFrame;
   preview: { x: number; y: number; width: number; height: number } | null;
 }
 
-/** `E` — extrudes a sketch profile (new body) or a body face (grow/shrink). */
+/** `E` — extrudes a sketch profile or pushes/pulls a planar body face. */
 export interface ExtrudeTool extends ToolSessionBase {
   kind: 'extrude';
   profile: ExtrudeProfileRef;
   distance: number;
-  operation: 'new' | 'join';
+  operation: ExtrudeOperation;
+  targetBodyId?: string;
+  /** `true` once the user picked the operation explicitly (disables sign-based join/cut). */
+  operationLocked: boolean;
   /**
-   * `evaluate(features + provisional feature)`, recomputed on every
-   * `setDistance` call, without ever touching `features` itself. The
-   * provisional feature carries the reserved id `"__preview_extrude__"`
-   * and is never part of the committed document.
+   * Kernel evaluation of `features + provisional feature`, recomputed
+   * asynchronously on every change without touching `features`. `null`
+   * until the first preview result arrives. The provisional feature
+   * carries the reserved id `"__preview_extrude__"`.
    */
-  previewEvaluation: EvaluationResult;
+  previewEvaluation: EvaluationResult | null;
+  /** `true` while a newer preview than `previewEvaluation` is being computed. */
+  previewPending: boolean;
 }
 
 /** `M` — translates a single body. */
@@ -88,7 +114,7 @@ export interface MoveTool extends ToolSessionBase {
 export type ToolSession = SketchRectangleTool | ExtrudeTool | MoveTool;
 
 /** Reserved feature id used only for the extrude tool's live preview; never committed. */
-const PREVIEW_EXTRUDE_FEATURE_ID = '__preview_extrude__';
+export const PREVIEW_EXTRUDE_FEATURE_ID = '__preview_extrude__';
 
 export type DisplayMode = 'shaded' | 'wireframe' | 'xray';
 export type SectionAxis = 'X' | 'Y' | 'Z';
@@ -103,11 +129,7 @@ export interface ViewState {
   gridVisible: boolean;
   snapToGrid: boolean;
   gridStep: number;
-  /**
-   * Bumping `nonce` is the signal: the viewport agent should react to any
-   * change of `nonce`, even if `preset` repeats (e.g. pressing "Front"
-   * twice should re-frame the view both times).
-   */
+  /** Bumping `nonce` is the signal to (re-)apply `preset`. */
   cameraRequest: { preset: CameraPreset; nonce: number } | null;
 }
 
@@ -117,29 +139,33 @@ export interface PanelsState {
 }
 
 /**
- * Patch for {@link editFeatureParams}. Not statically tied to the target
- * feature's kind (a `Feature` union only shares `id`/`kind`/`name`/
- * `suppressed` across all members) — callers are responsible for passing
- * a patch shape that matches the feature they are editing. Do not include
- * `id` or `kind` in a patch.
+ * Patch for {@link AssemblerState.editFeatureParams}. Callers pass a patch
+ * shape that matches the feature they edit; never include `id` or `kind`.
  */
-export type FeaturePatch =
-  | Partial<Omit<SketchRectFeature, 'id' | 'kind'>>
-  | Partial<Omit<ExtrudeFeature, 'id' | 'kind'>>
-  | Partial<Omit<MoveFeature, 'id' | 'kind'>>
-  | Partial<Omit<Feature, 'id' | 'kind'>>;
+export type FeaturePatch = {
+  [K in Feature['kind']]: Partial<Omit<Extract<Feature, { kind: K }>, 'id' | 'kind'>>;
+}[Feature['kind']];
 
 export interface AssemblerState {
   projectName: string;
-  /**
-   * Sets the project's display name (view/document metadata, not part of
-   * the undo-tracked `features` history — matches `loadDocument`'s
-   * `projectName` option). `name` is trimmed; a blank result is a no-op so
-   * the top bar always has something to show.
-   */
+  /** Sets the project's display name (not undo-tracked). Blank input is ignored. */
   setProjectName: (name: string) => void;
   features: Feature[];
+  /** Last completed kernel evaluation (see `evaluationPending`). */
   evaluation: EvaluationResult;
+  /** `true` while the kernel computes a newer document revision than `evaluation`. */
+  evaluationPending: boolean;
+
+  kernelStatus: KernelStatus;
+  kernelMessage: string;
+  /** Kernel load progress 0..1 while loading, when known. */
+  kernelProgress: number | null;
+  /** Measured kernel load time once ready, ms. */
+  kernelLoadMs: number | null;
+  /** Connects the store to a kernel and evaluates the current document. */
+  attachKernel: (adapter: KernelAdapter) => void;
+  /** Resolves once no document or preview evaluation is outstanding. */
+  whenSettled: () => Promise<void>;
 
   history: { canUndo: boolean; canRedo: boolean };
   undo: () => void;
@@ -160,11 +186,11 @@ export interface AssemblerState {
   setIsolatedBodyIds: (bodyIds: string[] | null) => void;
 
   activeTool: ToolSession | null;
-  beginSketchRectangle: (origin?: { bodyId: string; side: FaceSide }) => void;
+  beginSketchRectangle: (origin?: { bodyId: string; faceKey: string }) => void;
   setPreviewRect: (x: number, y: number, width: number, height: number) => void;
   beginExtrude: (profile: ExtrudeProfileRef) => void;
   setDistance: (distanceMm: number) => void;
-  setExtrudeOperation: (operation: 'new' | 'join') => void;
+  setExtrudeOperation: (operation: ExtrudeOperation) => void;
   beginMove: (bodyId: string) => void;
   setDelta: (dx: number, dy: number, dz: number) => void;
   /** Enters the `numericEditing` phase (e.g. a dimension field gained focus). No-op without an active tool. */
@@ -173,8 +199,15 @@ export interface AssemblerState {
   endNumericEditing: () => void;
   /** Commits the active tool's provisional feature as exactly one undo step. No-op without an active tool. */
   commit: () => void;
-  /** Cancels the active tool. `features` and the undo stack are left exactly as they were. No-op without an active tool. */
+  /** Cancels the active tool. `features` and the undo stack are left exactly as they were. */
   cancel: () => void;
+
+  /** Fillets or chamfers the selected edges (one undo step); selects the new feature. */
+  addEdgeBlend: (kind: 'fillet' | 'chamfer', size: number) => void;
+  /** Shells the body of the selected faces, opening them (one undo step). */
+  addShell: (thickness: number) => void;
+  /** Boolean of the selected bodies: the first selected body is the target (one undo step). */
+  addBoolean: (operation: BooleanFeature['operation']) => void;
 
   editFeatureParams: (featureId: string, patch: FeaturePatch) => void;
   setSuppressed: (featureId: string, suppressed: boolean) => void;
@@ -200,24 +233,72 @@ export interface AssemblerState {
   pushRecentCommand: (commandId: string) => void;
 
   /**
-   * Replaces the whole document (features + project name), resetting
-   * undo history, selection, hover, and visibility state. Used for
-   * "File > New" (Phase 1) and by tests to get a clean, isolated store
-   * without restarting the process (the store is a module-level
-   * singleton).
+   * Replaces the whole document (features + project name), resetting undo
+   * history, selection, hover and visibility state.
    */
   loadDocument: (features: Feature[], options?: { projectName?: string }) => void;
 }
 
+// ---- reference helpers (pure) -------------------------------------------------
+
+/** Finds a face of a body by naming key: exact key, then alias, then split-face base key. */
+export function findFace(body: Body, faceKey: string) {
+  return (
+    body.faces.find((f) => f.key === faceKey) ??
+    body.faces.find((f) => f.aliases.includes(faceKey)) ??
+    body.faces.find((f) => baseFaceKey(f.key) === baseFaceKey(faceKey))
+  );
+}
+
+export function findEdge(body: Body, edgeKey: string) {
+  return (
+    body.edges.find((e) => e.key === edgeKey) ??
+    body.edges.find((e) => baseEdgeKey(e.key) === baseEdgeKey(edgeKey))
+  );
+}
+
+/** Stable {@link FaceRef} for a face of the given evaluation, or `null` if it doesn't resolve. */
+export function makeFaceRef(
+  evaluation: EvaluationResult,
+  bodyId: string,
+  faceKey: string,
+): FaceRef | null {
+  const body = evaluation.bodies.find((b) => b.id === bodyId);
+  const face = body ? findFace(body, faceKey) : undefined;
+  if (!face) return null;
+  return { bodyId, key: face.key, signature: faceSignatureOf(face) };
+}
+
+export function makeEdgeRef(
+  evaluation: EvaluationResult,
+  bodyId: string,
+  edgeKey: string,
+): EdgeRef | null {
+  const body = evaluation.bodies.find((b) => b.id === bodyId);
+  const edge = body ? findEdge(body, edgeKey) : undefined;
+  if (!edge) return null;
+  return { bodyId, key: edge.key, signature: edgeSignatureOf(edge) };
+}
+
+/** `true` if the face is planar (usable as sketch plane or push/pull face). */
+export function isPlanarFace(
+  evaluation: EvaluationResult,
+  bodyId: string,
+  faceKey: string,
+): boolean {
+  const body = evaluation.bodies.find((b) => b.id === bodyId);
+  const face = body ? findFace(body, faceKey) : undefined;
+  return face?.surface === 'plane' && face.normal !== null;
+}
+
 function selectionKeysEqual(a: SelectionItem, b: SelectionItem): boolean {
-  if (a.kind !== b.kind) return false;
   switch (a.kind) {
     case 'body':
       return b.kind === 'body' && a.bodyId === b.bodyId;
     case 'face':
-      return b.kind === 'face' && a.bodyId === b.bodyId && a.side === b.side;
+      return b.kind === 'face' && a.bodyId === b.bodyId && a.faceKey === b.faceKey;
     case 'edge':
-      return b.kind === 'edge' && a.bodyId === b.bodyId && a.edge === b.edge;
+      return b.kind === 'edge' && a.bodyId === b.bodyId && a.edgeKey === b.edgeKey;
     case 'sketchProfile':
       return b.kind === 'sketchProfile' && a.featureId === b.featureId;
     case 'feature':
@@ -225,32 +306,38 @@ function selectionKeysEqual(a: SelectionItem, b: SelectionItem): boolean {
   }
 }
 
-function selectionItemResolves(
+/** Re-maps a selection item onto a new evaluation (keys may gain/lose `#n`), or `null` if it is gone. */
+function remapSelectionItem(
   item: SelectionItem,
-  bodyIds: ReadonlySet<string>,
-  sketchIds: ReadonlySet<string>,
+  evaluation: EvaluationResult,
   featureIds: ReadonlySet<string>,
-): boolean {
+): SelectionItem | null {
   switch (item.kind) {
     case 'body':
-    case 'face':
-    case 'edge':
-      return bodyIds.has(item.bodyId);
+      return evaluation.bodies.some((b) => b.id === item.bodyId) ? item : null;
+    case 'face': {
+      const body = evaluation.bodies.find((b) => b.id === item.bodyId);
+      const face = body ? findFace(body, item.faceKey) : undefined;
+      if (!face) return null;
+      return face.key === item.faceKey ? item : { ...item, faceKey: face.key };
+    }
+    case 'edge': {
+      const body = evaluation.bodies.find((b) => b.id === item.bodyId);
+      const edge = body ? findEdge(body, item.edgeKey) : undefined;
+      if (!edge) return null;
+      return edge.key === item.edgeKey ? item : { ...item, edgeKey: edge.key };
+    }
     case 'sketchProfile':
-      return sketchIds.has(item.featureId);
+      return evaluation.sketches.some((s) => s.featureId === item.featureId) ? item : null;
     case 'feature':
-      return featureIds.has(item.featureId);
+      return featureIds.has(item.featureId) ? item : null;
   }
 }
 
 /**
- * Seeded from the demo document's own ids (`feature-extrude-3`, etc.) so
- * newly created features never collide with the pre-existing mock document
- * — starting this at `0` made the very first feature created in any fresh
- * session (e.g. the first Extrude) reuse an id like `feature-extrude-1`
- * that the seed data already owns, corrupting id-keyed lookups
- * (`editFeatureParams`/`deleteFeature`/`renameFeature`/`setSuppressed` all
- * find-by-id) and producing duplicate React keys in the History panel.
+ * Seeded from the demo document's own ids so newly created features never
+ * collide with the pre-existing document (duplicate ids would corrupt
+ * id-keyed lookups and React keys).
  */
 let featureIdCounter = highestFeatureIdSuffix(createDemoDocument());
 
@@ -273,75 +360,165 @@ function nextFeatureName(prefix: string, features: readonly Feature[]): string {
   return `${prefix} ${count + 1}`;
 }
 
-function buildProvisionalExtrude(
-  profile: ExtrudeProfileRef,
-  distance: number,
-  operation: 'new' | 'join',
-): ExtrudeFeature {
+function buildProvisionalExtrude(tool: {
+  profile: ExtrudeProfileRef;
+  distance: number;
+  operation: ExtrudeOperation;
+  targetBodyId?: string;
+}): ExtrudeFeature {
   return {
     id: PREVIEW_EXTRUDE_FEATURE_ID,
     name: 'Extrude (preview)',
     suppressed: false,
     kind: 'extrude',
-    profile,
-    distance,
-    operation,
+    profile: tool.profile,
+    distance: tool.distance,
+    symmetric: false,
+    operation: tool.operation,
+    ...(tool.targetBodyId !== undefined ? { targetBodyId: tool.targetBodyId } : {}),
   };
 }
 
+/** For a sketch lying on a body face: join into that body for a positive distance, cut for a negative one. */
+function autoOperation(distance: number): ExtrudeOperation {
+  return distance < 0 ? 'cut' : 'join';
+}
+
 export const useAssemblerStore = create<AssemblerState>((set, get) => {
-  /**
-   * Undo/redo snapshots of `features`. Deliberately kept out of the
-   * public state object — the documented contract only exposes
-   * `history.canUndo` / `history.canRedo` plus `undo()`/`redo()`.
-   */
+  /** Undo/redo snapshots of `features`; only `history.canUndo/canRedo` are public. */
   let past: Feature[][] = [];
   let future: Feature[][] = [];
 
-  interface Derived {
-    features: Feature[];
-    evaluation: EvaluationResult;
-    selection: SelectionItem[];
-    hover: SelectionItem | null;
-    hiddenBodyIds: string[];
-    isolatedBodyIds: string[] | null;
+  let kernel: KernelAdapter | null = null;
+  let unsubscribeKernel: (() => void) | null = null;
+  /** Document revision: bumped on every `features` change. */
+  let documentRevision = 0;
+  let documentJob: KernelJob | null = null;
+  /** Preview revision: bumped on every provisional change, tool end, or document change. */
+  let previewRevision = 0;
+  let previewJob: KernelJob | null = null;
+  /** Completed evaluations by feature-array identity (undo/redo reuse them instantly). */
+  let resultCache = new WeakMap<Feature[], EvaluationResult>();
+  let settledWaiters: (() => void)[] = [];
+
+  function isSettled(): boolean {
+    const state = get();
+    const previewBusy = state.activeTool?.kind === 'extrude' && state.activeTool.previewPending;
+    return !state.evaluationPending && !previewBusy;
   }
 
-  function computeDerived(nextFeatures: Feature[], previous: AssemblerState): Derived {
-    const evaluation = evaluate(nextFeatures);
+  function notifySettled(): void {
+    if (!isSettled()) return;
+    const waiters = settledWaiters;
+    settledWaiters = [];
+    for (const resolve of waiters) resolve();
+  }
+
+  function applyEvaluation(evaluation: EvaluationResult): void {
+    const state = get();
     const bodyIds = new Set(evaluation.bodies.map((b) => b.id));
-    const sketchIds = new Set(evaluation.sketches.map((s) => s.featureId));
-    const featureIds = new Set(nextFeatures.map((f) => f.id));
-    const selection = previous.selection.filter((item) =>
-      selectionItemResolves(item, bodyIds, sketchIds, featureIds),
-    );
-    const hover =
-      previous.hover && selectionItemResolves(previous.hover, bodyIds, sketchIds, featureIds)
-        ? previous.hover
-        : null;
-    return {
-      features: nextFeatures,
+    const featureIds = new Set(state.features.map((f) => f.id));
+    const selection = state.selection
+      .map((item) => remapSelectionItem(item, evaluation, featureIds))
+      .filter((item): item is SelectionItem => item !== null);
+    const hover = state.hover ? remapSelectionItem(state.hover, evaluation, featureIds) : null;
+    set({
       evaluation,
+      evaluationPending: false,
       selection,
       hover,
-      hiddenBodyIds: previous.hiddenBodyIds.filter((id) => bodyIds.has(id)),
-      isolatedBodyIds: previous.isolatedBodyIds
-        ? previous.isolatedBodyIds.filter((id) => bodyIds.has(id))
+      hiddenBodyIds: state.hiddenBodyIds.filter((id) => bodyIds.has(id)),
+      isolatedBodyIds: state.isolatedBodyIds
+        ? state.isolatedBodyIds.filter((id) => bodyIds.has(id))
         : null,
-    };
+    });
+    notifySettled();
+  }
+
+  /** Requests evaluation of the current `features`. Stale results (older revisions) are dropped. */
+  function evaluateDocument(): void {
+    documentRevision += 1;
+    const revision = documentRevision;
+    const features = get().features;
+    if (documentJob) {
+      kernel?.cancel(documentJob.id);
+      documentJob = null;
+    }
+    const cached = resultCache.get(features);
+    if (cached) {
+      applyEvaluation(cached);
+      return;
+    }
+    set({ evaluationPending: true });
+    if (!kernel) return; // evaluated as soon as a kernel is attached
+    const job = kernel.evaluate({ channel: 'document', revision, features });
+    documentJob = job;
+    void job.outcome.then((outcome) => {
+      if (outcome.revision !== documentRevision) return; // stale
+      documentJob = null;
+      if (outcome.kind === 'done') {
+        resultCache.set(features, outcome.result);
+        applyEvaluation(outcome.result);
+      } else if (outcome.kind === 'failed') {
+        set({ evaluationPending: false, kernelMessage: outcome.message });
+        notifySettled();
+      }
+    });
+  }
+
+  /** Requests a preview evaluation for the active extrude tool. */
+  function evaluatePreview(tool: ExtrudeTool): ExtrudeTool {
+    previewRevision += 1;
+    const revision = previewRevision;
+    if (!kernel) return { ...tool, previewPending: true };
+    const features = [...get().features, buildProvisionalExtrude(tool)];
+    const job = kernel.evaluate({ channel: 'preview', revision, features });
+    previewJob = job;
+    void job.outcome.then((outcome) => {
+      if (outcome.revision !== previewRevision) return; // stale or tool ended
+      previewJob = null;
+      const current = get().activeTool;
+      if (current?.kind !== 'extrude') return;
+      set({
+        activeTool: {
+          ...current,
+          previewPending: false,
+          previewEvaluation: outcome.kind === 'done' ? outcome.result : current.previewEvaluation,
+        },
+      });
+      notifySettled();
+    });
+    return { ...tool, previewPending: true };
+  }
+
+  function endPreview(): void {
+    previewRevision += 1;
+    if (previewJob) {
+      kernel?.cancel(previewJob.id);
+      previewJob = null;
+    }
+  }
+
+  function setFeatures(nextFeatures: Feature[], extra: Partial<AssemblerState> = {}): void {
+    set({ features: nextFeatures, ...extra });
+    evaluateDocument();
+    notifySettled();
   }
 
   function commitFeatures(nextFeatures: Feature[], selectionOverride?: SelectionItem[]): void {
     const state = get();
     past = [...past, state.features];
     future = [];
-    const derived = computeDerived(nextFeatures, state);
-    set({
-      ...derived,
-      selection: selectionOverride ?? derived.selection,
+    endPreview();
+    setFeatures(nextFeatures, {
+      ...(selectionOverride ? { selection: selectionOverride } : {}),
       history: { canUndo: true, canRedo: false },
       activeTool: null,
     });
+  }
+
+  function appendFeature(feature: Feature): void {
+    commitFeatures([...get().features, feature], [{ kind: 'feature', featureId: feature.id }]);
   }
 
   return {
@@ -352,7 +529,43 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
       set({ projectName: trimmed });
     },
     features: createDemoDocument(),
-    evaluation: evaluate(createDemoDocument()),
+    evaluation: EMPTY_EVALUATION,
+    evaluationPending: true,
+
+    kernelStatus: 'loading',
+    kernelMessage: 'Loading CAD kernel…',
+    kernelProgress: null,
+    kernelLoadMs: null,
+    attachKernel: (adapter) => {
+      unsubscribeKernel?.();
+      kernel = adapter;
+      resultCache = new WeakMap();
+      unsubscribeKernel = adapter.onStatus((status) => {
+        const wasReady = get().kernelStatus === 'ready';
+        set({
+          kernelStatus: status.status,
+          kernelMessage: status.message,
+          kernelProgress: status.progress,
+          kernelLoadMs: status.loadMs,
+        });
+        if (status.status === 'error') {
+          set({ evaluationPending: false });
+          notifySettled();
+        }
+        // A restarted worker (after a hard cancel) lost nothing: re-request the current revision.
+        if (status.status === 'ready' && !wasReady && get().evaluationPending && !documentJob) {
+          evaluateDocument();
+        }
+      });
+      evaluateDocument();
+      const tool = get().activeTool;
+      if (tool?.kind === 'extrude') set({ activeTool: evaluatePreview(tool) });
+    },
+    whenSettled: () =>
+      new Promise<void>((resolve) => {
+        settledWaiters.push(resolve);
+        notifySettled();
+      }),
 
     history: { canUndo: false, canRedo: false },
     undo: () => {
@@ -361,8 +574,9 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
       const previousFeatures = past[past.length - 1]!;
       past = past.slice(0, -1);
       future = [...future, state.features];
-      const derived = computeDerived(previousFeatures, state);
-      set({ ...derived, history: { canUndo: past.length > 0, canRedo: future.length > 0 } });
+      setFeatures(previousFeatures, {
+        history: { canUndo: past.length > 0, canRedo: future.length > 0 },
+      });
     },
     redo: () => {
       const state = get();
@@ -370,8 +584,9 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
       const nextFeatures = future[future.length - 1]!;
       future = future.slice(0, -1);
       past = [...past, state.features];
-      const derived = computeDerived(nextFeatures, state);
-      set({ ...derived, history: { canUndo: past.length > 0, canRedo: future.length > 0 } });
+      setFeatures(nextFeatures, {
+        history: { canUndo: past.length > 0, canRedo: future.length > 0 },
+      });
     },
 
     selection: [],
@@ -408,22 +623,23 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
     activeTool: null,
     beginSketchRectangle: (origin) => {
       const state = get();
-      let plane: Plane = 'XY';
-      let offset = 0;
+      let plane: SketchPlaneRef = { kind: 'plane', plane: 'XY' as Plane, offset: 0 };
+      let frame: SketchFrame = frameForPlane('XY', 0);
       if (origin) {
-        const body = state.evaluation.bodies.find((b) => b.id === origin.bodyId);
-        if (body) {
-          const derived = planeForFace(body, origin.side);
-          plane = derived.plane;
-          offset = derived.offset;
+        const ref = makeFaceRef(state.evaluation, origin.bodyId, origin.faceKey);
+        const normal = ref?.signature.normal;
+        if (ref && normal && ref.signature.surface === 'plane') {
+          plane = { kind: 'face', face: ref };
+          frame = frameForFace(normal, ref.signature.centroid);
         }
       }
+      endPreview();
       set({
         activeTool: {
           kind: 'sketchRectangle',
           phase: 'collectingReferences',
           plane,
-          offset,
+          frame,
           preview: null,
         },
       });
@@ -435,46 +651,52 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
     },
     beginExtrude: (profile) => {
       const state = get();
-      const provisional = buildProvisionalExtrude(profile, 0, 'new');
-      set({
-        activeTool: {
-          kind: 'extrude',
-          phase: 'collectingReferences',
-          profile,
-          distance: 0,
-          operation: 'new',
-          previewEvaluation: evaluate([...state.features, provisional]),
-        },
-      });
+      let operation: ExtrudeOperation = 'new';
+      let targetBodyId: string | undefined;
+      if (profile.kind === 'sketch') {
+        const sketch = state.features.find(
+          (f): f is SketchFeature => f.id === profile.featureId && f.kind === 'sketch',
+        );
+        if (sketch?.plane.kind === 'face') {
+          operation = 'join';
+          targetBodyId = sketch.plane.face.bodyId;
+        }
+      } else {
+        operation = 'join';
+      }
+      const tool: ExtrudeTool = {
+        kind: 'extrude',
+        phase: 'collectingReferences',
+        profile,
+        distance: 0,
+        operation,
+        ...(targetBodyId !== undefined ? { targetBodyId } : {}),
+        operationLocked: false,
+        previewEvaluation: null,
+        previewPending: false,
+      };
+      endPreview();
+      // A zero distance has no geometry to preview; the first drag/entry requests one.
+      set({ activeTool: tool });
     },
     setDistance: (distanceMm) => {
-      const state = get();
-      const tool = state.activeTool;
+      const tool = get().activeTool;
       if (!tool || tool.kind !== 'extrude') return;
-      const provisional = buildProvisionalExtrude(tool.profile, distanceMm, tool.operation);
+      const operation =
+        !tool.operationLocked && (tool.targetBodyId !== undefined || tool.profile.kind === 'face')
+          ? autoOperation(distanceMm)
+          : tool.operation;
       set({
-        activeTool: {
-          ...tool,
-          phase: 'preview',
-          distance: distanceMm,
-          previewEvaluation: evaluate([...state.features, provisional]),
-        },
+        activeTool: evaluatePreview({ ...tool, phase: 'preview', distance: distanceMm, operation }),
       });
     },
     setExtrudeOperation: (operation) => {
-      const state = get();
-      const tool = state.activeTool;
+      const tool = get().activeTool;
       if (!tool || tool.kind !== 'extrude') return;
-      const provisional = buildProvisionalExtrude(tool.profile, tool.distance, operation);
-      set({
-        activeTool: {
-          ...tool,
-          operation,
-          previewEvaluation: evaluate([...state.features, provisional]),
-        },
-      });
+      set({ activeTool: evaluatePreview({ ...tool, operation, operationLocked: true }) });
     },
     beginMove: (bodyId) => {
+      endPreview();
       set({
         activeTool: {
           kind: 'move',
@@ -507,56 +729,109 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
       if (tool.kind === 'sketchRectangle') {
         if (!tool.preview) {
           set({ activeTool: null });
+          notifySettled();
           return;
         }
-        const id = createFeatureId('sketchRect');
-        const feature: SketchRectFeature = {
+        const id = createFeatureId('sketch');
+        const feature: SketchFeature = {
           id,
           name: nextFeatureName('Sketch', state.features),
           suppressed: false,
-          kind: 'sketchRect',
+          kind: 'sketch',
           plane: tool.plane,
-          offset: tool.offset,
-          x: tool.preview.x,
-          y: tool.preview.y,
-          width: tool.preview.width,
-          height: tool.preview.height,
+          profiles: [{ kind: 'rectangle', ...tool.preview }],
         };
         commitFeatures([...state.features, feature], [{ kind: 'sketchProfile', featureId: id }]);
         return;
       }
 
       if (tool.kind === 'extrude') {
+        const provisional = buildProvisionalExtrude(tool);
         const id = createFeatureId('extrude');
         const feature: ExtrudeFeature = {
+          ...provisional,
           id,
           name: nextFeatureName('Extrude', state.features),
-          suppressed: false,
-          kind: 'extrude',
-          profile: tool.profile,
-          distance: tool.distance,
-          operation: tool.operation,
         };
         commitFeatures([...state.features, feature]);
         return;
       }
 
-      if (tool.kind === 'move') {
-        const id = createFeatureId('move');
-        const feature: MoveFeature = {
-          id,
-          name: nextFeatureName('Move', state.features),
-          suppressed: false,
-          kind: 'move',
-          bodyId: tool.bodyId,
-          dx: tool.delta.dx,
-          dy: tool.delta.dy,
-          dz: tool.delta.dz,
-        };
-        commitFeatures([...state.features, feature]);
-      }
+      const id = createFeatureId('move');
+      const feature: MoveFeature = {
+        id,
+        name: nextFeatureName('Move', state.features),
+        suppressed: false,
+        kind: 'move',
+        bodyId: tool.bodyId,
+        dx: tool.delta.dx,
+        dy: tool.delta.dy,
+        dz: tool.delta.dz,
+      };
+      commitFeatures([...state.features, feature]);
     },
-    cancel: () => set({ activeTool: null }),
+    cancel: () => {
+      endPreview();
+      set({ activeTool: null });
+      notifySettled();
+    },
+
+    addEdgeBlend: (kind, size) => {
+      const state = get();
+      const edges = state.selection
+        .filter((item): item is Extract<SelectionItem, { kind: 'edge' }> => item.kind === 'edge')
+        .map((item) => makeEdgeRef(state.evaluation, item.bodyId, item.edgeKey))
+        .filter((ref): ref is EdgeRef => ref !== null);
+      if (edges.length === 0) return;
+      const prefix = kind === 'fillet' ? 'Fillet' : 'Chamfer';
+      const base = {
+        id: createFeatureId(kind),
+        name: nextFeatureName(prefix, state.features),
+        suppressed: false,
+      };
+      const feature: FilletFeature | ChamferFeature =
+        kind === 'fillet'
+          ? { ...base, kind: 'fillet', edges, radius: size }
+          : { ...base, kind: 'chamfer', edges, distance: size };
+      appendFeature(feature);
+    },
+    addShell: (thickness) => {
+      const state = get();
+      const faces = state.selection
+        .filter((item): item is Extract<SelectionItem, { kind: 'face' }> => item.kind === 'face')
+        .map((item) => makeFaceRef(state.evaluation, item.bodyId, item.faceKey))
+        .filter((ref): ref is FaceRef => ref !== null);
+      if (faces.length === 0) return;
+      const feature: ShellFeature = {
+        id: createFeatureId('shell'),
+        name: nextFeatureName('Shell', state.features),
+        suppressed: false,
+        kind: 'shell',
+        bodyId: faces[0]!.bodyId,
+        faces,
+        thickness,
+      };
+      appendFeature(feature);
+    },
+    addBoolean: (operation) => {
+      const state = get();
+      const bodyIds = state.selection
+        .filter((item): item is Extract<SelectionItem, { kind: 'body' }> => item.kind === 'body')
+        .map((item) => item.bodyId);
+      if (bodyIds.length < 2) return;
+      const label =
+        operation === 'union' ? 'Union' : operation === 'subtract' ? 'Subtract' : 'Intersect';
+      const feature: BooleanFeature = {
+        id: createFeatureId('boolean'),
+        name: nextFeatureName(label, state.features),
+        suppressed: false,
+        kind: 'boolean',
+        operation,
+        targetBodyId: bodyIds[0]!,
+        toolBodyIds: bodyIds.slice(1),
+      };
+      appendFeature(feature);
+    },
 
     editFeatureParams: (featureId, patch) => {
       const state = get();
@@ -567,18 +842,15 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
     },
     setSuppressed: (featureId, suppressed) => {
       const state = get();
-      const next = state.features.map((f) => (f.id === featureId ? { ...f, suppressed } : f));
-      commitFeatures(next);
+      commitFeatures(state.features.map((f) => (f.id === featureId ? { ...f, suppressed } : f)));
     },
     renameFeature: (featureId, name) => {
       const state = get();
-      const next = state.features.map((f) => (f.id === featureId ? { ...f, name } : f));
-      commitFeatures(next);
+      commitFeatures(state.features.map((f) => (f.id === featureId ? { ...f, name } : f)));
     },
     deleteFeature: (featureId) => {
       const state = get();
-      const next = state.features.filter((f) => f.id !== featureId);
-      commitFeatures(next);
+      commitFeatures(state.features.filter((f) => f.id !== featureId));
     },
 
     viewState: {
@@ -630,24 +902,21 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
     loadDocument: (features, options) => {
       past = [];
       future = [];
+      endPreview();
       const previous = get();
-      const derived = computeDerived(features, {
-        ...previous,
-        selection: [],
-        hover: null,
-        hiddenBodyIds: [],
-        isolatedBodyIds: null,
-      });
       set({
-        ...derived,
         projectName: options?.projectName ?? previous.projectName,
         history: { canUndo: false, canRedo: false },
         activeTool: null,
         selection: [],
         hover: null,
+        hiddenBodyIds: [],
+        isolatedBodyIds: null,
+        evaluation: EMPTY_EVALUATION,
       });
+      setFeatures(features);
     },
   };
 });
 
-export type { Body, EdgeId, EvaluationResult, ExtrudeProfileRef, FaceSide, Feature, Plane };
+export type { Body, EvaluationResult, ExtrudeProfileRef, Feature, Plane };

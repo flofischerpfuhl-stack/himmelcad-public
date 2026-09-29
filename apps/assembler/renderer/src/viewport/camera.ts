@@ -4,7 +4,7 @@
  * view-projection matrix. No WebGL, no DOM — unit tested directly.
  *
  * Convention: `yaw` rotates around world Z (up), `pitch` tilts away from the
- * XY plane, `distance` is eye-to-target. Z is up, matching `mockDocument.ts`.
+ * XY plane, `distance` is eye-to-target. Z is up, matching `model/document.ts`.
  */
 import {
   crossVec3,

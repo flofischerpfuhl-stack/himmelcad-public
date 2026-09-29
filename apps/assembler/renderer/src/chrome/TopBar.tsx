@@ -190,8 +190,17 @@ function HelpMenu(): JSX.Element {
         onClose={() => setDialog(null)}
         title="About Himmel:CAD Assembler"
       >
-        <p>Himmel:CAD Assembler — Phase 0 UI shell.</p>
-        <p>No CAD kernel yet: bodies are mock axis-aligned boxes.</p>
+        <p>Himmel:CAD Assembler — Phase 1 CAD-kernel spike.</p>
+        <p>
+          This application makes use of, and is based on facilities provided by, the Open CASCADE
+          Technology software (OCCT 8.0.1, LGPL 2.1 with the Open CASCADE exception), compiled to
+          WebAssembly by opencascade.js and loaded at runtime as a separate, replaceable module.
+          Modelling API: replicad (MIT).
+        </p>
+        <p>
+          License texts, source locations and replacement instructions ship with the application in
+          <code> licenses/THIRD-PARTY-NOTICES.txt</code>.
+        </p>
       </Dialog>
     </>
   );

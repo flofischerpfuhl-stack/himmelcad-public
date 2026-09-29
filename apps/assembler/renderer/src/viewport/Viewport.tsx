@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import type { Body, EvaluatedSketch } from '../model/mockDocument.js';
-import { useAssemblerStore, type SelectionItem, type ToolSession } from '../model/store.js';
+import type { Body, EvaluatedSketch } from '../kernel/types.js';
+import { framePoint, frameUv, type SketchFrame } from '../model/document.js';
+import {
+  findFace,
+  useAssemblerStore,
+  type SelectionItem,
+  type ToolSession,
+} from '../model/store.js';
 import {
   DEFAULT_POSE,
   fitPose,
@@ -38,39 +44,14 @@ const DOUBLE_CLICK_MS = 400;
 /** Matches `scene.ts`'s `MOVE_HANDLE_LENGTH_MM`. */
 const HANDLE_LENGTH_MM = 40;
 
-interface PlaneEmbedding {
-  origin: Vec3;
-  normal: Vec3;
-  u: Vec3;
-  v: Vec3;
-}
-
-function planeEmbedding(plane: 'XY' | 'XZ' | 'YZ', offset: number): PlaneEmbedding {
-  if (plane === 'XY')
-    return { origin: [0, 0, offset], normal: [0, 0, 1], u: [1, 0, 0], v: [0, 1, 0] };
-  if (plane === 'XZ')
-    return { origin: [0, offset, 0], normal: [0, 1, 0], u: [1, 0, 0], v: [0, 0, 1] };
-  return { origin: [offset, 0, 0], normal: [1, 0, 0], u: [0, 1, 0], v: [0, 0, 1] };
-}
+type PlaneEmbedding = SketchFrame;
 
 function toPlaneUv(point: Vec3, plane: PlaneEmbedding): { u: number; v: number } {
-  const rel: Vec3 = [
-    point[0] - plane.origin[0],
-    point[1] - plane.origin[1],
-    point[2] - plane.origin[2],
-  ];
-  return {
-    u: rel[0] * plane.u[0] + rel[1] * plane.u[1] + rel[2] * plane.u[2],
-    v: rel[0] * plane.v[0] + rel[1] * plane.v[1] + rel[2] * plane.v[2],
-  };
+  return frameUv(plane, point);
 }
 
 function fromPlaneUv(u: number, v: number, plane: PlaneEmbedding): Vec3 {
-  return [
-    plane.origin[0] + plane.u[0] * u + plane.v[0] * v,
-    plane.origin[1] + plane.u[1] * u + plane.v[1] * v,
-    plane.origin[2] + plane.u[2] * u + plane.v[2] * v,
-  ];
+  return framePoint(plane, u, v);
 }
 
 function snap(value: number, step: number): number {
@@ -94,25 +75,23 @@ function computeExtrudeAnchor(
   if (!tool || tool.kind !== 'extrude') return null;
   const { profile } = tool;
   if (profile.kind === 'face') {
-    const body = bodies.find((b) => b.id === profile.bodyId);
-    if (!body) return null;
-    const axis = profile.side[1] === 'X' ? 0 : profile.side[1] === 'Y' ? 1 : 2;
-    const sign = profile.side[0] === '+' ? 1 : -1;
-    const coord = sign > 0 ? body.max[axis] : body.min[axis];
-    const center: Vec3 = [
-      axis === 0 ? coord : (body.min[0] + body.max[0]) / 2,
-      axis === 1 ? coord : (body.min[1] + body.max[1]) / 2,
-      axis === 2 ? coord : (body.min[2] + body.max[2]) / 2,
-    ];
-    const normal: Vec3 = [axis === 0 ? sign : 0, axis === 1 ? sign : 0, axis === 2 ? sign : 0];
-    return { origin: center, normal };
+    const body = bodies.find((b) => b.id === profile.face.bodyId);
+    const face = body ? findFace(body, profile.face.key) : undefined;
+    if (!face?.normal) return null;
+    return { origin: face.centroid, normal: face.normal };
   }
   const sketch = sketches.find((s) => s.featureId === profile.featureId);
   if (!sketch) return null;
-  const plane = planeEmbedding(sketch.plane, sketch.offset);
-  const cu = (sketch.min[0] + sketch.max[0]) / 2;
-  const cv = (sketch.min[1] + sketch.max[1]) / 2;
-  return { origin: fromPlaneUv(cu, cv, plane), normal: plane.normal };
+  const profiles =
+    profile.profileIndex !== undefined
+      ? sketch.profiles.slice(profile.profileIndex, profile.profileIndex + 1)
+      : sketch.profiles;
+  if (profiles.length === 0) return null;
+  const origin: [number, number, number] = [0, 0, 0];
+  for (const p of profiles) {
+    for (let i = 0; i < 3; i += 1) origin[i] = origin[i]! + p.center[i]! / profiles.length;
+  }
+  return { origin, normal: sketch.frame.normal };
 }
 
 /** Pure (no React) move-anchor lookup; see {@link computeExtrudeAnchor}. */
@@ -160,7 +139,7 @@ interface PointerGesture {
 /**
  * The Assembler 3D viewport: WebGL2 scene (grid/axes/bodies/sketches),
  * Shapr3D-style orbit camera, click/hover picking, the view cube, and the
- * three Phase 0 tools' live previews. Fills its parent (`position: relative`
+ * interactive tools' live previews. Fills its parent (`position: relative`
  * host); the chrome places it full-bleed under the floating islands.
  */
 export function Viewport(props: ViewportProps): JSX.Element {
@@ -237,7 +216,12 @@ export function Viewport(props: ViewportProps): JSX.Element {
       // arbitrary fixed-distance `DEFAULT_POSE` — same framing math as
       // Ctrl+1 / "Zoom to fit" (`fitPose`), applied without an animation
       // so there's no pop on first paint.
-      if (!didInitialFitRef.current && host.clientWidth > 0 && host.clientHeight > 0) {
+      if (
+        !didInitialFitRef.current &&
+        host.clientWidth > 0 &&
+        host.clientHeight > 0 &&
+        stateRef.current.evaluation.bodies.length > 0
+      ) {
         didInitialFitRef.current = true;
         const aspect = host.clientWidth / Math.max(1, host.clientHeight);
         poseRef.current = fitPose(stateRef.current.evaluation.bodies, DEFAULT_POSE, aspect);
@@ -247,6 +231,18 @@ export function Viewport(props: ViewportProps): JSX.Element {
     observer.observe(host);
     return () => observer.disconnect();
   }, []);
+
+  // The kernel evaluates asynchronously: frame the document once its first
+  // bodies arrive (same "fit" framing as Ctrl+1, without animation).
+  const firstBodies = state.evaluation.bodies;
+  useEffect(() => {
+    const host = hostRef.current;
+    if (didInitialFitRef.current || !host || firstBodies.length === 0) return;
+    if (host.clientWidth === 0 || host.clientHeight === 0) return;
+    didInitialFitRef.current = true;
+    poseRef.current = fitPose(firstBodies, DEFAULT_POSE, host.clientWidth / host.clientHeight);
+    dirtyRef.current = true;
+  }, [firstBodies]);
 
   // ---- Camera preset requests ----------------------------------------------
   const lastCameraNonce = useRef<number | null>(null);
@@ -282,20 +278,20 @@ export function Viewport(props: ViewportProps): JSX.Element {
   );
 
   const activeTool = state.activeTool;
-  const displayedBodies =
-    activeTool?.kind === 'extrude' ? activeTool.previewEvaluation.bodies : state.evaluation.bodies;
-  const displayedSketches =
-    activeTool?.kind === 'extrude'
-      ? activeTool.previewEvaluation.sketches
-      : state.evaluation.sketches;
+  const previewEvaluation =
+    activeTool?.kind === 'extrude' && activeTool.distance !== 0
+      ? activeTool.previewEvaluation
+      : null;
+  const displayedBodies = previewEvaluation?.bodies ?? state.evaluation.bodies;
+  const displayedSketches = previewEvaluation?.sketches ?? state.evaluation.sketches;
   const extrudePreviewBodyId = useMemo(() => {
-    if (activeTool?.kind !== 'extrude') return null;
+    if (activeTool?.kind !== 'extrude' || !previewEvaluation) return null;
     const before = new Set(state.evaluation.bodies.map((b) => b.id));
-    const created = activeTool.previewEvaluation.bodies.find((b) => !before.has(b.id));
+    const created = previewEvaluation.bodies.find((b) => !before.has(b.id));
     if (created) return created.id;
-    if (activeTool.profile.kind === 'face') return activeTool.profile.bodyId;
-    return null;
-  }, [activeTool, state.evaluation.bodies]);
+    if (activeTool.profile.kind === 'face') return activeTool.profile.face.bodyId;
+    return activeTool.targetBodyId ?? null;
+  }, [activeTool, previewEvaluation, state.evaluation.bodies]);
   const movePreview = useMemo(
     () =>
       activeTool?.kind === 'move' ? { bodyId: activeTool.bodyId, delta: activeTool.delta } : null,
@@ -356,7 +352,7 @@ export function Viewport(props: ViewportProps): JSX.Element {
       if (currentTool?.kind === 'sketchRectangle') {
         let corners: [Vec3, Vec3, Vec3, Vec3] | null = null;
         if (currentTool.preview) {
-          const plane = planeEmbedding(currentTool.plane, currentTool.offset);
+          const plane = currentTool.frame;
           const p = currentTool.preview;
           corners = [
             fromPlaneUv(p.x, p.y, plane),
@@ -435,7 +431,7 @@ export function Viewport(props: ViewportProps): JSX.Element {
 
   const rectanglePlane = useMemo(() => {
     if (activeTool?.kind !== 'sketchRectangle') return null;
-    return planeEmbedding(activeTool.plane, activeTool.offset);
+    return activeTool.frame;
   }, [activeTool]);
 
   const extrudeAnchor = useMemo(

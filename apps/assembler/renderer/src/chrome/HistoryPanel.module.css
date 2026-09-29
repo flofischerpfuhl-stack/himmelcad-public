@@ -95,6 +95,31 @@
   grid-column: 1 / -1;
 }
 
+.paramLabel {
+  display: block;
+  font-size: 11px;
+  color: var(--hc-fg-muted);
+  margin-bottom: 2px;
+}
+
+.paramNote {
+  align-self: end;
+  padding-bottom: 6px;
+  font-family: var(--hc-font-ui);
+  font-size: 11px;
+  color: var(--hc-fg-subtle);
+}
+
+.warningMessage {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px var(--hc-space-2) 6px 30px;
+  font-family: var(--hc-font-ui);
+  font-size: 11px;
+  color: var(--hc-fg-muted);
+}
+
 .renameInput {
   flex: 1;
   min-width: 0;

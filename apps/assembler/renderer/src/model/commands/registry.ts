@@ -1,16 +1,16 @@
-﻿/**
+/**
  * Central command registry for the HimmelCAD Assembler UI shell.
  *
  * This is the single source of truth for the main menu, the adaptive
  * toolbar, command search, the context menu and keyboard shortcuts (see
- * `shortcuts.ts`) â€” per the interaction research (Â§1, Â§2, Â§7), the same
+ * `shortcuts.ts`) — per the interaction research (§1, §2, §7), the same
  * action must be reachable from all of these with identical availability
  * and identical disabled reasons. Nothing outside this file should decide
  * whether a command is enabled.
  */
-import type { AssemblerState, SelectionItem } from '../store.js';
+import { isPlanarFace, makeFaceRef, type AssemblerState, type SelectionItem } from '../store.js';
 
-/** Read access to the store snapshot and its actions. Commands never mutate `ctx` directly â€” they call its action methods. */
+/** Read access to the store snapshot and its actions. Commands never mutate `ctx` directly — they call its action methods. */
 export type CommandContext = AssemblerState;
 
 export type CommandGroup =
@@ -40,15 +40,24 @@ export interface Command {
   /** Display form of the shortcut, e.g. `'E'`, `'Ctrl+Z'`, `'Ctrl+1'`. */
   shortcut?: string;
   keywords?: string[];
-  /** `true` for operations that need a real CAD kernel (booleans, fillet/chamfer, shell, revolve). Always disabled in Phase 0. */
+  /**
+   * `true` for operations that create B-rep features (booleans,
+   * fillet/chamfer, shell, revolve): disabled until the CAD kernel is ready.
+   */
   requiresKernel?: boolean;
   availability: (ctx: CommandContext) => CommandAvailability;
   run: (ctx: CommandContext) => void;
 }
 
-const KERNEL_REASON = 'Needs the CAD kernel (Phase 1)';
+export const KERNEL_LOADING_REASON = 'The CAD kernel is still loading.';
+const KERNEL_FAILED_REASON = 'The CAD kernel failed to load.';
+const NOT_IN_SPIKE_REASON = 'Not part of the Phase 1 kernel spike yet';
 const SKETCH_SOLVER_REASON = 'Requires the sketch solver (Phase 1)';
 const PROJECT_FILES_REASON = 'Project files arrive in Phase 1';
+
+/** Default size of a new fillet/chamfer/shell (mm); edited afterwards in the History panel. */
+const DEFAULT_BLEND_MM = 1;
+const DEFAULT_SHELL_MM = 1;
 
 function selected<K extends SelectionItem['kind']>(
   ctx: CommandContext,
@@ -61,14 +70,45 @@ function selected<K extends SelectionItem['kind']>(
 
 const alwaysEnabled: CommandAvailability = { enabled: true };
 
-function kernelDisabled(): CommandAvailability {
-  return { enabled: false, reason: KERNEL_REASON };
+/** Disabled availability while the kernel is not ready, else `null`. */
+function kernelNotReady(ctx: CommandContext): CommandAvailability | null {
+  if (ctx.kernelStatus === 'ready') return null;
+  return {
+    enabled: false,
+    reason: ctx.kernelStatus === 'error' ? KERNEL_FAILED_REASON : KERNEL_LOADING_REASON,
+  };
+}
+
+/** Selected edges if they all belong to one body, else `null`. */
+function edgesOfOneBody(ctx: CommandContext) {
+  const edges = selected(ctx, 'edge');
+  if (edges.length === 0 || edges.length !== ctx.selection.length) return null;
+  return edges.every((e) => e.bodyId === edges[0]!.bodyId) ? edges : null;
+}
+
+function facesOfOneBody(ctx: CommandContext) {
+  const faces = selected(ctx, 'face');
+  if (faces.length === 0 || faces.length !== ctx.selection.length) return null;
+  return faces.every((f) => f.bodyId === faces[0]!.bodyId) ? faces : null;
+}
+
+function booleanAvailability(ctx: CommandContext): CommandAvailability {
+  const notReady = kernelNotReady(ctx);
+  if (notReady) return notReady;
+  const bodies = selected(ctx, 'body');
+  if (bodies.length < 2 || bodies.length !== ctx.selection.length) {
+    return {
+      enabled: false,
+      reason: 'Select two or more bodies; the first one selected is kept.',
+    };
+  }
+  return { enabled: true, recommended: true, priority: 60 };
 }
 
 /**
  * The full command set. Order here is the declaration-order tiebreak used
  * by {@link resolveAdaptive} and the disabled tail of
- * {@link searchCommands} â€” keep additions grouped with their siblings.
+ * {@link searchCommands} — keep additions grouped with their siblings.
  */
 export const COMMANDS: readonly Command[] = [
   {
@@ -79,14 +119,21 @@ export const COMMANDS: readonly Command[] = [
     keywords: ['sketch', 'rect', 'box profile', 'draw'],
     availability: (ctx) => {
       const faces = selected(ctx, 'face');
-      const recommended = ctx.selection.length === 1 && faces.length === 1;
+      const recommended =
+        ctx.selection.length === 1 &&
+        faces.length === 1 &&
+        isPlanarFace(ctx.evaluation, faces[0]!.bodyId, faces[0]!.faceKey);
       return { enabled: true, recommended, priority: recommended ? 70 : 0 };
     },
     run: (ctx) => {
       const faces = selected(ctx, 'face');
-      if (ctx.selection.length === 1 && faces.length === 1) {
+      if (
+        ctx.selection.length === 1 &&
+        faces.length === 1 &&
+        isPlanarFace(ctx.evaluation, faces[0]!.bodyId, faces[0]!.faceKey)
+      ) {
         const face = faces[0]!;
-        ctx.beginSketchRectangle({ bodyId: face.bodyId, side: face.side });
+        ctx.beginSketchRectangle({ bodyId: face.bodyId, faceKey: face.faceKey });
         return;
       }
       ctx.beginSketchRectangle();
@@ -124,6 +171,11 @@ export const COMMANDS: readonly Command[] = [
       if (!singleFace && !singleProfile) {
         return { enabled: false, reason: 'Select a sketch profile or a body face to extrude.' };
       }
+      const notReady = kernelNotReady(ctx);
+      if (notReady) return notReady;
+      if (singleFace && !isPlanarFace(ctx.evaluation, faces[0]!.bodyId, faces[0]!.faceKey)) {
+        return { enabled: false, reason: 'Only planar faces can be extruded.' };
+      }
       return { enabled: true, recommended: true, priority: 100 };
     },
     run: (ctx) => {
@@ -131,7 +183,8 @@ export const COMMANDS: readonly Command[] = [
       const profiles = selected(ctx, 'sketchProfile');
       if (ctx.selection.length === 1 && faces.length === 1) {
         const face = faces[0]!;
-        ctx.beginExtrude({ kind: 'face', bodyId: face.bodyId, side: face.side });
+        const ref = makeFaceRef(ctx.evaluation, face.bodyId, face.faceKey);
+        if (ref) ctx.beginExtrude({ kind: 'face', face: ref });
         return;
       }
       if (ctx.selection.length === 1 && profiles.length === 1) {
@@ -146,8 +199,31 @@ export const COMMANDS: readonly Command[] = [
     shortcut: 'F',
     keywords: ['round', 'bevel', 'edge'],
     requiresKernel: true,
-    availability: kernelDisabled,
-    run: () => undefined,
+    availability: (ctx) => {
+      const notReady = kernelNotReady(ctx);
+      if (notReady) return notReady;
+      if (!edgesOfOneBody(ctx)) {
+        return { enabled: false, reason: 'Select one or more edges of one body.' };
+      }
+      return { enabled: true, recommended: true, priority: 100 };
+    },
+    run: (ctx) => ctx.addEdgeBlend('fillet', DEFAULT_BLEND_MM),
+  },
+  {
+    id: 'tools.chamfer',
+    label: 'Chamfer',
+    group: 'tools',
+    keywords: ['bevel', 'edge', 'fillet'],
+    requiresKernel: true,
+    availability: (ctx) => {
+      const notReady = kernelNotReady(ctx);
+      if (notReady) return notReady;
+      if (!edgesOfOneBody(ctx)) {
+        return { enabled: false, reason: 'Select one or more edges of one body.' };
+      }
+      return { enabled: true, recommended: true, priority: 90 };
+    },
+    run: (ctx) => ctx.addEdgeBlend('chamfer', DEFAULT_BLEND_MM),
   },
   {
     id: 'tools.shell',
@@ -156,8 +232,15 @@ export const COMMANDS: readonly Command[] = [
     shortcut: 'H',
     keywords: ['hollow', 'thin wall'],
     requiresKernel: true,
-    availability: kernelDisabled,
-    run: () => undefined,
+    availability: (ctx) => {
+      const notReady = kernelNotReady(ctx);
+      if (notReady) return notReady;
+      if (!facesOfOneBody(ctx)) {
+        return { enabled: false, reason: 'Select the faces of one body to open.' };
+      }
+      return { enabled: true, priority: 50 };
+    },
+    run: (ctx) => ctx.addShell(DEFAULT_SHELL_MM),
   },
   {
     id: 'tools.revolve',
@@ -166,7 +249,7 @@ export const COMMANDS: readonly Command[] = [
     shortcut: 'V',
     keywords: ['lathe', 'rotate profile'],
     requiresKernel: true,
-    availability: kernelDisabled,
+    availability: () => ({ enabled: false, reason: NOT_IN_SPIKE_REASON }),
     run: () => undefined,
   },
   {
@@ -176,8 +259,8 @@ export const COMMANDS: readonly Command[] = [
     shortcut: 'Ctrl+U',
     keywords: ['boolean', 'combine', 'add'],
     requiresKernel: true,
-    availability: kernelDisabled,
-    run: () => undefined,
+    availability: booleanAvailability,
+    run: (ctx) => ctx.addBoolean('union'),
   },
   {
     id: 'tools.subtract',
@@ -186,8 +269,8 @@ export const COMMANDS: readonly Command[] = [
     shortcut: 'Ctrl+B',
     keywords: ['boolean', 'cut', 'remove'],
     requiresKernel: true,
-    availability: kernelDisabled,
-    run: () => undefined,
+    availability: booleanAvailability,
+    run: (ctx) => ctx.addBoolean('subtract'),
   },
   {
     id: 'tools.intersect',
@@ -196,8 +279,8 @@ export const COMMANDS: readonly Command[] = [
     shortcut: 'Ctrl+I',
     keywords: ['boolean', 'common'],
     requiresKernel: true,
-    availability: kernelDisabled,
-    run: () => undefined,
+    availability: booleanAvailability,
+    run: (ctx) => ctx.addBoolean('intersect'),
   },
   {
     id: 'transform.moveRotate',
@@ -407,9 +490,9 @@ function toResultAvailability(availability: CommandAvailability): CommandAvailab
  * command first (face/sketch profile -> Extrude, body -> Move/Rotate),
  * then by descending `priority`, then by declaration order in
  * {@link COMMANDS}. Availability only ever reads `ctx.selection` and
- * other document/view state â€” never `ctx.hover` â€” so this ordering is
+ * other document/view state — never `ctx.hover` — so this ordering is
  * stable across hover changes, as required by the interaction research
- * (Â§2): the adaptive toolbar must not reflow on mouse-over.
+ * (§2): the adaptive toolbar must not reflow on mouse-over.
  */
 export function resolveAdaptive(ctx: CommandContext): Command[] {
   return COMMANDS.map((command) => ({ command, availability: command.availability(ctx) }))

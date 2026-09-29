@@ -5,10 +5,15 @@
  * read without React/pointer-event noise. Not unit tested (feeds straight
  * into WebGL) but written as pure data-in/data-out.
  */
-import type { Body, EvaluatedSketch, FaceSide } from '../model/mockDocument.js';
+import type { Body, EvaluatedSketch } from '../kernel/types.js';
 import type { DisplayMode, SectionAxis, SelectionItem } from '../model/store.js';
 import { eyeOf, viewProjectionMatrix, type CameraPose } from './camera.js';
-import { buildBoxEdges, buildBoxTriangles, buildEdgeRibbon } from './geometry.js';
+import {
+  buildEdgeRibbon,
+  buildPolylineRibbon,
+  expandBody,
+  translatePositions,
+} from './geometry.js';
 import { PickTable, type PickTarget } from './picking.js';
 import type { FlatBatch, IdBatch, SceneFrame, TriBatch } from './gl.js';
 import type { ViewportColors } from './theme.js';
@@ -90,9 +95,9 @@ function selectionEquals(a: SelectionItem, b: SelectionItem): boolean {
     case 'body':
       return b.kind === 'body' && a.bodyId === b.bodyId;
     case 'face':
-      return b.kind === 'face' && a.bodyId === b.bodyId && a.side === b.side;
+      return b.kind === 'face' && a.bodyId === b.bodyId && a.faceKey === b.faceKey;
     case 'edge':
-      return b.kind === 'edge' && a.bodyId === b.bodyId && a.edge === b.edge;
+      return b.kind === 'edge' && a.bodyId === b.bodyId && a.edgeKey === b.edgeKey;
     case 'sketchProfile':
       return b.kind === 'sketchProfile' && a.featureId === b.featureId;
     case 'feature':
@@ -100,15 +105,26 @@ function selectionEquals(a: SelectionItem, b: SelectionItem): boolean {
   }
 }
 
-function translated(
-  body: Body,
-  delta: { dx: number; dy: number; dz: number } | null,
-): { min: [number, number, number]; max: [number, number, number] } {
-  if (!delta) return { min: body.min, max: body.max };
-  return {
-    min: [body.min[0] + delta.dx, body.min[1] + delta.dy, body.min[2] + delta.dz],
-    max: [body.max[0] + delta.dx, body.max[1] + delta.dy, body.max[2] + delta.dz],
-  };
+/** Concatenates line-segment lists (xyz pairs) into one array, optionally translated. */
+function concatSegments(
+  lists: readonly Float32Array[],
+  delta: readonly [number, number, number] | null,
+): Float32Array {
+  let length = 0;
+  for (const list of lists) length += list.length;
+  const out = new Float32Array(length);
+  let offset = 0;
+  for (const list of lists) {
+    out.set(list, offset);
+    offset += list.length;
+  }
+  return delta ? translatePositions(out, delta) : out;
+}
+
+function lineColors(vertexCount: number, color: readonly [number, number, number], alpha: number) {
+  const colors = new Float32Array(vertexCount * 4);
+  for (let i = 0; i < vertexCount; i += 1) colors.set([color[0], color[1], color[2], alpha], i * 4);
+  return colors;
 }
 
 function pushFlatLine(
@@ -289,135 +305,131 @@ export function buildScene(input: SceneInput): BuiltScene {
   for (const body of visibleBodies) {
     const isMovePreview = input.movePreview?.bodyId === body.id;
     const isExtrudePreview = input.extrudePreviewBodyId === body.id;
-    const { min, max } = translated(body, isMovePreview ? input.movePreview!.delta : null);
+    const delta: [number, number, number] | null =
+      isMovePreview && input.movePreview
+        ? [input.movePreview.delta.dx, input.movePreview.delta.dy, input.movePreview.delta.dz]
+        : null;
+    const expanded = expandBody(body);
+    const positions = delta ? translatePositions(expanded.positions, delta) : expanded.positions;
+    const facePositions = (faceIndex: number): Float32Array => {
+      const face = body.faces[faceIndex]!;
+      return positions.subarray(
+        face.triangleStart * 9,
+        (face.triangleStart + face.triangleCount) * 9,
+      );
+    };
+    const edgeSegments = (edgeIndex: number): Float32Array => {
+      const segments = body.edges[edgeIndex]!.segments;
+      return delta ? translatePositions(segments, delta) : segments;
+    };
     const rgb = hexToRgb01(body.color);
 
     if (!isWireframe) {
-      const tri = buildBoxTriangles(min, max);
       const alpha = isXray ? 0.32 : isExtrudePreview ? 0.55 : 1;
       lit.push({
-        positions: tri.positions,
-        normals: tri.normals,
+        positions,
+        normals: expanded.normals,
         color: rgb,
         alpha,
         depthTest: true,
         depthWrite: !isXray && !isExtrudePreview,
         polygonOffset: true,
       });
-      // Per-face picking ids (6 groups of 6 vertices / 2 triangles each).
-      for (let face = 0; face < 6; face += 1) {
-        const side = tri.sides[face * 6]!;
-        const id = pickTable.add({ kind: 'face', bodyId: body.id, side });
-        idBatches.push({
-          positions: tri.positions.slice(face * 18, face * 18 + 18),
-          id,
-          mode: 'triangles',
-        });
-      }
-    } else {
-      // Wireframe: still register face ids (invisible hit-test triangles) so face-click still works.
-      const tri = buildBoxTriangles(min, max);
-      for (let face = 0; face < 6; face += 1) {
-        const side = tri.sides[face * 6]!;
-        const id = pickTable.add({ kind: 'face', bodyId: body.id, side });
-        idBatches.push({
-          positions: tri.positions.slice(face * 18, face * 18 + 18),
-          id,
-          mode: 'triangles',
-        });
-      }
     }
+    // Per-face picking ids by naming key. In wireframe the triangles are
+    // invisible hit targets so face-click still works.
+    body.faces.forEach((face, faceIndex) => {
+      if (face.triangleCount === 0) return;
+      const id = pickTable.add({ kind: 'face', bodyId: body.id, faceKey: face.key });
+      idBatches.push({ positions: facePositions(faceIndex), id, mode: 'triangles' });
+    });
 
     const edgeColor = isExtrudePreview ? input.colors.activePreview : input.colors.bodyEdge;
-    const edges = buildBoxEdges(min, max);
-    const edgeLine = { positions: [] as number[], colors: [] as number[] };
-    for (const e of edges) {
-      pushFlatLine(edgeLine, e.a, e.b, edgeColor, isXray ? 0.6 : 0.85);
-      const ribbon = buildEdgeRibbon(e.a, e.b, eye, edgeHitWidth(input.pose.distance));
-      const id = pickTable.add({ kind: 'edge', bodyId: body.id, edge: e.edge });
-      idBatches.push({ positions: ribbon.positions, id, mode: 'triangles' });
-    }
+    const allEdges = concatSegments(
+      body.edges.map((edge) => edge.segments),
+      delta,
+    );
     flat.push({
-      positions: new Float32Array(edgeLine.positions),
-      colors: new Float32Array(edgeLine.colors),
+      positions: allEdges,
+      colors: lineColors(allEdges.length / 3, edgeColor, isXray ? 0.6 : 0.85),
       mode: 'lines',
       depthTest: true,
+    });
+    const hitWidth = edgeHitWidth(input.pose.distance);
+    body.edges.forEach((edge, edgeIndex) => {
+      if (edge.segments.length === 0) return;
+      const id = pickTable.add({ kind: 'edge', bodyId: body.id, edgeKey: edge.key });
+      idBatches.push({
+        positions: buildPolylineRibbon(edgeSegments(edgeIndex), eye, hitWidth),
+        id,
+        mode: 'triangles',
+      });
     });
 
     // Selection / hover highlight overlays (crisp + depth-test-off ghost pass).
     const bodyItem: SelectionItem = { kind: 'body', bodyId: body.id };
     if (isSelected(input.selection, bodyItem)) {
-      addHighlightEdges(flat, edges, input.colors.selection);
+      addHighlightEdges(flat, allEdges, input.colors.selection);
     } else if (input.hover?.kind === 'body' && input.hover.bodyId === body.id) {
-      addHighlightEdges(flat, edges, input.colors.hover);
+      addHighlightEdges(flat, allEdges, input.colors.hover);
     }
-    for (const side of ['+X', '-X', '+Y', '-Y', '+Z', '-Z'] as FaceSide[]) {
-      const faceItem: SelectionItem = { kind: 'face', bodyId: body.id, side };
+    body.faces.forEach((face, faceIndex) => {
+      const faceItem: SelectionItem = { kind: 'face', bodyId: body.id, faceKey: face.key };
       const selected = isSelected(input.selection, faceItem);
       const hovered =
         !selected &&
         input.hover?.kind === 'face' &&
         input.hover.bodyId === body.id &&
-        input.hover.side === side;
-      if (!selected && !hovered) continue;
-      const tri = buildBoxTriangles(min, max);
-      const faceIndex = (['+X', '-X', '+Y', '-Y', '+Z', '-Z'] as FaceSide[]).indexOf(side);
-      const facePositions = tri.positions.slice(faceIndex * 18, faceIndex * 18 + 18);
+        input.hover.faceKey === face.key;
+      if (!selected && !hovered) return;
+      const tris = facePositions(faceIndex);
       // Selected faces get a strong tint (always the selection-orange
       // token, regardless of body appearance) so selection is unmistakable
       // on every palette color; hover is a visibly lighter tint.
       const color = selected ? input.colors.selection : input.colors.hover;
       const fillAlphaMain = selected ? 0.45 : 0.2;
       const fillAlphaGhost = selected ? 0.18 : 0.08;
-      const colors = new Float32Array(6 * 4);
-      for (let i = 0; i < 6; i += 1)
-        colors.set([color[0], color[1], color[2], fillAlphaMain], i * 4);
-      flat.push({ positions: facePositions, colors, mode: 'triangles', depthTest: true });
+      const colors = lineColors(tris.length / 3, color, fillAlphaMain);
+      flat.push({ positions: tris, colors, mode: 'triangles', depthTest: true });
       flat.push({
-        positions: facePositions,
+        positions: tris,
         colors: fillAlpha(colors, fillAlphaGhost),
         mode: 'triangles',
         depthTest: false,
       });
       // Selected/hovered faces also get their own border in the same
-      // color as the fill (selection orange / hover tint edge lines), not
-      // just a translucent fill — the border reads correctly even in
-      // wireframe/x-ray and against edge-ink-colored neighbouring faces.
-      const faceEdges = edges.filter((e) => e.edge.split('|').includes(side));
-      addHighlightEdges(flat, faceEdges, color);
-    }
-    for (const e of edges) {
-      const edgeItem: SelectionItem = { kind: 'edge', bodyId: body.id, edge: e.edge };
+      // color as the fill, not just a translucent fill — the border reads
+      // correctly even in wireframe/x-ray and against edge-ink neighbours.
+      addHighlightEdges(flat, concatSegments(face.edgeIndices.map(edgeSegments), null), color);
+    });
+    body.edges.forEach((edge, edgeIndex) => {
+      const edgeItem: SelectionItem = { kind: 'edge', bodyId: body.id, edgeKey: edge.key };
       const selected = isSelected(input.selection, edgeItem);
       const hovered =
         !selected &&
         input.hover?.kind === 'edge' &&
         input.hover.bodyId === body.id &&
-        input.hover.edge === e.edge;
-      if (!selected && !hovered) continue;
+        input.hover.edgeKey === edge.key;
+      if (!selected && !hovered) return;
       const color = selected ? input.colors.selection : input.colors.hover;
-      const crisp = { positions: [] as number[], colors: [] as number[] };
-      pushFlatLine(crisp, e.a, e.b, color, 1);
+      const segments = edgeSegments(edgeIndex);
       flat.push({
-        positions: new Float32Array(crisp.positions),
-        colors: new Float32Array(crisp.colors),
+        positions: segments,
+        colors: lineColors(segments.length / 3, color, 1),
         mode: 'lines',
         depthTest: true,
       });
-      const ghost = { positions: [] as number[], colors: [] as number[] };
-      pushFlatLine(ghost, e.a, e.b, color, 0.3);
       flat.push({
-        positions: new Float32Array(ghost.positions),
-        colors: new Float32Array(ghost.colors),
+        positions: segments,
+        colors: lineColors(segments.length / 3, color, 0.3),
         mode: 'lines',
         depthTest: false,
       });
-    }
+    });
   }
 
   // ---- Sketches ---------------------------------------------------------
   for (const sketch of input.sketches) {
-    const corners = sketchCorners(sketch);
     const selected = isSelected(input.selection, {
       kind: 'sketchProfile',
       featureId: sketch.featureId,
@@ -426,44 +438,41 @@ export function buildScene(input: SceneInput): BuiltScene {
       !selected &&
       input.hover?.kind === 'sketchProfile' &&
       input.hover.featureId === sketch.featureId;
-    const outline = { positions: [] as number[], colors: [] as number[] };
     const color = selected
       ? input.colors.selection
       : hovered
         ? input.colors.hover
         : input.colors.sketchOutline;
-    for (let i = 0; i < 4; i += 1)
-      pushFlatLine(outline, corners[i]!, corners[(i + 1) % 4]!, color, 0.9);
+    const fillColor = selected || hovered ? color : input.colors.sketchOutline;
+    const fillAlphaValue = selected ? 0.18 : hovered ? 0.12 : 0.06;
+    const outline = { positions: [] as number[], colors: [] as number[] };
+    const fill = { positions: [] as number[], colors: [] as number[] };
+    const hit: number[] = [];
+    for (const profile of sketch.profiles) {
+      const points = profile.outline;
+      for (let i = 0; i < points.length; i += 1) {
+        const a = points[i]!;
+        const b = points[(i + 1) % points.length]!;
+        pushFlatLine(outline, a, b, color, 0.9);
+        // Profiles are convex (rectangle, circle): a fan from the centre fills them.
+        pushFlatTri(fill, profile.center, a, b, fillColor, fillAlphaValue);
+        hit.push(...profile.center, ...a, ...b);
+      }
+    }
     flat.push({
       positions: new Float32Array(outline.positions),
       colors: new Float32Array(outline.colors),
       mode: 'lines',
       depthTest: true,
     });
-
-    const fillColor = selected || hovered ? color : input.colors.sketchOutline;
-    const fillAlphaValue = selected ? 0.18 : hovered ? 0.12 : 0.06;
-    const fill = { positions: [] as number[], colors: [] as number[] };
-    pushFlatQuad(fill, corners, fillColor, fillAlphaValue);
     flat.push({
       positions: new Float32Array(fill.positions),
       colors: new Float32Array(fill.colors),
       mode: 'triangles',
       depthTest: true,
     });
-
     const id = pickTable.add({ kind: 'sketchProfile', featureId: sketch.featureId });
-    const idPositions = new Float32Array(18);
-    const tris: Vec3[] = [
-      corners[0]!,
-      corners[1]!,
-      corners[2]!,
-      corners[0]!,
-      corners[2]!,
-      corners[3]!,
-    ];
-    tris.forEach((p, i) => idPositions.set(p, i * 3));
-    idBatches.push({ positions: idPositions, id, mode: 'triangles' });
+    idBatches.push({ positions: new Float32Array(hit), id, mode: 'triangles' });
   }
 
   // ---- Extrude tool arrow handle (drawn on top, no depth test) -------------
@@ -562,24 +571,20 @@ export function buildScene(input: SceneInput): BuiltScene {
 
 function addHighlightEdges(
   flat: FlatBatch[],
-  edges: { a: Vec3; b: Vec3 }[],
+  segments: Float32Array,
   color: readonly [number, number, number],
 ): void {
-  const crisp = { positions: [] as number[], colors: [] as number[] };
-  const ghost = { positions: [] as number[], colors: [] as number[] };
-  for (const e of edges) {
-    pushFlatLine(crisp, e.a, e.b, color, 0.95);
-    pushFlatLine(ghost, e.a, e.b, color, 0.28);
-  }
+  if (segments.length === 0) return;
+  const vertexCount = segments.length / 3;
   flat.push({
-    positions: new Float32Array(crisp.positions),
-    colors: new Float32Array(crisp.colors),
+    positions: segments,
+    colors: lineColors(vertexCount, color, 0.95),
     mode: 'lines',
     depthTest: true,
   });
   flat.push({
-    positions: new Float32Array(ghost.positions),
-    colors: new Float32Array(ghost.colors),
+    positions: segments,
+    colors: lineColors(vertexCount, color, 0.28),
     mode: 'lines',
     depthTest: false,
   });
@@ -723,16 +728,6 @@ function addScaled(base: Vec3, a: Vec3, sa: number, b: Vec3, sb: number): Vec3 {
     base[1] + a[1] * sa + b[1] * sb,
     base[2] + a[2] * sa + b[2] * sb,
   ];
-}
-
-function sketchCorners(sketch: EvaluatedSketch): [Vec3, Vec3, Vec3, Vec3] {
-  const { min, max, plane, offset } = sketch;
-  const put = (u: number, v: number): Vec3 => {
-    if (plane === 'XY') return [u, v, offset];
-    if (plane === 'XZ') return [u, offset, v];
-    return [offset, u, v];
-  };
-  return [put(min[0], min[1]), put(max[0], min[1]), put(max[0], max[1]), put(min[0], max[1])];
 }
 
 function hexToRgb01(hex: string): [number, number, number] {

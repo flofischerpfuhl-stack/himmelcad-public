@@ -41,12 +41,13 @@ import {
   Spline,
   SquareDashedMousePointer,
   Trash2,
+  Triangle,
   Undo2,
   type LucideIcon,
 } from 'lucide-react';
 
 import type { Command, CommandGroup } from '../model/commands/registry.js';
-import type { Feature } from '../model/mockDocument.js';
+import type { Feature } from '../model/document.js';
 import type { SelectionItem } from '../model/store.js';
 
 export const GROUP_ICON: Record<CommandGroup, LucideIcon> = {
@@ -74,6 +75,7 @@ export const COMMAND_ICON: Partial<Record<string, LucideIcon>> = {
   'sketch.circle': CircleDot,
   'tools.extrude': ArrowUpFromLine,
   'tools.filletChamfer': Spline,
+  'tools.chamfer': Triangle,
   'tools.shell': PackageOpen,
   'tools.revolve': RotateCw,
   'tools.union': CopyPlus,
@@ -110,10 +112,17 @@ export function commandIcon(command: Pick<Command, 'id' | 'group'>): LucideIcon 
 
 export function featureKindIcon(kind: Feature['kind']): LucideIcon {
   switch (kind) {
-    case 'sketchRect':
+    case 'sketch':
       return PenSquare;
     case 'extrude':
       return Combine;
+    case 'fillet':
+    case 'chamfer':
+      return Spline;
+    case 'shell':
+      return PackageOpen;
+    case 'boolean':
+      return CopyPlus;
     case 'move':
       return MoveDiagonal;
     case 'setAppearance':

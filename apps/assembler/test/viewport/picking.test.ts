@@ -34,11 +34,15 @@ void test('NO_PICK_ID decodes from all-zero bytes', () => {
 void test('PickTable assigns sequential 1-based ids and resolves them back', () => {
   const table = new PickTable();
   const idA = table.add({ kind: 'body', bodyId: 'body-1' });
-  const idB = table.add({ kind: 'face', bodyId: 'body-1', side: '+X' });
+  const idB = table.add({ kind: 'face', bodyId: 'body-1', faceKey: 'feature-extrude-1:end:0' });
   assert.equal(idA, 1);
   assert.equal(idB, 2);
   assert.deepEqual(table.resolve(idA), { kind: 'body', bodyId: 'body-1' });
-  assert.deepEqual(table.resolve(idB), { kind: 'face', bodyId: 'body-1', side: '+X' });
+  assert.deepEqual(table.resolve(idB), {
+    kind: 'face',
+    bodyId: 'body-1',
+    faceKey: 'feature-extrude-1:end:0',
+  });
 });
 
 void test('PickTable.resolve returns null for id 0 and out-of-range ids', () => {

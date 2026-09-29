@@ -3,13 +3,16 @@
  * scene-side lookup table that maps a picking id back to a
  * `SelectionItem`-shaped target. `0` is reserved for "nothing" (the
  * framebuffer is cleared to it); real ids start at `1`.
+ *
+ * Faces and edges are identified by their kernel naming keys (see
+ * `kernel/naming.ts`), never by mesh or triangle indices, so a pick stays
+ * meaningful across re-evaluations.
  */
-import type { EdgeId, FaceSide } from '../model/mockDocument.js';
 
 export type PickTarget =
   | { kind: 'body'; bodyId: string }
-  | { kind: 'face'; bodyId: string; side: FaceSide }
-  | { kind: 'edge'; bodyId: string; edge: EdgeId }
+  | { kind: 'face'; bodyId: string; faceKey: string }
+  | { kind: 'edge'; bodyId: string; edgeKey: string }
   | { kind: 'sketchProfile'; featureId: string }
   | { kind: 'extrudeHandle' }
   | { kind: 'moveHandle'; axis: 0 | 1 | 2 };
