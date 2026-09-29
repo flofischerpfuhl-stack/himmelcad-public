@@ -5,6 +5,7 @@ import { BrowserWindow, app, ipcMain, nativeImage, protocol } from 'electron';
 
 import { registerAutomation, stopAutomation } from './automationIpc';
 import { attachCloseGuard, readHcasmFile, registerFileApi } from './fileApi';
+import { registerSlicerIpc } from './slicerIpc';
 import { ASSEMBLER_APP_NAME, createMainWindowOptions } from './windowOptions';
 
 /**
@@ -206,6 +207,8 @@ async function createWindow(): Promise<void> {
   win.webContents.on('will-redirect', (event) => event.preventDefault());
 
   registerFileApi(() => mainWindow);
+  // "Open in slicer": detection, registered slicers, temp 3MF handoff (spawn without a shell).
+  registerSlicerIpc(() => mainWindow);
   // Agent access (loopback JSON-RPC endpoint): off until the user turns it on in the UI.
   registerAutomation(() => mainWindow);
   attachCloseGuard(win);

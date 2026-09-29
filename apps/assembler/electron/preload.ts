@@ -45,6 +45,14 @@ const api: AssemblerApi = {
     openPath: (path: string) => ipcRenderer.invoke('assembler:recentFiles:openPath', path),
     locate: (oldPath: string) => ipcRenderer.invoke('assembler:recentFiles:locate', oldPath),
   },
+  slicers: {
+    list: () => ipcRenderer.invoke('assembler:slicers:list'),
+    add: () => ipcRenderer.invoke('assembler:slicers:add'),
+    remove: (id: string) => ipcRenderer.invoke('assembler:slicers:remove', id),
+    setDefault: (id: string) => ipcRenderer.invoke('assembler:slicers:setDefault', id),
+    open: (id: string, bytes: Uint8Array, projectName: string) =>
+      ipcRenderer.invoke('assembler:slicers:open', id, bytes, projectName),
+  },
   automation: {
     status: () => ipcRenderer.invoke('assembler:automation:status'),
     setEnabled: (enabled: boolean) =>

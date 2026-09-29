@@ -95,6 +95,41 @@ export interface AssemblerAutomationApi {
   respond(id: string, body: string): Promise<void>;
 }
 
+/** A slicer the app can hand a model to (`electron/slicerPaths.ts`). */
+export interface SlicerInfo {
+  id: string;
+  name: string;
+  kind: 'bambu' | 'orca' | 'prusa' | 'cura' | 'custom';
+  path: string;
+  source: 'detected' | 'user';
+  /** The executable exists right now. */
+  available: boolean;
+}
+
+export interface SlicerListInfo {
+  slicers: SlicerInfo[];
+  defaultId: string | null;
+  platform: AssemblerPlatform;
+}
+
+/**
+ * "Open in slicer": the main process detects installed slicers and keeps
+ * the user's registered ones; the renderer names a slicer by id only.
+ */
+export interface AssemblerSlicersApi {
+  list(): Promise<SlicerListInfo>;
+  /** Native "choose program" dialog; `error` explains a rejected choice. */
+  add(): Promise<SlicerListInfo & { error: string | null }>;
+  remove(id: string): Promise<SlicerListInfo>;
+  setDefault(id: string): Promise<SlicerListInfo>;
+  /** Writes `bytes` (a 3MF) to a temp file and launches the slicer with it. */
+  open(
+    id: string,
+    bytes: Uint8Array,
+    projectName: string,
+  ): Promise<{ ok: true; path: string; slicer: string } | { ok: false; error: string }>;
+}
+
 export interface AssemblerApi {
   readonly platform: AssemblerPlatform;
   readonly versions: {
@@ -105,4 +140,5 @@ export interface AssemblerApi {
   readonly project: AssemblerProjectApi;
   readonly automation: AssemblerAutomationApi;
   readonly recentFiles: AssemblerRecentFilesApi;
+  readonly slicers: AssemblerSlicersApi;
 }
