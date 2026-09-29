@@ -10,6 +10,7 @@
  */
 import { useAutomationStore } from '../../api/app/automationStore.js';
 import { useProjectStore } from '../project/projectStore.js';
+import { BLEND_RULE_COMMANDS } from './blendCommands.js';
 import { FEATURE_COMMANDS } from './featureCommands.js';
 import { isPlanarFace, makeFaceRef, type AssemblerState, type SelectionItem } from '../store.js';
 import { SKETCH_COMMANDS } from './sketchCommands.js';
@@ -212,6 +213,7 @@ export const COMMANDS: readonly Command[] = [
     },
     run: (ctx) => ctx.beginShell(),
   },
+  ...BLEND_RULE_COMMANDS,
   ...FEATURE_COMMANDS,
   {
     id: 'tools.union',

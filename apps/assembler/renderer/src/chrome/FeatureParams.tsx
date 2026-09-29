@@ -9,6 +9,7 @@ import type { ExtrudeOperation, Plane } from '../model/document.js';
 import type { AxisRef, ModelingFeature } from '../model/features.js';
 import type { AssemblerState, FeaturePatch } from '../model/store.js';
 import { ExpressionField } from './ExpressionField.js';
+import { PrintFeatureParams } from './PrintFeatureParams.js';
 import styles from './HistoryPanel.module.css';
 
 const OPERATION_OPTIONS = [
@@ -285,5 +286,11 @@ export function ModelingFeatureParams({
           <span className={styles.paramNote}>{plural(feature.faces.length, 'face')} removed</span>
         </div>
       );
+    case 'hole':
+    case 'emboss':
+    case 'draft':
+    case 'rib':
+    case 'thicken':
+      return <PrintFeatureParams feature={feature} state={state} />;
   }
 }

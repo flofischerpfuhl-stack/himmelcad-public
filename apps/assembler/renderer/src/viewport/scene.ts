@@ -121,6 +121,12 @@ export interface SceneInput {
   pivot?: { point: Vec3; hovered: boolean; pickable?: boolean } | null;
   /** Multiplies the edge pick widths (e.g. 2 for touch/coarse pointers). Default 1. */
   hitScale?: number;
+  /**
+   * Geometry a feature error points at (the edge a fillet fails on, the
+   * outline of a face a draft cannot tilt) as world line-segment pairs of
+   * the committed model, drawn in the error colour.
+   */
+  errorHighlight?: { segments: readonly Float32Array[] } | null;
 }
 
 /** An angle handle: arc about `axis` through `center`, from `ref` by `value` degrees. */
@@ -547,6 +553,14 @@ export function buildScene(input: SceneInput): BuiltScene {
       const color = selected ? input.colors.selection : input.colors.hover;
       thickEdges(edgeSegments(edgeIndex), color);
     });
+  }
+
+  // Where a feature failed (a fillet edge, a draft face's outline): thick lines in the error colour.
+  if (input.errorHighlight) {
+    const errorColor = input.colors.error ?? input.colors.axisX;
+    for (const segments of input.errorHighlight.segments) {
+      thickEdges(segments, errorColor, HIGHLIGHT_EDGE_PX + 1);
+    }
   }
 
   // ---- Ghosts (e.g. boolean tool bodies being consumed) ------------------

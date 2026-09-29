@@ -11,6 +11,7 @@ import {
   Move3d,
   RotateCw,
   Route,
+  Spline,
   SquareSlash,
   SquareSplitHorizontal,
   Stamp,
@@ -53,4 +54,7 @@ export const MODELING_COMMAND_ICON: Partial<Record<string, LucideIcon>> = {
   'tools.draft': TriangleRight,
   'tools.rib': SquareSlash,
   'tools.thicken': Layers2,
+  'tools.filletFaceEdges': Spline,
+  'tools.filletConcave': Spline,
+  'tools.filletConvex': Spline,
 };

@@ -37,6 +37,7 @@ import { anchoredMenuStyle } from './anchoredMenu.js';
 import { featureKindIcon } from './icons.js';
 import { ExpressionField } from './ExpressionField.js';
 import { ModelingFeatureParams } from './FeatureParams.js';
+import { BlendParams, BooleanParams, ShellParams } from './PrintFeatureParams.js';
 import { isModelingFeature } from '../model/features.js';
 import { checkMove, moveFeature, relevantFeatureIds } from '../model/historyTools.js';
 import { useWorkspaceStore } from '../model/workspace.js';
@@ -523,36 +524,12 @@ function FeatureParams({
   }
 
   if (feature.kind === 'fillet' || feature.kind === 'chamfer') {
-    return (
-      <div className={styles.params}>
-        <ExpressionField
-          label={feature.kind === 'fillet' ? 'Radius' : 'Distance'}
-          value={feature.kind === 'fillet' ? feature.radius : feature.distance}
-          unit="mm"
-          onCommit={(v) => edit(feature.kind === 'fillet' ? { radius: v } : { distance: v })}
-        />
-        <span className={styles.paramNote}>
-          {feature.edges.length} {feature.edges.length === 1 ? 'edge' : 'edges'}
-        </span>
-      </div>
-    );
+    return <BlendParams feature={feature} state={state} />;
   }
 
-  if (feature.kind === 'shell') {
-    return (
-      <div className={styles.params}>
-        <ExpressionField
-          label="Thickness"
-          value={feature.thickness}
-          unit="mm"
-          onCommit={(v) => edit({ thickness: v })}
-        />
-        <span className={styles.paramNote}>
-          {feature.faces.length} open {feature.faces.length === 1 ? 'face' : 'faces'}
-        </span>
-      </div>
-    );
-  }
+  if (feature.kind === 'shell') return <ShellParams feature={feature} state={state} />;
+
+  if (feature.kind === 'boolean') return <BooleanParams feature={feature} state={state} />;
 
   if (feature.kind === 'move') {
     return (

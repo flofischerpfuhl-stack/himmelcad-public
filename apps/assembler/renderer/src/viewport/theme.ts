@@ -19,6 +19,8 @@ export interface ViewportColors {
   hover: [number, number, number];
   activePreview: [number, number, number];
   sketchOutline: [number, number, number];
+  /** Geometry a feature error points at. Optional for older colour sets. */
+  error?: [number, number, number];
 }
 
 function hexToRgb01(hex: string): [number, number, number] {
@@ -56,5 +58,6 @@ export function readViewportColors(): ViewportColors {
     hover: readVar(styles, '--hc-geometry-hover', '#f0f1f3'),
     activePreview: readVar(styles, '--hc-geometry-active-preview', '#ffd166'),
     sketchOutline: readVar(styles, '--hc-accent-base', '#1597f2'),
+    error: readVar(styles, '--hc-error', '#ff5c5c'),
   };
 }

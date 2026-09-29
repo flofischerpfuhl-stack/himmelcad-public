@@ -97,6 +97,7 @@ import {
   type ToolHandleSet,
 } from './toolHandles.js';
 import { acceptPick } from '../model/featureTools.js';
+import { errorHighlightOf } from './errorHighlight.js';
 import type { AngleHandleState } from './scene.js';
 import styles from './Viewport.module.css';
 
@@ -766,7 +767,9 @@ export function Viewport(props: ViewportProps): JSX.Element {
         sketchPreview: null,
         pickSketchLines:
           currentTool?.kind === 'feature' &&
-          (currentTool.draft.kind === 'revolve' || currentTool.draft.kind === 'pattern'),
+          (currentTool.draft.kind === 'revolve' ||
+            currentTool.draft.kind === 'pattern' ||
+            currentTool.draft.kind === 'rib'),
         previewNewBodyIds: scene.previewNewBodyIds,
         angleHandles,
         guides: scene.toolHandles.guides,
@@ -780,6 +783,7 @@ export function Viewport(props: ViewportProps): JSX.Element {
             }
           : null,
         hitScale: coarseRef.current ? 2 : 1,
+        errorHighlight: errorHighlightOf(current),
       });
       renderer.render(built.frame);
       renderer.renderPicking(built.frame.viewProj, built.idBatches, built.frame.clip);
@@ -846,6 +850,33 @@ export function Viewport(props: ViewportProps): JSX.Element {
     const vp = viewProjectionMatrix(poseRef.current, aspect);
     return unprojectRay(vp, clientX - rect.left, clientY - rect.top, rect.width, rect.height);
   }, []);
+
+  /** World point where the pointer ray meets a picked planar face's plane (hole placement). */
+  const facePickPoint = useCallback(
+    (item: { bodyId: string; faceKey: string }, clientX: number, clientY: number): Vec3 | null => {
+      const face = useAssemblerStore
+        .getState()
+        .evaluation.bodies.find((b) => b.id === item.bodyId)
+        ?.faces.find((f) => f.key === item.faceKey);
+      const ray = rayAtClient(clientX, clientY);
+      if (!face?.normal || !ray) return null;
+      const n = face.normal;
+      const denom = n[0] * ray.direction[0] + n[1] * ray.direction[1] + n[2] * ray.direction[2];
+      if (Math.abs(denom) < 1e-9) return null;
+      const rel: Vec3 = [
+        face.centroid[0] - ray.origin[0],
+        face.centroid[1] - ray.origin[1],
+        face.centroid[2] - ray.origin[2],
+      ];
+      const t = (n[0] * rel[0] + n[1] * rel[1] + n[2] * rel[2]) / denom;
+      return [
+        ray.origin[0] + ray.direction[0] * t,
+        ray.origin[1] + ray.direction[1] * t,
+        ray.origin[2] + ray.direction[2] * t,
+      ];
+    },
+    [rayAtClient],
+  );
 
   // Sketch mode: camera normal to the sketch plane + the overlay's screen mapping.
   const sketch = useSketchViewport({ hostRef, poseRef, animRef, dirtyRef, rayAtClient, pickAt });
@@ -975,6 +1006,11 @@ export function Viewport(props: ViewportProps): JSX.Element {
         if (!pick) store.commit();
         else if (pick.kind === 'edge' && tool.kind === 'edgeBlend') {
           store.toggleBlendEdge(pick.bodyId, pick.edgeKey);
+        } else if (pick.kind === 'face' && tool.kind === 'shell') {
+          // Faces to open can be added/removed while the shell tool runs.
+          store.toggleShellFace(pick.bodyId, pick.faceKey);
+        } else if (tool.kind === 'boolean' && (pick.kind === 'face' || pick.kind === 'edge')) {
+          store.toggleBooleanTool(pick.bodyId);
         }
         return;
       }
@@ -985,7 +1021,9 @@ export function Viewport(props: ViewportProps): JSX.Element {
           return;
         }
         if (pick.kind === 'sketchLine') {
-          store.updateFeatureDraft((draft, evaluation) => acceptPick(draft, pick, evaluation));
+          store.updateFeatureDraft((draft, evaluation) =>
+            acceptPick(draft, pick, evaluation, store.features),
+          );
           return;
         }
         const item = selectionFromPick(pick, isDouble);
@@ -993,7 +1031,15 @@ export function Viewport(props: ViewportProps): JSX.Element {
         // no B-rep faces/edges for OCCT to consume — `apps/assembler/README.md`
         // "STL import": excluded from kernel operations).
         if (item && item.kind !== 'feature' && item.kind !== 'mesh') {
-          store.updateFeatureDraft((draft, evaluation) => acceptPick(draft, item, evaluation));
+          // Where a face was clicked (e.g. a hole position): the ray on the face's plane.
+          const point = item.kind === 'face' ? facePickPoint(item, clientX, clientY) : null;
+          const toolPick =
+            point && item.kind === 'face'
+              ? { ...item, point: [point[0], point[1], point[2]] as [number, number, number] }
+              : item;
+          store.updateFeatureDraft((draft, evaluation) =>
+            acceptPick(draft, toolPick, evaluation, store.features),
+          );
         }
         return;
       }
@@ -1035,7 +1081,7 @@ export function Viewport(props: ViewportProps): JSX.Element {
       if (!item) return;
       store.select(item, { additive });
     },
-    [pickAt, selectionFromPick, queryContext, candidateNames],
+    [pickAt, selectionFromPick, queryContext, candidateNames, facePickPoint],
   );
 
   const contextMenuAt = useCallback(
