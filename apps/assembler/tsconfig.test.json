@@ -9,5 +9,5 @@
     "sourceMap": false,
     "types": ["node"]
   },
-  "include": ["electron/windowOptions.ts", "test", "../../types"]
+  "include": ["electron/windowOptions.ts", "renderer/src/global.d.ts", "test", "../../types"]
 }

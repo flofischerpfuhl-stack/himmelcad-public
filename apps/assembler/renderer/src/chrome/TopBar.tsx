@@ -18,13 +18,22 @@ import {
 } from '@himmelcad/ui';
 
 import { COMMANDS } from '../model/commands/registry.js';
+import { onCloseRequested } from '../model/project/persistence.js';
+import { useProjectStore } from '../model/project/projectStore.js';
 import { CommandGroupMenu } from './CommandGroupMenu.js';
 import type { AssemblerState } from '../model/store.js';
 import styles from './TopBar.module.css';
 
+const PENDING_ACTION_LABEL: Record<'new' | 'open' | 'close', string> = {
+  new: 'starting a new project',
+  open: 'opening another project',
+  close: 'closing',
+};
+
 export function TopBar({ state }: { state: AssemblerState }): JSX.Element {
   const [renaming, setRenaming] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const project = useProjectStore();
 
   useEffect(() => {
     if (!renaming) return;
@@ -36,6 +45,14 @@ export function TopBar({ state }: { state: AssemblerState }): JSX.Element {
       return true;
     });
   }, [renaming, state.projectName]);
+
+  // Runs once: checks for a crash-recovery copy and wires up the Electron
+  // "window is closing" confirmation. Both are process-lifetime concerns,
+  // not per-render ones.
+  useEffect(() => {
+    void useProjectStore.getState().checkRecovery();
+    return onCloseRequested(() => useProjectStore.getState().requestCloseWindow());
+  }, []);
 
   return (
     <div className={styles.root}>
@@ -67,10 +84,15 @@ export function TopBar({ state }: { state: AssemblerState }): JSX.Element {
         <button
           type="button"
           className={styles.projectName}
-          title="Click to rename the project"
+          title={
+            project.dirty
+              ? 'Unsaved changes — click to rename the project'
+              : 'Click to rename the project'
+          }
           onClick={() => setRenaming(true)}
         >
           {state.projectName}
+          {project.dirty ? ' •' : ''}
         </button>
       )}
       <nav className={styles.menus} aria-label="Main menu">
@@ -122,6 +144,49 @@ export function TopBar({ state }: { state: AssemblerState }): JSX.Element {
           </button>
         </Tooltip>
       </div>
+
+      <Dialog
+        open={project.pendingAction !== null}
+        onClose={() => useProjectStore.getState().cancelPending()}
+        title="Unsaved changes"
+      >
+        <p>
+          {state.projectName} has unsaved changes. Save before{' '}
+          {project.pendingAction ? PENDING_ACTION_LABEL[project.pendingAction] : ''}?
+        </p>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
+          <button type="button" onClick={() => useProjectStore.getState().cancelPending()}>
+            Cancel
+          </button>
+          <button type="button" onClick={() => useProjectStore.getState().confirmDiscard()}>
+            Discard changes
+          </button>
+          <button type="button" onClick={() => void useProjectStore.getState().saveThenProceed()}>
+            Save
+          </button>
+        </div>
+      </Dialog>
+
+      <Dialog
+        open={project.recoveryOffer !== null}
+        onClose={() => useProjectStore.getState().dismissRecovery()}
+        title="Recover unsaved changes?"
+      >
+        <p>
+          {project.recoveryOffer
+            ? `An autosaved copy from ${new Date(project.recoveryOffer.when).toLocaleString()} was found. ` +
+              `Recover it, or discard it and keep the current document?`
+            : ''}
+        </p>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
+          <button type="button" onClick={() => useProjectStore.getState().dismissRecovery()}>
+            Discard
+          </button>
+          <button type="button" onClick={() => useProjectStore.getState().restoreRecovery()}>
+            Recover
+          </button>
+        </div>
+      </Dialog>
     </div>
   );
 }

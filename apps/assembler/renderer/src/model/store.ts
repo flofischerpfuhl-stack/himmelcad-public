@@ -52,6 +52,7 @@ import {
   type FaceRef,
   type Feature,
   type FilletFeature,
+  type ImportStepFeature,
   type MoveFeature,
   type Plane,
   type ShellFeature,
@@ -323,6 +324,12 @@ export interface AssemblerState {
   addShell: (thickness: number) => void;
   /** Boolean of the selected bodies: the first selected body is the target (one undo step). */
   addBoolean: (operation: BooleanFeature['operation']) => void;
+  /**
+   * Appends one "Import" history step producing a body from an already-read
+   * STEP file (base64 `data`), as one undo step; selects the new feature.
+   * Used by the File > Import > STEP flow (`model/project/`).
+   */
+  addImportedBody: (input: { data: string; fileName: string }) => void;
 
   editFeatureParams: (featureId: string, patch: FeaturePatch) => void;
   setSuppressed: (featureId: string, suppressed: boolean) => void;
@@ -1267,6 +1274,18 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
         operation,
         targetBodyId: bodyIds[0]!,
         toolBodyIds: bodyIds.slice(1),
+      };
+      appendFeature(feature);
+    },
+    addImportedBody: (input) => {
+      const state = get();
+      const feature: ImportStepFeature = {
+        id: createFeatureId('import'),
+        name: nextFeatureName('Import', state.features),
+        suppressed: false,
+        kind: 'importStep',
+        data: input.data,
+        fileName: input.fileName,
       };
       appendFeature(feature);
     },

@@ -82,8 +82,14 @@ void test('adaptive ordering does not depend on hover', async () => {
   assert.deepEqual(withoutHover, withHover);
 });
 
-void test('command search: "ext" ranks Extrude first', async () => {
+void test('command search: "ext" ranks Extrude first when it is enabled', async () => {
+  // With a planar face selected, Extrude is enabled and, per `searchCommands`'
+  // documented ordering (enabled commands first, disabled commands always
+  // ranked after with their reason), outranks the disabled-by-default file
+  // commands ("Export…" is also a plausible "ext" match, but only once
+  // there is something to export it, unlike Extrude, needs a selection).
   await freshStoreWithDemoDoc();
+  useAssemblerStore.getState().select({ kind: 'face', ...planarFaceKey() });
   const results = searchCommands('ext', useAssemblerStore.getState());
   assert.equal(results[0]?.command.id, 'tools.extrude');
 });

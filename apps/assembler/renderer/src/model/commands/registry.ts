@@ -8,6 +8,7 @@
  * and identical disabled reasons. Nothing outside this file should decide
  * whether a command is enabled.
  */
+import { useProjectStore } from '../project/projectStore.js';
 import { isPlanarFace, makeFaceRef, type AssemblerState, type SelectionItem } from '../store.js';
 
 /** Read access to the store snapshot and its actions. Commands never mutate `ctx` directly — they call its action methods. */
@@ -53,7 +54,6 @@ export const KERNEL_LOADING_REASON = 'The CAD kernel is still loading.';
 const KERNEL_FAILED_REASON = 'The CAD kernel failed to load.';
 const NOT_IN_SPIKE_REASON = 'Not part of the Phase 1 kernel spike yet';
 const SKETCH_SOLVER_REASON = 'Requires the sketch solver (Phase 1)';
-const PROJECT_FILES_REASON = 'Project files arrive in Phase 1';
 
 /** The single selected face if it is planar (a sketch plane), else `null`. */
 function singlePlanarFace(ctx: CommandContext) {
@@ -481,33 +481,99 @@ export const COMMANDS: readonly Command[] = [
     id: 'file.new',
     label: 'New',
     group: 'file',
+    shortcut: 'Ctrl+N',
     keywords: ['project', 'blank'],
-    availability: () => ({ enabled: false, reason: PROJECT_FILES_REASON }),
-    run: () => undefined,
+    availability: () => alwaysEnabled,
+    run: () => useProjectStore.getState().requestNew(),
   },
   {
     id: 'file.open',
-    label: 'Open',
+    label: 'Open…',
     group: 'file',
+    shortcut: 'Ctrl+O',
     keywords: ['project', 'load'],
-    availability: () => ({ enabled: false, reason: PROJECT_FILES_REASON }),
-    run: () => undefined,
+    availability: () => alwaysEnabled,
+    run: () => useProjectStore.getState().requestOpen(),
   },
   {
     id: 'file.save',
     label: 'Save',
     group: 'file',
+    shortcut: 'Ctrl+S',
     keywords: ['project', 'persist'],
-    availability: () => ({ enabled: false, reason: PROJECT_FILES_REASON }),
-    run: () => undefined,
+    availability: () => alwaysEnabled,
+    run: () => void useProjectStore.getState().save(),
+  },
+  {
+    id: 'file.saveAs',
+    label: 'Save As…',
+    group: 'file',
+    shortcut: 'Ctrl+Shift+S',
+    keywords: ['project', 'persist', 'copy'],
+    availability: () => alwaysEnabled,
+    run: () => void useProjectStore.getState().saveAs(),
+  },
+  {
+    id: 'file.exportStlAll',
+    label: 'Export STL (All Bodies)',
+    group: 'file',
+    keywords: ['export', 'print', 'stl'],
+    availability: (ctx) =>
+      ctx.evaluation.bodies.length > 0
+        ? alwaysEnabled
+        : { enabled: false, reason: 'No bodies to export.' },
+    run: () => void useProjectStore.getState().exportStlAll(),
+  },
+  {
+    id: 'file.exportStlBody',
+    label: 'Export STL (Selected Body)',
+    group: 'file',
+    keywords: ['export', 'print', 'stl', 'body'],
+    availability: (ctx) => {
+      const bodies = selected(ctx, 'body');
+      return bodies.length === 1 && ctx.selection.length === 1
+        ? alwaysEnabled
+        : { enabled: false, reason: 'Select exactly one body.' };
+    },
+    run: (ctx) => {
+      const bodies = selected(ctx, 'body');
+      if (bodies.length === 1) void useProjectStore.getState().exportStlBody(bodies[0]!.bodyId);
+    },
   },
   {
     id: 'file.export3mf',
     label: 'Export 3MF',
     group: 'file',
     keywords: ['export', 'print', '3mf'],
-    availability: () => ({ enabled: false, reason: PROJECT_FILES_REASON }),
-    run: () => undefined,
+    availability: (ctx) =>
+      ctx.evaluation.bodies.length > 0
+        ? alwaysEnabled
+        : { enabled: false, reason: 'No bodies to export.' },
+    run: () => void useProjectStore.getState().export3mf(),
+  },
+  {
+    id: 'file.exportStep',
+    label: 'Export STEP',
+    group: 'file',
+    keywords: ['export', 'step', 'cad'],
+    requiresKernel: true,
+    availability: (ctx) => {
+      const notReady = kernelNotReady(ctx);
+      if (notReady) return notReady;
+      return ctx.evaluation.bodies.length > 0
+        ? alwaysEnabled
+        : { enabled: false, reason: 'No bodies to export.' };
+    },
+    run: () => void useProjectStore.getState().exportStep(),
+  },
+  {
+    id: 'file.importStep',
+    label: 'Import STEP…',
+    group: 'file',
+    keywords: ['import', 'step', 'cad'],
+    requiresKernel: true,
+    availability: (ctx) => kernelNotReady(ctx) ?? alwaysEnabled,
+    run: () => void useProjectStore.getState().importStep(),
   },
 ];
 
