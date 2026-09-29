@@ -147,8 +147,9 @@ Limits (known, not solved by the spike):
   split face picks the nearest piece by centroid.
 - Surface identity cannot tell apart two different features that create
   faces on the _same_ surface later on; the earliest-feature rule decides.
-- Sketch profiles are addressed by index; there is no sketch-entity naming
-  (needed once constraints/polylines arrive).
+- ~~Sketch profiles are addressed by index~~ — superseded 2026-09-29:
+  profiles are detected regions with stable keys and side faces are named
+  by sketch entity (`<extrude>:side:<p>:<entityId>`); see `SKETCHING.md`.
 - OCCT's own history (`BRepAlgoAPI_*::Modified/Generated`) is not used; it is
   available in the bindings and is the next step if surface identity proves
   too weak (e.g. for variable fillets or drafts).

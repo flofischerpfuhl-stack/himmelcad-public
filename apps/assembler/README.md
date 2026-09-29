@@ -16,6 +16,9 @@ stable-reference scheme and open risks: `assembler/KERNEL-SPIKE.md`.
 - `renderer/src/kernel/` — kernel adapter contract, OCCT evaluator,
   naming/reference resolution, worker.
 - `renderer/src/viewport/` — WebGL2 scene, picking by face/edge naming key.
+- `renderer/src/sketch/` — constrained sketches and sketch mode: data model,
+  region (profile) detection, planeGCS solver worker, drawing tools,
+  inference, session store and overlay UI (`assembler/SKETCHING.md`).
 - `renderer/public/licenses/` — third-party notices and license texts
   shipped with the app (OCCT is LGPL-2.1 with the Open CASCADE exception; see
   `LICENSES/THIRD_PARTY.md`).
@@ -39,10 +42,29 @@ Shell `H`, Union/Subtract/Intersect) preview `features + provisional
 feature` on the kernel's preview channel — one request in flight, newest
 parameters next, stale results dropped. A kernel failure keeps the last
 valid preview, shows the error under the tool pill and disables Done.
-Circle (`C`) and Rectangle (`R`) take their plane from the first click on
-a planar face; Extrude picks New/Join/Cut from face contact (out of a face
-joins, into a body cuts, free-standing is new) until the badge overrides it.
-Escape order: dimension field, placed circle centre, tool, selection.
+Extrude picks New/Join/Cut from face contact (out of a face joins, into a
+body cuts, free-standing is new) until the badge overrides it; a single
+clicked sketch region extrudes just that profile. Escape order: dimension
+field, tool, selection.
+
+## Sketch mode
+
+Constrained sketches solved by FreeCAD's planeGCS (WebAssembly, own worker;
+LGPL record in `LICENSES/THIRD_PARTY.md`). Line `L`, Arc `A`, Circle `C`,
+Rectangle `R`, Polygon `G` start a sketch (on XY, or on the selected planar
+face; the first click on a face moves an empty new sketch there); Trim `T`,
+Offset `O`, Dimension `D`, Construction `Q` and the constraints (Shift +
+letter) work inside it. Double-click a sketch (viewport, Items, History) to
+edit it. Snapping and inferred horizontal/vertical/perpendicular/parallel/
+midpoint/point-on constraints while drawing; typed values add dimensions;
+dimensions accept expressions (`d1 / 2`). Blue = under-constrained, green =
+fully constrained; conflicting edits are rejected with a red banner and the
+last valid sketch is kept. Dragging moves unconstrained geometry through the
+solver. Esc cancels the tool, then leaves the sketch; the session undoes step
+by step and becomes one document undo step. Profiles are the detected closed
+regions (holes and intersections included), referenced by stable keys.
+Project files are schema 2; schema 1 files migrate on load. Details and
+limits: `assembler/SKETCHING.md`.
 
 ## Dev automation hook (DEV only)
 
@@ -64,6 +86,11 @@ viewport, directly usable with `page.mouse`.
 | `bodies()`                        | Displayed bodies (the active tool's preview if any): `id`, `name`, `volume`, `min`, `max`.                                              |
 | `faces(bodyId)` / `edges(bodyId)` | Stable references (`faceKey`/`edgeKey`) with readable names (`"Extrude 1 end · plane +Z at …"`, `"Circle Ø6 at …"`) plus geometry.      |
 | `waitForKernelIdle()`             | Resolves when no document/preview evaluation is outstanding and that state has been drawn (so anchors are current).                     |
+| `sketchToScreen([u, v], id?)`     | Page pixel of sketch coordinates in the open sketch session (or in the evaluated sketch `id`), `null` if not visible.                   |
+| `sketchSession()`                 | Open session summary: feature id, tool, DOF, problem message, constraint kinds, dimensions (`id`, `name`, `kind`, `value`), selection.  |
+| `dimensionChip(name)`             | Centre of the value chip of dimension `name` (e.g. `"d1"`), or `null`.                                                                  |
+| `waitForSketchIdle()`             | Resolves when no sketch edit/drag solve is pending, the document settled and the frame is drawn.                                        |
+| `sketchStore`                     | The sketch-mode zustand store (`begin`, `dispatch`, `setTool`, …).                                                                      |
 
 Example (see `D:\AgentWork\HimmelCAD-Assembler\shots\tool-shots.mjs` on the
 Windows host for a full script):
