@@ -48,6 +48,8 @@ export interface EdgeInfo {
   midpoint: Vec3;
   length: number;
   direction: Vec3 | null;
+  /** Radius of circular edges (full circles and arcs), else `null`. Optional for older results. */
+  radius?: number | null;
   /** Line-segment pairs (x, y, z, x, y, z, ...) approximating the edge. */
   segments: Float32Array;
 }

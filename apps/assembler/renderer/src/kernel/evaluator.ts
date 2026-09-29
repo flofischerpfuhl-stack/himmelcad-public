@@ -93,7 +93,13 @@ interface Topology {
   faceEdges: number[][];
   /** Face indices per edge. */
   edgeFaces: number[][];
-  edgeGeoms: { curve: CurveKind; midpoint: Vec3; length: number; direction: Vec3 | null }[];
+  edgeGeoms: {
+    curve: CurveKind;
+    midpoint: Vec3;
+    length: number;
+    direction: Vec3 | null;
+    radius: number | null;
+  }[];
 }
 
 export interface EvaluatorOptions {
@@ -189,12 +195,19 @@ export function createEvaluator(oc: OpenCascade, options: EvaluatorOptions = {})
       const midpoint: Vec3 = [mid.x, mid.y, mid.z];
       mid.delete();
       let direction: Vec3 | null = null;
+      let radius: number | null = null;
       if (curve === 'line') {
         const t = edge.tangentAt(0.5);
         direction = normalize([t.x, t.y, t.z]);
         t.delete();
+      } else if (curve === 'circle') {
+        const adaptor = new oc.BRepAdaptor_Curve(edge.wrapped);
+        const circle = adaptor.Circle();
+        radius = circle.Radius();
+        circle.delete();
+        adaptor.delete();
       }
-      return { curve, midpoint, length: edge.length, direction };
+      return { curve, midpoint, length: edge.length, direction, radius };
     });
     return { faces, edges, faceEdges, edgeFaces, edgeGeoms };
   }
@@ -709,6 +722,7 @@ export function createEvaluator(oc: OpenCascade, options: EvaluatorOptions = {})
       midpoint: g.midpoint,
       length: g.length,
       direction: g.direction,
+      radius: g.radius,
       segments: segmentsByEdge.get(i) ?? new Float32Array(0),
     }));
 
