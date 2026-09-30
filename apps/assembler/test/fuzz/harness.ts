@@ -26,6 +26,8 @@
  *                       evaluation on a separate, fresh kernel instance.
  * - `heap`              the wasm heap stays below {@link HEAP_LIMIT_BYTES}
  *                       under the restart policy.
+ * - `arenaOrder`        no OCCT object arena was closed out of order
+ *                       (interleaved kernel users, `kernel/occtArena.ts`).
  */
 import { createRequire } from 'node:module';
 
@@ -36,6 +38,7 @@ import { ApiError } from '../../renderer/src/api/errors.js';
 import { AgentSession, HEADLESS_CAPABILITIES } from '../../renderer/src/api/session.js';
 import { InProcessKernelAdapter } from '../../renderer/src/kernel/adapter.js';
 import { createEvaluator, type KernelEvaluator } from '../../renderer/src/kernel/evaluator.js';
+import { arenaInterleavings } from '../../renderer/src/kernel/occtArena.js';
 import type { EvaluationResult } from '../../renderer/src/kernel/types.js';
 import type { Feature } from '../../renderer/src/model/document.js';
 import { checkMove, moveFeature } from '../../renderer/src/model/historyTools.js';
@@ -914,6 +917,10 @@ export class FuzzHarness {
       if (ids.has(f.id)) fail('uniqueIds', `duplicate feature id ${f.id}`);
       ids.add(f.id);
     }
+    // OCCT object arenas must never be closed out of order (interleaved kernel users).
+    if (arenaInterleavings() !== 0) {
+      fail('arenaOrder', `${arenaInterleavings()} OCCT arena(s) closed out of order`);
+    }
   }
 
   private checkEvaluation(evaluation: EvaluationResult, active: Feature[]): void {
@@ -1072,7 +1079,11 @@ export class FuzzHarness {
         }
         if (ok) {
           entry.outcome = 'ok';
-          if (op.op === 'txBegin') {
+          // A UI edit (History reorder/rollback) during an agent transaction is the user's own
+          // change: cancel must drop the staged writes, not undo the user (the commit would
+          // report `conflict`). The baseline moves with it.
+          const uiEditInTx = (op.op === 'reorder' || op.op === 'rollback') && txBase !== null;
+          if (op.op === 'txBegin' || uiEditInTx) {
             txBase = {
               features: after.features,
               parameters: after.parameters,

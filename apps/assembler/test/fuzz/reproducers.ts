@@ -73,6 +73,22 @@ export const REPRODUCERS: RegressionCase[] = [
       { op: 'extrude', r: [0.6349, 0.9919, 0.4834, 0.2315, 0.0539, 0.9114, 0.1419, 0.5449] },
     ],
   },
+  {
+    // A History reorder (UI) while an agent transaction is open, then transaction.cancel: the
+    // user's reorder stays (as it must). Harness bug H1, the product was right.
+    name: 'cancelTrace-s2-q330',
+    finding: 'H1',
+    invariant: 'cancelTrace',
+    ops: [
+      { op: 'sketch', r: [0.4745, 0.1792, 0.9017, 0.2703, 0.4846, 0.0674, 0.7044, 0.8471] },
+      { op: 'extrude', r: [0.0057, 0.6258, 0.1508, 0.0526, 0.5052, 0.5128, 0.7809, 0.1957] },
+      { op: 'extrude', r: [0.3242, 0.3662, 0.7636, 0.2468, 0.2698, 0.3017, 0.2499, 0.0553] },
+      { op: 'sketchOnFace', r: [0.3045, 0.3076, 0.92, 0.532, 0.4938, 0.177, 0.7113, 0.2237] },
+      { op: 'txBegin', r: [0.0633, 0.8304, 0.7545, 0.1459, 0.3487, 0.9034, 0.0107, 0.962] },
+      { op: 'reorder', r: [0.3612, 0.5501, 0.9968, 0.5862, 0.2617, 0.9738, 0.8854, 0.2301] },
+      { op: 'txCancel', r: [0.1623, 0.9559, 0.8452, 0.6591, 0.6619, 0.4179, 0.4055, 0.3347] },
+    ],
+  },
 ];
 
 /**

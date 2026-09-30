@@ -1596,7 +1596,7 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
       if (!feature.suppressed) {
         const snapshot = snapshotBodies(ctx.bodies);
         featureInfos = [];
-        openArena();
+        const arena = openArena();
         try {
           const t = now();
           await applyFeature(feature, ctx);
@@ -1605,7 +1605,7 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
               (phases[`feature:${feature.kind}`] ?? 0) + now() - t;
         } catch (error) {
           if (isFatalKernelError(error)) {
-            closeArena();
+            closeArena(arena);
             throw error instanceof KernelFatalError
               ? error
               : new KernelFatalError(`CAD kernel failure: ${describeError(error)}`);
@@ -1625,7 +1625,7 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
           if (!isPinned(shape.wrapped)) dropInfo(shape);
         }
         featureInfos = [];
-        timed('release', () => closeArena());
+        timed('release', () => closeArena(arena));
         for (const id of ctx.order)
           if (!replay.creationOrder.includes(id)) replay.creationOrder.push(id);
       }
@@ -1761,13 +1761,13 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
             )
             .map((state) => ({ shape: state.shape, color: state.color, name: state.name }));
           if (shapes.length === 0) throw new Error('Nothing to export');
-          openArena();
+          const arena = openArena();
           try {
             const blob = R.exportSTEP(shapes, { unit: 'mm', modelUnit: 'mm' });
             const buffer = await blob.arrayBuffer();
             return new Uint8Array(buffer);
           } finally {
-            closeArena();
+            closeArena(arena);
           }
         } finally {
           releaseTransient(replay);
@@ -1806,7 +1806,7 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
         // Raw OCCT objects (not tracked by the arena) are deleted explicitly;
         // the arena releases the replicad vertex of a point target.
         const made: { delete(): void }[] = [];
-        openArena();
+        const arena = openArena();
         try {
           const shapeOf = (target: DistanceTarget): RawShape => {
             if (target.kind === 'point') {
@@ -1851,7 +1851,7 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
           };
         } finally {
           for (const object of made) object.delete();
-          closeArena();
+          closeArena(arena);
           releaseTransient(replay);
         }
       });
