@@ -548,3 +548,129 @@ void test('parameters: an unknown-name or non-positive expression is rejected wi
     'invalidParams',
   );
 });
+
+void test('parameters: parameter.edit re-solves dependent sketches and shells in one undo step; conflicts refuse all', async () => {
+  await reset();
+  const wall = await call<Json>('parameter.create', { name: 'wall', unit: 'mm', value: 3 });
+  const wallId = (wall.parameter as Json).id as string;
+  const { sketchId, bodyId } = await apiPlate();
+  // The rectangle's width (d3) and a shell's thickness read `wall`.
+  await call('sketch.setDimension', {
+    featureId: sketchId,
+    dimension: 'd3',
+    expression: 'wall * 20',
+  });
+  const shell = await call<Json>('feature.create', {
+    kind: 'shell',
+    params: { bodyId, faces: [{ bodyId, select: '>Z' }], thicknessExpression: 'wall' },
+  });
+  const width = async () => {
+    const b = (await call<Json>('body.get', { bodyId })).bbox as { min: number[]; max: number[] };
+    return Math.round((b.max[0]! - b.min[0]!) * 1e6) / 1e6;
+  };
+  const thickness = async () =>
+    ((await call<Json>('feature.get', { featureId: shell.featureId as string })).params as Json)
+      .thickness;
+  assert.equal(await width(), 60);
+  assert.equal(await thickness(), 3);
+  const steps = store.getState().features.length;
+
+  const edited = await call<Json>('parameter.edit', { parameterId: wallId, value: 5 });
+  assert.equal(edited.committed, true);
+  assert.deepEqual(edited.resolvedSketchIds, [sketchId]);
+  assert.deepEqual(edited.errors, {});
+  assert.equal(await width(), 100, 'the sketch was re-solved immediately');
+  assert.equal(await thickness(), 5);
+  assert.equal(store.getState().features.length, steps);
+
+  // ONE undo step restores the parameter, the sketch and the shell.
+  await call('history.undo');
+  assert.equal(((await call<Json[]>('parameters.list'))[0] as Json).value, 3);
+  assert.equal(await width(), 60);
+  assert.equal(await thickness(), 3);
+  await call('history.redo');
+  assert.equal(await width(), 100);
+
+  // Unsatisfiable for the sketch (width 0): sketchConflict, nothing changes.
+  const revision = session.documentRevision;
+  const refused = await fails(
+    call('parameter.edit', { parameterId: 'wall', value: 0 }),
+    'sketchConflict',
+  );
+  assert.equal((refused.details?.conflicts as Json[])[0]!.featureId, sketchId);
+  assert.equal(session.documentRevision, revision);
+  assert.equal(await width(), 100);
+
+  // Rename + value is one call and one undo step.
+  await call('parameter.edit', { parameterId: 'wall', name: 'side', value: 4 });
+  assert.equal(await width(), 80);
+  await call('history.undo');
+  const restored = (await call<Json[]>('parameters.list'))[0] as Json;
+  assert.deepEqual([restored.name, restored.value], ['wall', 5]);
+
+  // Parameters are not staged in transactions.
+  await call('transaction.begin');
+  await fails(call('parameter.edit', { parameterId: 'wall', value: 6 }), 'transactionState');
+  await call('transaction.cancel');
+});
+void test('measure.*: kernel-exact distance, angle, area and volume, same numbers as the Measure panel', async () => {
+  await reset();
+  const { bodyId } = await apiPlate(); // 80 x 50 x 6
+  const second = await call<Json>('feature.create', {
+    kind: 'sketch',
+    params: { plane: { kind: 'plane', plane: 'XY', offset: 10 }, profiles: [{ ...RECT, x: 100 }] },
+  });
+  const other = await call<Json>('feature.create', {
+    kind: 'extrude',
+    params: { profile: { kind: 'sketch', featureId: second.featureId }, distance: 4 },
+  });
+  const otherId = `body:${String(other.featureId)}`;
+
+  // Plate (x 0..80, z 0..6) to the second block (x 100..180, z 10..14): gap (20, 0, 4).
+  const distance = await call<Json>('measure.distance', {
+    a: { kind: 'body', bodyId },
+    b: { kind: 'body', bodyId: otherId },
+  });
+  assert.equal(distance.exact, true);
+  assert.ok(Math.abs((distance.distance as number) - Math.hypot(20, 4)) < 1e-6);
+  const toPoint = await call<Json>('measure.distance', {
+    a: { kind: 'face', face: { bodyId, select: '>Z' } },
+    b: { kind: 'point', point: [10, 10, 16] },
+  });
+  assert.ok(Math.abs((toPoint.distance as number) - 10) < 1e-6);
+
+  const angle = await call<Json>('measure.angle', {
+    a: { kind: 'face', face: { bodyId, select: '>Z' } },
+    b: { kind: 'face', face: { bodyId, select: '>X' } },
+  });
+  assert.ok(Math.abs((angle.angle as number) - 90) < 1e-6);
+  const parallel = await call<Json>('measure.angle', {
+    a: { kind: 'face', face: { bodyId, select: '>Z' } },
+    b: { kind: 'face', face: { bodyId, select: '<Z' } },
+  });
+  assert.equal(parallel.parallel, true);
+  assert.ok(Math.abs((parallel.distance as number) - 6) < 1e-9);
+
+  const area = await call<Json>('measure.area', { faces: [{ bodyId, select: '%PLANE' }] });
+  assert.ok(Math.abs((area.area as number) - 2 * (80 * 50 + 80 * 6 + 50 * 6)) < 1e-6);
+
+  const volume = await call<Json>('measure.volume', { bodyIds: [bodyId] });
+  assert.ok(Math.abs((volume.volume as number) - 80 * 50 * 6) < 1e-6);
+  assert.ok(Math.abs((volume.mass as number) - (80 * 50 * 6 * 1.24) / 1000) < 1e-6, 'PLA default');
+
+  const panel = await call<Json>('measure.get', {
+    items: [
+      { kind: 'body', bodyId },
+      { kind: 'body', bodyId: otherId },
+    ],
+  });
+  const min = (panel.values as Json[]).find((v) => v.label === 'Minimum distance')!;
+  assert.equal(min.value, distance.distance);
+  assert.equal(min.unit, 'mm');
+  assert.equal(min.approx, undefined, 'exact from the kernel');
+
+  await fails(
+    call('measure.angle', { a: { kind: 'body', bodyId }, b: { kind: 'point', point: [0, 0, 0] } }),
+    'invalidParams',
+  );
+});

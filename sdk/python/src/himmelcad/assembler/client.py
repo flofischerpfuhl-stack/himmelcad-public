@@ -7,7 +7,7 @@ on top of this class.
 from __future__ import annotations
 
 import base64
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +22,7 @@ METHODS = (
     "document.get", "features.list", "feature.get", "bodies.list", "body.get",
     "faces.list", "edges.list", "sketches.list", "selection.get", "selection.set",
     "parameters.list", "parameter.create", "parameter.edit", "parameter.delete",
+    "measure.get", "measure.distance", "measure.angle", "measure.area", "measure.volume",
     "feature.create", "feature.edit", "feature.delete", "feature.suppress", "feature.rename",
     "sketch.addProfile", "sketch.addPolyline", "sketch.addArc", "sketch.addConstraint",
     "sketch.addDimension", "sketch.setDimension", "sketch.deleteItems",
@@ -116,6 +117,23 @@ class AssemblerClient:
     def parameters(self) -> list[Mapping[str, Any]]:
         """Document parameters ("variables", `model/parameters.ts`), in creation order."""
         return self.call("parameters.list")
+
+    def measure(self, items: Sequence[Mapping[str, Any]], *, scope: str | None = None) -> Mapping[str, Any]:
+        """The Measure panel's measurement of 1..n targets (``{"kind": "body"|"face"|"edge"|"point", ...}``)."""
+        return self.call("measure.get", {"items": [dict(i) for i in items], "scope": scope})
+
+    def measure_distance(self, a: Mapping[str, Any], b: Mapping[str, Any], *, scope: str | None = None) -> Mapping[str, Any]:
+        """Exact minimum distance (kernel) between two targets and the closest points."""
+        return self.call("measure.distance", {"a": dict(a), "b": dict(b), "scope": scope})
+
+    def measure_angle(self, a: Mapping[str, Any], b: Mapping[str, Any], *, scope: str | None = None) -> Mapping[str, Any]:
+        return self.call("measure.angle", {"a": dict(a), "b": dict(b), "scope": scope})
+
+    def measure_area(self, faces: Sequence[Mapping[str, Any]], *, scope: str | None = None) -> Mapping[str, Any]:
+        return self.call("measure.area", {"faces": [dict(f) for f in faces], "scope": scope})
+
+    def measure_volume(self, body_ids: Sequence[str] | None = None, *, scope: str | None = None) -> Mapping[str, Any]:
+        return self.call("measure.volume", {"bodyIds": None if body_ids is None else list(body_ids), "scope": scope})
 
     # ---- commands ------------------------------------------------------------------------
 

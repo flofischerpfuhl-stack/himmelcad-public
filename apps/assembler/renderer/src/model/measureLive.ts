@@ -60,7 +60,9 @@ export function useLiveMeasurements(): LiveMeasurements {
       bodyName: (body) => displayBodyName(body, meta),
       materials: bodyMaterials(features, activeCount({ features, rollbackBefore })),
       distance: (a, b) => {
-        const result = useMeasureStore.getState().kernelDistance(features, evaluation, a, b);
+        // The kernel replays the evaluated steps: those above the History rollback bar.
+        const active = features.slice(0, activeCount({ features, rollbackBefore }));
+        const result = useMeasureStore.getState().kernelDistance(active, evaluation, a, b);
         return result === 'failed' ? null : result;
       },
     };

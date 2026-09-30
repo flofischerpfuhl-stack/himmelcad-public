@@ -4,8 +4,11 @@
  * (`ParamExpressionField`, `model/parameters.ts`). Add, rename (cascades to
  * every expression that names it), edit the value/expression, change the
  * unit, and delete (refused with the list of users when still referenced).
- * Every edit is one undo step (`model/store.ts` `upsertParameter` /
- * `renameParameter` / `deleteParameter`).
+ * Every edit is one undo step (`model/store.ts` `editParameter`): changing a
+ * value re-solves every sketch whose dimensions use it and re-evaluates the
+ * features that depend on it; an edit a sketch cannot satisfy is refused as
+ * a whole and the reason shown. Value fields complete parameter names
+ * (`ExpressionSuggestInput`).
  */
 import { AlertTriangle, Plus, Trash2 } from 'lucide-react';
 import { useEffect, useId, useState } from 'react';
@@ -14,6 +17,8 @@ import { consumeEscapeBlurCommitSuppression, Select, Tooltip } from '@himmelcad/
 
 import { resolveParameterValues, type Parameter, type ParameterUnit } from '../model/parameters.js';
 import type { AssemblerState } from '../model/store.js';
+import { parameterCandidates } from './expressionSuggest.js';
+import { ExpressionSuggestInput } from './ExpressionSuggestInput.js';
 import panelStyles from './Panel.module.css';
 import styles from './ParametersPanel.module.css';
 
@@ -76,12 +81,14 @@ export function ParametersPanel({ state }: ParametersPanelProps): JSX.Element {
         ))}
         {adding ? (
           <NewParameterRow
-            existingNames={state.parameters.map((p) => p.name)}
+            parameters={state.parameters}
             onCancel={() => setAdding(false)}
-            onCreate={(input) => {
-              const outcome = state.upsertParameter(input);
-              if (outcome.ok) setAdding(false);
-              else setError(outcome.message);
+            onCreate={async (input) => {
+              const outcome = await state.upsertParameter(input);
+              if (outcome.ok) {
+                setAdding(false);
+                setError(null);
+              } else setError(outcome.message);
             }}
           />
         ) : null}
@@ -124,13 +131,13 @@ function ParameterRow({
     if (!valueFocused) setValueDraft(parameter.expression ?? String(parameter.value));
   }, [parameter.value, parameter.expression, valueFocused]);
 
-  const commitName = (): void => {
+  const commitName = async (): Promise<void> => {
     const trimmed = nameDraft.trim();
     if (trimmed === parameter.name || trimmed === '') {
       setNameDraft(parameter.name);
       return;
     }
-    const outcome = state.renameParameter(parameter.id, trimmed);
+    const outcome = await state.renameParameter(parameter.id, trimmed);
     if (!outcome.ok) {
       onError(outcome.message);
       setNameDraft(parameter.name);
@@ -139,14 +146,14 @@ function ParameterRow({
     }
   };
 
-  const commitValue = (): void => {
+  const commitValue = async (): Promise<void> => {
     const text = valueDraft.trim();
-    if (text === '') {
+    if (text === '' || text === (parameter.expression ?? String(parameter.value))) {
       setValueDraft(parameter.expression ?? String(parameter.value));
       return;
     }
     const isPlain = /^-?\d+(\.\d+)?$/.test(text.replace(',', '.'));
-    const outcome = state.upsertParameter({
+    const outcome = await state.upsertParameter({
       id: parameter.id,
       name: parameter.name,
       unit: parameter.unit,
@@ -160,8 +167,8 @@ function ParameterRow({
     }
   };
 
-  const handleDelete = (): void => {
-    const outcome = state.deleteParameter(parameter.id);
+  const handleDelete = async (): Promise<void> => {
+    const outcome = await state.deleteParameter(parameter.id);
     if (!outcome.ok) {
       const list = (outcome.usages ?? []).map((u) => `${u.featureName} (${u.field})`).join(', ');
       onError(`"${parameter.name}" is used by ${list || 'other fields'}.`);
@@ -183,29 +190,30 @@ function ParameterRow({
         onBlur={(event) => {
           setNameFocused(false);
           if (consumeEscapeBlurCommitSuppression(event.currentTarget)) return;
-          commitName();
+          void commitName();
         }}
         onKeyDown={(event) => {
           if (event.key === 'Enter') event.currentTarget.blur();
           if (event.key === 'Escape') setNameDraft(parameter.name);
         }}
       />
-      <input
+      <ExpressionSuggestInput
         id={nameId}
         className={styles.valueInput}
         aria-label={`${parameter.name} value or expression`}
         value={valueDraft}
+        suggestions={parameterCandidates(state.parameters, parameter.name)}
         title={
           parameter.expression
             ? `${parameter.expression} = ${resolvedValue}`
             : String(resolvedValue)
         }
         onFocus={() => setValueFocused(true)}
-        onChange={(event) => setValueDraft(event.currentTarget.value)}
+        onValueChange={setValueDraft}
         onBlur={(event) => {
           setValueFocused(false);
           if (consumeEscapeBlurCommitSuppression(event.currentTarget)) return;
-          commitValue();
+          void commitValue();
         }}
         onKeyDown={(event) => {
           if (event.key === 'Enter') event.currentTarget.blur();
@@ -219,7 +227,7 @@ function ParameterRow({
         value={parameter.unit}
         options={UNIT_OPTIONS}
         onChange={(event) =>
-          state.upsertParameter({
+          void state.upsertParameter({
             id: parameter.id,
             name: parameter.name,
             unit: event.currentTarget.value as ParameterUnit,
@@ -234,7 +242,7 @@ function ParameterRow({
           className={styles.deleteButton}
           aria-label={`Delete ${parameter.name}`}
           onClick={() => {
-            if (confirmDelete) handleDelete();
+            if (confirmDelete) void handleDelete();
             else setConfirmDelete(true);
           }}
           onBlur={() => setConfirmDelete(false)}
@@ -247,19 +255,20 @@ function ParameterRow({
 }
 
 function NewParameterRow({
-  existingNames,
+  parameters,
   onCreate,
   onCancel,
 }: {
-  existingNames: readonly string[];
+  parameters: readonly Parameter[];
   onCreate: (input: {
     name: string;
     unit: ParameterUnit;
     value?: number;
     expression?: string;
-  }) => void;
+  }) => void | Promise<void>;
   onCancel: () => void;
 }): JSX.Element {
+  const existingNames = parameters.map((p) => p.name);
   const [name, setName] = useState('');
   const [unit, setUnit] = useState<ParameterUnit>('mm');
   const [value, setValue] = useState('1');
@@ -272,7 +281,7 @@ function NewParameterRow({
     }
     const text = value.trim();
     const isPlain = /^-?\d+(\.\d+)?$/.test(text.replace(',', '.'));
-    onCreate({
+    void onCreate({
       name: trimmed,
       unit,
       ...(isPlain ? { value: Number(text.replace(',', '.')) || 0 } : { expression: text }),
@@ -293,11 +302,12 @@ function NewParameterRow({
           if (event.key === 'Escape') onCancel();
         }}
       />
-      <input
+      <ExpressionSuggestInput
         className={styles.valueInput}
         aria-label="New parameter value"
         value={value}
-        onChange={(event) => setValue(event.currentTarget.value)}
+        suggestions={parameterCandidates(parameters)}
+        onValueChange={setValue}
         onKeyDown={(event) => {
           if (event.key === 'Enter') create();
           if (event.key === 'Escape') onCancel();

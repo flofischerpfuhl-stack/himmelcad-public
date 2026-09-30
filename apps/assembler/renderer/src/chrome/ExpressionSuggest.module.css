@@ -1,0 +1,45 @@
+/* Name completion list of expression fields; same surface as the shared Menu (BaseControls). */
+.list {
+  position: fixed;
+  z-index: var(--hc-z-popover);
+  max-width: 320px;
+  max-height: 220px;
+  margin: 0;
+  padding: 4px;
+  overflow-y: auto;
+  list-style: none;
+  color: var(--hc-fg-default);
+  background: var(--hc-bg-island);
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-md);
+  box-shadow: var(--hc-shadow-popover);
+  font: 12px var(--hc-font-ui);
+}
+
+.option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: var(--hc-radius-sm);
+  cursor: pointer;
+}
+
+.optionActive {
+  color: var(--hc-fg-strong);
+  background: var(--hc-hover-bg);
+  border-color: var(--hc-border-subtle);
+}
+
+.name {
+  font-family: var(--hc-font-mono);
+}
+
+.detail {
+  color: var(--hc-fg-subtle);
+  font-size: 11px;
+  white-space: nowrap;
+}

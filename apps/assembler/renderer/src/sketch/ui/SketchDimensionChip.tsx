@@ -13,6 +13,8 @@ import { useEffect, useRef, useState } from 'react';
 
 import { registerEscapeRung } from '@himmelcad/ui';
 
+import type { SuggestionCandidate } from '../../chrome/expressionSuggest.js';
+import { ExpressionSuggestInput } from '../../chrome/ExpressionSuggestInput.js';
 import labelStyles from '../../viewport/DimensionLabel.module.css';
 import styles from './SketchOverlay.module.css';
 
@@ -22,6 +24,8 @@ export interface SketchDimensionChipProps {
   display: string;
   /** Text the field opens with (the expression or the rounded value). */
   editText: string;
+  /** Names the value field completes (other dimensions of the sketch, document parameters). */
+  suggestions?: readonly SuggestionCandidate[];
   driven: boolean;
   selected: boolean;
   invalid: boolean;
@@ -85,14 +89,14 @@ export function SketchDimensionChip(props: SketchDimensionChipProps): JSX.Elemen
         onDoubleClick={(event) => event.stopPropagation()}
       >
         <span className={styles.srOnly}>{`Dimension ${props.name}`}</span>
-        <input
+        <ExpressionSuggestInput
           ref={inputRef}
           className={labelStyles.input}
           style={{ left: props.x, top: props.y }}
           type="text"
-          inputMode="decimal"
           value={text}
-          onChange={(event) => setText(event.target.value)}
+          suggestions={props.suggestions ?? []}
+          onValueChange={setText}
           onBlur={() => {
             if (!closingRef.current) close(true);
           }}

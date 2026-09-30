@@ -90,6 +90,12 @@ class FakeTransport:
             return {"data": base64.b64encode(b"solid x\nendsolid x\n").decode(), "byteLength": 19}
         if method in ("print.placeOnPlate", "print.orient"):
             return {"featureId": "feature-transform-9", "bodyId": "body:b"}
+        if method == "measure.distance":
+            return {"distance": 4.0, "pointA": [0, 0, 6], "pointB": [0, 0, 10], "unit": "mm", "exact": True}
+        if method == "measure.angle":
+            return {"angle": 90.0, "unit": "deg", "parallel": False}
+        if method == "measure.area":
+            return {"area": 12.5, "unit": "mm²", "faces": []}
         if method == "print.analyze":
             return {"totals": {"bodies": 1, "massG": 12.5, "cost": 0.25}, "bodies": [{"bodyId": "body:b"}], "findings": [{"kind": "overhang", "severity": "warning"}]}
         return {}
@@ -260,6 +266,25 @@ class ModelingLayerTests(unittest.TestCase):
         wall.delete()
         self.assertEqual(self.doc.parameters, [])
 
+    def test_measure_queries_are_one_canonical_read_each(self) -> None:
+        from himmelcad.assembler import Body, Face
+
+        plate = Body(self.doc, "body:b")
+        top = Face("body:b", "x:end:0", "top", "plane", (0, 0, 1), (0, 0, 6), 1.0)
+        self.assertEqual(self.doc.distance(plate, (0, 0, 10)), 4.0)
+        self.assertEqual(self.doc.angle(top, top), 90.0)
+        self.assertEqual(self.doc.area(top), 12.5)
+        self.assertEqual(
+            [m for m, _ in self.transport.requests[-3:]],
+            ["measure.distance", "measure.angle", "measure.area"],
+        )
+        distance = self.transport.requests[-3][1]
+        self.assertEqual(distance["a"], {"kind": "body", "bodyId": "body:b"})
+        self.assertEqual(distance["b"], {"kind": "point", "point": [0.0, 0.0, 10.0]})
+        self.assertEqual(self.transport.requests[-1][1]["faces"], [{"bodyId": "body:b", "key": "x:end:0"}])
+        self.assertEqual(self.doc.commands, [], "measurements are reads")
+        with self.assertRaises(ValueError):
+            self.doc.distance(plate, (1, 2))
     def test_exports_are_written_by_the_client(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = self.doc.export_3mf(Path(tmp) / "out" / "part.3mf")
@@ -451,6 +476,7 @@ class HeadlessIntegrationTests(unittest.TestCase):
             s.set_dimension("d2", 10)  # slot width
             self.assertAlmostEqual(area(), 30 * 10 + math.pi * 25, places=3)
             self.assertEqual(doc.errors(), {})
+
     def test_document_parameters_drive_a_sketch_dimension_and_an_extrude(self) -> None:
         with Document(AssemblerClient(StdioTransport())) as doc:
             wall = doc.param("wall", 2)
@@ -459,24 +485,30 @@ class HeadlessIntegrationTests(unittest.TestCase):
             plate = doc.extrude(s, expression="wall * 3")
             self.assertEqual(plate.bbox.size[2], 6.0)
             # A sketch dimension expression also reads a document parameter (falls
-            # back to it once the sketch's own dimension names don't match),
-            # resolved whenever that sketch is written.
+            # back to it once the sketch's own dimension names don't match).
             width_dim = s.dimensions[0]["width"]
             s.set_dimension(width_dim, expression="wall * 40")
             self.assertEqual(plate.bbox.size[0], 80.0)
 
-            # Changing the parameter's value immediately re-resolves every feature
-            # `*Expression` field (extrude/fillet/chamfer/shell) that reads it, in
-            # the same undo step as the parameter edit.
+            # Changing the parameter re-solves every sketch that reads it and
+            # re-resolves every feature `*Expression` field — one undo step.
+            steps = len(doc.features())
             wall.set(3)
             self.assertEqual(plate.bbox.size[2], 9.0)
-            # A sketch dimension expression re-resolves the next time that sketch
-            # is written (not retroactively on a bare parameter edit — the sketch
-            # solver only re-runs when the sketch itself changes).
+            self.assertEqual(plate.bbox.size[0], 120.0)
+            self.assertEqual(len(doc.features()), steps)
+            doc.undo()
+            self.assertEqual(doc.param("wall").value, 2.0)
             self.assertEqual(plate.bbox.size[0], 80.0)
-            s.set_dimension(width_dim, expression="wall * 40")
+            self.assertEqual(plate.bbox.size[2], 6.0)
+            doc.redo()
             self.assertEqual(plate.bbox.size[0], 120.0)
 
+            # A value the sketch cannot satisfy (width 0) is refused as a whole.
+            with self.assertRaises(SketchConflictError):
+                wall.set(0)
+            self.assertEqual(doc.param("wall").value, 3.0)
+            self.assertEqual(plate.bbox.size, (120.0, 50.0, 9.0))
             # Renaming rewrites the extrude's stored expression and the sketch
             # dimension's expression alike.
             wall.rename("thickness")
@@ -489,6 +521,21 @@ class HeadlessIntegrationTests(unittest.TestCase):
             with self.assertRaises(ConflictError) as caught:
                 wall.delete()
             self.assertTrue(caught.exception.details.get("usages"))
+
+    def test_measure_matches_the_geometry(self) -> None:
+        with Document(AssemblerClient(StdioTransport())) as doc:
+            s = doc.sketch("XY")
+            s.rect(80, 50)
+            plate = doc.extrude(s, 6)
+            self.assertAlmostEqual(doc.distance(plate.face(">Z"), (0, 0, 16)), 10.0, places=6)
+            self.assertAlmostEqual(doc.angle(plate.face(">Z"), plate.face(">X")), 90.0, places=6)
+            self.assertAlmostEqual(doc.area(plate.face(">Z")), 80 * 50, places=6)
+            volume = doc.volume(plate)
+            self.assertAlmostEqual(volume["volume"], 80 * 50 * 6, places=4)
+            self.assertAlmostEqual(volume["mass"], 80 * 50 * 6 * 1.24 / 1000, places=6)
+            panel = doc.measure(plate.face(">Z"), plate.face("<Z"))
+            self.assertEqual(panel["title"], "Parallel faces")
+            self.assertAlmostEqual(panel["values"][0]["value"], 6.0, places=9)
 
 
 if __name__ == "__main__":

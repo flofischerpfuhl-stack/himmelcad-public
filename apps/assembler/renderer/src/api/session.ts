@@ -62,6 +62,8 @@ import { candidateJson, printReportJson } from './printApi.js';
 import { resolveFaceInput } from './references.js';
 import { consumedSketchIds } from '../model/modeling.js';
 import { resolveParameterValues } from '../model/parameters.js';
+import type { ParameterChange } from '../model/parameterEdits.js';
+import { runMeasureQuery } from './measureApi.js';
 import { ProjectFormatError, loadProjectFile, saveProjectFile } from '../model/project/format.js';
 import type { AssemblerState, SelectionItem } from '../model/store.js';
 import { rememberRegions } from '../sketch/regionMemory.js';
@@ -320,6 +322,16 @@ export class AgentSession {
         return this.store.getState().selection;
       case 'selection.set':
         return this.setSelection(p);
+      case 'measure.get':
+      case 'measure.distance':
+      case 'measure.angle':
+      case 'measure.area':
+      case 'measure.volume':
+        return runMeasureQuery(method, p, {
+          evaluation: await this.readEvaluation(p),
+          features: this.activeFeatures(p),
+          kernel: this.kernel,
+        });
       case 'parameters.list':
         return this.store.getState().parameters.map(describeParameter);
       case 'parameter.create':
@@ -483,6 +495,14 @@ export class AgentSession {
     return this.useStaged(p) ? this.tx!.staged : this.store.getState().features;
   }
 
+  /** The steps the read evaluation comes from (above the History rollback bar when rolled back). */
+  private activeFeatures(p: Json): Feature[] {
+    if (this.useStaged(p)) return this.tx!.staged;
+    const { features, rollbackBefore } = this.store.getState();
+    const marker = rollbackBefore ? features.findIndex((f) => f.id === rollbackBefore) : -1;
+    return marker >= 0 ? features.slice(0, marker) : features;
+  }
+
   private async readEvaluation(p: Json): Promise<EvaluationResult> {
     if (this.useStaged(p)) return this.stagedEvaluation();
     return this.committedEvaluation();
@@ -602,58 +622,93 @@ export class AgentSession {
 
   // ---- parameters --------------------------------------------------------------------
 
-  private createParameter(p: Json): Json {
-    this.ensureWritable();
-    const unit = (typeof p.unit === 'string' ? p.unit : 'mm') as 'mm' | 'deg' | '';
-    const outcome = this.store.getState().upsertParameter({
-      name: String(p.name),
-      unit,
-      ...(typeof p.value === 'number' ? { value: p.value } : {}),
-      ...(typeof p.expression === 'string' ? { expression: p.expression } : {}),
-    });
-    if (!outcome.ok) throw new ApiError('invalidParams', outcome.message);
-    const parameter = this.findParameter(outcome.id);
-    return { parameter: describeParameter(parameter), revision: this.revision };
-  }
-
-  private editParameter(p: Json): Json {
-    this.ensureWritable();
-    const state = this.store.getState();
-    const existing = this.findParameter(String(p.parameterId));
-    if (typeof p.name === 'string' && p.name !== existing.name) {
-      const renamed = state.renameParameter(existing.id, p.name);
-      if (!renamed.ok) throw new ApiError('invalidParams', renamed.message);
-    }
-    if (p.unit !== undefined || p.value !== undefined || p.expression !== undefined) {
-      const current = this.findParameter(existing.id);
-      const nextExpression = p.expression !== undefined ? p.expression : current.expression;
-      const outcome = this.store.getState().upsertParameter({
-        id: current.id,
-        name: current.name,
-        unit: (typeof p.unit === 'string' ? p.unit : current.unit) as 'mm' | 'deg' | '',
-        value: typeof p.value === 'number' ? p.value : current.value,
-        ...(typeof nextExpression === 'string' ? { expression: nextExpression } : {}),
+  /**
+   * One parameter change through the store's planner (`model/parameterEdits.ts`,
+   * the same path as the Parameters panel): dependent sketches re-solved,
+   * `*Expression` fields re-resolved, kernel-validated, committed as ONE undo
+   * step. Refused as a whole (nothing changes) on an invalid name/expression,
+   * a sketch the solver cannot satisfy (`sketchConflict`), a feature that
+   * newly fails in the kernel (`featureFailed`), or inside a transaction
+   * (parameters are not staged; `transactionState`).
+   */
+  private async changeParameter(change: ParameterChange): Promise<{ id: string; result: Json }> {
+    if (this.tx) {
+      throw new ApiError('transactionState', 'Parameters cannot be changed inside a transaction', {
+        hint: 'Commit or roll back the transaction first; a parameter edit is one undo step on its own.',
       });
-      if (!outcome.ok) throw new ApiError('invalidParams', outcome.message);
     }
+    this.ensureWritable();
+    const store = this.store.getState();
+    const plan = await store.planParameterChange(change);
+    if (!plan.ok) {
+      if (plan.conflicts) {
+        throw new ApiError('sketchConflict', plan.message, {
+          hint: 'Choose a value the dependent sketches can satisfy; nothing was changed.',
+          details: { conflicts: plan.conflicts, committed: false },
+        });
+      }
+      if (plan.usages) {
+        throw new ApiError('conflict', plan.message, { details: { usages: plan.usages } });
+      }
+      if (/^No parameter/.test(plan.message)) {
+        throw new ApiError('notFound', plan.message, {
+          hint: 'parameters.list returns every parameter with its id and name.',
+        });
+      }
+      throw new ApiError('invalidParams', plan.message);
+    }
+    const before = await this.committedEvaluation();
+    const evaluation = await this.evaluate(plan.features);
+    const newlyFailing = plan.features
+      .map((f) => f.id)
+      .filter((id) => evaluation.errors[id] && !before.errors[id]);
+    this.assertNoFeatureErrors(newlyFailing, evaluation);
+    const applied = this.store.getState().applyParameterPlan(plan, { evaluation });
+    if (!applied.ok) {
+      throw new ApiError('conflict', applied.message, { hint: 'Re-read the document and retry.' });
+    }
+    await this.store.getState().whenSettled();
     return {
-      parameter: describeParameter(this.findParameter(existing.id)),
-      revision: this.revision,
+      id: applied.id,
+      result: {
+        committed: true,
+        revision: this.revision,
+        resolvedSketchIds: applied.resolvedSketchIds,
+        changedFeatureIds: applied.changedFeatureIds,
+        ...this.evaluationSummary(this.store.getState().evaluation),
+      },
     };
   }
 
-  private deleteParameter(p: Json): Json {
-    this.ensureWritable();
-    const existing = this.findParameter(String(p.parameterId));
-    const outcome = this.store.getState().deleteParameter(existing.id);
-    if (!outcome.ok) {
-      throw new ApiError('conflict', outcome.message, {
-        details: { usages: outcome.usages ?? [] },
-      });
-    }
-    return { parameterId: existing.id, revision: this.revision };
+  private async createParameter(p: Json): Promise<Json> {
+    const { id, result } = await this.changeParameter({
+      name: String(p.name),
+      unit: (typeof p.unit === 'string' ? p.unit : 'mm') as 'mm' | 'deg' | '',
+      ...(typeof p.value === 'number' ? { value: p.value } : {}),
+      ...(typeof p.expression === 'string' ? { expression: p.expression } : {}),
+    });
+    return { parameter: describeParameter(this.findParameter(id)), ...result };
   }
 
+  /** Rename, unit, value and formula in one call are one undo step. */
+  private async editParameter(p: Json): Promise<Json> {
+    const existing = this.findParameter(String(p.parameterId));
+    const { id, result } = await this.changeParameter({
+      id: existing.id,
+      ...(typeof p.name === 'string' ? { name: p.name } : {}),
+      ...(typeof p.unit === 'string' ? { unit: p.unit as 'mm' | 'deg' | '' } : {}),
+      ...(typeof p.value === 'number' ? { value: p.value } : {}),
+      ...(typeof p.expression === 'string' ? { expression: p.expression } : {}),
+      ...(p.expression === null ? { expression: null } : {}),
+    });
+    return { parameter: describeParameter(this.findParameter(id)), ...result };
+  }
+
+  private async deleteParameter(p: Json): Promise<Json> {
+    const existing = this.findParameter(String(p.parameterId));
+    const { result } = await this.changeParameter({ delete: existing.id });
+    return { parameterId: existing.id, ...result };
+  }
   private findParameter(parameterId: string): {
     id: string;
     name: string;

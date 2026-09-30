@@ -15,9 +15,11 @@ import {
 } from '@himmelcad/ui';
 
 import { ExpressionField } from '../../chrome/ExpressionField.js';
+import { sketchDimensionCandidates } from '../../chrome/expressionSuggest.js';
+import { ExpressionSuggestInput } from '../../chrome/ExpressionSuggestInput.js';
 import fieldStyles from '../../chrome/ExpressionField.module.css';
 import type { SketchFeature } from '../../model/document.js';
-import type { AssemblerState } from '../../model/store.js';
+import { useAssemblerStore, type AssemblerState } from '../../model/store.js';
 import { setSketchDimension } from '../featureOps.js';
 import { useSketchStore } from '../session.js';
 import type { SketchDimension } from '../types.js';
@@ -47,6 +49,7 @@ function DimensionField({
   const [focused, setFocused] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [input, setInput] = useState<HTMLInputElement | null>(null);
+  const parameters = useAssemblerStore((s) => s.parameters);
 
   useEffect(() => {
     if (!focused) setDraft(committed);
@@ -91,16 +94,17 @@ function DimensionField({
     <div className={fieldStyles.field}>
       <span className={fieldStyles.label}>{label}</span>
       <div className={`${fieldStyles.wrap} ${error ? fieldStyles.wrapInvalid : ''}`}>
-        <input
+        <ExpressionSuggestInput
           ref={setInput}
           className={fieldStyles.input}
           value={draft}
+          suggestions={sketchDimensionCandidates(feature.dimensions, parameters, dimension.name)}
           aria-label={label}
           aria-invalid={error !== null || undefined}
           onFocus={() => setFocused(true)}
-          onChange={(event) => {
-            consumeEscapeBlurCommitSuppression(event.currentTarget);
-            setDraft(event.currentTarget.value);
+          onValueChange={(text) => {
+            if (input) consumeEscapeBlurCommitSuppression(input);
+            setDraft(text);
             setError(null);
           }}
           onBlur={(event) => {

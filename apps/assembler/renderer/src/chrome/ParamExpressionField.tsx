@@ -8,11 +8,10 @@
  * formula itself, which the store resolves and keeps re-resolving whenever
  * a parameter changes.
  *
- * Autocomplete is the browser's own `<datalist>` (every parameter name),
- * which is enough for a short, flat list and needs no extra UI; hovering a
- * resolved field shows the source formula in the title tooltip, and typing a
- * formula shows its live resolved value the same way (Shapr3D "numerical
- * values" pattern, extended with named references).
+ * Parameter names complete from a styled suggestion list
+ * (`ExpressionSuggestInput`: arrows, Enter/Tab accept, Esc closes); hovering
+ * a resolved field shows the source formula in the title tooltip (Shapr3D
+ * "numerical values" pattern, extended with named references).
  */
 import { useEffect, useId, useRef, useState } from 'react';
 
@@ -23,6 +22,8 @@ import {
 } from '@himmelcad/ui';
 
 import { formatExpressionValue } from './expression.js';
+import { parameterCandidates } from './expressionSuggest.js';
+import { ExpressionSuggestInput } from './ExpressionSuggestInput.js';
 import type { Parameter } from '../model/parameters.js';
 import { resolveFeatureExpression } from '../model/parameters.js';
 import { isPlainNumber } from '../sketch/expressions.js';
@@ -59,7 +60,6 @@ export function ParamExpressionField({
   const [focused, setFocused] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const messageId = useId();
-  const listId = useId();
 
   useEffect(() => {
     if (focused) return;
@@ -109,11 +109,11 @@ export function ParamExpressionField({
     <div className={styles.field}>
       <span className={styles.label}>{label}</span>
       <div className={`${styles.wrap} ${invalid ? styles.wrapInvalid : ''}`}>
-        <input
+        <ExpressionSuggestInput
           ref={inputRef}
           className={styles.input}
           value={draft}
-          list={listId}
+          suggestions={parameterCandidates(parameters)}
           aria-label={label}
           aria-invalid={invalid || undefined}
           aria-describedby={invalid ? messageId : undefined}
@@ -123,9 +123,9 @@ export function ParamExpressionField({
               : undefined
           }
           onFocus={() => setFocused(true)}
-          onChange={(event) => {
-            consumeEscapeBlurCommitSuppression(event.currentTarget);
-            setDraft(event.currentTarget.value);
+          onValueChange={(text) => {
+            if (inputRef.current) consumeEscapeBlurCommitSuppression(inputRef.current);
+            setDraft(text);
             setInvalid(false);
           }}
           onBlur={(event) => {
@@ -142,11 +142,7 @@ export function ParamExpressionField({
         />
         {unit ? <span className={styles.unit}>{unit}</span> : null}
       </div>
-      <datalist id={listId}>
-        {parameters.map((p) => (
-          <option key={p.id} value={p.name} />
-        ))}
-      </datalist>
+
       {invalid ? (
         <span id={messageId} role="alert" className={styles.message}>
           Enter a number or an expression (numbers, parameters, + - * /).

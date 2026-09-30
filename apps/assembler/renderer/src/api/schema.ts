@@ -123,6 +123,16 @@ export const DEFS: Record<string, JsonSchema> = {
   FaceInput: { oneOf: [ref('FaceRef'), ref('Selector')] },
   PrintSettings: PRINT_SETTINGS_SCHEMA,
   EdgeInput: { oneOf: [ref('EdgeRef'), ref('Selector')] },
+  MeasureTarget: {
+    description:
+      'What to measure: a body, a face or edge (key or selector matching exactly one), or a world point [x, y, z] (mm).',
+    oneOf: [
+      obj({ kind: { const: 'body' }, bodyId: str }, ['kind', 'bodyId']),
+      obj({ kind: { const: 'face' }, face: ref('FaceInput') }, ['kind', 'face']),
+      obj({ kind: { const: 'edge' }, edge: ref('EdgeInput') }, ['kind', 'edge']),
+      obj({ kind: { const: 'point' }, point: ref('Vec3') }, ['kind', 'point']),
+    ],
+  },
   Vec2: { type: 'array', items: num, minItems: 2, maxItems: 2 },
   SketchShape: {
     description:
@@ -725,6 +735,10 @@ const meshExportParams = (extra: Record<string, JsonSchema>) =>
     ...extra,
   });
 
+/** Result of parameter.create / parameter.edit. */
+const RESULT_PARAMETER_EDIT =
+  '{parameter: Parameter, revision, committed, resolvedSketchIds (sketches re-solved), changedFeatureIds, errors, warnings, bodies}';
+
 export const METHODS: Record<string, MethodSpec> = {
   'api.hello': {
     kind: 'meta',
@@ -829,7 +843,7 @@ export const METHODS: Record<string, MethodSpec> = {
     kind: 'command',
     capability: 'document.write',
     summary:
-      'Adds a document parameter. Exactly one of `value`/`expression` is normally given; `expression` is resolved immediately (cycle/unknown-name errors reject with nothing changed).',
+      'Adds a document parameter (one undo step; not inside a transaction). Exactly one of `value`/`expression` is normally given; `expression` is resolved immediately (cycle/unknown-name errors reject with nothing changed).',
     params: obj(
       {
         name: { type: 'string', pattern: '^[A-Za-z_][A-Za-z0-9_]*$' },
@@ -840,25 +854,25 @@ export const METHODS: Record<string, MethodSpec> = {
       },
       ['name'],
     ),
-    result: '{parameter: Parameter, revision}',
+    result: RESULT_PARAMETER_EDIT,
   },
   'parameter.edit': {
     kind: 'command',
     capability: 'document.write',
     summary:
-      "Changes a parameter's name, unit, value or expression. Renaming rewrites every sketch dimension and feature `*Expression` field that references it.",
+      "Changes a parameter's name, unit, value and/or expression as ONE undo step (not inside a transaction). A new value re-solves every sketch whose dimensions use the parameter (directly or through other parameters) and re-resolves every feature `*Expression` field; dependent features re-evaluate. All-or-nothing: a sketch the solver cannot satisfy rejects with `sketchConflict` (details.conflicts), a feature that newly fails in the kernel with `featureFailed` — nothing changes. `value` alone replaces a formula; `expression: null` removes it. Renaming rewrites every expression that references it.",
     params: obj(
       {
         parameterId: str,
         name: str,
         unit: { enum: ['mm', 'deg', ''] },
         value: num,
-        expression: str,
+        expression: { anyOf: [str, { type: 'null' }] },
         expectedRevision: revision,
       },
       ['parameterId'],
     ),
-    result: '{parameter: Parameter, revision}',
+    result: RESULT_PARAMETER_EDIT,
   },
   'parameter.delete': {
     kind: 'command',
@@ -866,7 +880,52 @@ export const METHODS: Record<string, MethodSpec> = {
     summary:
       'Removes a parameter. Refused with `conflict` and the list of users when a sketch dimension or feature field still references it by name.',
     params: obj({ parameterId: str, expectedRevision: revision }, ['parameterId']),
-    result: '{parameterId, revision}',
+    result: '{parameterId, revision, committed, errors, warnings, bodies}',
+  },
+  'measure.get': {
+    kind: 'query',
+    capability: 'document.read',
+    summary:
+      "The Measure panel's measurement of 1..n items (one body: size/volume/mass/area; one edge: length or radius/diameter; one face: area (+ cylinder diameter); two items: exact minimum distance from the kernel, parallel distance or angle; several bodies: combined box/volume/mass). Values carry `unit` (mm, mm², mm³, deg, g); `approx` marks mesh estimates.",
+    params: obj(
+      { items: { type: 'array', items: ref('MeasureTarget'), minItems: 1, maxItems: 16 }, scope },
+      ['items'],
+    ),
+    result: '{title, subject, values: [{label, kind, value, unit, approx?, secondary?}], note?}',
+  },
+  'measure.distance': {
+    kind: 'query',
+    capability: 'document.read',
+    summary:
+      'Exact minimum distance between two bodies/faces/edges/points (kernel BRepExtrema_DistShapeShape) and the closest points.',
+    params: obj({ a: ref('MeasureTarget'), b: ref('MeasureTarget'), scope }, ['a', 'b']),
+    result: '{distance, pointA, pointB, unit: "mm", exact: true}',
+  },
+  'measure.angle': {
+    kind: 'query',
+    capability: 'document.read',
+    summary:
+      'Angle between two planar faces, two straight edges, or a straight edge and a planar face (deg). Parallel items give angle 0, `parallel: true` and their `distance`.',
+    params: obj({ a: ref('MeasureTarget'), b: ref('MeasureTarget'), scope }, ['a', 'b']),
+    result: '{angle, unit: "deg", parallel, distance?}',
+  },
+  'measure.area': {
+    kind: 'query',
+    capability: 'document.read',
+    summary: 'Exact B-rep area of faces (selectors may match several; each face counted once).',
+    params: obj({ faces: { type: 'array', items: ref('FaceInput'), minItems: 1 }, scope }, [
+      'faces',
+    ]),
+    result: '{area, unit: "mm²", faces: [{bodyId, key, surface, area}]}',
+  },
+  'measure.volume': {
+    kind: 'query',
+    capability: 'document.read',
+    summary:
+      'Exact B-rep volume, surface area, bounding box and mass (density of the body material set with its appearance, PLA otherwise; solid) of the given bodies (default: all).',
+    params: obj({ bodyIds: { type: 'array', items: str }, scope }),
+    result:
+      '{volume, mass, units, bodies: [{bodyId, name, volume, surfaceArea, material, densityGPerCm3, mass, bbox}]}',
   },
   'feature.create': {
     kind: 'command',

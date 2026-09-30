@@ -62,6 +62,7 @@ import {
 } from '../types.js';
 import { chipSize, layoutBadges, layoutChips, nextChipText, type Rect } from './declutter.js';
 import { SketchDimensionChip } from './SketchDimensionChip.js';
+import { sketchDimensionCandidates } from '../../chrome/expressionSuggest.js';
 import { ToolValueChip } from './ToolValueChip.js';
 import styles from './SketchOverlay.module.css';
 
@@ -197,6 +198,7 @@ export function SketchOverlay({
   tick: number;
 }): JSX.Element | null {
   const session = useSketchStore((s) => s.session);
+  const parameters = useAssemblerStore((s) => s.parameters);
   const view = useAssemblerStore((s) => s.viewState);
   const evaluatedSketch = useAssemblerStore((s) =>
     session ? s.evaluation.sketches.find((sk) => sk.featureId === session.featureId) : undefined,
@@ -945,6 +947,11 @@ export function SketchOverlay({
             name={d.name}
             display={text.replace(/^\((.*)\)$/, '$1')}
             editText={typing ?? editText}
+            suggestions={sketchDimensionCandidates(
+              session?.sketch.dimensions ?? [],
+              parameters,
+              d.name,
+            )}
             driven={d.driven === true}
             selected={selection.has(d.id)}
             invalid={problemIds.has(d.id)}

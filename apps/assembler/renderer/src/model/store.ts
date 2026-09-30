@@ -81,8 +81,6 @@ import {
   FEATURE_EXPRESSION_FIELDS,
   findParameterDependents,
   findParameterUsages,
-  isValidParameterName,
-  renameInExpression,
   resolveFeatureExpression,
   resolveParameterValues,
   type Parameter,
@@ -90,6 +88,12 @@ import {
   type ParameterUsage,
 } from './parameters.js';
 import { setParameterValuesProvider } from '../sketch/solverProvider.js';
+import {
+  planParameterChange,
+  type ParameterChange,
+  type ParameterEditResult,
+  type ParameterPlan,
+} from './parameterEdits.js';
 
 /** One selectable/hoverable thing in the viewport or a panel. */
 export type SelectionItem =
@@ -304,9 +308,7 @@ export type FeaturePatch = {
   [K in Feature['kind']]: Partial<Omit<Extract<Feature, { kind: K }>, 'id' | 'kind'>>;
 }[Feature['kind']];
 
-export type ParameterEditResult =
-  | { ok: true; id: string }
-  | { ok: false; message: string; usages?: ParameterUsage[] };
+export type { ParameterChange, ParameterEditResult, ParameterPlan };
 
 export interface AssemblerState {
   projectName: string;
@@ -489,12 +491,28 @@ export interface AssemblerState {
    */
   parameters: Parameter[];
   /**
-   * Creates (`id` omitted) or edits (`id` given) one parameter. Validates the
-   * name (identifier syntax, unique) and the expression (cycle detection via
-   * {@link resolveParameterValues}); on success, every parameter's resolved
-   * `value` and every feature `*Expression` field are recomputed and
-   * committed as one undo step. Returns the problem instead when invalid —
-   * nothing is changed.
+   * Plans a parameter change (create/edit/rename/delete) against the current
+   * document without changing it: the new parameters, every sketch whose
+   * dimensions read a changed value re-solved, every `*Expression` field
+   * re-resolved (`model/parameterEdits.ts`). Refusals are all-or-nothing.
+   */
+  planParameterChange: (change: ParameterChange) => Promise<ParameterPlan>;
+  /**
+   * Commits a plan as exactly one undo step (parameters + re-solved
+   * sketches + re-resolved features). Refused when a tool is active or the
+   * document changed since the plan was made. `evaluation` (the agent API
+   * validated the plan's features already) seeds the result cache.
+   */
+  applyParameterPlan: (
+    plan: ParameterPlan,
+    options?: { evaluation?: EvaluationResult },
+  ) => ParameterEditResult;
+  /** Plans and commits one parameter change (UI entry point; re-plans if the document moved). */
+  editParameter: (change: ParameterChange) => Promise<ParameterEditResult>;
+  /**
+   * Creates (`id` omitted) or edits (`id` given) one parameter via
+   * {@link AssemblerState.editParameter}: a formula wins over `value`; a
+   * `value` alone replaces a formula.
    */
   upsertParameter: (input: {
     id?: string;
@@ -502,12 +520,13 @@ export interface AssemblerState {
     unit: ParameterUnit;
     value?: number;
     expression?: string;
-  }) => ParameterEditResult;
+  }) => Promise<ParameterEditResult>;
   /** Renames a parameter and rewrites every expression that references it (by name, not value). */
-  renameParameter: (id: string, name: string) => ParameterEditResult;
+  renameParameter: (id: string, name: string) => Promise<ParameterEditResult>;
   /** Refused (`ok: false`, `usages`) when any sketch dimension or feature field still references it. */
-  deleteParameter: (id: string) => ParameterEditResult;
-  /** Every place in the document that reads `paramId`'s name, for a "used by" listing before delete. */
+  deleteParameter: (
+    id: string,
+  ) => Promise<ParameterEditResult>; /** Every place in the document that reads `paramId`'s name, for a "used by" listing before delete. */
   parameterUsages: (paramId: string) => ParameterUsage[];
 
   viewState: ViewState;
@@ -884,10 +903,15 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
    * the full feature list and the History rollback marker (the evaluated array itself
    * is only the slice above the marker, so it must never be committed as the document).
    */
-  let lastEvaluatedDocument: { features: Feature[]; rollbackBefore: string | null } | null = null;
+  let lastEvaluatedDocument: {
+    features: Feature[];
+    rollbackBefore: string | null;
+    /** Parameters of that document (a parameter edit re-solves sketches: restored together). */
+    parameters: Parameter[];
+  } | null = null;
   function recordEvaluatedDocument(): void {
-    const { features, rollbackBefore } = get();
-    lastEvaluatedDocument = { features, rollbackBefore };
+    const { features, rollbackBefore, parameters } = get();
+    lastEvaluatedDocument = { features, rollbackBefore, parameters };
   }
   let unsubscribeActivity: (() => void) | null = null;
   let activityTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1182,43 +1206,6 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
     commitFeatures([...get().features, feature], [{ kind: 'feature', featureId: feature.id }]);
   }
 
-  /**
-   * Re-resolves every feature's `*Expression` field (extrude `distance`,
-   * fillet `radius`, chamfer `distance`, shell `thickness`) against the
-   * current parameter values, writing the result into the plain numeric
-   * field the kernel reads — mirrors how a sketch dimension's `value` is
-   * always its last solved state. A feature whose expression no longer
-   * resolves (unknown/removed name, cycle) keeps its last good numeric
-   * value unchanged; the parameter edit itself is not blocked by it.
-   */
-  function recomputeFeatureExpressions(
-    features: Feature[],
-    paramValues: ReadonlyMap<string, number>,
-  ): Feature[] {
-    return features.map((f) => {
-      const field = FEATURE_EXPRESSION_FIELDS[f.kind];
-      if (!field) return f;
-      const expression = (f as unknown as Record<string, unknown>)[`${field}Expression`];
-      if (typeof expression !== 'string') return f;
-      const resolved = resolveFeatureExpression(expression, paramValues);
-      if (!resolved.ok) return f;
-      return { ...f, [field]: resolved.value } as Feature;
-    });
-  }
-
-  /** Resolves `parameters`' expressions, writing back each parameter's `value`. `null` on cycle/error. */
-  function resolveParameters(
-    parameters: Parameter[],
-  ): { parameters: Parameter[]; values: Map<string, number> } | null {
-    const resolved = resolveParameterValues(parameters);
-    if (!resolved.ok) return null;
-    const parametersWithValues = parameters.map((p) => ({
-      ...p,
-      value: resolved.values.get(p.name) ?? p.value,
-    }));
-    return { parameters: parametersWithValues, values: resolved.values };
-  }
-
   return {
     projectName: 'Bracket',
     setProjectName: (name) => {
@@ -1270,6 +1257,7 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
               : null;
           set({
             features: restore.features,
+            parameters: restore.parameters,
             rollbackBefore: marker,
             history: { canUndo: past.length > 0, canRedo: future.length > 0 },
             kernelNotice: featuresChanged
@@ -1932,109 +1920,58 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
         ...findParameterUsages(state.features, param.name),
       ];
     },
-    upsertParameter: (input) => {
+    planParameterChange: (change) => {
       const state = get();
-      const name = input.name.trim();
-      if (!isValidParameterName(name)) {
-        return { ok: false, message: `"${name}" is not a valid parameter name` };
+      return planParameterChange(
+        { features: state.features, parameters: state.parameters },
+        change,
+        () => {
+          const taken = new Set(get().parameters.map((p) => p.id));
+          let id = `param-${Math.random().toString(36).slice(2, 10)}`;
+          while (taken.has(id)) id = `param-${Math.random().toString(36).slice(2, 10)}`;
+          return id;
+        },
+      );
+    },
+    applyParameterPlan: (plan, options) => {
+      if (!plan.ok) return plan;
+      const state = get();
+      if (state.activeTool !== null) {
+        return { ok: false, message: 'Finish or cancel the active tool first.' };
       }
-      const duplicate = state.parameters.find((p) => p.name === name && p.id !== input.id);
-      if (duplicate) {
-        return { ok: false, message: `A parameter named "${name}" already exists` };
+      if (state.features !== plan.base.features || state.parameters !== plan.base.parameters) {
+        return { ok: false, message: 'The document changed meanwhile; try again.' };
       }
-      const id = input.id ?? `param-${Math.random().toString(36).slice(2, 10)}`;
-      const draft: Parameter = {
-        id,
-        name,
-        unit: input.unit,
-        value: input.expression !== undefined ? 0 : (input.value ?? 0),
-        ...(input.expression !== undefined ? { expression: input.expression } : {}),
+      if (options?.evaluation) resultCache.set(plan.features, options.evaluation);
+      // Same length: the History rollback bar stays where it is.
+      commitFeatures(plan.features, undefined, plan.parameters);
+      return {
+        ok: true,
+        id: plan.id,
+        resolvedSketchIds: plan.resolvedSketchIds,
+        changedFeatureIds: plan.changedFeatureIds,
       };
-      const nextParameters = input.id
-        ? state.parameters.map((p) => (p.id === id ? draft : p))
-        : [...state.parameters, draft];
-      const resolved = resolveParameters(nextParameters);
-      if (!resolved) {
-        return { ok: false, message: `Invalid expression for "${name}"` };
-      }
-      const nextFeatures = recomputeFeatureExpressions(state.features, resolved.values);
-      commitFeatures(nextFeatures, undefined, resolved.parameters);
-      return { ok: true, id };
     },
-    renameParameter: (id, name) => {
-      const state = get();
-      const trimmed = name.trim();
-      const existing = state.parameters.find((p) => p.id === id);
-      if (!existing) return { ok: false, message: `No parameter "${id}"` };
-      if (!isValidParameterName(trimmed)) {
-        return { ok: false, message: `"${trimmed}" is not a valid parameter name` };
+    editParameter: async (change) => {
+      // A concurrent edit (another panel field, an agent) makes the plan stale: plan again.
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const plan = await get().planParameterChange(change);
+        if (!plan.ok) return plan;
+        const applied = get().applyParameterPlan(plan);
+        if (applied.ok || !/changed meanwhile/.test(applied.message)) return applied;
       }
-      if (state.parameters.some((p) => p.name === trimmed && p.id !== id)) {
-        return { ok: false, message: `A parameter named "${trimmed}" already exists` };
-      }
-      if (trimmed === existing.name) return { ok: true, id };
-      const nextParameters = state.parameters.map((p) =>
-        p.id === id
-          ? { ...p, name: trimmed }
-          : p.expression !== undefined
-            ? { ...p, expression: renameInExpression(p.expression, existing.name, trimmed) }
-            : p,
-      );
-      const nextFeatures = state.features.map((f) => {
-        let changed: Feature = f;
-        if (f.kind === 'sketch') {
-          const dimensions = f.dimensions.map((d) =>
-            d.expression !== undefined
-              ? { ...d, expression: renameInExpression(d.expression, existing.name, trimmed) }
-              : d,
-          );
-          changed = { ...changed, dimensions } as Feature;
-        }
-        const field = FEATURE_EXPRESSION_FIELDS[f.kind];
-        const exprField = field ? `${field}Expression` : null;
-        if (exprField) {
-          const expression = (changed as unknown as Record<string, unknown>)[exprField];
-          if (typeof expression === 'string') {
-            changed = {
-              ...changed,
-              [exprField]: renameInExpression(expression, existing.name, trimmed),
-            } as Feature;
-          }
-        }
-        return changed;
-      });
-      const resolved = resolveParameters(nextParameters);
-      if (!resolved)
-        return { ok: false, message: `Renaming "${existing.name}" would break an expression` };
-      commitFeatures(
-        recomputeFeatureExpressions(nextFeatures, resolved.values),
-        undefined,
-        resolved.parameters,
-      );
-      return { ok: true, id };
+      return { ok: false, message: 'The document keeps changing; try again.' };
     },
-    deleteParameter: (id) => {
-      const state = get();
-      const existing = state.parameters.find((p) => p.id === id);
-      if (!existing) return { ok: false, message: `No parameter "${id}"` };
-      const usages = [
-        ...findParameterDependents(state.parameters, existing.name),
-        ...findParameterUsages(state.features, existing.name),
-      ];
-      if (usages.length > 0) {
-        return {
-          ok: false,
-          message: `"${existing.name}" is used by ${usages.length} field${usages.length === 1 ? '' : 's'}`,
-          usages,
-        };
-      }
-      const nextParameters = state.parameters.filter((p) => p.id !== id);
-      const resolved = resolveParameters(nextParameters);
-      if (!resolved) return { ok: false, message: `Cannot re-resolve remaining parameters` };
-      commitFeatures(state.features, undefined, resolved.parameters);
-      return { ok: true, id };
-    },
-
+    upsertParameter: (input) =>
+      get().editParameter({
+        ...(input.id !== undefined ? { id: input.id } : {}),
+        name: input.name,
+        unit: input.unit,
+        ...(input.value !== undefined ? { value: input.value } : {}),
+        ...(input.expression !== undefined ? { expression: input.expression } : {}),
+      }),
+    renameParameter: (id, name) => get().editParameter({ id, name }),
+    deleteParameter: (id) => get().editParameter({ delete: id }),
     viewState: {
       displayMode: 'shaded',
       sectionEnabled: false,

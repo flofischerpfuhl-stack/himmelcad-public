@@ -20,8 +20,13 @@ accepts one. Implementation: `apps/assembler/renderer/src/model/parameters.ts`
 same small recursive-descent grammar as sketch dimension expressions,
 `sketch/expressions.ts`, reused directly), `model/store.ts`
 (`upsertParameter`/`renameParameter`/`deleteParameter`/`parameterUsages`),
-`chrome/ParametersPanel.tsx` + `chrome/ParamExpressionField.tsx` (the feature-chip
-field, native `<datalist>` autocomplete, resolved value + formula on hover).
+`chrome/ParametersPanel.tsx` + `chrome/ParamExpressionField.tsx` (the History
+card size field, resolved value + formula on hover). Every field that accepts
+names (feature size fields, the panel's value fields, sketch dimension fields
+in History and in sketch mode) completes them from a styled list
+(`chrome/ExpressionSuggestInput.tsx`: ↓/↑, Enter/Tab accept, Esc closes; ARIA
+combobox) — not the unstyled native `<datalist>`. Tool pills and viewport value
+chips take arithmetic only (`2 * 3`), no names, so they have no list.
 
 - **Where an expression can read a parameter.** Every sketch dimension
   expression (`sketch.setDimension`, `sketch.addDimension`, the sketch tool's
@@ -56,15 +61,37 @@ field, native `<datalist>` autocomplete, resolved value + formula on hover).
   adds an empty array. Feature `*Expression` fields are additive optional
   strings on the existing v2 feature shapes (no format bump needed on their
   own). Round-trip and migration tests: `test/model/project/format.test.ts`.
-- **Undo and the incremental cache.** A parameter edit is one undo step
-  (`model/store.ts`'s undo/redo snapshot now carries `{features, parameters}`
-  pairs, not just `features`); it re-resolves and writes back every dependent
-  feature's plain numeric field in the same commit, so the existing
-  feature-array-identity result cache (`KERNEL-SPIKE.md`) invalidates and
-  re-evaluates exactly the features whose stored value actually changed.
+- **A parameter edit is one consistent change** (`model/parameterEdits.ts`,
+  2026-09-30 integration fix). Changing a value (directly, or of a parameter
+  another one reads) re-solves **every sketch whose driving dimensions read a
+  changed value** with the new values (planeGCS, the same solver as every
+  other sketch write; region keys kept via `rememberRegions`), re-resolves
+  every feature `*Expression` field, and commits parameters + sketches +
+  features as **one undo step** (`{features, parameters}` snapshots). It is
+  all-or-nothing: a sketch the solver cannot satisfy (over-constrained, no
+  solution, a dimension turning non-positive) or a size expression no longer
+  giving a positive length refuses the whole edit with the sketch/feature
+  named — nothing changes. The plan is computed asynchronously against a
+  document snapshot and only committed if the document is still that
+  snapshot (`applyParameterPlan`; the panel re-plans, the API answers
+  `conflict`). Rolled-back sketches are re-solved too and the History
+  rollback bar stays. Cancelling the kernel computation afterwards restores
+  features and parameters together. Tests: `test/model/parameterEdits.test.ts`
+  (UI/store path), `test/api/session.test.ts` (API),
+  `sdk/python/tests/test_assembler.py` (Python against the headless app).
+- **Undo and the incremental cache.** The re-resolved plain numeric fields and
+  re-solved sketches are new feature objects only where something changed, so
+  the feature-array-identity result cache (`KERNEL-SPIKE.md`) re-evaluates
+  exactly the affected features.
 - **Agent API.** `parameters.list` (query), `parameter.create`,
-  `parameter.edit` (name/unit/value/expression, any subset),
-  `parameter.delete` (`api/schema.ts`, `api/session.ts`); `feature.create`/
+  `parameter.edit` (name/unit/value/expression, any subset — still one undo
+  step; `value` alone replaces a formula, `expression: null` removes it),
+  `parameter.delete` (`api/schema.ts`, `api/session.ts`). Results report
+  `resolvedSketchIds`, `changedFeatureIds` and the evaluation (`errors`,
+  `bodies`); a sketch conflict answers `sketchConflict` with
+  `details.conflicts`, a feature that newly fails in the kernel
+  `featureFailed`. Parameters are not staged in transactions
+  (`transactionState` inside one). `feature.create`/
   `feature.edit` accept `<field>Expression` for extrude/fillet/chamfer/shell,
   resolved against the document's current parameters before the kernel sees
   the feature (`api/featureKinds.ts#resolveExpressionField`).
@@ -78,14 +105,41 @@ field, native `<datalist>` autocomplete, resolved value + formula on hover).
   (`test_param_creates_then_edits_by_name_and_feeds_a_feature_expression`,
   `test_document_parameters_drive_a_sketch_dimension_and_an_extrude` — the
   latter against the real headless process).
-- **Known limit (see "Limits" below for the full list).** A bare parameter
-  value/expression edit immediately re-resolves feature `*Expression` fields
-  (synchronous arithmetic) but does **not** retroactively re-run the sketch
-  solver for sketches whose dimension expression reads that parameter; the
-  sketch's dimension re-resolves the next time that sketch itself is written
-  (any `sketch.*` command or `feature.edit` of the sketch). Shown directly in
-  the test above. Closing this gap needs the store to re-solve every affected
-  sketch asynchronously inside the same commit, which is deferred.
+
+## Measurement and display
+
+- **Measure queries** (`api/measureApi.ts`, 2026-09-30) return the Measure
+  panel's numbers computed by the same code (`model/measure.ts`) from the
+  kernel's exact B-rep data: `measure.distance {a, b}` — exact minimum
+  distance and closest points from the kernel (`KernelAdapter.measureDistance`,
+  `BRepExtrema_DistShapeShape`); `measure.angle {a, b}` — planar faces /
+  straight edges (parallel items: `angle: 0`, `parallel: true`, `distance`);
+  `measure.area {faces}` — exact face areas (selectors may match several);
+  `measure.volume {bodyIds?}` — volume, surface area, box and mass (density
+  of the body material from its appearance step, PLA otherwise); `measure.get
+{items}` — everything the panel shows for 1..n items. Targets are
+  `MeasureTarget`: `{kind: "body", bodyId}`, `{kind: "face", face:
+FaceInput}`, `{kind: "edge", edge: EdgeInput}`, `{kind: "point", point:
+[x, y, z]}`. Values carry units (mm, mm², mm³, deg, g). While History is
+  rolled back they measure the steps above the bar (like the viewport).
+  Python: `doc.distance(a, b)`, `doc.angle(a, b)`, `doc.area(*faces)`,
+  `doc.volume(*bodies)`, `doc.measure(*items)` with `Body`/`Face`/`Edge`
+  objects or `(x, y, z)` points. Tests: `test/api/session.test.ts`
+  (`measure.*`), `sdk/python/tests/test_assembler.py`.
+- **Display modes, view toggles, section view, pins and image export are
+  UI-only by design.** Display mode (`Alt+1…7`), edges/hidden edges/grid/
+  axes, render quality, camera, section plane, Measure pins and PNG export
+  change how the user's window looks, not the model: they live in view
+  state/preferences (`ViewState`, `usePreferences`, not the undo-tracked
+  document), differ per window, and would make an agent fight the user for
+  the screen. An agent's legitimate needs are covered by document commands
+  (a body's `material` for "Visualized" and mass is part of its
+  `setAppearance` step via `feature.create`), by the measure queries above
+  (exact numbers instead of a picture), and by exports (`export.stl/3mf/
+step`). The headless process has no renderer at all, so screenshot or view
+  commands would work in only one of the two transports — contrary to the
+  one-contract rule (ADR 0024). Automated UI checks use the DEV hook
+  (`window.__assembler`, `README.md`), which is not an agent API.
 
 ## Shape
 
@@ -139,6 +193,8 @@ small in-repo validator (no new dependency).
 | History      | `history.undo`, `history.redo`                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | Files        | `export.stl` (`format` binary/ascii, `resolution`), `export.3mf` (`resolution`), `export.step`, `export.meshStats`, `import.step`, `project.new`, `project.open`, `project.save`                                                                                                                                                                                                                                                                                                         |
 | 3D printing  | `print.analyze` (query), `print.orientations` (query), `print.placeOnPlate`, `print.orient` (one transform step each) — see `assembler/PRINTING.md`                                                                                                                                                                                                                                                                                                                                      |
+| Parameters   | `parameters.list` (query), `parameter.create`, `parameter.edit`, `parameter.delete` — see "Document parameters" above                                                                                                                                                                                                                                                                                                                                                                    |
+| Measure      | `measure.get`, `measure.distance`, `measure.angle`, `measure.area`, `measure.volume` (queries) — see "Measurement and display" below                                                                                                                                                                                                                                                                                                                                                     |
 | View         | `selection.set` (not undoable)                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 
 Design rules:
@@ -455,12 +511,11 @@ implementing one, and slicer checks of the 3MF/STL files.
 
 ## Limits and open risks
 
-- **Parameters do not retroactively re-solve sketches.** See "Document
-  parameters" above: a bare parameter edit re-resolves feature
-  `*Expression` fields immediately but leaves a dependent sketch dimension's
-  solved value stale until that sketch is next written. Feature-chip
-  autocomplete is the browser's native `<datalist>` (a flat name list),
-  not a ranked/fuzzy dropdown. Renaming/deleting a parameter only scans
+- **Parameters.** Name completion ranks prefix matches before substring
+  matches (no fuzzy matching). Parameters are not staged in transactions.
+  Only extrude/fillet/chamfer/shell size fields and sketch dimensions accept
+  parameter names (hole, draft, rib, thicken, second radius/distance and
+  tool pills take numbers/arithmetic). Renaming/deleting a parameter only scans
   sketch dimensions and feature `*Expression` fields for usage — a
   parameter referenced solely from a currently-open sketch-tool session's
   unsaved draft (not yet committed) is not seen by the usage scan.

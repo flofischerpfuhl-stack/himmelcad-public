@@ -190,7 +190,9 @@ class Parameter:
         return self
 
     def set(self, value: float | None = None, *, expression: str | None = None, unit: str | None = None) -> Parameter:
-        """Changes the value/expression/unit; every dependent dimension and feature field re-resolves."""
+        """Changes the value/expression/unit as one undo step: every sketch whose dimensions use it is
+        re-solved and every dependent feature re-evaluates. Raises :class:`SketchConflictError` (nothing
+        changed) when a dependent sketch cannot take the new value."""
         result = self.doc.client.edit_parameter(self.id, value=value, expression=expression, unit=unit)
         return self._refresh(result["parameter"])
 
@@ -595,7 +597,7 @@ class Document(PrintToolsMixin):
     @property
     def commands(self) -> list[str]:
         """Methods issued so far that change or export the document (for benchmarks/audits)."""
-        reads = {"api.hello", "api.describe", "document.get", "features.list", "feature.get", "bodies.list", "body.get", "faces.list", "edges.list", "sketches.list", "selection.get", "print.analyze", "print.orientations", "export.meshStats"}
+        reads = {"api.hello", "api.describe", "document.get", "features.list", "feature.get", "bodies.list", "body.get", "faces.list", "edges.list", "sketches.list", "selection.get", "print.analyze", "print.orientations", "export.meshStats", "parameters.list", "measure.get", "measure.distance", "measure.angle", "measure.area", "measure.volume"}
         return [call.method for call in self.log if call.method not in reads]
 
     # ---- parameters ---------------------------------------------------------------------
@@ -624,6 +626,41 @@ class Document(PrintToolsMixin):
     def parameters(self) -> list[Parameter]:
         """Every document parameter, in creation order."""
         return [Parameter(self, p) for p in self.client.parameters()]
+
+    # ---- measurement (the Measure panel's numbers; exact B-rep / kernel) ----------------------
+    @staticmethod
+    def _target(item: Body | Face | Edge | Sequence[float]) -> dict[str, Any]:
+        if isinstance(item, Body):
+            return {"kind": "body", "bodyId": item.id}
+        if isinstance(item, Face):
+            return {"kind": "face", "face": item.ref}
+        if isinstance(item, Edge):
+            return {"kind": "edge", "edge": item.ref}
+        point = [float(v) for v in item]
+        if len(point) != 3:
+            raise ValueError("a point target is (x, y, z) in mm")
+        return {"kind": "point", "point": point}
+
+    def distance(self, a: Body | Face | Edge | Sequence[float], b: Body | Face | Edge | Sequence[float]) -> float:
+        """Exact minimum distance in mm between bodies, faces, edges or points (kernel ``BRepExtrema``)."""
+        return float(self.client.measure_distance(self._target(a), self._target(b))["distance"])
+
+    def angle(self, a: Face | Edge, b: Face | Edge) -> float:
+        """Angle in degrees between planar faces / straight edges (0 when parallel)."""
+        return float(self.client.measure_angle(self._target(a), self._target(b))["angle"])
+
+    def area(self, *faces: Face | FaceSet) -> float:
+        """Exact total area in mm² of the faces (each counted once)."""
+        refs = [f.ref for item in faces for f in (item if isinstance(item, FaceSet) else [item])]
+        return float(self.client.measure_area(refs)["area"])
+
+    def volume(self, *bodies: Body) -> Mapping[str, Any]:
+        """Volume (mm³), mass (g, from the body material; PLA otherwise) and per-body rows; all bodies by default."""
+        return self.client.measure_volume([b.id for b in bodies] if bodies else None)
+
+    def measure(self, *items: Body | Face | Edge | Sequence[float]) -> Mapping[str, Any]:
+        """Everything the Measure panel shows for these items (``values`` with label, value and unit)."""
+        return self.client.measure([self._target(i) for i in items])
 
     # ---- sketches and features -------------------------------------------------------------
     def sketch(self, plane: str | Face = "XY", offset: float = 0.0) -> Sketch:

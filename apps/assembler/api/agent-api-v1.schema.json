@@ -233,6 +233,64 @@
         }
       ]
     },
+    "MeasureTarget": {
+      "description": "What to measure: a body, a face or edge (key or selector matching exactly one), or a world point [x, y, z] (mm).",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "body"
+            },
+            "bodyId": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": ["kind", "bodyId"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "face"
+            },
+            "face": {
+              "$ref": "#/$defs/FaceInput"
+            }
+          },
+          "required": ["kind", "face"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "edge"
+            },
+            "edge": {
+              "$ref": "#/$defs/EdgeInput"
+            }
+          },
+          "required": ["kind", "edge"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "point"
+            },
+            "point": {
+              "$ref": "#/$defs/Vec3"
+            }
+          },
+          "required": ["kind", "point"],
+          "additionalProperties": false
+        }
+      ]
+    },
     "Vec2": {
       "type": "array",
       "items": {
@@ -2190,7 +2248,7 @@
     "parameter.create": {
       "kind": "command",
       "capability": "document.write",
-      "summary": "Adds a document parameter. Exactly one of `value`/`expression` is normally given; `expression` is resolved immediately (cycle/unknown-name errors reject with nothing changed).",
+      "summary": "Adds a document parameter (one undo step; not inside a transaction). Exactly one of `value`/`expression` is normally given; `expression` is resolved immediately (cycle/unknown-name errors reject with nothing changed).",
       "params": {
         "type": "object",
         "properties": {
@@ -2218,12 +2276,12 @@
         "required": ["name"],
         "additionalProperties": false
       },
-      "result": "{parameter: Parameter, revision}"
+      "result": "{parameter: Parameter, revision, committed, resolvedSketchIds (sketches re-solved), changedFeatureIds, errors, warnings, bodies}"
     },
     "parameter.edit": {
       "kind": "command",
       "capability": "document.write",
-      "summary": "Changes a parameter's name, unit, value or expression. Renaming rewrites every sketch dimension and feature `*Expression` field that references it.",
+      "summary": "Changes a parameter's name, unit, value and/or expression as ONE undo step (not inside a transaction). A new value re-solves every sketch whose dimensions use the parameter (directly or through other parameters) and re-resolves every feature `*Expression` field; dependent features re-evaluate. All-or-nothing: a sketch the solver cannot satisfy rejects with `sketchConflict` (details.conflicts), a feature that newly fails in the kernel with `featureFailed` — nothing changes. `value` alone replaces a formula; `expression: null` removes it. Renaming rewrites every expression that references it.",
       "params": {
         "type": "object",
         "properties": {
@@ -2242,8 +2300,15 @@
             "type": "number"
           },
           "expression": {
-            "type": "string",
-            "minLength": 1
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "expectedRevision": {
             "type": "integer",
@@ -2254,7 +2319,7 @@
         "required": ["parameterId"],
         "additionalProperties": false
       },
-      "result": "{parameter: Parameter, revision}"
+      "result": "{parameter: Parameter, revision, committed, resolvedSketchIds (sketches re-solved), changedFeatureIds, errors, warnings, bodies}"
     },
     "parameter.delete": {
       "kind": "command",
@@ -2276,7 +2341,131 @@
         "required": ["parameterId"],
         "additionalProperties": false
       },
-      "result": "{parameterId, revision}"
+      "result": "{parameterId, revision, committed, errors, warnings, bodies}"
+    },
+    "measure.get": {
+      "kind": "query",
+      "capability": "document.read",
+      "summary": "The Measure panel's measurement of 1..n items (one body: size/volume/mass/area; one edge: length or radius/diameter; one face: area (+ cylinder diameter); two items: exact minimum distance from the kernel, parallel distance or angle; several bodies: combined box/volume/mass). Values carry `unit` (mm, mm², mm³, deg, g); `approx` marks mesh estimates.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/MeasureTarget"
+            },
+            "minItems": 1,
+            "maxItems": 16
+          },
+          "scope": {
+            "enum": ["auto", "committed", "staged"],
+            "default": "auto",
+            "description": "`auto`: the open transaction's staged state if any, else the committed document."
+          }
+        },
+        "required": ["items"],
+        "additionalProperties": false
+      },
+      "result": "{title, subject, values: [{label, kind, value, unit, approx?, secondary?}], note?}"
+    },
+    "measure.distance": {
+      "kind": "query",
+      "capability": "document.read",
+      "summary": "Exact minimum distance between two bodies/faces/edges/points (kernel BRepExtrema_DistShapeShape) and the closest points.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "a": {
+            "$ref": "#/$defs/MeasureTarget"
+          },
+          "b": {
+            "$ref": "#/$defs/MeasureTarget"
+          },
+          "scope": {
+            "enum": ["auto", "committed", "staged"],
+            "default": "auto",
+            "description": "`auto`: the open transaction's staged state if any, else the committed document."
+          }
+        },
+        "required": ["a", "b"],
+        "additionalProperties": false
+      },
+      "result": "{distance, pointA, pointB, unit: \"mm\", exact: true}"
+    },
+    "measure.angle": {
+      "kind": "query",
+      "capability": "document.read",
+      "summary": "Angle between two planar faces, two straight edges, or a straight edge and a planar face (deg). Parallel items give angle 0, `parallel: true` and their `distance`.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "a": {
+            "$ref": "#/$defs/MeasureTarget"
+          },
+          "b": {
+            "$ref": "#/$defs/MeasureTarget"
+          },
+          "scope": {
+            "enum": ["auto", "committed", "staged"],
+            "default": "auto",
+            "description": "`auto`: the open transaction's staged state if any, else the committed document."
+          }
+        },
+        "required": ["a", "b"],
+        "additionalProperties": false
+      },
+      "result": "{angle, unit: \"deg\", parallel, distance?}"
+    },
+    "measure.area": {
+      "kind": "query",
+      "capability": "document.read",
+      "summary": "Exact B-rep area of faces (selectors may match several; each face counted once).",
+      "params": {
+        "type": "object",
+        "properties": {
+          "faces": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/FaceInput"
+            },
+            "minItems": 1
+          },
+          "scope": {
+            "enum": ["auto", "committed", "staged"],
+            "default": "auto",
+            "description": "`auto`: the open transaction's staged state if any, else the committed document."
+          }
+        },
+        "required": ["faces"],
+        "additionalProperties": false
+      },
+      "result": "{area, unit: \"mm²\", faces: [{bodyId, key, surface, area}]}"
+    },
+    "measure.volume": {
+      "kind": "query",
+      "capability": "document.read",
+      "summary": "Exact B-rep volume, surface area, bounding box and mass (density of the body material set with its appearance, PLA otherwise; solid) of the given bodies (default: all).",
+      "params": {
+        "type": "object",
+        "properties": {
+          "bodyIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "scope": {
+            "enum": ["auto", "committed", "staged"],
+            "default": "auto",
+            "description": "`auto`: the open transaction's staged state if any, else the committed document."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "result": "{volume, mass, units, bodies: [{bodyId, name, volume, surfaceArea, material, densityGPerCm3, mass, bbox}]}"
     },
     "feature.create": {
       "kind": "command",
