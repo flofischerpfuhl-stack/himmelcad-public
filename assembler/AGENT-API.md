@@ -2,11 +2,90 @@
 
 Status: implemented 2026-09-29 (branch `asm/agentapi-20260929`); constrained
 sketches and the modelling-feature kinds added when merging the sketch-solver
-and features workstreams (integration branch `feat/assembler-phase0-20260929`). Serves owner
+and features workstreams (integration branch `feat/assembler-phase0-20260929`).
+**Document parameters** ("variables", schema v3) added 2026-09-30 (branch
+`asm/params-20260930`). Serves owner
 intent **U5** ("as usable by agents as possible, taking their training into
 account") and `PLAN.md` §5, under ADR 0024 (one canonical command/query
 contract for UI, Python and agents) and ADR 0033 §4. This document records the
 contract design, the trust boundary, the benchmark evidence and the limits.
+
+## Document parameters ("variables")
+
+A Shapr3D-like Parameters panel (right dock, `Ctrl+Alt+P`, command search
+"Parameters"): named values (`wall = 2 mm`, `hole_d = 5.2`) with a unit
+(`mm`/`deg`/unitless), usable from expressions anywhere a numeric field
+accepts one. Implementation: `apps/assembler/renderer/src/model/parameters.ts`
+(the `Parameter` type, `resolveParameterValues` — topological, cycle-checked,
+same small recursive-descent grammar as sketch dimension expressions,
+`sketch/expressions.ts`, reused directly), `model/store.ts`
+(`upsertParameter`/`renameParameter`/`deleteParameter`/`parameterUsages`),
+`chrome/ParametersPanel.tsx` + `chrome/ParamExpressionField.tsx` (the feature-chip
+field, native `<datalist>` autocomplete, resolved value + formula on hover).
+
+- **Where an expression can read a parameter.** Every sketch dimension
+  expression (`sketch.setDimension`, `sketch.addDimension`, the sketch tool's
+  dimension fields) falls back to a document parameter for a name not found
+  among the sketch's own dimensions (`"wall * 2"`, `"d1 + wall"`) —
+  `sketch/expressions.ts#resolveDimensionValues` takes the parameter values as
+  a second lookup; `sketch/solverProvider.ts` injects the document's current
+  parameter values into every solve request (UI tool, headless, agent API)
+  from one place, so live dragging, one-shot edits and agent writes never
+  diverge. The size field of `extrude` (`distance`), `fillet` (`radius`),
+  `chamfer` (`distance`) and `shell` (`thickness`) additionally accepts a
+  sibling `<field>Expression` string (`distanceExpression`, …); the plain
+  field always holds the last resolved value (kernel input unchanged), the
+  `Expression` field is the formula, exactly mirroring `SketchDimension`'s
+  `value`/`expression` split.
+- **Rename cascades.** Renaming a parameter (`parameter.edit {name}` /
+  `Parameter.rename` / the panel's name field) rewrites every sketch
+  dimension expression and every feature `*Expression` field that names it
+  (whole-word text substitution, `renameInExpression`), and every other
+  parameter's expression that reads it — one undo step, no numeric value
+  changes.
+- **Delete refusal.** `parameter.delete` / `Parameter.delete` / the panel's
+  delete button refuse (`conflict`, `details.usages`) when a sketch
+  dimension, a feature `*Expression` field or another parameter's expression
+  still names it; the usage list gives the feature/parameter and field.
+- **Cycle detection.** `resolveParameterValues` is topological with a
+  `visiting` mark; a cycle (direct or through several parameters) fails the
+  whole edit (`invalidParams`, nothing changed) with the parameter name in
+  the message, exactly like a sketch dimension cycle.
+- **Storage.** `.hcasm` schema v3 (`model/project/format.ts`): a
+  `parameters: Parameter[]` array alongside `features`; migration `v2 -> v3`
+  adds an empty array. Feature `*Expression` fields are additive optional
+  strings on the existing v2 feature shapes (no format bump needed on their
+  own). Round-trip and migration tests: `test/model/project/format.test.ts`.
+- **Undo and the incremental cache.** A parameter edit is one undo step
+  (`model/store.ts`'s undo/redo snapshot now carries `{features, parameters}`
+  pairs, not just `features`); it re-resolves and writes back every dependent
+  feature's plain numeric field in the same commit, so the existing
+  feature-array-identity result cache (`KERNEL-SPIKE.md`) invalidates and
+  re-evaluates exactly the features whose stored value actually changed.
+- **Agent API.** `parameters.list` (query), `parameter.create`,
+  `parameter.edit` (name/unit/value/expression, any subset),
+  `parameter.delete` (`api/schema.ts`, `api/session.ts`); `feature.create`/
+  `feature.edit` accept `<field>Expression` for extrude/fillet/chamfer/shell,
+  resolved against the document's current parameters before the kernel sees
+  the feature (`api/featureKinds.ts#resolveExpressionField`).
+- **Python.** `doc.param("wall", 2)` creates or edits by name (one call
+  either way); `doc.param("wall")` reads without changing it
+  (`NotFoundError` if absent); `doc.parameters` lists them.
+  `Parameter.set/.rename/.delete`. `doc.extrude(profile, expression="wall * 2")`
+  and the matching `fillet`/`chamfer`/`shell` keyword reach the `*Expression`
+  fields (`sdk/python/src/himmelcad/assembler/modeling.py`). Tests:
+  `sdk/python/tests/test_assembler.py`
+  (`test_param_creates_then_edits_by_name_and_feeds_a_feature_expression`,
+  `test_document_parameters_drive_a_sketch_dimension_and_an_extrude` — the
+  latter against the real headless process).
+- **Known limit (see "Limits" below for the full list).** A bare parameter
+  value/expression edit immediately re-resolves feature `*Expression` fields
+  (synchronous arithmetic) but does **not** retroactively re-run the sketch
+  solver for sketches whose dimension expression reads that parameter; the
+  sketch's dimension re-resolves the next time that sketch itself is written
+  (any `sketch.*` command or `feature.edit` of the sketch). Shown directly in
+  the test above. Closing this gap needs the store to re-solve every affected
+  sketch asynchronously inside the same commit, which is deferred.
 
 ## Shape
 
@@ -287,13 +366,97 @@ candidate names ("Extrude 2 side · plane -Y at 40, 50, 48.5", "Extrude 1 side
 Cable clip: the hand-calculated bbox ignored that the opening trims the ring
 top (max y is √(7² − 2.5²), not 7).
 
-What the benchmark does **not** show: token cost per part and comparison with
-FreeCAD-Python/build123d on the same tasks (PLAN §5 asks for both; not
-measured here), agents other than the implementing one, and slicer checks of
-the 3MF files.
+### Comparison: build123d on the same five parts (2026-09-30)
+
+PLAN §5 asks for a comparison against FreeCAD-Python and build123d on the
+same tasks. **FreeCAD**: not installed on the measuring host (checked;
+`docs/DEPENDENCY-POLICY.md` says not to install it for this) — not measured.
+**build123d** (Apache-2.0, MIT-compatible with this repository's license but
+not shipped as a dependency — installed only into a throwaway venv,
+`D:\AgentWork\HimmelCAD-Assembler\venv-b123d`, `pip install build123d`,
+version 0.13.0) was measured: `apps/assembler/bench/build123d_tasks.py` models
+the same five parts, `run_bench_build123d.py` checks them and exports
+STL/STEP to `D:\AgentWork\HimmelCAD-Assembler\bench-b123d`.
+
+**Not a token count.** Neither script was actually run through an LLM to
+measure prompt/completion tokens for this comparison; **characters of code
+are used as an explicit, cruder proxy** (a real token count needs an actual
+model run, which PLAN §5's own token-budget framing (owner intent U8) treats
+as a separate, measured exercise, not something to guess at here).
+
+**Not the same construction steps, deliberately.** build123d exposes direct
+`Box`/`Cylinder` primitives and boolean `+`/`-`; the Assembler agent API has
+no "add a box" command by design (every solid comes from a sketch + a
+modelling feature, so it stays a real, editable parametric history — see
+"Feature params are the stored feature fields" above). Matching the
+**parts** (bbox, volume) rather than mirroring the Assembler script's exact
+steps is the fair comparison; a build123d script that used its own sketch
+
+- extrude idioms throughout would look more similar in shape but not
+  meaningfully shorter.
+
+| Task                | build123d valid | bbox | volume mm³ (expected) | code lines / chars | Assembler code lines / chars |
+| ------------------- | --------------- | ---- | --------------------- | ------------------ | ---------------------------- |
+| enclosure-with-lid¹ | yes             | ok   | 13367.6 (13367.6)     | 9 / 518            | 25 / 1152                    |
+| bracket-with-slot   | yes             | ok   | 20429.0 (20429.0)     | 23 / 1237          | 34 / 1478                    |
+| pipe-adapter        | yes             | ok   | 5814.0 (5814.0)       | 19 / 1033          | 33 / 1452                    |
+| phone-stand         | yes             | ok   | 91143.7 (91143.7)     | 24 / 1281          | 27 / 1389                    |
+| cable-clip          | yes             | ok   | 1352.7 (1337.6, 1.1%) | 36 / 1649          | 41 / 1511                    |
+
+¹ The build123d script models only the enclosure body, not the paired lid
+(dropped for time); its line/char count is therefore **not comparable** to
+the Assembler column for this row alone (which builds both bodies). The
+other four rows model the same bodies both ways.
+
+Every build123d body reports `is_valid` true, matches the expected bounding
+box, and matches the hand-calculated volume within 1e-4 relative tolerance
+except cable-clip (1.1%, box-based tab/notch/hole modelling rather than the
+Assembler script's exact construction — both are legitimate models of the
+same nominal part; the discrepancy is a modelling difference, not an error in
+either tool). STL and STEP export succeeded for all five
+(`export_stl`/`export_step`, checked-in results:
+`D:\AgentWork\HimmelCAD-Assembler\bench-b123d\results.json`).
+
+**Manual editability afterwards, in a GUI: build123d — no; Assembler —
+yes.** A build123d script is a plain CadQuery-style Python program with no
+associated document, feature tree or GUI; the only way to "edit" the result
+is to edit the Python and re-run it (there is no viewer/editor shipped with
+build123d itself — CQ-editor or a Jupyter view are separate, optional
+tools and still show a mesh, not an editable parametric history). Every
+Assembler script in this benchmark produces a normal `.hcasm` history that
+opens, stays selectable/editable (dimensions, distances, radii) and
+re-evaluates in the desktop app, which is exactly owner intent U5's "stays
+editable" condition (`assembler/OWNER-INTENT.md` U5, U8) — this is the
+qualitative result PLAN §5 is actually after, not just the code-size numbers.
+
+**A real footgun found while writing the build123d scripts, worth recording
+for the comparison's own sake:** `fillet()`/`chamfer()` return a _new_ solid;
+an edge object captured from the solid _before_ an earlier fillet/chamfer,
+then reused afterwards, silently resolves against the pre-operation solid
+(`Shape.topo_parent`) and drops that earlier operation — `phone_stand()`
+in `build123d_tasks.py` hit this (a first attempt silently lost the "back"
+fillet) and needed edges re-queried from the post-fillet solid. The
+Assembler agent API's face/edge references are stable named keys
+(`kernel/naming.ts`) that survive every later feature exactly so an agent
+does not have to reason about _which_ intermediate solid a captured
+reference actually belongs to.
+
+What the benchmark does **not** show: an actual token count per part
+(character counts are the proxy used above, explicitly not the same thing),
+FreeCAD-Python (not installed, not measured), agents other than the
+implementing one, and slicer checks of the 3MF/STL files.
 
 ## Limits and open risks
 
+- **Parameters do not retroactively re-solve sketches.** See "Document
+  parameters" above: a bare parameter edit re-resolves feature
+  `*Expression` fields immediately but leaves a dependent sketch dimension's
+  solved value stale until that sketch is next written. Feature-chip
+  autocomplete is the browser's native `<datalist>` (a flat name list),
+  not a ranked/fuzzy dropdown. Renaming/deleting a parameter only scans
+  sketch dimensions and feature `*Expression` fields for usage — a
+  parameter referenced solely from a currently-open sketch-tool session's
+  unsaved draft (not yet committed) is not seen by the usage scan.
 - **Sketch API granularity.** Commands add whole shapes, polylines, arcs,
   single constraints and dimensions; there is no drag, trim or offset command
   (the UI has them) and no reference (driven) dimension — dimensioning an
