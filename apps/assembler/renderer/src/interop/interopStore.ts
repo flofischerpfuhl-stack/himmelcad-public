@@ -176,6 +176,10 @@ function formatSize(n: number): string {
   return n.toLocaleString('en-US');
 }
 
+function plural(n: number, noun: string): string {
+  return `${formatSize(n)} ${noun}${n === 1 ? '' : 's'}`;
+}
+
 export const useInteropStore = create<InteropState>((set, get) => {
   const startJob = (title: string, detail: string, stage: ImportJob['stage']): number => {
     jobSerial += 1;
@@ -447,7 +451,7 @@ export const useInteropStore = create<InteropState>((set, get) => {
       useWorkspaceStore.getState().sendCamera({ kind: 'fitAll' });
       const skipped = Object.entries(pending.drawing.skipped).map(([t, n]) => `${n} × ${t}`);
       const lines = [
-        `${built.stats.curves} curves and ${built.stats.points} points in "${built.feature.name}"; ${built.stats.connected} end points connected. Units: ${units.label}.`,
+        `${plural(built.stats.curves, 'curve')} and ${plural(built.stats.points, 'point')} in "${built.feature.name}"; ${plural(built.stats.connected, 'end point')} connected. Units: ${units.label}.`,
         ...(built.stats.approximated > 0
           ? [
               `${built.stats.approximated} rational or periodic spline(s) were approximated by fit splines.`,

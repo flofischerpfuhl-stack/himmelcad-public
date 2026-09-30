@@ -11,7 +11,7 @@ Status 2026-09-30, branch `asm/interop-20260930`. Code: `apps/assembler/renderer
 | ---------------------- | ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | STEP (`.step`, `.stp`) | bodies, **one** `Import` History step                            | exact B-rep; product structure as nested Items folders; part names; part colours; placements (nested, rotated, shared sub-assemblies); file unit converted to mm                                                  | bodies                            | exact B-rep, names (Items names), colours, Items folders as sub-assemblies (optional), AP242 or AP214, mm/cm/m/in, flat / assembly / one file per body, all / visible / selected |
 | IGES                   | —                                                                | not in this OCCT build                                                                                                                                                                                            | —                                 | not in this OCCT build                                                                                                                                                           |
-| STL                    | reference mesh                                                   | triangles; unitless: a rescale is offered, never applied                                                                                                                                                          | bodies + visible reference meshes | unchanged (print export)                                                                                                                                                         |
+| STL                    | reference mesh                                                   | triangles; unitless: a rescale is offered, never applied                                                                                                                                                          | bodies + visible reference meshes | print export: binary/ASCII, resolution presets; all / **visible** (new) / selected bodies in one file, or one file per body                                                      |
 | 3MF                    | reference meshes, one per build item                             | object names, item and component transforms (baked), Production-extension parts (`p:path`), colour (base material / colour group, most common per object), declared unit → mm                                     | bodies + visible reference meshes | unchanged (print export)                                                                                                                                                         |
 | OBJ                    | reference meshes, one per group (folder per file/object)         | polygons (fan-triangulated), groups/objects, vertex colours (average)                                                                                                                                             | —                                 | —                                                                                                                                                                                |
 | DXF (ASCII)            | a new sketch on XY/XZ/YZ (+ offset) or the selected planar face  | LINE, ARC, CIRCLE, LWPOLYLINE/POLYLINE with bulges (→ arcs), SPLINE, ELLIPSE, POINT, INSERT (translation, rotation, uniform scale; nested); `$INSUNITS`; end points connected (shared sketch points = coincident) | a sketch or a planar face outline | R2000: LINE, ARC, CIRCLE, ELLIPSE, SPLINE, LWPOLYLINE, POINT, layer `CONSTRUCTION`; R12: splines/ellipses as polylines; `$INSUNITS` 4                                            |
@@ -87,8 +87,18 @@ Fidelity checks (tests, real OCCT):
   name wins), colour `#9AAE9B` exact in the file and after re-import, volumes to 1e-6.
 - AP214 + inches: `AUTOMOTIVE_DESIGN`, `CONVERSION_BASED_UNIT('INCH')`, re-imported cube
   volume 1000 mm³ ± 1e-3.
-- Third-party read (evidence, not a test dependency): the exported assembly read with OCP's
-  full XCAF reader (`STEPCAFControl_Reader`, build123d venv) — see "Evidence" below.
+- Third-party read (evidence, not a test dependency): the robot re-exported as an assembly
+  (AP242) and flat (AP214, inches) and read with OCP's full XCAF reader
+  (`STEPCAFControl_Reader`, OCCT 7.8 in the build123d venv): assembly tree
+  `Robot export/{Base plate, Arm/{Link, Pin}, Arm (2)/{Link, Pin}}` and flat
+  `Base plate, Link, Pin, Link, Pin` as parts (no wrapper assemblies), colours `#FF0000`,
+  `#0000FF`, `#33AA55` exact. Imported (located) parts are baked before the XCAF writer:
+  otherwise XCAF writes each as an assembly around an unnamed part ("Open CASCADE STEP
+  translator …") — found by this check, covered by
+  `interopStep.test.ts` "imported (located) parts re-export flat and as an assembly".
+- DXF: `ezdxf.recover` + auditor on the R2000 and R12 exports of the plate: 0 errors, 0
+  fixes; entity counts LINE 5, ARC 3, CIRCLE 2, SPLINE 1, ELLIPSE 1, POINT 1 (R12: the spline
+  and ellipse as 2 POLYLINEs).
 
 ## IGES
 
@@ -198,7 +208,8 @@ mesh_to_solid/export_step/formats` (`interop.py`), `AssemblerClient` counterpart
 - Screenshots (DEV hook): `D:\AgentWork\HimmelCAD-Assembler\shots\io-*.png` (drop overlay,
   STEP assembly in Items, DXF dialog/sketch/sketch mode, mesh selected, mesh → solid,
   fillet, open mesh refused, STEP export dialog), script `shots\io-shots.mjs`.
-- Third-party validation: `D:\AgentWork\HimmelCAD-Assembler\interop-spike\validate.py`.
+- Third-party validation: `D:\AgentWork\HimmelCAD-Assembler\interop-spike\validate.py`
+  (inputs from `make-outputs.mjs`, output `validate-output.txt`).
 
 ## Limits
 
