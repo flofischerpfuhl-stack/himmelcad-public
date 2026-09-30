@@ -14,7 +14,6 @@ import { installPreferenceEffects } from './interface/shell-ui/preferenceEffects
 import { installAutomationBridge } from './interface/agent-api/automationStore.js';
 import { installAutomationHook } from './app/devtools/automationHook.js';
 import { WorkerKernelAdapter } from './foundation/geometry-kernel/workerAdapter.js';
-import { useMeasureStore } from './model/measureStore.js';
 import { useProjectStore } from './interface/shell-ui/project/projectStore.js';
 import { useAssemblerStore } from './foundation/commands/store.js';
 import { setSketchSolverFactory } from './foundation/sketch-solver/solverProvider.js';
@@ -40,8 +39,6 @@ const kernelAdapter = new WorkerKernelAdapter(
 useAssemblerStore.getState().attachKernel(kernelAdapter);
 // Project export (STEP) shares the same adapter instance, see `model/project/projectStore.ts`.
 useProjectStore.getState().attachKernelAdapter(kernelAdapter);
-// Measure panel: exact minimum distances (`BRepExtrema`) from the same kernel.
-useMeasureStore.getState().attachKernel(kernelAdapter);
 // Agent access (desktop only, off until the user enables it): canonical command layer on this document.
 installAutomationBridge(kernelAdapter);
 // The modules' runtime wiring (Print mode and interop: their workers and the kernel for exports).

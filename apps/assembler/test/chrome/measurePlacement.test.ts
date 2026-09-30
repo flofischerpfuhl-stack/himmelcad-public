@@ -8,7 +8,7 @@ import test from 'node:test';
 import {
   MEASURE_PANEL_WIDTH,
   measurePanelPlacement,
-} from '../../renderer/src/chrome/measurePlacement.js';
+} from '../../renderer/src/modules/measure/ui/measurePlacement.js';
 
 const window = { width: 1600, height: 900 };
 /** The right column (Parameters/History): x from width - 284 to width - 12, y from 372. */

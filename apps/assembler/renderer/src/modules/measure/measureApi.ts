@@ -8,9 +8,9 @@
  * `EdgeInput` references (keys or selectors). Read-only: nothing here
  * changes the document or the UI (pins are UI view state).
  */
-import type { KernelAdapter } from '../foundation/geometry-kernel/adapter.js';
-import type { DistanceTarget, EvaluationResult } from '../foundation/geometry-kernel/types.js';
-import type { Feature } from '../foundation/document/document.js';
+import type { KernelAdapter } from '../../foundation/geometry-kernel/adapter.js';
+import type { DistanceTarget, EvaluationResult } from '../../foundation/geometry-kernel/types.js';
+import type { Feature } from '../../foundation/document/document.js';
 import {
   measure,
   type DistanceResult,
@@ -18,15 +18,16 @@ import {
   type MeasureRef,
   type Measurement,
   type ValueKind,
-} from '../model/measure.js';
+} from './measure.js';
 import {
   bodyMaterials,
   DEFAULT_DENSITY_MATERIAL,
   materialPreset,
-} from '../platform/viewport/displayModes.js';
-import { findBody } from '../foundation/commands/api/describe.js';
-import { ApiError } from '../foundation/commands/api/errors.js';
-import { resolveEdgeInput, resolveFaceInput } from '../foundation/commands/api/references.js';
+} from '../../platform/viewport/displayModes.js';
+import { findBody } from '../../foundation/commands/api/describe.js';
+import type { ApiContribution, ApiHandler } from '../../foundation/commands/api/registry.js';
+import { ApiError } from '../../foundation/commands/api/errors.js';
+import { resolveEdgeInput, resolveFaceInput } from '../../foundation/commands/api/references.js';
 
 type Json = Record<string, unknown>;
 
@@ -241,3 +242,26 @@ export async function runMeasureQuery(method: string, p: Json, env: MeasureEnv):
       throw new ApiError('methodNotFound', `Unknown method "${method}"`);
   }
 }
+
+/** Runs a `measure.*` query on the session's view of the document (committed or staged). */
+const measureQuery: ApiHandler = async (ctx, p, method) =>
+  runMeasureQuery(method, p, {
+    evaluation: await ctx.readEvaluation(p),
+    features: ctx.activeFeatures(p),
+    kernel: ctx.kernel,
+  });
+
+/**
+ * The measure module's agent-API contribution: the handlers of the
+ * `measure.*` queries. Their schemas (and `MeasureTarget`) are still
+ * published by the agent-api block (`schema.ts`), in the published order.
+ */
+export const MEASURE_API: ApiContribution = {
+  handlers: {
+    'measure.get': measureQuery,
+    'measure.distance': measureQuery,
+    'measure.angle': measureQuery,
+    'measure.area': measureQuery,
+    'measure.volume': measureQuery,
+  },
+};

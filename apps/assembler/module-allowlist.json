@@ -35,7 +35,7 @@
       "to": "measure",
       "rule": "cross-domain",
       "reason": "Known at the start of the ADR 0032 restructure (phase A): domain modules talk through foundation contracts and registrations, not directly.",
-      "edges": ["renderer/src/model/offsetFaceModes.ts -> renderer/src/model/measure.ts"]
+      "edges": ["renderer/src/model/offsetFaceModes.ts -> renderer/src/modules/measure/measure.ts"]
     },
     {
       "from": "direct-edit",
@@ -43,16 +43,6 @@
       "rule": "cross-domain",
       "reason": "Known at the start of the ADR 0032 restructure (phase A): domain modules talk through foundation contracts and registrations, not directly.",
       "edges": ["renderer/src/model/offsetFaceModes.ts -> renderer/src/model/features.ts"]
-    },
-    {
-      "from": "display",
-      "to": "measure",
-      "rule": "cross-domain",
-      "reason": "Known at the start of the ADR 0032 restructure (phase A): domain modules talk through foundation contracts and registrations, not directly.",
-      "edges": [
-        "renderer/src/model/commands/displayCommands.ts -> renderer/src/model/measure.ts",
-        "renderer/src/model/commands/displayCommands.ts -> renderer/src/model/measureStore.ts"
-      ]
     },
     {
       "from": "display",
@@ -82,15 +72,6 @@
       "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
       "edges": [
         "renderer/src/foundation/geometry-kernel/features/faceOps.ts -> renderer/src/model/features.ts"
-      ]
-    },
-    {
-      "from": "measure",
-      "to": "shell-ui",
-      "rule": "upward",
-      "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
-      "edges": [
-        "renderer/src/chrome/MeasurePanel.tsx -> renderer/src/interface/shell-ui/workspace.ts"
       ]
     },
     {
@@ -154,9 +135,9 @@
       "rule": "upward",
       "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
       "edges": [
-        "renderer/src/platform/viewport/Viewport.tsx -> renderer/src/model/measure.ts",
-        "renderer/src/platform/viewport/Viewport.tsx -> renderer/src/model/measureStore.ts",
-        "renderer/src/platform/viewport/Viewport.tsx -> renderer/src/viewport/MeasureOverlay.tsx"
+        "renderer/src/platform/viewport/Viewport.tsx -> renderer/src/modules/measure/measure.ts",
+        "renderer/src/platform/viewport/Viewport.tsx -> renderer/src/modules/measure/measureStore.ts",
+        "renderer/src/platform/viewport/Viewport.tsx -> renderer/src/modules/measure/ui/MeasureOverlay.tsx"
       ]
     },
     {

@@ -6,9 +6,9 @@
  */
 import { MeasurementGraphics, type MeasurementGraphicItem } from '@himmelcad/ui';
 
-import type { Measurement, Vec3 } from '../model/measure.js';
-import { graphicLabel, useDisplayUnit, useLiveMeasurements } from '../model/measureLive.js';
-import { useMeasureStore } from '../model/measureStore.js';
+import type { Measurement, Vec3 } from '../measure.js';
+import { graphicLabel, useDisplayUnit, useLiveMeasurements } from '../measureLive.js';
+import { useMeasureStore } from '../measureStore.js';
 
 export interface MeasureOverlayProps {
   /** Bumped every drawn frame. */

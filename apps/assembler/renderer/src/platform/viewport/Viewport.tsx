@@ -103,9 +103,9 @@ import {
   type SectionView,
 } from '../../viewport/toolAnchors.js';
 import { bodyMaterials } from './displayModes.js';
-import { MeasureOverlay } from '../../viewport/MeasureOverlay.js';
-import { snapMeasurePoint, snapPoints, type Vec3 as MeasureVec3 } from '../../model/measure.js';
-import { useMeasureStore } from '../../model/measureStore.js';
+import { MeasureOverlay } from '../../modules/measure/ui/MeasureOverlay.js';
+import { snapMeasurePoint, snapPoints, type Vec3 as MeasureVec3 } from '../../modules/measure/measure.js';
+import { useMeasureStore } from '../../modules/measure/measureStore.js';
 import { rayCastFaces } from './pickCandidates.js';
 import { ViewCube } from './ViewCube.js';
 import {

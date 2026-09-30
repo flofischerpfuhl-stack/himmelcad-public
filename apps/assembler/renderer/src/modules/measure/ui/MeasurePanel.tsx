@@ -19,26 +19,27 @@ import {
 
 import { Spinner, Tooltip, registerEscapeRung } from '@himmelcad/ui';
 
-import type { Measurement } from '../model/measure.js';
+import type { Measurement } from '../measure.js';
 import {
   formatMeasureValue,
   measurementText,
   useDisplayUnit,
   useLiveMeasurements,
-} from '../model/measureLive.js';
-import { useMeasureStore } from '../model/measureStore.js';
-import { usePreferences, type LengthUnit } from '../platform/input/preferences.js';
-import type { AssemblerState } from '../foundation/commands/store.js';
-import { useWorkspaceStore } from '../interface/shell-ui/workspace.js';
+} from '../measureLive.js';
+import { useMeasureStore } from '../measureStore.js';
+import { usePreferences, type LengthUnit } from '../../../platform/input/preferences.js';
+import type { AssemblerState } from '../../../foundation/commands/store.js';
+import { notify } from '../../../foundation/commands/notices.js';
+import type { PanelProps } from '../../../platform/widgets/moduleUi.js';
 import { measurePanelPlacement } from './measurePlacement.js';
 import styles from './MeasurePanel.module.css';
 
 async function copyText(text: string): Promise<void> {
   try {
     await navigator.clipboard.writeText(text);
-    useWorkspaceStore.getState().notify('Copied to the clipboard');
+    notify('Copied to the clipboard');
   } catch {
-    useWorkspaceStore.getState().notify('Could not copy to the clipboard', 'warning');
+    notify('Could not copy to the clipboard', 'warning');
   }
 }
 
@@ -316,4 +317,9 @@ export function MeasurePanel({ state }: { state: AssemblerState }): JSX.Element 
       </div>
     </section>
   );
+}
+
+/** The panel while Measure is on (registered in the shell's overlay slot, `module.ui.ts`). */
+export function MeasureModePanel({ state }: PanelProps): JSX.Element | null {
+  return state.viewState.measureEnabled ? <MeasurePanel state={state} /> : null;
 }

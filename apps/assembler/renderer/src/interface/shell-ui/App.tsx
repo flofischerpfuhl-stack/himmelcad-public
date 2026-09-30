@@ -3,7 +3,6 @@ import { useCallback, useState } from 'react';
 import { AgentAccessIndicator } from '../agent-api/ui/AgentAccessIndicator.js';
 import { AnalysisLegend } from '../../chrome/AnalysisLegend.js';
 import { ExportImageDialog } from '../../chrome/ExportImageDialog.js';
-import { MeasurePanel } from '../../chrome/MeasurePanel.js';
 import { ColourDialog } from '../../chrome/ColourDialog.js';
 import { CommandContextMenu } from './ContextMenu.js';
 import { CommandSearch } from './CommandSearch.js';
@@ -104,7 +103,6 @@ export function App(): JSX.Element {
         const Panel = panel.component;
         return <Panel key={panel.id} state={state} onContextMenu={openContextMenuAt} />;
       })}
-      {state.viewState.measureEnabled ? <MeasurePanel state={state} /> : null}
       <AnalysisLegend state={state} />
       <StatusStrip state={state} />
       <KernelActivity state={state} />

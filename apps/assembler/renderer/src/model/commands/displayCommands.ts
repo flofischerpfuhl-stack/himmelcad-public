@@ -8,8 +8,6 @@
 import { DISPLAY_MODE_ENTRIES, activeDisplayEntry } from '../../platform/viewport/displayModes.js';
 import { sectionNormal } from '../../viewport/toolAnchors.js';
 import { displayBodyName, useItemsStore } from '../../foundation/commands/items.js';
-import { currentRefs } from '../measure.js';
-import { useMeasureStore } from '../measureStore.js';
 import { usePreferences } from '../../platform/input/preferences.js';
 import {
   findFace,
@@ -210,37 +208,6 @@ export const DISPLAY_COMMANDS: readonly Command[] = [
     adaptive: false,
     availability: sectionOn,
     run: (ctx) => lookAtSection(ctx),
-  },
-  {
-    id: 'modes.measurePin',
-    label: 'Pin measurement',
-    group: 'modes',
-    keywords: ['measure', 'keep', 'dimension', 'pin'],
-    adaptive: false,
-    availability: (ctx) => {
-      if (!ctx.viewState.measureEnabled)
-        return { enabled: false, reason: 'Turn Measure on first.' };
-      return currentRefs(ctx.selection, useMeasureStore.getState().points).length > 0
-        ? enabled
-        : { enabled: false, reason: 'Select something to measure, or pick points.' };
-    },
-    run: (ctx) => {
-      const measure = useMeasureStore.getState();
-      measure.pin(currentRefs(ctx.selection, measure.points));
-    },
-  },
-  {
-    id: 'modes.measurePoints',
-    label: 'Measure points',
-    group: 'modes',
-    keywords: ['point to point', 'distance', 'measure', 'vertex', 'centre'],
-    adaptive: false,
-    availability: () => ({ enabled: true, recommended: useMeasureStore.getState().pointMode }),
-    run: (ctx) => {
-      const measure = useMeasureStore.getState();
-      if (!ctx.viewState.measureEnabled) ctx.setMeasureEnabled(true);
-      measure.setPointMode(!measure.pointMode);
-    },
   },
 ];
 

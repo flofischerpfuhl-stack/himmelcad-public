@@ -36,7 +36,7 @@ import type { SketchFeature } from '../../foundation/sketch-solver/sketchFeature
 import { parseMirroredSketchId } from '../../model/features.js';
 import { consumedSketchIds } from '../../model/modeling.js';
 import { resolveParameterValues } from '../../foundation/document/parameters.js';
-import { runMeasureQuery } from '../../api/measureApi.js';
+import { runMeasureQuery } from '../../modules/measure/measureApi.js';
 import {
   exportDxf,
   importDxf,

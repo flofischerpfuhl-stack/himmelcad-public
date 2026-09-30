@@ -13,9 +13,9 @@ import {
   snapMeasurePoint,
   snapPoints,
   type MeasureContext,
-} from '../../renderer/src/model/measure.js';
-import { formatMeasureValue } from '../../renderer/src/model/measureLive.js';
-import { parsePins, serializePins } from '../../renderer/src/model/measureStore.js';
+} from '../../renderer/src/modules/measure/measure.js';
+import { formatMeasureValue } from '../../renderer/src/modules/measure/measureLive.js';
+import { parsePins, serializePins } from '../../renderer/src/modules/measure/measureStore.js';
 import {
   parseSectionPlane,
   sectionPlaneFromFace,

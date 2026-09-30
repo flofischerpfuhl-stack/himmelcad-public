@@ -139,17 +139,7 @@
       "id": "measure",
       "layer": "domain",
       "summary": "Measure mode: measurements, pinned dimensions, Measure panel and overlay, measure API.",
-      "paths": [
-        "renderer/src/modules/measure/",
-        "renderer/src/model/measure.ts",
-        "renderer/src/model/measureLive.ts",
-        "renderer/src/model/measureStore.ts",
-        "renderer/src/model/commands/measureCommands.ts",
-        "renderer/src/chrome/MeasurePanel",
-        "renderer/src/chrome/measurePlacement.ts",
-        "renderer/src/viewport/MeasureOverlay.tsx",
-        "renderer/src/api/measureApi.ts"
-      ]
+      "paths": ["renderer/src/modules/measure/"]
     },
     {
       "id": "display",

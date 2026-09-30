@@ -10,7 +10,7 @@ import type { Body, EvaluationResult, FaceInfo } from '../foundation/geometry-ke
 import { faceSignatureOf } from '../foundation/geometry-kernel/naming.js';
 import type { FaceRef, Vec3 } from '../foundation/document/document.js';
 import type { OffsetFaceMode } from './features.js';
-import { circleOfEdge } from './measure.js';
+import { circleOfEdge } from '../modules/measure/measure.js';
 
 /** What the modes need to know about one face. */
 export interface OffsetFaceShape {

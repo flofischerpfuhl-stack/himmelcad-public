@@ -22,7 +22,11 @@ import {
   useItemsStore,
 } from '../../../foundation/commands/items.js';
 import type { ReferenceMesh } from '../../../foundation/commands/referenceMesh.js';
-import { parsePins, serializePins, useMeasureStore } from '../../../model/measureStore.js';
+import {
+  parsePins,
+  serializePins,
+  useMeasureStore,
+} from '../../../modules/measure/measureStore.js';
 import { useAssemblerStore } from '../../../foundation/commands/store.js';
 import { viewDisplayToProject } from '../../../model/viewDisplay.js';
 import { parseSavedViews, useWorkspaceStore } from '../workspace.js';

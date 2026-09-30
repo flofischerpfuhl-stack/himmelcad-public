@@ -33,7 +33,7 @@ import {
   type ViewportProbe,
 } from '../../platform/viewport/automation.js';
 import { useFixStore } from '../../interface/shell-ui/fixReference.js';
-import { useMeasureStore } from '../../model/measureStore.js';
+import { useMeasureStore } from '../../modules/measure/measureStore.js';
 import { useProjectStore } from '../../interface/shell-ui/project/projectStore.js';
 import { useInteropStore } from '../../modules/interop/interopStore.js';
 import type { ToolHandleKind } from '../../platform/viewport/picking.js';
