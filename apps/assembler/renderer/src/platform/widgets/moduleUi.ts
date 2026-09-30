@@ -11,6 +11,7 @@ import type { ComponentType } from 'react';
 import type { AssemblerState } from '../../foundation/commands/store.js';
 import type { Feature } from '../../foundation/document/document.js';
 import { registerViewportOverlay, type ViewportOverlayProvider } from '../viewport/overlays.js';
+import { registerViewportTool, type ViewportToolProvider } from '../viewport/toolViews.js';
 
 export interface PanelProps {
   state: AssemblerState;
@@ -68,6 +69,8 @@ export interface ModuleUi {
   modeButtons?: readonly ModeButtonRegistration[];
   historyCards?: readonly HistoryCardRegistration[];
   viewportOverlays?: readonly ViewportOverlayProvider[];
+  /** What the viewport shows and does for the module's tool sessions (handles, drags, clicks). */
+  viewportTools?: readonly ViewportToolProvider[];
   /** Icons of the module's feature kinds (History cards, Items). */
   featureIcons?: Readonly<Record<string, LucideIcon>>;
   /** Icons of the module's commands (toolbar, menus, search). */
@@ -100,6 +103,7 @@ export function installModuleUis(uis: readonly ModuleUi[]): void {
       }
     }
     for (const overlay of ui.viewportOverlays ?? []) registerViewportOverlay(overlay);
+    for (const tool of ui.viewportTools ?? []) registerViewportTool(tool);
     for (const [kind, icon] of Object.entries(ui.featureIcons ?? {})) featureIcons.set(kind, icon);
     for (const [id, icon] of Object.entries(ui.commandIcons ?? {})) commandIcons.set(id, icon);
   }

@@ -1,8 +1,8 @@
 /**
  * The modelling module's UI: the History-card editors of its kinds and of
  * the core fillet/chamfer/shell/boolean kinds whose variant options it owns
- * (`ui/FeatureParams.tsx`, `ui/PrintFeatureParams.tsx`), and the icons of
- * its kinds and commands.
+ * (`ui/FeatureParams.tsx`, `ui/PrintFeatureParams.tsx`), the icons of its
+ * kinds and commands, and the viewport side of its tools (`viewportTools.ts`).
  */
 import { BlendParams, BooleanParams, ShellParams } from './ui/PrintFeatureParams.js';
 import { ModelingFeatureParams } from './ui/FeatureParams.js';
@@ -15,11 +15,13 @@ import type {
 import { MODELING_FEATURE_KINDS, type ModelingFeature } from './features.js';
 import { defineModuleUi } from '../../platform/widgets/moduleUi.js';
 import { MODELING_COMMAND_ICON, MODELING_FEATURE_ICON } from './ui/featureIcons.js';
+import { MODELING_VIEWPORT_TOOLS } from './viewportTools.js';
 
 export const modelingUi = defineModuleUi({
   id: 'modeling',
   featureIcons: MODELING_FEATURE_ICON,
   commandIcons: MODELING_COMMAND_ICON,
+  viewportTools: MODELING_VIEWPORT_TOOLS,
   historyCards: [
     {
       kinds: MODELING_FEATURE_KINDS,

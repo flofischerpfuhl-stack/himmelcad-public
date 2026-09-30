@@ -83,17 +83,6 @@
     },
     {
       "from": "viewport",
-      "to": "modeling",
-      "rule": "upward",
-      "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
-      "edges": [
-        "renderer/src/platform/viewport/Viewport.tsx -> renderer/src/modules/modeling/moveGizmo.ts",
-        "renderer/src/platform/viewport/Viewport.tsx -> renderer/src/modules/modeling/toolAnchors.ts",
-        "renderer/src/platform/viewport/Viewport.tsx -> renderer/src/modules/modeling/toolHandles.ts"
-      ]
-    },
-    {
-      "from": "viewport",
       "to": "shell-ui",
       "rule": "upward",
       "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",

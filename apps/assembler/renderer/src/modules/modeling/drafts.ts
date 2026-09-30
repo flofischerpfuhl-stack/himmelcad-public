@@ -61,6 +61,9 @@ for (const kind of MODELING_DRAFT_KINDS) {
     guides: (draft, evaluation) => modelingDraftGuides(draft, evaluation),
     modifiedBodyIds: modelingDraftModifiedBodyIds,
     picksSketchLines: (draft) => TAKES_AXIS.has(draft.kind),
+    // Bodies that move (Align, Mirror in place): their old place as a ghost.
+    ghostsModifiedBodies: (draft) =>
+      draft.kind === 'align' || (draft.kind === 'mirror' && !draft.keepOriginal),
   });
 }
 
@@ -89,5 +92,15 @@ for (const kind of PRINT_DRAFT_KINDS) {
     guides: printDraftGuides,
     modifiedBodyIds: printDraftModifiedBodyIds,
     picksSketchLines: printDraftPicksSketchLines,
+    // Hole: a click into a through hole of the picked face removes that hole.
+    acceptEmptyClick: (draft, ray, evaluation, features) =>
+      draft.kind === 'hole' && draft.face
+        ? acceptPrintPick(
+            draft,
+            { kind: 'face', bodyId: draft.face.bodyId, faceKey: draft.face.key, ray },
+            evaluation,
+            features,
+          )
+        : draft,
   });
 }

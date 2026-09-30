@@ -1,56 +1,32 @@
 /**
- * Handles, value chips and guides of the modelling-feature tools and of the
- * Move/Rotate gizmo's rings and pivot, derived from the store state (pure,
- * no React/GL) and shared by the render loop, the pointer handlers and the
- * chip overlay — all three always agree. Values are written back through
- * {@link applyToolHandleValue}.
+ * Handles and value chips of the modelling tools: the Move/Rotate gizmo's
+ * rings and centre, the extrude extras (second side, start offset), the
+ * Move/Rotate preview bodies and the gizmo-centre snapping — derived from
+ * the store state (pure, no React/GL) and shared by the render loop, the
+ * pointer handlers and the chip overlay (`viewportTools.ts`). Values are
+ * written back through {@link applyToolHandleValue}.
  */
 import { opsAffine } from '../../foundation/geometry-kernel/features/rigid.js';
 import { WORLD_AXES, gizmoOps, isWorldAxes } from './moveGizmo.js';
 import type { Body } from '../../foundation/geometry-kernel/types.js';
 import { profileSamples } from './featureTools.js';
-import {
-  draftGuides,
-  draftHandles,
-  draftModifiedBodyIds,
-  type DraftGuides,
-  type DraftHandle,
-  type HandleUnit,
-} from '../../foundation/commands/featureDrafts.js';
 import { useAssemblerStore, type AssemblerState } from '../../foundation/commands/store.js';
 import type { MoveTool } from './tools.js';
 import { transformBody } from '../../platform/viewport/bodyTransform.js';
+import {
+  applyFeatureHandleValue,
+  featureToolHandles,
+} from '../../platform/viewport/featureToolView.js';
 import type { Vec3 } from '../../platform/viewport/math.js';
 import type { ToolHandleKind } from '../../platform/viewport/picking.js';
-import type { AngleHandleState } from '../../platform/viewport/scene.js';
-
-import type { AxisHandle } from '../../platform/viewport/section.js';
-
+import {
+  EMPTY_TOOL_HANDLES,
+  type ToolChip,
+  type ToolHandleSet,
+} from '../../platform/viewport/toolViews.js';
 /** Rotation-ring radius relative to the move arrows (40 mm). */
 const RING_RADIUS_MM = 28;
 const DRAG_STEP_MM = 0.1;
-/** Angle drags snap to this unless Shift is held (then 0.1°). */
-export const ANGLE_SNAP_DEG = 15;
-
-export interface ToolChip {
-  handle: ToolHandleKind;
-  label: string;
-  prefix?: string;
-  unit: HandleUnit;
-  value: number;
-  /** World anchor of the chip. */
-  at: Vec3;
-}
-
-export interface ToolHandleSet {
-  axis: AxisHandle[];
-  angles: Omit<AngleHandleState, 'hovered'>[];
-  chips: ToolChip[];
-  guides: DraftGuides | null;
-  pivot: Vec3 | null;
-}
-
-const EMPTY: ToolHandleSet = { axis: [], angles: [], chips: [], guides: null, pivot: null };
 
 function angleAt(
   h: { center: Vec3; axis: Vec3; ref: Vec3; radius: number },
@@ -64,56 +40,6 @@ function angleAt(
     h.center[1] + (u[1] * Math.cos(a) + v[1] * Math.sin(a)) * h.radius,
     h.center[2] + (u[2] * Math.cos(a) + v[2] * Math.sin(a)) * h.radius,
   ];
-}
-
-/** Handles of the running feature tool. */
-function featureHandles(state: AssemblerState, handles: DraftHandle[]): ToolHandleSet {
-  const out: ToolHandleSet = { ...EMPTY, axis: [], angles: [], chips: [] };
-  for (const h of handles) {
-    const handle: ToolHandleKind = `feature:${h.id}`;
-    const chip = {
-      handle,
-      label: h.label,
-      unit: h.unit,
-      value: h.value,
-      ...(h.prefix ? { prefix: h.prefix } : {}),
-    };
-    if (h.kind === 'linear') {
-      out.axis.push({
-        handle,
-        base: h.base,
-        dir: h.dir,
-        length: h.length,
-        dragDir: h.dir,
-        value: h.value,
-      });
-      out.chips.push({
-        ...chip,
-        at: [
-          h.base[0] + h.dir[0] * h.length,
-          h.base[1] + h.dir[1] * h.length,
-          h.base[2] + h.dir[2] * h.length,
-        ],
-      });
-    } else if (h.kind === 'angle') {
-      out.angles.push({
-        handle,
-        center: h.center,
-        axis: h.axis,
-        ref: h.ref,
-        radius: h.radius,
-        value: h.value,
-        ring: false,
-        color: null,
-      });
-      // Beside the arc's middle, so the chip never covers the knob being dragged.
-      out.chips.push({ ...chip, at: angleAt({ ...h, radius: h.radius * 1.25 }, h.value / 2) });
-    } else {
-      out.chips.push({ ...chip, at: h.at });
-    }
-  }
-  void state;
-  return out;
 }
 
 /** Displayed gizmo centre: the pivot carried along by the translation. */
@@ -162,14 +88,10 @@ export function toolHandleSet(
   ringColors: [Vec3, Vec3, Vec3] | null = null,
 ): ToolHandleSet {
   const tool = state.activeTool;
-  if (tool?.kind === 'feature') {
-    const set = featureHandles(state, draftHandles(tool.draft, state.evaluation, state.features));
-    set.guides = draftGuides(tool.draft, state.evaluation, state.features);
-    return set;
-  }
+  if (tool?.kind === 'feature') return featureToolHandles(state);
   if (tool?.kind === 'move') return ringHandles(tool, ringColors);
   if (tool?.kind === 'extrude') return extrudeHandles(state);
-  return EMPTY;
+  return EMPTY_TOOL_HANDLES;
 }
 
 /**
@@ -178,9 +100,9 @@ export function toolHandleSet(
  */
 function extrudeHandles(state: AssemblerState): ToolHandleSet {
   const tool = state.activeTool;
-  if (tool?.kind !== 'extrude') return EMPTY;
+  if (tool?.kind !== 'extrude') return EMPTY_TOOL_HANDLES;
   const samples = profileSamples(state.evaluation, tool.profile);
-  if (!samples) return EMPTY;
+  if (!samples) return EMPTY_TOOL_HANDLES;
   const n = samples.normal;
   const s = tool.startOffset ?? 0;
   const base: Vec3 = [
@@ -239,9 +161,6 @@ export function movePreviewBodies(
   };
 }
 
-/** Bodies a feature tool changes in place (accent) — re-exported for the scene model. */
-export { draftModifiedBodyIds };
-
 /**
  * Writes a dragged or typed value of a tool handle to the store. `snap`
  * applies the drag step (0.1 mm, whole counts; angles are snapped by the
@@ -266,18 +185,7 @@ export function applyToolHandleValue(handle: ToolHandleKind, raw: number, snap: 
     else s.setExtrudeOptions({ startOffset: value === 0 ? undefined : value });
     return true;
   }
-  if (!handle.startsWith('feature:')) return false;
-  const tool = s.activeTool;
-  if (tool?.kind !== 'feature') return true;
-  const id = handle.slice('feature:'.length);
-  const h = draftHandles(tool.draft, s.evaluation, s.features).find((x) => x.id === id);
-  if (!h) return true;
-  let value = raw;
-  if (snap && h.unit === 'mm') value = Math.round(raw / DRAG_STEP_MM) * DRAG_STEP_MM;
-  if (h.unit === 'count') value = Math.round(raw);
-  value = Math.round(value * 1000) / 1000;
-  s.updateFeatureDraft((draft) => h.apply(draft, value));
-  return true;
+  return applyFeatureHandleValue(handle, raw, snap);
 }
 
 /**

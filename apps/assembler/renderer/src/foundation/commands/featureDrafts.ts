@@ -165,6 +165,19 @@ export interface FeatureDraftDefinition<K extends FeatureDraftKind = FeatureDraf
   modifiedBodyIds?(draft: FeatureDraftOf<K>): string[];
   /** Whether sketch lines are pickable while the tool runs (it takes an axis or a line). */
   picksSketchLines?(draft: FeatureDraftOf<K>): boolean;
+  /** Whether the modified bodies' old place is shown as a ghost (they move: Align, Mirror in place). */
+  ghostsModifiedBodies?(draft: FeatureDraftOf<K>): boolean;
+  /**
+   * A click on empty space (no pick) with the pointer ray, before it
+   * finishes the tool: return a changed draft to consume it (Hole: a click
+   * into a through hole removes that hole).
+   */
+  acceptEmptyClick?(
+    draft: FeatureDraftOf<K>,
+    ray: { origin: Vec3; direction: Vec3 },
+    evaluation: EvaluationResult,
+    features: readonly Feature[],
+  ): FeatureDraft;
 }
 
 const definitions = new Map<string, FeatureDraftDefinition>();
@@ -260,6 +273,22 @@ export function draftModifiedBodyIds(draft: FeatureDraft): string[] {
 /** Whether the running tool takes sketch lines (they become pickable in the viewport). */
 export function draftPicksSketchLines(draft: FeatureDraft): boolean {
   return definitionOf(draft.kind).picksSketchLines?.(draft) ?? false;
+}
+
+/** Whether the running tool shows the old place of the bodies it modifies. */
+export function draftGhostsModifiedBodies(draft: FeatureDraft): boolean {
+  return definitionOf(draft.kind).ghostsModifiedBodies?.(draft) ?? false;
+}
+
+/** A click on empty space while the tool runs (unchanged draft = not consumed). */
+export function draftAcceptEmptyClick(
+  draft: FeatureDraft,
+  ray: { origin: Vec3; direction: Vec3 },
+  evaluation: EvaluationResult,
+  features: readonly Feature[],
+): FeatureDraft {
+  const accept = definitionOf(draft.kind).acceptEmptyClick;
+  return accept ? accept(draft, ray, evaluation, features) : draft;
 }
 
 /** Construction planes/axes a draft references (highlighted while the tool runs). */
