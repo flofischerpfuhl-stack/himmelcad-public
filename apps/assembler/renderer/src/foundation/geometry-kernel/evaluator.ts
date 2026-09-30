@@ -38,13 +38,14 @@ import {
   type MoveFeature,
   type SetAppearanceFeature,
   type ShellFeature,
-  type SketchFeature,
   type SketchFrame,
   type SurfaceKind,
   type Vec3,
+  extraBodyId,
 } from '../document/document.js';
+import type { SketchFeature } from '../sketch-solver/sketchFeature.js';
 import { edgeRuleBodyId, edgeRuleLabel } from '../document/blendOptions.js';
-import { extraBodyId } from '../../model/features.js';
+
 import { decodeMeshSolidPayload } from './meshSolidPayload.js';
 import { buildMeshSolid } from './meshSolid.js';
 import { occtFormatCapabilities, readStepAssembly, type StepImportResult } from './stepImport.js';
@@ -133,7 +134,9 @@ import {
   type ExtrudeSpan,
 } from './features/extrudeExtent.js';
 import { offsetBodyFaces } from './features/faceOps.js';
-import { applyModelingFeature, type FeatureKit } from './features/index.js';
+import '../document/coreKinds.js';
+import type { FeatureKit } from './features/kit.js';
+import { applyRegisteredFeature } from './features/registry.js';
 import { nameMissingReferences } from './referenceNames.js';
 import { rebindRegion } from './regionRebind.js';
 import { FaceMeshCache } from './tessellate.js';
@@ -1851,7 +1854,8 @@ export function createEvaluator(oc: OpenCascade, options: EvaluatorOptions = {})
       case 'meshSolid':
         return applyMeshSolid(feature, ctx);
       default:
-        applyModelingFeature(feature, ctx, kit);
+        // Every other kind comes from its module's kernel part (`features/registry.ts`).
+        return applyRegisteredFeature(feature, ctx, kit);
     }
   }
 

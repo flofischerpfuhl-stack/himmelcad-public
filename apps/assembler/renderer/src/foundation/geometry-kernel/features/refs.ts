@@ -10,13 +10,12 @@ import {
   frameForPlane,
   framePoint,
   type Vec3,
-} from '../../document/document.js';
-import {
   worldAxisVector,
   type AxisRef,
   type PlaneRef,
   type ProfileRef,
-} from '../../../model/features.js';
+} from '../../document/document.js';
+
 import { entityMap, pointPos } from '../../sketch-solver/types.js';
 import { assignEdgeKeys } from '../naming.js';
 import { edgePointAt, takeList, type RawShape } from '../occt.js';

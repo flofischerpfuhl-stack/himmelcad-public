@@ -11,7 +11,8 @@ import test from 'node:test';
 import { appSessionHost } from '../../../renderer/src/interface/agent-api/automationStore.js';
 import { ApiError } from '../../../renderer/src/foundation/commands/api/errors.js';
 import { AgentSession } from '../../../renderer/src/interface/agent-api/session.js';
-import { createDemoDocument } from '../../../renderer/src/foundation/document/document.js';
+
+import { createDemoDocument } from '../../../renderer/src/foundation/commands/demoDocument.js';
 import {
   bodyRowKey,
   meshRowKey,

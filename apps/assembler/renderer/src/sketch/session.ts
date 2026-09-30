@@ -23,10 +23,10 @@ import {
   frameForFace,
   frameForPlane,
   type Plane,
-  type SketchFeature,
   type SketchFrame,
   type SketchPlaneRef,
 } from '../foundation/document/document.js';
+import type { SketchFeature } from '../foundation/sketch-solver/sketchFeature.js';
 import {
   makeEdgeRef,
   makeFaceRef,
@@ -41,7 +41,7 @@ import {
   toggleConstruction,
   type EditResult,
 } from '../foundation/sketch-solver/edits.js';
-import { isPlainNumber } from '../foundation/sketch-solver/expressions.js';
+import { isPlainNumber } from '../foundation/document/expressions.js';
 import {
   addProjection,
   adoptProjectedEntities,

@@ -24,9 +24,9 @@ import type {
   FaceRef,
   Feature,
   Plane,
-  SketchFeature,
   SketchPlaneRef,
 } from '../../renderer/src/foundation/document/document.js';
+import type { SketchFeature } from '../../renderer/src/foundation/sketch-solver/sketchFeature.js';
 import {
   mirroredSketchId,
   type MirrorFeature,

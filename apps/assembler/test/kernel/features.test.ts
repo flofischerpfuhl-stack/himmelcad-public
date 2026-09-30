@@ -22,11 +22,11 @@ import type {
   Feature,
   FilletFeature,
   Plane,
-  SketchFeature,
+  AxisRef,
 } from '../../renderer/src/foundation/document/document.js';
+import type { SketchFeature } from '../../renderer/src/foundation/sketch-solver/sketchFeature.js';
 import type {
   AlignFeature,
-  AxisRef,
   DeleteFaceFeature,
   LoftFeature,
   MirrorFeature,

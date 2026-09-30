@@ -5,7 +5,7 @@
  */
 import type { Body } from '../../foundation/geometry-kernel/types.js';
 import type { Feature } from '../../foundation/document/document.js';
-import { MODELING_FEATURE_LABEL } from '../../model/features.js';
+import { featureKindLabel as registeredLabel } from '../../foundation/document/featureKinds.js';
 import type { SelectionItem } from '../../foundation/commands/store.js';
 
 const KIND_LABELS: Record<SelectionItem['kind'], [string, string]> = {
@@ -41,30 +41,7 @@ function round1(value: number): number {
   return Math.round(value * 10) / 10;
 }
 
-/** Display name for a feature-history card icon lookup / a11y label. */
+/** Display name for a feature-history card icon lookup / a11y label (the kind's registered label). */
 export function featureKindLabel(kind: Feature['kind']): string {
-  switch (kind) {
-    case 'sketch':
-      return 'Sketch';
-    case 'extrude':
-      return 'Extrude';
-    case 'fillet':
-      return 'Fillet';
-    case 'chamfer':
-      return 'Chamfer';
-    case 'shell':
-      return 'Shell';
-    case 'boolean':
-      return 'Boolean';
-    case 'move':
-      return 'Move';
-    case 'setAppearance':
-      return 'Appearance';
-    case 'importStep':
-      return 'Import';
-    case 'meshSolid':
-      return 'Mesh to Solid';
-    default:
-      return MODELING_FEATURE_LABEL[kind];
-  }
+  return registeredLabel(kind);
 }

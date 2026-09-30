@@ -85,6 +85,7 @@
         "renderer/src/modules/modeling/",
         "renderer/src/kernel/features/",
         "renderer/src/model/features.ts",
+        "renderer/src/model/modelingKinds.ts",
         "renderer/src/model/featureTools.ts",
         "renderer/src/model/printFeatures.ts",
         "renderer/src/model/printFeatureTools.ts",
@@ -117,7 +118,8 @@
         "renderer/src/model/construction.ts",
         "renderer/src/model/constructionTools.ts",
         "renderer/src/model/commands/constructCommands.ts",
-        "renderer/src/kernel/features/construction.ts"
+        "renderer/src/kernel/features/construction.ts",
+        "renderer/src/kernel/features/constructionKernel.ts"
       ]
     },
     {

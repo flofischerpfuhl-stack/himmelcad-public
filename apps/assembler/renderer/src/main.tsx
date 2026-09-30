@@ -6,6 +6,7 @@ import '@himmelcad/theme/tokens.css';
 import '@himmelcad/theme/reset.css';
 import './assembler.css';
 
+import './app/composition.js';
 import { App } from './interface/shell-ui/App.js';
 import { installPreferenceEffects } from './interface/shell-ui/preferenceEffects.js';
 import { installAutomationBridge } from './interface/agent-api/automationStore.js';
@@ -36,7 +37,7 @@ installPreferenceEffects();
 // OCCT (WebAssembly) runs in its own worker; the UI stays responsive while it loads.
 const kernelAdapter = new WorkerKernelAdapter(
   () =>
-    new Worker(new URL('./foundation/geometry-kernel/kernel.worker.ts', import.meta.url), {
+    new Worker(new URL('./app/kernel.worker.ts', import.meta.url), {
       type: 'module',
     }),
 );

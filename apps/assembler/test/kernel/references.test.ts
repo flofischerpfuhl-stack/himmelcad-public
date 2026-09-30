@@ -24,12 +24,8 @@ import type {
   Body,
   EvaluationResult,
 } from '../../renderer/src/foundation/geometry-kernel/types.js';
-import type {
-  EdgeRef,
-  FaceRef,
-  Feature,
-  SketchFeature,
-} from '../../renderer/src/foundation/document/document.js';
+import type { EdgeRef, FaceRef, Feature } from '../../renderer/src/foundation/document/document.js';
+import type { SketchFeature } from '../../renderer/src/foundation/sketch-solver/sketchFeature.js';
 import type {
   OffsetFaceFeature,
   PatternFeature,

@@ -3,21 +3,25 @@
  *
  * A document is an ordered list of {@link Feature}s. Evaluation — replaying
  * the list into real B-rep bodies — happens in the CAD kernel (OCCT via
- * replicad, see `../kernel/`), never here. This module holds only the
- * serializable feature data, the stable-reference types and the pure
+ * replicad, see `../geometry-kernel/`), never here. This module holds only
+ * the serializable feature data of the **core kinds** (the ones the
+ * evaluator implements itself), the stable-reference types and the pure
  * sketch-frame math that both the kernel and the viewport need, so that the
- * UI can draw a sketch plane without asking the kernel.
+ * UI can draw a sketch plane without asking the kernel. Every other kind —
+ * the sketch (`../sketch-solver/sketchFeature.ts`) and the modelling kinds
+ * of the domain modules — joins {@link Feature} through the feature-kind
+ * registry (`featureKinds.ts`).
  *
  * Units are millimetres. Z is up; the construction grid is the XY plane at
  * z = 0. Everything here is plain data (structured-clone safe) so a feature
  * list can be posted to the kernel worker unchanged.
  */
 
-import type { ModelingFeature } from '../../model/features.js';
 import type { ChamferMode, EdgeRule, ShellDirection, ShellFaceThickness } from './blendOptions.js';
+import type { FeatureBase } from './featureKinds.js';
 
-import { addCircle, addRectangle } from '../sketch-solver/builders.js';
-import { EMPTY_SKETCH, type SketchData } from '../sketch-solver/types.js';
+export type { Feature, FeatureBase, FeatureKind } from './featureKinds.js';
+export { isBooleanResult } from './featureKinds.js';
 
 /** A length or coordinate in millimetres. */
 export type Millimeters = number;
@@ -76,16 +80,6 @@ export interface EdgeRef {
   signature: EdgeSignature;
 }
 
-/** Fields every feature has, regardless of kind. */
-export interface FeatureBase {
-  /** Stable, unique identifier. Never reused, never derived from position. */
-  id: string;
-  /** History-card display name, e.g. `"Sketch 1"`, `"Extrude 2"`. */
-  name: string;
-  /** When `true`, evaluation skips this feature as if it were absent. */
-  suppressed: boolean;
-}
-
 /**
  * Where a sketch lies: a canonical plane with offset, a planar body face,
  * or a construction plane (`model/construction.ts`) by feature id; `frame`
@@ -103,18 +97,6 @@ export type SketchPlaneRef =
       frame: SketchFrame;
       shown?: { center: Vec3; size: Millimeters };
     };
-
-/**
- * A constrained 2D sketch (schema v2): entities in the sketch frame's
- * (u, v) coordinates (always the last solved state), constraints and
- * driving dimensions — see `sketch/types.ts`. Profiles are not stored:
- * they are the closed regions detected from the geometry
- * (`sketch/regions.ts`).
- */
-export interface SketchFeature extends FeatureBase, SketchData {
-  kind: 'sketch';
-  plane: SketchPlaneRef;
-}
 
 /**
  * What an extrude reads its profile from: regions of a sketch by their
@@ -316,34 +298,19 @@ export interface MeshSolidFeature extends FeatureBase {
   triangles: number;
 }
 
-export type Feature =
-  | SketchFeature
-  | ExtrudeFeature
-  | FilletFeature
-  | ChamferFeature
-  | ShellFeature
-  | BooleanFeature
-  | MoveFeature
-  | SetAppearanceFeature
-  | ImportStepFeature
-  | MeshSolidFeature
-  | ModelingFeature;
-
-/**
- * Whether a feature's result is a boolean of solids: the Boolean feature, a
- * Join/Cut/Intersect of a profile solid (extrude, revolve, sweep, loft,
- * thicken), and holes, emboss/engrave and ribs. OCCT can return an invalid
- * solid for such a boolean instead of failing; committing one is refused
- * after a full B-rep check (`EvaluationRequest.commitCheck`,
- * `assembler/ROBUSTNESS.md`).
- */
-export function isBooleanResult(feature: Feature): boolean {
-  if (feature.kind === 'boolean') return true;
-  if (feature.kind === 'hole' || feature.kind === 'emboss' || feature.kind === 'rib') return true;
-  // Push/pull of a body face joins outwards and cuts inwards whatever `operation` says.
-  if (feature.kind === 'extrude' && feature.profile.kind === 'face') return true;
-  const operation = (feature as { operation?: unknown }).operation;
-  return operation === 'join' || operation === 'cut' || operation === 'intersect';
+/** The core kinds: implemented by the evaluator itself (`coreKinds.ts` registers them). */
+declare module './featureKinds.js' {
+  interface FeatureKindMap {
+    extrude: ExtrudeFeature;
+    fillet: FilletFeature;
+    chamfer: ChamferFeature;
+    shell: ShellFeature;
+    boolean: BooleanFeature;
+    move: MoveFeature;
+    setAppearance: SetAppearanceFeature;
+    importStep: ImportStepFeature;
+    meshSolid: MeshSolidFeature;
+  }
 }
 
 /** Minimum size, in millimetres, of sketch dimensions and extrude distances. */
@@ -352,6 +319,48 @@ export const MIN_FEATURE_SIZE_MM: Millimeters = 0.1;
 /** Body id for the body created by a feature: derived from the feature id, never from position. */
 export function bodyIdFor(featureId: string): string {
   return `body:${featureId}`;
+}
+
+/** Body id of the `index`-th body a feature creates besides `bodyIdFor(featureId)` (copies, split parts). */
+export function extraBodyId(featureId: string, index: number): string {
+  return `body:${featureId}:${index}`;
+}
+
+// ---- References shared by feature kinds ---------------------------------------
+
+/** A closed profile: a sketch profile or a planar body face (the extrude profile reference). */
+export type ProfileRef = ExtrudeProfileRef;
+
+export type WorldAxis = 'X' | 'Y' | 'Z';
+
+/**
+ * A straight axis: a world axis (through `origin`, default the world
+ * origin), a straight body edge (or the axis of a circular edge), or a
+ * sketch line by entity id (construction lines included, e.g. a dedicated
+ * centre line), read from the sketch's last solved state.
+ */
+export type AxisRef =
+  | { kind: 'world'; axis: WorldAxis; origin?: Vec3 }
+  | { kind: 'edge'; edge: EdgeRef }
+  | { kind: 'sketchLine'; featureId: string; entityId: string }
+  /** A construction axis (`model/construction.ts`) by feature id; `line` is its last evaluated line (signature). */
+  | { kind: 'construction'; featureId: string; line: { point: Vec3; dir: Vec3 } };
+
+/**
+ * Sweep path: a chain of body edges, the closed outer outline of a sketch
+ * region (by region key, see `sketch-solver/regions.ts`), or a straight world line.
+ */
+export type PathRef =
+  | { kind: 'edges'; edges: EdgeRef[] }
+  | { kind: 'sketch'; featureId: string; region: string }
+  | { kind: 'line'; start: Vec3; end: Vec3 };
+
+/** A plane: a construction plane with offset, or a planar body face. */
+export type PlaneRef = SketchPlaneRef;
+
+/** Unit vector of a world axis. */
+export function worldAxisVector(axis: WorldAxis): Vec3 {
+  return axis === 'X' ? [1, 0, 0] : axis === 'Y' ? [0, 1, 0] : [0, 0, 1];
 }
 
 // ---- Sketch frames ----------------------------------------------------------
@@ -441,116 +450,4 @@ function cross(a: Vec3, b: Vec3): Vec3 {
 function normalize(v: readonly [number, number, number]): Vec3 {
   const len = Math.hypot(v[0], v[1], v[2]) || 1;
   return [v[0] / len, v[1] / len, v[2] / len];
-}
-
-// ---- Demo document ------------------------------------------------------------
-
-/** A fully dimensioned rectangle sketch (corner position from the origin + size). */
-function rectangleSketch(x: number, y: number, width: number, height: number): SketchData {
-  return addRectangle(EMPTY_SKETCH, [x, y], [x + width, y + height], { position: true, size: true })
-    .sketch;
-}
-
-/**
- * Printable demo bracket, as real B-rep: an 80 x 50 x 6 mm base plate, an
- * 80 x 8 x 40 mm upright joined onto its back edge (y = 42..50), a 4 mm fillet on the
- * inner edge between plate top and upright front, and a 6 mm through-hole
- * sketched on the plate's top face and cut through the plate.
- *
- * Hand calculation (used by the kernel tests): volume
- * `80*50*6 + 80*8*40 + (4^2 - pi*4^2/4)*80 - pi*3^2*6 = 49 705.04 mm^3`,
- * bounding box `[0, 0, 0]..[80, 50, 46]`.
- *
- * The references below carry naming keys the kernel derives on its own
- * (`kernel/naming.ts`); their signatures are hand-computed and only serve
- * as a fallback.
- */
-export function createDemoDocument(): Feature[] {
-  const plateBody = bodyIdFor('feature-extrude-1');
-  const sketch1: SketchFeature = {
-    id: 'feature-sketch-1',
-    name: 'Sketch 1',
-    suppressed: false,
-    kind: 'sketch',
-    plane: { kind: 'plane', plane: 'XY', offset: 0 },
-    ...rectangleSketch(0, 0, 80, 50),
-  };
-  const extrude1: ExtrudeFeature = {
-    id: 'feature-extrude-1',
-    name: 'Extrude 1',
-    suppressed: false,
-    kind: 'extrude',
-    profile: { kind: 'sketch', featureId: sketch1.id },
-    distance: 6,
-    symmetric: false,
-    operation: 'new',
-    resultBodyName: 'Bracket',
-  };
-  const sketch2: SketchFeature = {
-    id: 'feature-sketch-2',
-    name: 'Sketch 2',
-    suppressed: false,
-    kind: 'sketch',
-    plane: { kind: 'plane', plane: 'XY', offset: 6 },
-    ...rectangleSketch(0, 42, 80, 8),
-  };
-  const extrude2: ExtrudeFeature = {
-    id: 'feature-extrude-2',
-    name: 'Extrude 2',
-    suppressed: false,
-    kind: 'extrude',
-    profile: { kind: 'sketch', featureId: sketch2.id },
-    distance: 40,
-    symmetric: false,
-    operation: 'join',
-    targetBodyId: plateBody,
-  };
-  const fillet1: FilletFeature = {
-    id: 'feature-fillet-3',
-    name: 'Fillet 1',
-    suppressed: false,
-    kind: 'fillet',
-    radius: 4,
-    edges: [
-      {
-        bodyId: plateBody,
-        // Plate top face | upright front face (rectangle segment 0 = -v side, y = 42).
-        key: 'feature-extrude-1:end:0|feature-extrude-2:side:0:l1',
-        signature: { curve: 'line', midpoint: [40, 42, 6], length: 80, direction: [1, 0, 0] },
-      },
-    ],
-  };
-  const sketch3: SketchFeature = {
-    id: 'feature-sketch-4',
-    name: 'Sketch 3',
-    suppressed: false,
-    kind: 'sketch',
-    plane: {
-      kind: 'face',
-      face: {
-        bodyId: plateBody,
-        key: 'feature-extrude-1:end:0',
-        signature: {
-          surface: 'plane',
-          normal: [0, 0, 1],
-          centroid: [40, 20, 6],
-          area: 3360,
-          adjacentFaces: 5,
-        },
-      },
-    },
-    ...addCircle(EMPTY_SKETCH, [40, 20], 3, { position: true, size: true }).sketch,
-  };
-  const extrude3: ExtrudeFeature = {
-    id: 'feature-extrude-5',
-    name: 'Extrude 3',
-    suppressed: false,
-    kind: 'extrude',
-    profile: { kind: 'sketch', featureId: sketch3.id },
-    distance: -8,
-    symmetric: false,
-    operation: 'cut',
-    targetBodyId: plateBody,
-  };
-  return [sketch1, extrude1, sketch2, extrude2, fillet1, sketch3, extrude3];
 }

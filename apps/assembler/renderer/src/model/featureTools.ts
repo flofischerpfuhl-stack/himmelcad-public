@@ -35,18 +35,14 @@ import {
   type Feature,
   type Plane,
   type Vec3,
-} from '../foundation/document/document.js';
-import {
-  MAX_PATTERN_COUNT,
   worldAxisVector,
   type AxisRef,
-  type OffsetFaceMode,
   type PathRef,
-  type PatternDefinition,
   type PlaneRef,
   type ProfileRef,
   type WorldAxis,
-} from './features.js';
+} from '../foundation/document/document.js';
+import { MAX_PATTERN_COUNT, type OffsetFaceMode, type PatternDefinition } from './features.js';
 import { constructionAxisLine, datumRef, planeRefPlane } from './construction.js';
 import {
   acceptConstructionPick,

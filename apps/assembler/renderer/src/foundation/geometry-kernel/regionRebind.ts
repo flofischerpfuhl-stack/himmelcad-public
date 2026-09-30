@@ -18,7 +18,8 @@
  * Every rebind is reported as a warning on the feature; anything else stays
  * a `Missing reference: profile …` error (never a silent guess).
  */
-import type { SketchFeature } from '../document/document.js';
+
+import type { SketchFeature } from '../sketch-solver/sketchFeature.js';
 import { regionSignature, sameRegionGeometry } from '../sketch-solver/regionMemory.js';
 import type { SketchRegion } from '../sketch-solver/regions.js';
 

@@ -1,10 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import {
-  createDemoDocument,
-  type SketchFeature,
-} from '../../renderer/src/foundation/document/document.js';
+import { createDemoDocument } from '../../renderer/src/foundation/commands/demoDocument.js';
+import type { SketchFeature } from '../../renderer/src/foundation/sketch-solver/sketchFeature.js';
 import { useAssemblerStore } from '../../renderer/src/foundation/commands/store.js';
 import { addRectangle } from '../../renderer/src/foundation/sketch-solver/builders.js';
 import { EMPTY_SKETCH } from '../../renderer/src/foundation/sketch-solver/types.js';

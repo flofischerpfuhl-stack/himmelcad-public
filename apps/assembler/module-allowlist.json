@@ -79,7 +79,9 @@
       "to": "print",
       "rule": "upward",
       "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
-      "edges": ["renderer/src/foundation/commands/registry.ts -> renderer/src/print/printCommands.ts"]
+      "edges": [
+        "renderer/src/foundation/commands/registry.ts -> renderer/src/print/printCommands.ts"
+      ]
     },
     {
       "from": "commands",
@@ -87,9 +89,9 @@
       "rule": "upward",
       "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
       "edges": [
-        "renderer/src/foundation/commands/registry.ts -> renderer/src/interface/shell-ui/workspaceCommands.ts",
         "renderer/src/foundation/commands/registry.ts -> renderer/src/interface/shell-ui/project/projectStore.ts",
         "renderer/src/foundation/commands/registry.ts -> renderer/src/interface/shell-ui/workspace.ts",
+        "renderer/src/foundation/commands/registry.ts -> renderer/src/interface/shell-ui/workspaceCommands.ts",
         "renderer/src/foundation/commands/shortcuts.ts -> renderer/src/interface/shell-ui/fixReference.ts",
         "renderer/src/foundation/commands/store.ts -> renderer/src/interface/shell-ui/workspace.ts"
       ]
@@ -102,16 +104,6 @@
       "edges": [
         "renderer/src/foundation/commands/registry.ts -> renderer/src/model/commands/sketchCommands.ts",
         "renderer/src/foundation/commands/registry.ts -> renderer/src/sketch/session.ts"
-      ]
-    },
-    {
-      "from": "construction",
-      "to": "modeling",
-      "rule": "cross-domain",
-      "reason": "Known at the start of the ADR 0032 restructure (phase A): domain modules talk through foundation contracts and registrations, not directly.",
-      "edges": [
-        "renderer/src/model/construction.ts -> renderer/src/model/features.ts",
-        "renderer/src/model/constructionTools.ts -> renderer/src/model/features.ts"
       ]
     },
     {
@@ -168,54 +160,12 @@
       ]
     },
     {
-      "from": "document",
-      "to": "modeling",
-      "rule": "upward",
-      "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
-      "edges": [
-        "renderer/src/foundation/document/document.ts -> renderer/src/model/features.ts",
-        "renderer/src/foundation/document/format.ts -> renderer/src/model/project/featureFormat.ts",
-        "renderer/src/foundation/document/format.ts -> renderer/src/model/project/printFeatureFormat.ts"
-      ]
-    },
-    {
-      "from": "document",
-      "to": "sketch-solver",
-      "rule": "layer-order",
-      "reason": "Known at the start of the ADR 0032 restructure (phase A): lower foundation/platform/interface modules must not depend on later ones.",
-      "edges": [
-        "renderer/src/foundation/document/document.ts -> renderer/src/foundation/sketch-solver/builders.ts",
-        "renderer/src/foundation/document/document.ts -> renderer/src/foundation/sketch-solver/types.ts",
-        "renderer/src/foundation/document/parameters.ts -> renderer/src/foundation/sketch-solver/expressions.ts",
-        "renderer/src/foundation/document/format.ts -> renderer/src/foundation/sketch-solver/migration.ts",
-        "renderer/src/foundation/document/format.ts -> renderer/src/foundation/sketch-solver/validation.ts"
-      ]
-    },
-    {
-      "from": "geometry-kernel",
-      "to": "construction",
-      "rule": "upward",
-      "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
-      "edges": [
-        "renderer/src/foundation/geometry-kernel/features/index.ts -> renderer/src/kernel/features/construction.ts"
-      ]
-    },
-    {
       "from": "geometry-kernel",
       "to": "modeling",
       "rule": "upward",
       "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
       "edges": [
-        "renderer/src/foundation/geometry-kernel/evaluator.ts -> renderer/src/model/features.ts",
-        "renderer/src/foundation/geometry-kernel/features/faceOps.ts -> renderer/src/model/features.ts",
-        "renderer/src/foundation/geometry-kernel/features/index.ts -> renderer/src/kernel/features/bodyOps.ts",
-        "renderer/src/foundation/geometry-kernel/features/index.ts -> renderer/src/kernel/features/draft.ts",
-        "renderer/src/foundation/geometry-kernel/features/index.ts -> renderer/src/kernel/features/emboss.ts",
-        "renderer/src/foundation/geometry-kernel/features/index.ts -> renderer/src/kernel/features/holes.ts",
-        "renderer/src/foundation/geometry-kernel/features/index.ts -> renderer/src/kernel/features/profileSolids.ts",
-        "renderer/src/foundation/geometry-kernel/features/index.ts -> renderer/src/kernel/features/ribThicken.ts",
-        "renderer/src/foundation/geometry-kernel/features/index.ts -> renderer/src/model/features.ts",
-        "renderer/src/foundation/geometry-kernel/features/refs.ts -> renderer/src/model/features.ts"
+        "renderer/src/foundation/geometry-kernel/features/faceOps.ts -> renderer/src/model/features.ts"
       ]
     },
     {

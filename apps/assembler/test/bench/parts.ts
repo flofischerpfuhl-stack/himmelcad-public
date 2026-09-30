@@ -5,7 +5,8 @@
  * Each part is a family of documents so edits and previews can use fresh
  * values (`v`) that no cache has seen before.
  */
-import { createDemoDocument } from '../../renderer/src/foundation/document/document.js';
+
+import { createDemoDocument } from '../../renderer/src/foundation/commands/demoDocument.js';
 import type {
   EdgeRef,
   ExtrudeFeature,
@@ -13,8 +14,8 @@ import type {
   Feature,
   FilletFeature,
   Plane,
-  SketchFeature,
 } from '../../renderer/src/foundation/document/document.js';
+import type { SketchFeature } from '../../renderer/src/foundation/sketch-solver/sketchFeature.js';
 import type { PatternFeature, RevolveFeature } from '../../renderer/src/model/features.js';
 import {
   addCircle,

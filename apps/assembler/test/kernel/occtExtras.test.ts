@@ -21,8 +21,8 @@ import type {
   FaceRef,
   Feature,
   Plane,
-  SketchFeature,
 } from '../../renderer/src/foundation/document/document.js';
+import type { SketchFeature } from '../../renderer/src/foundation/sketch-solver/sketchFeature.js';
 import type { DeleteFaceFeature, OffsetFaceFeature } from '../../renderer/src/model/features.js';
 import {
   addPolyline,

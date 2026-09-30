@@ -11,7 +11,8 @@ import test from 'node:test';
 
 import { loadProjectFile } from '../../renderer/src/foundation/document/format.js';
 import { currentProjectText } from '../../renderer/src/interface/shell-ui/project/projectStore.js';
-import type { SketchFeature } from '../../renderer/src/foundation/document/document.js';
+
+import type { SketchFeature } from '../../renderer/src/foundation/sketch-solver/sketchFeature.js';
 import { setSketchDimension } from '../../renderer/src/sketch/featureOps.js';
 import { projectTemplate } from '../../renderer/src/templates/projectTemplates.js';
 import { bodies, call, evidence, near, reset, store, type Json } from './harness.js';

@@ -12,9 +12,9 @@ import {
   MIN_FEATURE_SIZE_MM,
   type ExtrudeOperation,
   type Feature,
-  type SketchFeature,
   type Vec3,
 } from '../foundation/document/document.js';
+import type { SketchFeature } from '../foundation/sketch-solver/sketchFeature.js';
 import { detectRegions, loopPolygon } from '../foundation/sketch-solver/regions.js';
 import { isModelingFeature, sketchIdsUsedBy } from './features.js';
 import type { SelectionItem } from '../foundation/commands/store.js';

@@ -3,15 +3,13 @@
  * called by `format.ts` for kinds it does not know itself. Same strictness:
  * the first problem throws with a path-qualified message.
  */
-import type { EdgeRef, FaceRef, Feature } from '../../foundation/document/document.js';
+import type { Feature } from '../../foundation/document/document.js';
 import { MODELING_FEATURE_KINDS, OFFSET_FACE_MODES, type ModelingFeature } from '../features.js';
 import { isPrintFeatureKind, validatePrintFeature } from './printFeatureFormat.js';
+import { validatePlaneRef } from '../../foundation/document/validation.js';
+import type { FormatHelpers } from '../../foundation/document/featureKinds.js';
 
-export interface FormatHelpers {
-  fail: (path: string, message: string) => never;
-  faceRef: (v: unknown, path: string) => FaceRef;
-  edgeRef: (v: unknown, path: string) => EdgeRef;
-}
+export type { FormatHelpers };
 
 type Rec = Record<string, unknown>;
 
@@ -20,34 +18,7 @@ const isNumber = (v: unknown): v is number => typeof v === 'number' && Number.is
 const isString = (v: unknown): v is string => typeof v === 'string';
 const isVec3 = (v: unknown): boolean => Array.isArray(v) && v.length === 3 && v.every(isNumber);
 
-const isFrame = (v: unknown): boolean =>
-  isRecord(v) && isVec3(v.origin) && isVec3(v.u) && isVec3(v.v) && isVec3(v.normal);
-
-/**
- * A plane reference (sketch plane, mirror/split plane, draft neutral
- * plane): world plane with offset, planar face, or construction plane.
- */
-export function validatePlaneRef(v: unknown, p: string, h: FormatHelpers): void {
-  if (!isRecord(v)) h.fail(p, 'expected an object');
-  if (v.kind === 'plane') {
-    if (!['XY', 'XZ', 'YZ'].includes(v.plane as string))
-      h.fail(`${p}.plane`, 'expected XY, XZ or YZ');
-    if (!isNumber(v.offset)) h.fail(`${p}.offset`, 'expected a number');
-  } else if (v.kind === 'face') {
-    h.faceRef(v.face, `${p}.face`);
-  } else if (v.kind === 'construction') {
-    if (!isString(v.featureId)) h.fail(`${p}.featureId`, 'expected a string');
-    if (!isFrame(v.frame)) h.fail(`${p}.frame`, 'expected {origin, u, v, normal}');
-    if (v.shown !== undefined) {
-      const shown = v.shown;
-      if (!isRecord(shown) || !isVec3(shown.center) || !isNumber(shown.size)) {
-        h.fail(`${p}.shown`, 'expected {center, size}');
-      }
-    }
-  } else {
-    h.fail(`${p}.kind`, 'expected "plane", "face" or "construction"');
-  }
-}
+export { validatePlaneRef };
 
 /** `true` if `kind` is a modelling feature kind this module validates. */
 export function isModelingFeatureKind(kind: unknown): boolean {

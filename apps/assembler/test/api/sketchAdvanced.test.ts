@@ -12,7 +12,8 @@ import {
   AgentSession,
   HEADLESS_CAPABILITIES,
 } from '../../renderer/src/interface/agent-api/session.js';
-import type { SketchFeature } from '../../renderer/src/foundation/document/document.js';
+
+import type { SketchFeature } from '../../renderer/src/foundation/sketch-solver/sketchFeature.js';
 import { useAssemblerStore } from '../../renderer/src/foundation/commands/store.js';
 import { setSketchSolverFactory } from '../../renderer/src/foundation/sketch-solver/solverProvider.js';
 import { createNodeKernelAdapter } from '../kernel/nodeKernel.js';

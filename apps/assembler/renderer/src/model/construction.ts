@@ -20,7 +20,7 @@ import {
   type SketchFrame,
   type Vec3,
 } from '../foundation/document/document.js';
-import type { AxisRef, PlaneRef } from './features.js';
+import type { AxisRef, PlaneRef } from '../foundation/document/document.js';
 
 /**
  * A point in space: a fixed world point, the end of an edge nearest to
@@ -73,6 +73,13 @@ export interface ConstructionAxisFeature extends FeatureBase {
 }
 
 export type ConstructionFeature = ConstructionPlaneFeature | ConstructionAxisFeature;
+
+declare module '../foundation/document/featureKinds.js' {
+  interface FeatureKindMap {
+    constructionPlane: ConstructionPlaneFeature;
+    constructionAxis: ConstructionAxisFeature;
+  }
+}
 
 export const CONSTRUCTION_FEATURE_KINDS: readonly ConstructionFeature['kind'][] = [
   'constructionPlane',

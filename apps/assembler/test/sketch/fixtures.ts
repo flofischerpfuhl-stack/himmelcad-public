@@ -2,11 +2,8 @@
  * Test fixtures: sketch features built from simple rectangle/circle
  * profiles (the former v1 shapes), fully dimensioned like migrated files.
  */
-import type {
-  Plane,
-  SketchFeature,
-  SketchPlaneRef,
-} from '../../renderer/src/foundation/document/document.js';
+import type { Plane, SketchPlaneRef } from '../../renderer/src/foundation/document/document.js';
+import type { SketchFeature } from '../../renderer/src/foundation/sketch-solver/sketchFeature.js';
 import {
   legacyProfileContains,
   sketchFromLegacyProfiles,

@@ -10,29 +10,9 @@
  * or partially, because a CAD feature list is a single indivisible
  * document — there is no meaningful "read-only partial" B-rep history.
  */
-import {
-  type Feature,
-  type BooleanFeature,
-  type ChamferFeature,
-  type EdgeRef,
-  type ExtrudeFeature,
-  type FaceRef,
-  type FilletFeature,
-  type ImportStepFeature,
-  type MeshSolidFeature,
-  type MoveFeature,
-  type SetAppearanceFeature,
-  type ShellFeature,
-  type SketchFeature,
-} from './document.js';
-import { migrateSketchesV1ToV2 } from '../sketch-solver/migration.js';
-import { validateSketchData } from '../sketch-solver/validation.js';
-import {
-  isModelingFeatureKind,
-  validateModelingFeature,
-  validatePlaneRef,
-} from '../../model/project/featureFormat.js';
-import { validateBlendOptions } from '../../model/project/printFeatureFormat.js';
+import type { EdgeRef, FaceRef, Feature } from './document.js';
+import './coreKinds.js';
+import { featureKindDefinition, type FormatHelpers } from './featureKinds.js';
 import { isValidParameterName, type Parameter, type ParameterUnit } from './parameters.js';
 
 export const PROJECT_FORMAT_ID = 'himmelcad-assembler';
@@ -271,12 +251,6 @@ function validateReferenceMesh(v: unknown, index: number): ReferenceMeshRecordV1
   };
 }
 
-function validateOptionalExpression(r: Record<string, unknown>, field: string, path: string): void {
-  if (r[field] !== undefined && !isString(r[field])) {
-    fail(`${path}.${field}`, 'expected a string');
-  }
-}
-
 function validateParameter(v: unknown, index: number): Parameter {
   const path = `parameters[${index}]`;
   if (!isRecord(v)) fail(path, 'expected an object');
@@ -324,157 +298,28 @@ function validateBase(r: Record<string, unknown>, path: string): void {
   if (!isBoolean(r.suppressed)) fail(`${path}.suppressed`, 'expected a boolean');
 }
 
-/** Extent, second side and start offset of an extrude (all optional, additive). */
-function validateExtrudeExtent(r: Record<string, unknown>, path: string): void {
-  const extent = r.extent;
-  if (extent !== undefined) {
-    if (!isRecord(extent)) fail(`${path}.extent`, 'expected an object');
-    if (extent.kind === 'toObject') {
-      const target = extent.target;
-      if (!isRecord(target)) fail(`${path}.extent.target`, 'expected an object');
-      if (target.kind === 'face') validateFaceRef(target.face, `${path}.extent.target.face`);
-      else if (target.kind === 'body') {
-        if (!isString(target.bodyId)) fail(`${path}.extent.target.bodyId`, 'expected a string');
-      } else fail(`${path}.extent.target.kind`, 'expected "face" or "body"');
-    } else if (extent.kind !== 'distance' && extent.kind !== 'throughAll') {
-      fail(`${path}.extent.kind`, 'expected "distance", "throughAll" or "toObject"');
-    }
-  }
-  if (r.distance2 !== undefined && !(isNumber(r.distance2) && r.distance2 >= 0)) {
-    fail(`${path}.distance2`, 'expected a number ≥ 0');
-  }
-  if (r.startOffset !== undefined && !isNumber(r.startOffset)) {
-    fail(`${path}.startOffset`, 'expected a number');
-  }
-}
-
-const FORMAT_HELPERS = {
+const FORMAT_HELPERS: FormatHelpers = {
   fail,
   faceRef: validateFaceRef,
   edgeRef: validateEdgeRef,
 };
 
-/** Validates one feature and narrows it to {@link Feature}, or throws {@link ProjectFormatError}. */
+/**
+ * Validates one feature and narrows it to {@link Feature}, or throws
+ * {@link ProjectFormatError}. The kind's own fields are checked by the
+ * validator its module registered (`featureKinds.ts`).
+ */
 function validateFeature(v: unknown, index: number): Feature {
   const path = `features[${index}]`;
   if (!isRecord(v)) fail(path, 'expected an object');
   const r = v;
   validateBase(r, path);
-  switch (r.kind) {
-    case 'sketch': {
-      validatePlaneRef(r.plane, `${path}.plane`, FORMAT_HELPERS);
-      const sketchError = validateSketchData(r);
-      if (sketchError) fail(`${path}.${sketchError.path}`, sketchError.message);
-      return r as unknown as SketchFeature;
-    }
-    case 'extrude': {
-      const profile = r.profile;
-      if (!isRecord(profile)) fail(`${path}.profile`, 'expected an object');
-      if (profile.kind === 'sketch') {
-        if (!isString(profile.featureId)) fail(`${path}.profile.featureId`, 'expected a string');
-        if (
-          profile.regions !== undefined &&
-          (!Array.isArray(profile.regions) || !profile.regions.every(isString))
-        ) {
-          fail(`${path}.profile.regions`, 'expected an array of region keys');
-        }
-      } else if (profile.kind === 'face') {
-        validateFaceRef(profile.face, `${path}.profile.face`);
-      } else {
-        fail(`${path}.profile.kind`, 'expected "sketch" or "face"');
-      }
-      if (!isNumber(r.distance)) fail(`${path}.distance`, 'expected a number');
-      validateOptionalExpression(r, 'distanceExpression', path);
-      if (!isBoolean(r.symmetric)) fail(`${path}.symmetric`, 'expected a boolean');
-      if (!['new', 'join', 'cut', 'intersect'].includes(r.operation as string)) {
-        fail(`${path}.operation`, 'expected "new", "join", "cut" or "intersect"');
-      }
-      if (r.targetBodyId !== undefined && !isString(r.targetBodyId)) {
-        fail(`${path}.targetBodyId`, 'expected a string');
-      }
-      validateExtrudeExtent(r, path);
-      return r as unknown as ExtrudeFeature;
-    }
-    case 'fillet':
-    case 'chamfer': {
-      // Edges picked by rule (`rules`) allow an empty `edges` list.
-      const byRule = validateBlendOptions(r, path, FORMAT_HELPERS);
-      if (!Array.isArray(r.edges) || (r.edges.length === 0 && !byRule)) {
-        fail(`${path}.edges`, 'expected a non-empty array');
-      }
-      r.edges.forEach((e, i) => validateEdgeRef(e, `${path}.edges[${i}]`));
-      const sizeField = r.kind === 'fillet' ? 'radius' : 'distance';
-      if (!isNumber(r[sizeField])) fail(`${path}.${sizeField}`, 'expected a number');
-      validateOptionalExpression(r, `${sizeField}Expression`, path);
-      return r as unknown as FilletFeature | ChamferFeature;
-    }
-    case 'shell': {
-      if (!isString(r.bodyId)) fail(`${path}.bodyId`, 'expected a string');
-      if (!Array.isArray(r.faces) || r.faces.length === 0) {
-        fail(`${path}.faces`, 'expected a non-empty array');
-      }
-      r.faces.forEach((f, i) => validateFaceRef(f, `${path}.faces[${i}]`));
-      if (!isNumber(r.thickness)) fail(`${path}.thickness`, 'expected a number');
-      validateBlendOptions(r, path, FORMAT_HELPERS);
-      validateOptionalExpression(r, 'thicknessExpression', path);
-      return r as unknown as ShellFeature;
-    }
-    case 'boolean': {
-      if (!['union', 'subtract', 'intersect'].includes(r.operation as string)) {
-        fail(`${path}.operation`, 'expected "union", "subtract" or "intersect"');
-      }
-      if (!isString(r.targetBodyId)) fail(`${path}.targetBodyId`, 'expected a string');
-      if (!Array.isArray(r.toolBodyIds) || !r.toolBodyIds.every(isString)) {
-        fail(`${path}.toolBodyIds`, 'expected an array of strings');
-      }
-      validateBlendOptions(r, path, FORMAT_HELPERS);
-      return r as unknown as BooleanFeature;
-    }
-    case 'move': {
-      for (const field of ['dx', 'dy', 'dz']) {
-        if (!isNumber(r[field])) fail(`${path}.${field}`, 'expected a number');
-      }
-      if (!isString(r.bodyId)) fail(`${path}.bodyId`, 'expected a string');
-      return r as unknown as MoveFeature;
-    }
-    case 'setAppearance': {
-      if (!isString(r.bodyId)) fail(`${path}.bodyId`, 'expected a string');
-      if (!isString(r.color) || !/^#[0-9a-fA-F]{6}$/.test(r.color)) {
-        fail(`${path}.color`, 'expected a "#RRGGBB" string');
-      }
-      if (
-        r.material !== undefined &&
-        !['pla', 'petg', 'metal', 'resin'].includes(r.material as string)
-      ) {
-        fail(`${path}.material`, 'expected "pla", "petg", "metal" or "resin"');
-      }
-      return r as unknown as SetAppearanceFeature;
-    }
-    case 'importStep': {
-      if (!isString(r.data) || r.data === '') fail(`${path}.data`, 'expected a non-empty string');
-      if (!isString(r.fileName)) fail(`${path}.fileName`, 'expected a string');
-      if (r.structure !== undefined && r.structure !== 'assembly') {
-        fail(`${path}.structure`, 'expected "assembly"');
-      }
-      if (r.format !== undefined && r.format !== 'iges') {
-        fail(`${path}.format`, 'expected "iges"');
-      }
-      return r as unknown as ImportStepFeature;
-    }
-    case 'meshSolid': {
-      if (!isString(r.data) || r.data === '') fail(`${path}.data`, 'expected a non-empty string');
-      if (!isString(r.fileName)) fail(`${path}.fileName`, 'expected a string');
-      if (!isNumber(r.triangles) || r.triangles < 0) {
-        fail(`${path}.triangles`, 'expected a non-negative number');
-      }
-      return r as unknown as MeshSolidFeature;
-    }
-    default:
-      if (isModelingFeatureKind(r.kind)) {
-        return validateModelingFeature(r, path, FORMAT_HELPERS);
-      }
-      fail(`${path}.kind`, `unknown feature kind "${String(r.kind)}"`);
+  const definition = featureKindDefinition(String(r.kind));
+  if (!definition || typeof r.kind !== 'string') {
+    fail(`${path}.kind`, `unknown feature kind "${String(r.kind)}"`);
   }
+  definition.validate(r, path, FORMAT_HELPERS);
+  return r as unknown as Feature;
 }
 
 /**
@@ -566,16 +411,30 @@ function validateItems(v: unknown): ProjectItems {
 
 // ---- migration -----------------------------------------------------------------
 
-type Migration = (body: Record<string, unknown>) => Record<string, unknown>;
+/** One migration step of a raw body from schema version `n` to `n + 1`. */
+export type FormatMigration = (body: Record<string, unknown>) => Record<string, unknown>;
 
-/** One entry per schema version this app can read; `n` migrates a v`n` body to v`n+1`. */
-const MIGRATIONS: Record<number, Migration> = {
-  // v1 -> v2: rectangle/circle profiles become constrained sketches; extrude
-  // profile indices become region keys; index-based face keys are renamed.
-  1: (body) => ({ ...body, features: migrateSketchesV1ToV2(body.features) }),
-  // v2 -> v3: document parameters ("variables"); older files simply have none.
-  2: (body) => ({ ...body, parameters: body.parameters ?? [] }),
-};
+/**
+ * Migration steps by source version; `n` migrates a v`n` body to v`n+1`.
+ * The module that owns the data a step rewrites registers it
+ * ({@link registerFormatMigration}); steps of one version run in
+ * registration order. v1 → v2 (sketches) is registered by the sketch solver
+ * (`sketch-solver/sketchFeature.ts`).
+ */
+const MIGRATIONS = new Map<number, FormatMigration[]>();
+
+/** Registers a migration step from schema version `fromVersion` to `fromVersion + 1`. */
+export function registerFormatMigration(fromVersion: number, migrate: FormatMigration): void {
+  if (!Number.isInteger(fromVersion) || fromVersion < 1 || fromVersion >= CURRENT_SCHEMA_VERSION) {
+    throw new Error(`No schema version ${fromVersion} to migrate from`);
+  }
+  const steps = MIGRATIONS.get(fromVersion) ?? [];
+  if (!steps.includes(migrate)) steps.push(migrate);
+  MIGRATIONS.set(fromVersion, steps);
+}
+
+// v2 -> v3: document parameters ("variables"); older files simply have none.
+registerFormatMigration(2, (body) => ({ ...body, parameters: body.parameters ?? [] }));
 
 /**
  * Migrates a raw parsed body from `fromVersion` up to {@link CURRENT_SCHEMA_VERSION},
@@ -600,13 +459,13 @@ export function migrateAndValidate(
   }
   let current = body;
   for (let v = fromVersion; v < CURRENT_SCHEMA_VERSION; v += 1) {
-    const migrate = MIGRATIONS[v];
-    if (!migrate) {
+    const steps = MIGRATIONS.get(v);
+    if (!steps || steps.length === 0) {
       throw new ProjectFormatError(
         `Invalid project file: no migration registered from schema version ${v}.`,
       );
     }
-    current = migrate(current);
+    for (const migrate of steps) current = migrate(current);
   }
   return validateV1Body(current);
 }

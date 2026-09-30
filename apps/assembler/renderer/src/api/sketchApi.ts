@@ -11,7 +11,8 @@
  * changes.
  */
 import type { EvaluatedSketch } from '../foundation/geometry-kernel/types.js';
-import type { SketchFeature } from '../foundation/document/document.js';
+
+import type { SketchFeature } from '../foundation/sketch-solver/sketchFeature.js';
 import {
   addCircle,
   addPolyline,
@@ -19,7 +20,7 @@ import {
   withConstraints,
 } from '../foundation/sketch-solver/builders.js';
 import { deleteItems } from '../foundation/sketch-solver/edits.js';
-import { isPlainNumber } from '../foundation/sketch-solver/expressions.js';
+import { isPlainNumber } from '../foundation/document/expressions.js';
 import { adoptProjectedEntities } from '../foundation/sketch-solver/projection.js';
 import { detectRegions } from '../foundation/sketch-solver/regions.js';
 import { describeProblem } from '../sketch/session.js';

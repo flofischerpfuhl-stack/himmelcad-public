@@ -3,6 +3,7 @@
  * file — every `node --test` file runs in its own process). The module is
  * chosen by `HIMMELCAD_OCCT` (`headless/occtModule.ts`).
  */
+import '../../renderer/src/app/kernelModules.js';
 import { loadOcct, type OpenCascadeModule } from '../../headless/occtModule.js';
 import {
   createEvaluator,

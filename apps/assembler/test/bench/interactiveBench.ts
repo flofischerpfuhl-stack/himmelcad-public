@@ -37,7 +37,8 @@ import {
   searchCommands,
   findCommand,
 } from '../../renderer/src/foundation/commands/registry.js';
-import { createDemoDocument, frameUv } from '../../renderer/src/foundation/document/document.js';
+import { frameUv } from '../../renderer/src/foundation/document/document.js';
+import { createDemoDocument } from '../../renderer/src/foundation/commands/demoDocument.js';
 import { acceptPick, draftBadges } from '../../renderer/src/model/featureTools.js';
 import { useProjectStore } from '../../renderer/src/interface/shell-ui/project/projectStore.js';
 import { isPreviewTool, useAssemblerStore } from '../../renderer/src/foundation/commands/store.js';

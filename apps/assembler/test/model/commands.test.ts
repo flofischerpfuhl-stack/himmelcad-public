@@ -9,7 +9,8 @@ import {
   resolveAdaptive,
   searchCommands,
 } from '../../renderer/src/foundation/commands/registry.js';
-import { createDemoDocument } from '../../renderer/src/foundation/document/document.js';
+
+import { createDemoDocument } from '../../renderer/src/foundation/commands/demoDocument.js';
 import { useAssemblerStore } from '../../renderer/src/foundation/commands/store.js';
 import { createNodeKernelAdapter } from '../kernel/nodeKernel.js';
 

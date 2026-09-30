@@ -18,7 +18,8 @@ import { ExpressionField } from '../../interface/shell-ui/ExpressionField.js';
 import { sketchDimensionCandidates } from '../../interface/shell-ui/expressionSuggest.js';
 import { ExpressionSuggestInput } from '../../interface/shell-ui/ExpressionSuggestInput.js';
 import fieldStyles from '../../interface/shell-ui/ExpressionField.module.css';
-import type { SketchFeature } from '../../foundation/document/document.js';
+
+import type { SketchFeature } from '../../foundation/sketch-solver/sketchFeature.js';
 import { useAssemblerStore, type AssemblerState } from '../../foundation/commands/store.js';
 import { setSketchDimension } from '../featureOps.js';
 import { useSketchStore } from '../session.js';

@@ -32,8 +32,12 @@ import {
   type Feature,
   type Plane,
   type Vec3,
+  worldAxisVector,
+  type AxisRef,
+  type PlaneRef,
+  type WorldAxis,
 } from '../foundation/document/document.js';
-import { worldAxisVector, type AxisRef, type PlaneRef, type WorldAxis } from './features.js';
+
 import type { SelectionItem } from '../foundation/commands/store.js';
 
 export type PlaneMode = ConstructionPlaneDef['kind'];

@@ -16,11 +16,13 @@ import {
   type ExtrudeOperation,
   type FaceRef,
   type Feature,
-  type SketchFeature,
   type Vec3,
+  type PlaneRef,
+  type ProfileRef,
 } from '../foundation/document/document.js';
+import type { SketchFeature } from '../foundation/sketch-solver/sketchFeature.js';
 import { datumRef, planeRefFrame } from './construction.js';
-import type { PlaneRef, ProfileRef } from './features.js';
+
 import {
   HOLE_PRESET_LABEL,
   MAX_DRAFT_ANGLE,

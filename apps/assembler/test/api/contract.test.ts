@@ -28,10 +28,8 @@ import {
   unsupportedKeywords,
   validateSchema,
 } from '../../renderer/src/foundation/commands/api/validate.js';
-import {
-  createDemoDocument,
-  type Feature,
-} from '../../renderer/src/foundation/document/document.js';
+import { type Feature } from '../../renderer/src/foundation/document/document.js';
+import { createDemoDocument } from '../../renderer/src/foundation/commands/demoDocument.js';
 import { useAssemblerStore } from '../../renderer/src/foundation/commands/store.js';
 import { InProcessKernelAdapter } from '../../renderer/src/foundation/geometry-kernel/adapter.js';
 

@@ -11,11 +11,11 @@ import type { KernelAdapter } from '../../renderer/src/foundation/geometry-kerne
 import type { EvaluationRequest } from '../../renderer/src/foundation/geometry-kernel/types.js';
 import { findCommand, resolveAdaptive } from '../../renderer/src/foundation/commands/registry.js';
 import {
-  createDemoDocument,
   type ExtrudeFeature,
   type Feature,
-  type SketchFeature,
 } from '../../renderer/src/foundation/document/document.js';
+import { createDemoDocument } from '../../renderer/src/foundation/commands/demoDocument.js';
+import type { SketchFeature } from '../../renderer/src/foundation/sketch-solver/sketchFeature.js';
 import {
   PREVIEW_FEATURE_ID,
   useAssemblerStore,

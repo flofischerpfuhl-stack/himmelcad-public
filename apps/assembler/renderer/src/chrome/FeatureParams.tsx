@@ -10,8 +10,8 @@ import {
   PLANE_DEF_LABEL,
   type ConstructionFeature,
 } from '../model/construction.js';
-import type { ExtrudeOperation, Plane } from '../foundation/document/document.js';
-import type { AxisRef, ModelingFeature } from '../model/features.js';
+import type { ExtrudeOperation, Plane, AxisRef } from '../foundation/document/document.js';
+import type { ModelingFeature } from '../model/features.js';
 import { OFFSET_FACE_MODE_LABEL } from '../model/offsetFaceModes.js';
 import type { AssemblerState, FeaturePatch } from '../foundation/commands/store.js';
 import { ExpressionField } from '../interface/shell-ui/ExpressionField.js';

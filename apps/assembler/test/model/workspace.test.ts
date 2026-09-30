@@ -12,10 +12,8 @@ import {
   shortcutSections,
 } from '../../renderer/src/foundation/commands/shortcutSheet.js';
 import { resolveShortcut } from '../../renderer/src/foundation/commands/shortcuts.js';
-import {
-  createDemoDocument,
-  type Feature,
-} from '../../renderer/src/foundation/document/document.js';
+import { type Feature } from '../../renderer/src/foundation/document/document.js';
+import { createDemoDocument } from '../../renderer/src/foundation/commands/demoDocument.js';
 import {
   checkMove,
   directDependencies,

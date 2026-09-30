@@ -13,16 +13,16 @@ import {
   frameForFace,
   framePoint,
   MIN_FEATURE_SIZE_MM,
-  type SketchFeature,
   type SketchFrame,
   type Vec3,
+  extraBodyId,
 } from '../../foundation/document/document.js';
+import type { SketchFeature } from '../../foundation/sketch-solver/sketchFeature.js';
 import { addProjection, projectSource } from '../../foundation/sketch-solver/projection.js';
 import { EMPTY_SKETCH } from '../../foundation/sketch-solver/types.js';
 import { evaluateSketchGeometry } from '../../foundation/geometry-kernel/sketchGeometry.js';
 import { sampleEdge } from '../../foundation/geometry-kernel/sketchProjection.js';
 import {
-  extraBodyId,
   mirroredSketchId,
   MAX_PATTERN_COUNT,
   type AlignFeature,

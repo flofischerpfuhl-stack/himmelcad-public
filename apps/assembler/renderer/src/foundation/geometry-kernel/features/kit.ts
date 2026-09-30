@@ -14,7 +14,8 @@
  */
 import type * as R from 'replicad';
 
-import type { EdgeRef, FaceRef, SketchFeature } from '../../document/document.js';
+import type { EdgeRef, FaceRef } from '../../document/document.js';
+import type { SketchFeature } from '../../sketch-solver/sketchFeature.js';
 import type { SketchRegion } from '../../sketch-solver/regions.js';
 import type { FaceGeom, KeyedFace, KeyedFaceKeys } from '../naming.js';
 import type { HistorySource, RawShape, Topology } from '../occt.js';

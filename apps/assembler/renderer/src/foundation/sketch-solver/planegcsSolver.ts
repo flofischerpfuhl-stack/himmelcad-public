@@ -14,7 +14,7 @@
  */
 import type { GcsWrapper, ModuleStatic, SketchPrimitive } from '@salusoft89/planegcs';
 
-import { resolveDimensionValues } from './expressions.js';
+import { resolveDimensionValues } from './dimensionValues.js';
 import { measure } from './measure.js';
 import { splineTangentPoint } from './splineTangent.js';
 import type { SketchSolver, SolveRequest, SolveResult } from './solverTypes.js';

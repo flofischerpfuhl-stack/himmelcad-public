@@ -17,7 +17,8 @@ import {
   type EvaluationRequest,
   type EvaluationResult,
 } from '../../renderer/src/foundation/geometry-kernel/types.js';
-import type { Feature, SketchFeature } from '../../renderer/src/foundation/document/document.js';
+import type { Feature } from '../../renderer/src/foundation/document/document.js';
+import type { SketchFeature } from '../../renderer/src/foundation/sketch-solver/sketchFeature.js';
 import {
   setLongOperationDelay,
   useAssemblerStore,

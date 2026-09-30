@@ -17,7 +17,8 @@
  * when the estimated B-rep bytes exceed the budget. Checkpoints of the
  * document evaluated last are never evicted by that evaluation.
  */
-import type { SketchFeature } from '../document/document.js';
+
+import type { SketchFeature } from '../sketch-solver/sketchFeature.js';
 import type { SketchRegion } from '../sketch-solver/regions.js';
 import type { KeyedFace } from './naming.js';
 import type { Shape3D } from './occt.js';

@@ -10,11 +10,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { findCommand } from '../../renderer/src/foundation/commands/registry.js';
-import type {
-  ExtrudeFeature,
-  Feature,
-  SketchFeature,
-} from '../../renderer/src/foundation/document/document.js';
+import type { ExtrudeFeature, Feature } from '../../renderer/src/foundation/document/document.js';
+import type { SketchFeature } from '../../renderer/src/foundation/sketch-solver/sketchFeature.js';
 import type { EvaluationResult } from '../../renderer/src/foundation/geometry-kernel/types.js';
 import {
   acceptPick,

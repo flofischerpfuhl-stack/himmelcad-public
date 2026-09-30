@@ -8,13 +8,8 @@
 import './occtArena.js';
 import * as R from 'replicad';
 
-import {
-  framePoint,
-  frameUv,
-  type SketchFeature,
-  type SketchFrame,
-  type Vec3,
-} from '../document/document.js';
+import { framePoint, frameUv, type SketchFrame, type Vec3 } from '../document/document.js';
+import type { SketchFeature } from '../sketch-solver/sketchFeature.js';
 import {
   closestOnCurve,
   isClosedCurve,

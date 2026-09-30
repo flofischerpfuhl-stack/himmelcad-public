@@ -9,11 +9,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type {
-  Feature,
-  ShellFeature,
-  SketchFeature,
-} from '../../renderer/src/foundation/document/document.js';
+import type { Feature, ShellFeature } from '../../renderer/src/foundation/document/document.js';
+import type { SketchFeature } from '../../renderer/src/foundation/sketch-solver/sketchFeature.js';
 import {
   makeEdgeRef,
   makeFaceRef,

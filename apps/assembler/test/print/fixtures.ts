@@ -8,8 +8,8 @@ import type {
   ExtrudeFeature,
   Feature,
   Plane,
-  SketchFeature,
 } from '../../renderer/src/foundation/document/document.js';
+import type { SketchFeature } from '../../renderer/src/foundation/sketch-solver/sketchFeature.js';
 import { makeFaceRef } from '../../renderer/src/foundation/commands/store.js';
 import { addPolyline } from '../../renderer/src/foundation/sketch-solver/builders.js';
 import { detectRegions } from '../../renderer/src/foundation/sketch-solver/regions.js';

@@ -11,7 +11,8 @@
  * trailing unit) — reused directly, not reimplemented, so the two layers of
  * expressions can never drift apart.
  */
-import { isPlainNumber, parseDimensionExpression } from '../sketch-solver/expressions.js';
+import { isPlainNumber, parseDimensionExpression } from './expressions.js';
+import { expressionFieldsOf, isSignedExpressionField } from './featureKinds.js';
 
 /** A parameter's display/storage unit. Purely a label: values are always stored resolved in millimetres/degrees. */
 export type ParameterUnit = 'mm' | 'deg' | '';
@@ -174,29 +175,13 @@ export function findParameterDependents(
 }
 
 /**
- * A feature's numeric fields that accept a formula, by kind: the plain field
- * holds the last resolved value (what the kernel reads), `<field>Expression`
- * the formula. All are positive lengths except the signed ones in
- * {@link SIGNED_EXPRESSION_FIELDS}.
+ * A feature's numeric fields that accept a formula come from the kind's
+ * registration (`featureKinds.ts` `expressionFields`): the plain field holds
+ * the last resolved value (what the kernel reads), `<field>Expression` the
+ * formula. All are positive lengths except the kind's
+ * `signedExpressionFields` (a draft angle).
  */
-export const FEATURE_EXPRESSION_FIELDS: Record<string, readonly string[]> = {
-  extrude: ['distance'],
-  fillet: ['radius', 'radius2'],
-  chamfer: ['distance', 'distance2'],
-  shell: ['thickness'],
-  hole: ['diameter'],
-  draft: ['angle'],
-  rib: ['thickness'],
-  thicken: ['thickness'],
-};
-
-/** `kind.field` of expression fields that may be negative (a draft angle). */
-export const SIGNED_EXPRESSION_FIELDS: ReadonlySet<string> = new Set(['draft.angle']);
-
-/** The expression fields of `kind` (empty for kinds without any). */
-export function expressionFieldsOf(kind: string): readonly string[] {
-  return FEATURE_EXPRESSION_FIELDS[kind] ?? [];
-}
+export { expressionFieldsOf };
 
 /** Resolves `kind.field`'s formula with that field's sign rule. */
 export function resolveFieldExpression(
@@ -206,7 +191,7 @@ export function resolveFieldExpression(
   paramValues: ReadonlyMap<string, number>,
 ): FeatureExpressionResult {
   return resolveFeatureExpression(expression, paramValues, {
-    signed: SIGNED_EXPRESSION_FIELDS.has(`${kind}.${field}`),
+    signed: isSignedExpressionField(kind, field),
   });
 }
 

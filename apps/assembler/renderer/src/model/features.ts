@@ -9,15 +9,17 @@
  * new sketch representation only has to keep that reference resolvable.
  */
 import type {
-  EdgeRef,
+  AxisRef,
   ExtrudeOperation,
-  ExtrudeProfileRef,
   FaceRef,
   Feature,
   FeatureBase,
   Millimeters,
-  SketchPlaneRef,
+  PathRef,
+  PlaneRef,
+  ProfileRef,
   Vec3,
+  WorldAxis,
 } from '../foundation/document/document.js';
 import {
   CONSTRUCTION_FEATURE_KINDS,
@@ -31,35 +33,10 @@ import {
   type PrintFeature,
 } from './printFeatures.js';
 
-/** A closed profile: a sketch profile or a planar body face (the extrude profile reference). */
-export type ProfileRef = ExtrudeProfileRef;
-
-export type WorldAxis = 'X' | 'Y' | 'Z';
-
-/**
- * A straight axis: a world axis (through `origin`, default the world
- * origin), a straight body edge (or the axis of a circular edge), or a
- * sketch line by entity id (construction lines included, e.g. a dedicated
- * centre line), read from the sketch's last solved state.
- */
-export type AxisRef =
-  | { kind: 'world'; axis: WorldAxis; origin?: Vec3 }
-  | { kind: 'edge'; edge: EdgeRef }
-  | { kind: 'sketchLine'; featureId: string; entityId: string }
-  /** A construction axis (`construction.ts`) by feature id; `line` is its last evaluated line (signature). */
-  | { kind: 'construction'; featureId: string; line: { point: Vec3; dir: Vec3 } };
-
-/**
- * Sweep path: a chain of body edges, the closed outer outline of a sketch
- * region (by region key, see `sketch/regions.ts`), or a straight world line.
- */
-export type PathRef =
-  | { kind: 'edges'; edges: EdgeRef[] }
-  | { kind: 'sketch'; featureId: string; region: string }
-  | { kind: 'line'; start: Vec3; end: Vec3 };
-
-/** A plane: a construction plane with offset, or a planar body face. */
-export type PlaneRef = SketchPlaneRef;
+// The shared reference types moved to the document (`foundation/document/document.ts`),
+// where the kernel reads them; re-exported for the modelling code.
+export type { AxisRef, PathRef, PlaneRef, ProfileRef, WorldAxis };
+export { extraBodyId, worldAxisVector } from '../foundation/document/document.js';
 
 /** Revolves a profile about an axis; New/Join/Cut like Extrude. */
 export interface RevolveFeature extends FeatureBase {
@@ -254,6 +231,22 @@ export type ModelingFeature =
   // Construction planes and axes (`construction.ts`).
   | ConstructionFeature;
 
+declare module '../foundation/document/featureKinds.js' {
+  interface FeatureKindMap {
+    revolve: RevolveFeature;
+    sweep: SweepFeature;
+    loft: LoftFeature;
+    mirror: MirrorFeature;
+    pattern: PatternFeature;
+    split: SplitFeature;
+    transform: TransformFeature;
+    rotateAxis: RotateAxisFeature;
+    align: AlignFeature;
+    offsetFace: OffsetFaceFeature;
+    deleteFace: DeleteFaceFeature;
+  }
+}
+
 export const MODELING_FEATURE_KINDS: readonly ModelingFeature['kind'][] = [
   'revolve',
   'sweep',
@@ -294,11 +287,6 @@ export const MODELING_FEATURE_LABEL: Record<ModelingFeature['kind'], string> = {
 /** Largest pattern instance count (bounds evaluation cost). */
 export const MAX_PATTERN_COUNT = 200;
 
-/** Body id of the `index`-th body a feature creates besides `bodyIdFor(featureId)` (copies, split parts). */
-export function extraBodyId(featureId: string, index: number): string {
-  return `body:${featureId}:${index}`;
-}
-
 /** Sketch feature ids a feature reads profiles from (hidden by default once used, like Shapr3D). */
 export function sketchIdsUsedBy(feature: ModelingFeature): string[] {
   const out: string[] = [];
@@ -327,9 +315,4 @@ export function sketchIdsUsedBy(feature: ModelingFeature): string[] {
       break;
   }
   return out;
-}
-
-/** Unit vector of a world axis. */
-export function worldAxisVector(axis: WorldAxis): Vec3 {
-  return axis === 'X' ? [1, 0, 0] : axis === 'Y' ? [0, 1, 0] : [0, 0, 1];
 }

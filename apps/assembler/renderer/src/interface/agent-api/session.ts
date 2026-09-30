@@ -31,7 +31,8 @@ import {
 import { stlAsciiForMeshes, stlBytes } from '../../kernel/stlExport.js';
 import { buildThreeMf } from '../../kernel/threeMf.js';
 import type { Body, EvaluationResult } from '../../foundation/geometry-kernel/types.js';
-import type { Feature, SketchFeature } from '../../foundation/document/document.js';
+import type { Feature } from '../../foundation/document/document.js';
+import type { SketchFeature } from '../../foundation/sketch-solver/sketchFeature.js';
 import { parseMirroredSketchId, type TransformFeature } from '../../model/features.js';
 import { referenceMeshIdOf } from '../../model/referenceMesh.js';
 import {

@@ -15,8 +15,9 @@ import type {
   FaceRef,
   FeatureBase,
   Millimeters,
+  PlaneRef,
+  ProfileRef,
 } from '../foundation/document/document.js';
-import type { PlaneRef, ProfileRef } from './features.js';
 
 // ---- Hole ---------------------------------------------------------------------------
 
@@ -308,6 +309,16 @@ export interface ThickenFeature extends FeatureBase {
 }
 
 export type PrintFeature = HoleFeature | EmbossFeature | DraftFeature | RibFeature | ThickenFeature;
+
+declare module '../foundation/document/featureKinds.js' {
+  interface FeatureKindMap {
+    hole: HoleFeature;
+    emboss: EmbossFeature;
+    draft: DraftFeature;
+    rib: RibFeature;
+    thicken: ThickenFeature;
+  }
+}
 
 export const PRINT_FEATURE_KINDS: readonly PrintFeature['kind'][] = [
   'hole',

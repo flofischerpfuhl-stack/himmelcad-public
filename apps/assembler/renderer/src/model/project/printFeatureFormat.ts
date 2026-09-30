@@ -1,7 +1,7 @@
 /**
- * `.hcasm` validation of the print features (`model/printFeatures.ts`) and
- * of the optional Fillet/Chamfer/Shell/Boolean fields
- * (`model/blendOptions.ts`). Same strictness as `format.ts`: the first
+ * `.hcasm` validation of the print features (`model/printFeatures.ts`); the
+ * optional Fillet/Chamfer/Shell/Boolean fields are core-kind fields
+ * (`foundation/document/coreKinds.ts`). Same strictness as `format.ts`: the first
  * problem throws with a path-qualified message.
  */
 import type { Feature } from '../../foundation/document/document.js';
@@ -165,59 +165,4 @@ export function validatePrintFeature(r: Rec, path: string, h: FormatHelpers): Fe
       h.fail(`${path}.kind`, `unknown feature kind "${String(r.kind)}"`);
   }
   return r as unknown as Feature;
-}
-
-/**
- * The optional variant fields of fillet, chamfer, shell and boolean
- * features. Returns `true` when `edges` may be empty (edges chosen by rule).
- */
-export function validateBlendOptions(r: Rec, path: string, h: FormatHelpers): boolean {
-  const c = checkers(r, path, h);
-  switch (r.kind) {
-    case 'fillet':
-    case 'chamfer': {
-      if (r.kind === 'fillet') {
-        c.optionalNum('radius2');
-        c.optionalStr('radius2Expression');
-      }
-      if (r.kind === 'chamfer') {
-        if (r.mode !== undefined) c.oneOf('mode', ['equal', 'twoDistances', 'distanceAngle']);
-        c.optionalNum('distance2');
-        c.optionalStr('distance2Expression');
-        c.optionalNum('angle');
-        c.optionalBool('flip');
-      }
-      if (r.rules === undefined) return false;
-      if (!Array.isArray(r.rules)) h.fail(`${path}.rules`, 'expected an array');
-      r.rules.forEach((rule, i) => {
-        const at = `${path}.rules[${i}]`;
-        if (!isRecord(rule)) h.fail(at, 'expected an object');
-        if (rule.kind === 'faceEdges') h.faceRef(rule.face, `${at}.face`);
-        else if (rule.kind === 'concave' || rule.kind === 'convex') {
-          if (!isString(rule.bodyId)) h.fail(`${at}.bodyId`, 'expected a string');
-        } else h.fail(`${at}.kind`, 'expected "faceEdges", "concave" or "convex"');
-      });
-      return r.rules.length > 0;
-    }
-    case 'shell': {
-      if (r.direction !== undefined) c.oneOf('direction', ['inside', 'outside']);
-      c.optionalNum('clearance');
-      if (r.faceThickness !== undefined) {
-        if (!Array.isArray(r.faceThickness)) h.fail(`${path}.faceThickness`, 'expected an array');
-        r.faceThickness.forEach((entry, i) => {
-          const at = `${path}.faceThickness[${i}]`;
-          if (!isRecord(entry)) h.fail(at, 'expected an object');
-          h.faceRef(entry.face, `${at}.face`);
-          if (!isNumber(entry.thickness)) h.fail(`${at}.thickness`, 'expected a number');
-        });
-      }
-      return false;
-    }
-    case 'boolean':
-      c.optionalBool('keepTools');
-      c.optionalBool('keepTarget');
-      return false;
-    default:
-      return false;
-  }
 }

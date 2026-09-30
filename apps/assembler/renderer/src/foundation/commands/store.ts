@@ -56,7 +56,6 @@ import {
   type ShellDirection,
 } from '../document/blendOptions.js';
 import {
-  createDemoDocument,
   frameForPlane,
   isBooleanResult,
   MIN_FEATURE_SIZE_MM,
@@ -74,11 +73,13 @@ import {
   type MoveFeature,
   type Plane,
   type ShellFeature,
-  type SketchFeature,
   type SketchFrame,
   type Vec3,
 } from '../document/document.js';
-import { MODELING_FEATURE_LABEL, type TransformFeature } from '../../model/features.js';
+import { createDemoDocument } from './demoDocument.js';
+import type { SketchFeature } from '../sketch-solver/sketchFeature.js';
+import type { TransformFeature } from '../../model/features.js';
+import { featureKindLabel } from '../document/featureKinds.js';
 import { draftToFeature, type FeatureDraft } from '../../model/featureTools.js';
 import { readyToFinish, startSession, type PickSessionState } from './pickSession.js';
 import { gizmoTransformFields } from '../../model/moveGizmo.js';
@@ -2113,7 +2114,7 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
         const kind = tool.draft.kind;
         const feature = draftToFeature(tool.draft, {
           id: createFeatureId(kind),
-          name: nextFeatureName(MODELING_FEATURE_LABEL[kind], state.features),
+          name: nextFeatureName(featureKindLabel(kind), state.features),
         });
         if (!feature) return; // references still missing: the tool stays open
         commitChecked(feature, [{ kind: 'feature', featureId: feature.id }]);
@@ -2136,7 +2137,7 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
       if (tool.copy || rotation.rx !== 0 || rotation.ry !== 0 || rotation.rz !== 0) {
         const transform: TransformFeature = {
           id: createFeatureId('transform'),
-          name: nextFeatureName(MODELING_FEATURE_LABEL.transform, state.features),
+          name: nextFeatureName(featureKindLabel('transform'), state.features),
           suppressed: false,
           kind: 'transform',
           bodyId: tool.bodyId,

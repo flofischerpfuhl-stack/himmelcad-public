@@ -19,11 +19,11 @@ import { findCommand } from '../../renderer/src/foundation/commands/registry.js'
 import { datumRef, type ConstructionPlaneFeature } from '../../renderer/src/model/construction.js';
 import { createConstructionDraft } from '../../renderer/src/model/constructionTools.js';
 import {
-  createDemoDocument,
   type ExtrudeFeature,
   type Feature,
-  type SketchFeature,
 } from '../../renderer/src/foundation/document/document.js';
+import { createDemoDocument } from '../../renderer/src/foundation/commands/demoDocument.js';
+import type { SketchFeature } from '../../renderer/src/foundation/sketch-solver/sketchFeature.js';
 import { createDraft, draftMeta, draftToFeature } from '../../renderer/src/model/featureTools.js';
 import {
   applyFixPick,

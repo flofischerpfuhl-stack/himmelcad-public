@@ -1,10 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import {
-  createDemoDocument,
-  type SetAppearanceFeature,
-} from '../../renderer/src/foundation/document/document.js';
+import { type SetAppearanceFeature } from '../../renderer/src/foundation/document/document.js';
+import { createDemoDocument } from '../../renderer/src/foundation/commands/demoDocument.js';
 import { applyBodyColour, applyBodyMaterial } from '../../renderer/src/model/appearance.js';
 import { moveFeature } from '../../renderer/src/interface/shell-ui/historyTools.js';
 import { usePrintStore } from '../../renderer/src/print/printStore.js';
