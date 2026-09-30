@@ -28,14 +28,18 @@ import { migrateSketchesV1ToV2 } from '../../sketch/migration.js';
 import { validateSketchData } from '../../sketch/validation.js';
 import { isModelingFeatureKind, validateModelingFeature } from './featureFormat.js';
 import { validateBlendOptions } from './printFeatureFormat.js';
+import { isValidParameterName, type Parameter, type ParameterUnit } from '../parameters.js';
 
 export const PROJECT_FORMAT_ID = 'himmelcad-assembler';
 /**
  * Schema history: 1 = rectangle/circle sketch profiles; 2 = constrained
  * sketches (entities, constraints, dimensions) and region-keyed extrude
- * profiles (`sketch/migration.ts` migrates 1 → 2).
+ * profiles (`sketch/migration.ts` migrates 1 → 2); 3 = document parameters
+ * (`parameters`, `model/parameters.ts`) and `*Expression` fields on
+ * extrude/fillet/chamfer/shell (`v2 -> v3` adds an empty `parameters` array;
+ * existing features already lack the optional expression fields).
  */
-export const CURRENT_SCHEMA_VERSION = 2;
+export const CURRENT_SCHEMA_VERSION = 3;
 
 /** View-only state worth restoring on Open; never affects geometry or undo history. */
 export interface ProjectViewState {
@@ -71,6 +75,7 @@ export interface ProjectViewState {
   panels?: {
     items?: boolean;
     history?: boolean;
+    parameters?: boolean;
   };
   /** Saved camera views (up to 8, `model/workspace.ts` `SavedView`); malformed entries are dropped on load. */
   savedViews?: unknown[];
@@ -115,6 +120,8 @@ export interface ProjectFileV1 {
   units: 'mm';
   projectName: string;
   features: Feature[];
+  /** Document parameters ("variables"), schema v3+. Always present once loaded (defaults to `[]`). */
+  parameters: Parameter[];
   referenceMeshes?: ReferenceMeshRecordV1[];
   viewState?: ProjectViewState;
   items?: ProjectItems;
@@ -228,6 +235,53 @@ function validateReferenceMesh(v: unknown, index: number): ReferenceMeshRecordV1
   };
 }
 
+function validateOptionalExpression(r: Record<string, unknown>, field: string, path: string): void {
+  if (r[field] !== undefined && !isString(r[field])) {
+    fail(`${path}.${field}`, 'expected a string');
+  }
+}
+
+function validateParameter(v: unknown, index: number): Parameter {
+  const path = `parameters[${index}]`;
+  if (!isRecord(v)) fail(path, 'expected an object');
+  const r = v;
+  if (!isString(r.id) || r.id === '') fail(`${path}.id`, 'expected a non-empty string');
+  if (!isString(r.name) || !isValidParameterName(r.name)) {
+    fail(
+      `${path}.name`,
+      'expected an identifier (letters, digits, underscore, not starting with a digit)',
+    );
+  }
+  if (!['mm', 'deg', ''].includes(r.unit as string)) {
+    fail(`${path}.unit`, 'expected "mm", "deg" or ""');
+  }
+  if (!isNumber(r.value)) fail(`${path}.value`, 'expected a number');
+  if (r.expression !== undefined && !isString(r.expression)) {
+    fail(`${path}.expression`, 'expected a string');
+  }
+  return {
+    id: r.id,
+    name: r.name,
+    unit: r.unit as ParameterUnit,
+    value: r.value,
+    ...(r.expression !== undefined ? { expression: r.expression as string } : {}),
+  };
+}
+
+function validateParameters(v: unknown): Parameter[] {
+  if (!Array.isArray(v)) fail('parameters', 'expected an array');
+  const parameters = v.map((p, i) => validateParameter(p, i));
+  const ids = new Set<string>();
+  const names = new Set<string>();
+  for (const p of parameters) {
+    if (ids.has(p.id)) fail('parameters', `duplicate parameter id "${p.id}"`);
+    ids.add(p.id);
+    if (names.has(p.name)) fail('parameters', `duplicate parameter name "${p.name}"`);
+    names.add(p.name);
+  }
+  return parameters;
+}
+
 function validateBase(r: Record<string, unknown>, path: string): void {
   if (!isString(r.id) || r.id === '') fail(`${path}.id`, 'expected a non-empty string');
   if (!isString(r.name)) fail(`${path}.name`, 'expected a string');
@@ -281,6 +335,7 @@ function validateFeature(v: unknown, index: number): Feature {
         fail(`${path}.profile.kind`, 'expected "sketch" or "face"');
       }
       if (!isNumber(r.distance)) fail(`${path}.distance`, 'expected a number');
+      validateOptionalExpression(r, 'distanceExpression', path);
       if (!isBoolean(r.symmetric)) fail(`${path}.symmetric`, 'expected a boolean');
       if (!['new', 'join', 'cut'].includes(r.operation as string)) {
         fail(`${path}.operation`, 'expected "new", "join" or "cut"');
@@ -300,6 +355,7 @@ function validateFeature(v: unknown, index: number): Feature {
       r.edges.forEach((e, i) => validateEdgeRef(e, `${path}.edges[${i}]`));
       const sizeField = r.kind === 'fillet' ? 'radius' : 'distance';
       if (!isNumber(r[sizeField])) fail(`${path}.${sizeField}`, 'expected a number');
+      validateOptionalExpression(r, `${sizeField}Expression`, path);
       return r as unknown as FilletFeature | ChamferFeature;
     }
     case 'shell': {
@@ -310,6 +366,7 @@ function validateFeature(v: unknown, index: number): Feature {
       r.faces.forEach((f, i) => validateFaceRef(f, `${path}.faces[${i}]`));
       if (!isNumber(r.thickness)) fail(`${path}.thickness`, 'expected a number');
       validateBlendOptions(r, path, FORMAT_HELPERS);
+      validateOptionalExpression(r, 'thicknessExpression', path);
       return r as unknown as ShellFeature;
     }
     case 'boolean': {
@@ -375,6 +432,7 @@ function validateV1Body(raw: Record<string, unknown>): ProjectFileV1 {
     if (ids.has(f.id)) fail('features', `duplicate feature id "${f.id}"`);
     ids.add(f.id);
   }
+  const parameters = validateParameters(raw.parameters ?? []);
   if (!isString(raw.createdAt) || Number.isNaN(Date.parse(raw.createdAt))) {
     fail('createdAt', 'expected an ISO 8601 date string');
   }
@@ -402,6 +460,7 @@ function validateV1Body(raw: Record<string, unknown>): ProjectFileV1 {
     units: 'mm',
     projectName: raw.projectName,
     features,
+    parameters,
     ...(referenceMeshes !== undefined ? { referenceMeshes } : {}),
     ...(raw.viewState !== undefined ? { viewState: raw.viewState as ProjectViewState } : {}),
     ...(items ? { items } : {}),
@@ -449,6 +508,8 @@ const MIGRATIONS: Record<number, Migration> = {
   // v1 -> v2: rectangle/circle profiles become constrained sketches; extrude
   // profile indices become region keys; index-based face keys are renamed.
   1: (body) => ({ ...body, features: migrateSketchesV1ToV2(body.features) }),
+  // v2 -> v3: document parameters ("variables"); older files simply have none.
+  2: (body) => ({ ...body, parameters: body.parameters ?? [] }),
 };
 
 /**
@@ -517,6 +578,7 @@ export function saveProjectFile(input: {
   projectName: string;
   features: Feature[];
   appVersion: string;
+  parameters?: Parameter[];
   referenceMeshes?: ReferenceMeshRecordV1[];
   viewState?: ProjectViewState;
   items?: ProjectItems;
@@ -530,6 +592,7 @@ export function saveProjectFile(input: {
     units: 'mm',
     projectName: input.projectName,
     features: input.features,
+    parameters: input.parameters ?? [],
     ...(input.referenceMeshes && input.referenceMeshes.length > 0
       ? { referenceMeshes: input.referenceMeshes }
       : {}),

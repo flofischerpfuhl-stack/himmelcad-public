@@ -4,7 +4,7 @@
  * grid-step readout and the Display popover (modes, edge/grid/axes toggles,
  * `DisplayMenu.tsx`); below it, the History panel toggle.
  */
-import { History as HistoryIcon, Magnet } from 'lucide-react';
+import { History as HistoryIcon, Magnet, Variable } from 'lucide-react';
 
 import { Select, Tooltip } from '@himmelcad/ui';
 
@@ -42,6 +42,18 @@ export function RightDock({ state }: { state: AssemblerState }): JSX.Element {
         <span className={styles.label}>Display</span>
         <DisplayMenu state={state} />
       </div>
+      <Tooltip content="Parameters (Ctrl+Alt+P)">
+        <button
+          type="button"
+          className={`${styles.historyToggle} ${state.panels.parameters ? styles.historyToggleActive : ''}`}
+          aria-label="Toggle parameters panel"
+          aria-pressed={state.panels.parameters}
+          onClick={() => state.togglePanel('parameters')}
+        >
+          <Variable size={14} />
+          Parameters
+        </button>
+      </Tooltip>
       <Tooltip content="History (Ctrl+Alt+H)">
         <button
           type="button"

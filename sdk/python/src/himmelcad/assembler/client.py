@@ -21,6 +21,7 @@ METHODS = (
     "api.hello", "api.describe",
     "document.get", "features.list", "feature.get", "bodies.list", "body.get",
     "faces.list", "edges.list", "sketches.list", "selection.get", "selection.set",
+    "parameters.list", "parameter.create", "parameter.edit", "parameter.delete",
     "feature.create", "feature.edit", "feature.delete", "feature.suppress", "feature.rename",
     "sketch.addProfile", "sketch.addPolyline", "sketch.addArc", "sketch.addConstraint",
     "sketch.addDimension", "sketch.setDimension", "sketch.deleteItems",
@@ -112,7 +113,20 @@ class AssemblerClient:
     def set_selection(self, items: list[Mapping[str, Any]]) -> Mapping[str, Any]:
         return self.call("selection.set", {"items": items})
 
+    def parameters(self) -> list[Mapping[str, Any]]:
+        """Document parameters ("variables", `model/parameters.ts`), in creation order."""
+        return self.call("parameters.list")
+
     # ---- commands ------------------------------------------------------------------------
+
+    def create_parameter(self, name: str, *, unit: str | None = None, value: float | None = None, expression: str | None = None, expected_revision: int | None = None) -> Mapping[str, Any]:
+        return self.call("parameter.create", {"name": name, "unit": unit, "value": value, "expression": expression, "expectedRevision": expected_revision})
+
+    def edit_parameter(self, parameter_id: str, *, name: str | None = None, unit: str | None = None, value: float | None = None, expression: str | None = None, expected_revision: int | None = None) -> Mapping[str, Any]:
+        return self.call("parameter.edit", {"parameterId": parameter_id, "name": name, "unit": unit, "value": value, "expression": expression, "expectedRevision": expected_revision})
+
+    def delete_parameter(self, parameter_id: str) -> Mapping[str, Any]:
+        return self.call("parameter.delete", {"parameterId": parameter_id})
     def create_feature(self, kind: str, params: Mapping[str, Any], *, name: str | None = None, expected_revision: int | None = None) -> Mapping[str, Any]:
         return self.call("feature.create", {"kind": kind, "params": dict(params), "name": name, "expectedRevision": expected_revision})
 

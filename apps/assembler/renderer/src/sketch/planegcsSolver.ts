@@ -734,7 +734,10 @@ export function createPlanegcsSolver(
         { conflicting: [usesDriven.id] },
       );
     }
-    const values = resolveDimensionValues(input.dimensions.filter((d) => !d.driven));
+    const values = resolveDimensionValues(
+      input.dimensions.filter((d) => !d.driven),
+      request.paramValues ? new Map(request.paramValues) : undefined,
+    );
     if (!values.ok) return fail('invalid', values.message, { conflicting: [values.dimensionId] });
 
     let prims: Primitive[];

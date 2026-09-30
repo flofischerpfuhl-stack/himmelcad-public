@@ -648,7 +648,33 @@
       },
       "required": ["id", "name", "kind", "refs", "value"],
       "additionalProperties": false,
-      "description": "Driving dimension (mm, angle in degrees); `driven: true` makes it a reference dimension that only measures (sketch.setReference). `offset`/`along` place the label. refs: distance 1 line / 2 points / point + line / 2 parallel lines; horizontal/verticalDistance 1 line or 2 points; radius/diameter 1 circle/arc; angle 2 lines. `expression` (e.g. \"d1 / 2 + 3\") uses names of other dimensions of the sketch."
+      "description": "Driving dimension (mm, angle in degrees); `driven: true` makes it a reference dimension that only measures (sketch.setReference). `offset`/`along` place the label. refs: distance 1 line / 2 points / point + line / 2 parallel lines; horizontal/verticalDistance 1 line or 2 points; radius/diameter 1 circle/arc; angle 2 lines. `expression` (e.g. \"d1 / 2 + 3\") uses names of other driving dimensions of the sketch, or of a document parameter (`parameter.list`); editing a parameter re-solves every sketch that uses it."
+    },
+    "Parameter": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+        },
+        "unit": {
+          "enum": ["mm", "deg", ""]
+        },
+        "value": {
+          "type": "number"
+        },
+        "expression": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": ["id", "name", "unit", "value"],
+      "additionalProperties": false,
+      "description": "Document parameter (\"variable\"): `value` is always the last resolved value; `expression` (e.g. \"wall * 2\") is the source formula when the value is computed from other parameters. Usable from sketch dimension expressions and the distance/radius/thickness fields of extrude/fillet/chamfer/shell (`<field>Expression`)."
     },
     "SketchPlane": {
       "oneOf": [
@@ -1203,6 +1229,11 @@
           "distance": {
             "type": "number"
           },
+          "distanceExpression": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Formula over document parameters (`parameters.list`), e.g. \"wall * 2\"; resolved into `distance`. Either this or `distance` is required."
+          },
           "symmetric": {
             "type": "boolean",
             "default": false
@@ -1220,7 +1251,7 @@
             "minLength": 1
           }
         },
-        "required": ["profile", "distance"],
+        "required": ["profile"],
         "additionalProperties": false
       }
     },
@@ -1240,6 +1271,11 @@
             "type": "number",
             "exclusiveMinimum": 0
           },
+          "radiusExpression": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Formula over document parameters, resolved into `radius`."
+          },
           "radius2": {
             "type": "number",
             "exclusiveMinimum": 0,
@@ -1252,9 +1288,9 @@
             }
           }
         },
-        "required": ["radius"],
+        "required": [],
         "additionalProperties": false,
-        "description": "`edges` defaults to [] (then `rules` must pick edges)."
+        "description": "`edges` defaults to [] (then `rules` must pick edges). One of `radius` / `radiusExpression` is required."
       }
     },
     "chamfer": {
@@ -1272,6 +1308,11 @@
           "distance": {
             "type": "number",
             "exclusiveMinimum": 0
+          },
+          "distanceExpression": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Formula over document parameters, resolved into `distance`."
           },
           "mode": {
             "enum": ["equal", "twoDistances", "distanceAngle"],
@@ -1299,9 +1340,9 @@
             }
           }
         },
-        "required": ["distance"],
+        "required": [],
         "additionalProperties": false,
-        "description": "`edges` defaults to [] (then `rules` must pick edges)."
+        "description": "`edges` defaults to [] (then `rules` must pick edges). One of `distance` / `distanceExpression` is required."
       }
     },
     "shell": {
@@ -1325,6 +1366,11 @@
             "type": "number",
             "exclusiveMinimum": 0
           },
+          "thicknessExpression": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Formula over document parameters, resolved into `thickness`."
+          },
           "direction": {
             "enum": ["inside", "outside"],
             "default": "inside"
@@ -1342,8 +1388,9 @@
             }
           }
         },
-        "required": ["faces", "thickness"],
-        "additionalProperties": false
+        "required": ["faces"],
+        "additionalProperties": false,
+        "description": "One of `thickness` / `thicknessExpression` is required."
       }
     },
     "boolean": {
@@ -2127,6 +2174,109 @@
         "additionalProperties": false
       },
       "result": "{selection}"
+    },
+    "parameters.list": {
+      "kind": "query",
+      "capability": "document.read",
+      "summary": "Document parameters (\"variables\"), in creation order.",
+      "params": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "result": "[Parameter]"
+    },
+    "parameter.create": {
+      "kind": "command",
+      "capability": "document.write",
+      "summary": "Adds a document parameter. Exactly one of `value`/`expression` is normally given; `expression` is resolved immediately (cycle/unknown-name errors reject with nothing changed).",
+      "params": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+          },
+          "unit": {
+            "enum": ["mm", "deg", ""],
+            "default": "mm"
+          },
+          "value": {
+            "type": "number"
+          },
+          "expression": {
+            "type": "string",
+            "minLength": 1
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Optimistic concurrency: the command fails with `conflict` unless the document revision still equals this value."
+          }
+        },
+        "required": ["name"],
+        "additionalProperties": false
+      },
+      "result": "{parameter: Parameter, revision}"
+    },
+    "parameter.edit": {
+      "kind": "command",
+      "capability": "document.write",
+      "summary": "Changes a parameter's name, unit, value or expression. Renaming rewrites every sketch dimension and feature `*Expression` field that references it.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "parameterId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "unit": {
+            "enum": ["mm", "deg", ""]
+          },
+          "value": {
+            "type": "number"
+          },
+          "expression": {
+            "type": "string",
+            "minLength": 1
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Optimistic concurrency: the command fails with `conflict` unless the document revision still equals this value."
+          }
+        },
+        "required": ["parameterId"],
+        "additionalProperties": false
+      },
+      "result": "{parameter: Parameter, revision}"
+    },
+    "parameter.delete": {
+      "kind": "command",
+      "capability": "document.write",
+      "summary": "Removes a parameter. Refused with `conflict` and the list of users when a sketch dimension or feature field still references it by name.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "parameterId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Optimistic concurrency: the command fails with `conflict` unless the document revision still equals this value."
+          }
+        },
+        "required": ["parameterId"],
+        "additionalProperties": false
+      },
+      "result": "{parameterId, revision}"
     },
     "feature.create": {
       "kind": "command",

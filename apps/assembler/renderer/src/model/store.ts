@@ -77,6 +77,19 @@ import {
   visibleBounds,
   type SketchContact,
 } from './modeling.js';
+import {
+  FEATURE_EXPRESSION_FIELDS,
+  findParameterDependents,
+  findParameterUsages,
+  isValidParameterName,
+  renameInExpression,
+  resolveFeatureExpression,
+  resolveParameterValues,
+  type Parameter,
+  type ParameterUnit,
+  type ParameterUsage,
+} from './parameters.js';
+import { setParameterValuesProvider } from '../sketch/solverProvider.js';
 
 /** One selectable/hoverable thing in the viewport or a panel. */
 export type SelectionItem =
@@ -279,6 +292,8 @@ export interface ViewState {
 export interface PanelsState {
   items: boolean;
   history: boolean;
+  /** Parameters ("variables") panel; hidden by default (Ctrl+Alt+P, command search, right dock). */
+  parameters: boolean;
 }
 
 /**
@@ -288,6 +303,10 @@ export interface PanelsState {
 export type FeaturePatch = {
   [K in Feature['kind']]: Partial<Omit<Extract<Feature, { kind: K }>, 'id' | 'kind'>>;
 }[Feature['kind']];
+
+export type ParameterEditResult =
+  | { ok: true; id: string }
+  | { ok: false; message: string; usages?: ParameterUsage[] };
 
 export interface AssemblerState {
   projectName: string;
@@ -461,6 +480,36 @@ export interface AssemblerState {
   renameFeature: (featureId: string, name: string) => void;
   deleteFeature: (featureId: string) => void;
 
+  /**
+   * Document parameters ("variables", `model/parameters.ts`): named values
+   * usable from sketch dimension expressions and extrude/fillet/chamfer/shell
+   * size fields. Part of the undo-tracked document (one parameter edit is
+   * exactly one undo step, alongside any feature whose `*Expression` field
+   * it feeds re-resolves in the same commit).
+   */
+  parameters: Parameter[];
+  /**
+   * Creates (`id` omitted) or edits (`id` given) one parameter. Validates the
+   * name (identifier syntax, unique) and the expression (cycle detection via
+   * {@link resolveParameterValues}); on success, every parameter's resolved
+   * `value` and every feature `*Expression` field are recomputed and
+   * committed as one undo step. Returns the problem instead when invalid —
+   * nothing is changed.
+   */
+  upsertParameter: (input: {
+    id?: string;
+    name: string;
+    unit: ParameterUnit;
+    value?: number;
+    expression?: string;
+  }) => ParameterEditResult;
+  /** Renames a parameter and rewrites every expression that references it (by name, not value). */
+  renameParameter: (id: string, name: string) => ParameterEditResult;
+  /** Refused (`ok: false`, `usages`) when any sketch dimension or feature field still references it. */
+  deleteParameter: (id: string) => ParameterEditResult;
+  /** Every place in the document that reads `paramId`'s name, for a "used by" listing before delete. */
+  parameterUsages: (paramId: string) => ParameterUsage[];
+
   viewState: ViewState;
   setDisplayMode: (mode: DisplayMode) => void;
   setSectionEnabled: (enabled: boolean) => void;
@@ -507,7 +556,7 @@ export interface AssemblerState {
    */
   loadDocument: (
     features: Feature[],
-    options?: { projectName?: string; referenceMeshes?: ReferenceMesh[] },
+    options?: { projectName?: string; referenceMeshes?: ReferenceMesh[]; parameters?: Parameter[] },
   ) => void;
 
   /**
@@ -793,9 +842,25 @@ export function setLongOperationDelay(ms: number): void {
 }
 
 export const useAssemblerStore = create<AssemblerState>((set, get) => {
-  /** Undo/redo snapshots of `features`; only `history.canUndo/canRedo` are public. */
-  let past: Feature[][] = [];
-  let future: Feature[][] = [];
+  /**
+   * Undo/redo snapshots of `features` + `parameters` (one committed tool
+   * operation or one parameter edit = exactly one entry); only
+   * `history.canUndo/canRedo` are public.
+   */
+  interface HistorySnapshot {
+    features: Feature[];
+    parameters: Parameter[];
+  }
+  let past: HistorySnapshot[] = [];
+  let future: HistorySnapshot[] = [];
+
+  // The sketch solver (any transport: UI tool, headless, agent API) always
+  // reads the document's *current* parameter values for a name a sketch's
+  // own dimensions do not resolve (`sketch/solverProvider.ts`).
+  setParameterValuesProvider(() => {
+    const resolved = resolveParameterValues(get().parameters);
+    return resolved.ok ? resolved.values : new Map();
+  });
 
   let kernel: KernelAdapter | null = null;
   let unsubscribeKernel: (() => void) | null = null;
@@ -1081,9 +1146,13 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
     notifySettled();
   }
 
-  function commitFeatures(nextFeatures: Feature[], selectionOverride?: SelectionItem[]): void {
+  function commitFeatures(
+    nextFeatures: Feature[],
+    selectionOverride?: SelectionItem[],
+    nextParameters?: Parameter[],
+  ): void {
     const state = get();
-    past = [...past, state.features];
+    past = [...past, { features: state.features, parameters: state.parameters }];
     future = [];
     endPreview();
     const marker = state.rollbackBefore;
@@ -1103,6 +1172,7 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
     }
     setFeatures(nextFeatures, {
       ...(selectionOverride ? { selection: selectionOverride } : {}),
+      ...(nextParameters ? { parameters: nextParameters } : {}),
       history: { canUndo: true, canRedo: false },
       activeTool: null,
     });
@@ -1110,6 +1180,43 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
 
   function appendFeature(feature: Feature): void {
     commitFeatures([...get().features, feature], [{ kind: 'feature', featureId: feature.id }]);
+  }
+
+  /**
+   * Re-resolves every feature's `*Expression` field (extrude `distance`,
+   * fillet `radius`, chamfer `distance`, shell `thickness`) against the
+   * current parameter values, writing the result into the plain numeric
+   * field the kernel reads — mirrors how a sketch dimension's `value` is
+   * always its last solved state. A feature whose expression no longer
+   * resolves (unknown/removed name, cycle) keeps its last good numeric
+   * value unchanged; the parameter edit itself is not blocked by it.
+   */
+  function recomputeFeatureExpressions(
+    features: Feature[],
+    paramValues: ReadonlyMap<string, number>,
+  ): Feature[] {
+    return features.map((f) => {
+      const field = FEATURE_EXPRESSION_FIELDS[f.kind];
+      if (!field) return f;
+      const expression = (f as unknown as Record<string, unknown>)[`${field}Expression`];
+      if (typeof expression !== 'string') return f;
+      const resolved = resolveFeatureExpression(expression, paramValues);
+      if (!resolved.ok) return f;
+      return { ...f, [field]: resolved.value } as Feature;
+    });
+  }
+
+  /** Resolves `parameters`' expressions, writing back each parameter's `value`. `null` on cycle/error. */
+  function resolveParameters(
+    parameters: Parameter[],
+  ): { parameters: Parameter[]; values: Map<string, number> } | null {
+    const resolved = resolveParameterValues(parameters);
+    if (!resolved.ok) return null;
+    const parametersWithValues = parameters.map((p) => ({
+      ...p,
+      value: resolved.values.get(p.name) ?? p.value,
+    }));
+    return { parameters: parametersWithValues, values: resolved.values };
   }
 
   return {
@@ -1149,12 +1256,12 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
         if (featuresChanged || markerChanged) {
           // Restore features and marker together (not via `commitFeatures`, whose
           // insert-at-marker rule would misplace a restored list while rolled back).
-          const viaUndo = featuresChanged && past[past.length - 1] === restore.features;
+          const viaUndo = featuresChanged && past[past.length - 1]?.features === restore.features;
           if (viaUndo) {
             past = past.slice(0, -1);
-            future = [...future, state.features];
+            future = [...future, { features: state.features, parameters: state.parameters }];
           } else if (featuresChanged) {
-            past = [...past, state.features];
+            past = [...past, { features: state.features, parameters: state.parameters }];
             future = [];
           }
           const marker =
@@ -1224,10 +1331,11 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
       }
       const state = get();
       if (past.length === 0) return;
-      const previousFeatures = past[past.length - 1]!;
+      const previous = past[past.length - 1]!;
       past = past.slice(0, -1);
-      future = [...future, state.features];
-      setFeatures(previousFeatures, {
+      future = [...future, { features: state.features, parameters: state.parameters }];
+      setFeatures(previous.features, {
+        parameters: previous.parameters,
         history: { canUndo: past.length > 0, canRedo: future.length > 0 },
       });
     },
@@ -1238,10 +1346,11 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
       }
       const state = get();
       if (future.length === 0) return;
-      const nextFeatures = future[future.length - 1]!;
+      const next = future[future.length - 1]!;
       future = future.slice(0, -1);
-      past = [...past, state.features];
-      setFeatures(nextFeatures, {
+      past = [...past, { features: state.features, parameters: state.parameters }];
+      setFeatures(next.features, {
+        parameters: next.parameters,
         history: { canUndo: past.length > 0, canRedo: future.length > 0 },
       });
     },
@@ -1777,9 +1886,27 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
 
     editFeatureParams: (featureId, patch) => {
       const state = get();
-      const next = state.features.map((f) =>
-        f.id === featureId ? ({ ...f, ...patch } as Feature) : f,
-      );
+      const paramValues = resolveParameterValues(state.parameters);
+      const values = paramValues.ok ? paramValues.values : new Map<string, number>();
+      const next = state.features.map((f) => {
+        if (f.id !== featureId) return f;
+        let merged = { ...f, ...patch } as Feature;
+        // A field's own `*Expression` in this patch is resolved immediately
+        // (the History card's expression input), like a sketch dimension.
+        const field = FEATURE_EXPRESSION_FIELDS[merged.kind];
+        const exprField = field ? `${field}Expression` : null;
+        if (exprField && exprField in patch) {
+          const expression = (patch as unknown as Record<string, unknown>)[exprField];
+          if (typeof expression === 'string') {
+            const resolved = resolveFeatureExpression(expression, values);
+            if (resolved.ok) merged = { ...merged, [field!]: resolved.value } as Feature;
+          } else if (expression === undefined) {
+            const { [exprField]: _drop, ...rest } = merged as unknown as Record<string, unknown>;
+            merged = rest as unknown as Feature;
+          }
+        }
+        return merged;
+      });
       commitFeatures(next);
     },
     setSuppressed: (featureId, suppressed) => {
@@ -1793,6 +1920,119 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
     deleteFeature: (featureId) => {
       const state = get();
       commitFeatures(state.features.filter((f) => f.id !== featureId));
+    },
+
+    parameters: [],
+    parameterUsages: (paramId) => {
+      const state = get();
+      const param = state.parameters.find((p) => p.id === paramId);
+      if (!param) return [];
+      return [
+        ...findParameterDependents(state.parameters, param.name),
+        ...findParameterUsages(state.features, param.name),
+      ];
+    },
+    upsertParameter: (input) => {
+      const state = get();
+      const name = input.name.trim();
+      if (!isValidParameterName(name)) {
+        return { ok: false, message: `"${name}" is not a valid parameter name` };
+      }
+      const duplicate = state.parameters.find((p) => p.name === name && p.id !== input.id);
+      if (duplicate) {
+        return { ok: false, message: `A parameter named "${name}" already exists` };
+      }
+      const id = input.id ?? `param-${Math.random().toString(36).slice(2, 10)}`;
+      const draft: Parameter = {
+        id,
+        name,
+        unit: input.unit,
+        value: input.expression !== undefined ? 0 : (input.value ?? 0),
+        ...(input.expression !== undefined ? { expression: input.expression } : {}),
+      };
+      const nextParameters = input.id
+        ? state.parameters.map((p) => (p.id === id ? draft : p))
+        : [...state.parameters, draft];
+      const resolved = resolveParameters(nextParameters);
+      if (!resolved) {
+        return { ok: false, message: `Invalid expression for "${name}"` };
+      }
+      const nextFeatures = recomputeFeatureExpressions(state.features, resolved.values);
+      commitFeatures(nextFeatures, undefined, resolved.parameters);
+      return { ok: true, id };
+    },
+    renameParameter: (id, name) => {
+      const state = get();
+      const trimmed = name.trim();
+      const existing = state.parameters.find((p) => p.id === id);
+      if (!existing) return { ok: false, message: `No parameter "${id}"` };
+      if (!isValidParameterName(trimmed)) {
+        return { ok: false, message: `"${trimmed}" is not a valid parameter name` };
+      }
+      if (state.parameters.some((p) => p.name === trimmed && p.id !== id)) {
+        return { ok: false, message: `A parameter named "${trimmed}" already exists` };
+      }
+      if (trimmed === existing.name) return { ok: true, id };
+      const nextParameters = state.parameters.map((p) =>
+        p.id === id
+          ? { ...p, name: trimmed }
+          : p.expression !== undefined
+            ? { ...p, expression: renameInExpression(p.expression, existing.name, trimmed) }
+            : p,
+      );
+      const nextFeatures = state.features.map((f) => {
+        let changed: Feature = f;
+        if (f.kind === 'sketch') {
+          const dimensions = f.dimensions.map((d) =>
+            d.expression !== undefined
+              ? { ...d, expression: renameInExpression(d.expression, existing.name, trimmed) }
+              : d,
+          );
+          changed = { ...changed, dimensions } as Feature;
+        }
+        const field = FEATURE_EXPRESSION_FIELDS[f.kind];
+        const exprField = field ? `${field}Expression` : null;
+        if (exprField) {
+          const expression = (changed as unknown as Record<string, unknown>)[exprField];
+          if (typeof expression === 'string') {
+            changed = {
+              ...changed,
+              [exprField]: renameInExpression(expression, existing.name, trimmed),
+            } as Feature;
+          }
+        }
+        return changed;
+      });
+      const resolved = resolveParameters(nextParameters);
+      if (!resolved)
+        return { ok: false, message: `Renaming "${existing.name}" would break an expression` };
+      commitFeatures(
+        recomputeFeatureExpressions(nextFeatures, resolved.values),
+        undefined,
+        resolved.parameters,
+      );
+      return { ok: true, id };
+    },
+    deleteParameter: (id) => {
+      const state = get();
+      const existing = state.parameters.find((p) => p.id === id);
+      if (!existing) return { ok: false, message: `No parameter "${id}"` };
+      const usages = [
+        ...findParameterDependents(state.parameters, existing.name),
+        ...findParameterUsages(state.features, existing.name),
+      ];
+      if (usages.length > 0) {
+        return {
+          ok: false,
+          message: `"${existing.name}" is used by ${usages.length} field${usages.length === 1 ? '' : 's'}`,
+          usages,
+        };
+      }
+      const nextParameters = state.parameters.filter((p) => p.id !== id);
+      const resolved = resolveParameters(nextParameters);
+      if (!resolved) return { ok: false, message: `Cannot re-resolve remaining parameters` };
+      commitFeatures(state.features, undefined, resolved.parameters);
+      return { ok: true, id };
     },
 
     viewState: {
@@ -1866,7 +2106,7 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
         },
       })),
 
-    panels: { items: true, history: true },
+    panels: { items: true, history: true, parameters: false },
     togglePanel: (panel) => set((s) => ({ panels: { ...s.panels, [panel]: !s.panels[panel] } })),
     setPanelVisible: (panel, visible) =>
       set((s) => ({ panels: { ...s.panels, [panel]: visible } })),
@@ -1911,6 +2151,7 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
           panels: {
             items: view.panels?.items ?? s.panels.items,
             history: view.panels?.history ?? s.panels.history,
+            parameters: view.panels?.parameters ?? s.panels.parameters,
           },
         };
       });
@@ -1949,6 +2190,7 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
         evaluation: EMPTY_EVALUATION,
         rollbackBefore: null,
         referenceMeshes: options?.referenceMeshes ?? [],
+        parameters: options?.parameters ?? [],
       });
       setFeatures(features);
     },

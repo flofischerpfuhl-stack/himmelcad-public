@@ -36,10 +36,12 @@ import {
 import { anchoredMenuStyle } from './anchoredMenu.js';
 import { featureKindIcon } from './icons.js';
 import { ExpressionField } from './ExpressionField.js';
+import { ParamExpressionField } from './ParamExpressionField.js';
 import { ModelingFeatureParams } from './FeatureParams.js';
 import { BlendParams, BooleanParams, ShellParams } from './PrintFeatureParams.js';
 import { isModelingFeature } from '../model/features.js';
 import { checkMove, moveFeature, relevantFeatureIds } from '../model/historyTools.js';
+import { resolveParameterValues } from '../model/parameters.js';
 import { useWorkspaceStore } from '../model/workspace.js';
 import type { AssemblerState, FeaturePatch } from '../model/store.js';
 import type { ExtrudeOperation, Feature } from '../model/document.js';
@@ -469,6 +471,8 @@ function FeatureParams({
   state: AssemblerState;
 }): JSX.Element {
   const edit = (patch: FeaturePatch) => state.editFeatureParams(feature.id, patch);
+  const paramResolved = resolveParameterValues(state.parameters);
+  const paramValues = paramResolved.ok ? paramResolved.values : new Map<string, number>();
 
   if (feature.kind === 'sketch') {
     return (
@@ -484,11 +488,15 @@ function FeatureParams({
   if (feature.kind === 'extrude') {
     return (
       <div className={styles.params}>
-        <ExpressionField
+        <ParamExpressionField
           label="Distance"
           value={feature.distance}
+          expression={feature.distanceExpression}
           unit="mm"
-          onCommit={(v) => edit({ distance: v })}
+          parameters={state.parameters}
+          paramValues={paramValues}
+          onCommitValue={(v) => edit({ distance: v, distanceExpression: undefined })}
+          onCommitExpression={(expr) => edit({ distanceExpression: expr })}
         />
         <div>
           <span className={styles.paramLabel}>Direction</span>

@@ -178,7 +178,11 @@ function currentViewState(): ProjectViewState {
       snap: doc.viewState.snapToGrid,
       step: doc.viewState.gridStep,
     },
-    panels: { items: doc.panels.items, history: doc.panels.history },
+    panels: {
+      items: doc.panels.items,
+      history: doc.panels.history,
+      parameters: doc.panels.parameters,
+    },
   };
 }
 
@@ -251,6 +255,7 @@ async function currentProjectPayload(): Promise<string> {
     projectName: doc.projectName,
     features: doc.features,
     appVersion: APP_VERSION,
+    parameters: doc.parameters,
     referenceMeshes,
     // One view-state object: display/section/grid/panels/camera plus the saved views.
     viewState: { ...currentViewState(), ...(savedViews.length > 0 ? { savedViews } : {}) },
@@ -302,6 +307,9 @@ function ensureSubscription(): void {
     // Import/remove/hide/move of an STL reference mesh (not a feature, so not
     // covered by the feature baseline below).
     if (state.referenceMeshes !== prev.referenceMeshes) markDirty();
+    // A parameter edit that recomputes no feature's `*Expression` field still
+    // changes `parameters` without necessarily changing `features` identity.
+    if (state.parameters !== prev.parameters) markDirty();
     if (state.features === prev.features) return;
     // Undo back to the saved feature list makes the project clean again
     // (unless items, saved views or meshes changed meanwhile).
@@ -440,9 +448,11 @@ export const useProjectStore = create<ProjectFileState>((set, get) => ({
       baselineFeatures = project.features;
       extrasDirty = false;
       loadWithoutDirty(() =>
-        useAssemblerStore
-          .getState()
-          .loadDocument(project.features, { projectName: project.projectName, referenceMeshes }),
+        useAssemblerStore.getState().loadDocument(project.features, {
+          projectName: project.projectName,
+          referenceMeshes,
+          parameters: project.parameters,
+        }),
       );
       useAssemblerStore.getState().applyViewState(project.viewState ?? {});
       restoreExtras(project);
@@ -680,9 +690,11 @@ export const useProjectStore = create<ProjectFileState>((set, get) => ({
         const referenceMeshes = await decodeReferenceMeshes(project.referenceMeshes ?? []);
         baselineFeatures = null; // force dirty: a restored-but-unsaved recovery is not yet "saved"
         loadWithoutDirty(() =>
-          useAssemblerStore
-            .getState()
-            .loadDocument(project.features, { projectName: project.projectName, referenceMeshes }),
+          useAssemblerStore.getState().loadDocument(project.features, {
+            projectName: project.projectName,
+            referenceMeshes,
+            parameters: project.parameters,
+          }),
         );
         useAssemblerStore.getState().applyViewState(project.viewState ?? {});
         restoreExtras(project);

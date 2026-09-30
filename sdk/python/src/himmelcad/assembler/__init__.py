@@ -31,7 +31,9 @@ from .errors import (
     TransactionStateError,
     TransportError,
 )
-from .modeling import BBox, Body, Document, Edge, EdgeSet, Face, FaceSet, Feature, PrintReport, Sketch, SketchLine, Transaction
+from .modeling import (
+    BBox, Body, Document, Edge, EdgeSet, Face, FaceSet, Feature, Parameter, PrintReport, Sketch, SketchLine, Transaction,
+)
 from .printing import METRIC_HOLE_SIZES, PRINT_FITS, hole_diameter
 from .transport import LoopbackTransport, StdioTransport, Transport, find_headless_command
 
@@ -39,7 +41,7 @@ __all__ = [
     "API_ID", "API_VERSION", "METHODS",
     "AssemblerClient", "AssemblerError", "BBox", "Body", "BusyError", "ConfirmationRequiredError",
     "ConflictError", "Document", "Edge", "EdgeSet", "Face", "FaceSet", "Feature", "FeatureFailedError",
-    "InvalidParamsError", "LoopbackTransport", "NotFoundError", "PermissionDeniedError", "PrintReport",
+    "InvalidParamsError", "LoopbackTransport", "NotFoundError", "Parameter", "PermissionDeniedError", "PrintReport",
     "ReferenceNotFoundError", "Sketch", "SketchConflictError", "SketchLine", "StdioTransport", "Transaction", "TransactionStateError",
     "Transport", "TransportError", "find_headless_command",
     "METRIC_HOLE_SIZES", "PRINT_FITS", "hole_diameter",

@@ -25,7 +25,9 @@ import {
   type PrintFeature,
 } from '../model/printFeatures.js';
 import type { AssemblerState, FeaturePatch } from '../model/store.js';
+import { resolveParameterValues } from '../model/parameters.js';
 import { ExpressionField } from './ExpressionField.js';
+import { ParamExpressionField } from './ParamExpressionField.js';
 import styles from './HistoryPanel.module.css';
 
 const OPERATION_OPTIONS = [
@@ -36,6 +38,12 @@ const OPERATION_OPTIONS = [
 
 function plural(n: number, one: string, many = `${one}s`): string {
   return `${n} ${n === 1 ? one : many}`;
+}
+
+/** Current parameter values (unresolvable parameters leave the map empty; fields then reject names). */
+function paramValuesOf(state: AssemblerState): ReadonlyMap<string, number> {
+  const resolved = resolveParameterValues(state.parameters);
+  return resolved.ok ? resolved.values : new Map<string, number>();
 }
 
 function useEdit(state: AssemblerState, featureId: string) {
@@ -353,11 +361,15 @@ export function BlendParams({
     <div className={styles.params}>
       {feature.kind === 'fillet' ? (
         <>
-          <ExpressionField
+          <ParamExpressionField
             label={feature.radius2 !== undefined ? 'Start radius' : 'Radius'}
             value={feature.radius}
+            expression={feature.radiusExpression}
             unit="mm"
-            onCommit={(v) => edit({ radius: v })}
+            parameters={state.parameters}
+            paramValues={paramValuesOf(state)}
+            onCommitValue={(v) => edit({ radius: v, radiusExpression: undefined })}
+            onCommitExpression={(expr) => edit({ radiusExpression: expr })}
           />
           {feature.radius2 !== undefined ? (
             <ExpressionField
@@ -387,11 +399,15 @@ export function BlendParams({
         </>
       ) : (
         <>
-          <ExpressionField
+          <ParamExpressionField
             label={feature.mode && feature.mode !== 'equal' ? 'Distance 1' : 'Distance'}
             value={feature.distance}
+            expression={feature.distanceExpression}
             unit="mm"
-            onCommit={(v) => edit({ distance: v })}
+            parameters={state.parameters}
+            paramValues={paramValuesOf(state)}
+            onCommitValue={(v) => edit({ distance: v, distanceExpression: undefined })}
+            onCommitExpression={(expr) => edit({ distanceExpression: expr })}
           />
           {feature.mode === 'twoDistances' ? (
             <ExpressionField
@@ -489,11 +505,15 @@ export function ShellParams({
   const walls = feature.faceThickness ?? [];
   return (
     <div className={styles.params}>
-      <ExpressionField
+      <ParamExpressionField
         label="Thickness"
         value={feature.thickness}
+        expression={feature.thicknessExpression}
         unit="mm"
-        onCommit={(v) => edit({ thickness: v })}
+        parameters={state.parameters}
+        paramValues={paramValuesOf(state)}
+        onCommitValue={(v) => edit({ thickness: v, thicknessExpression: undefined })}
+        onCommitExpression={(expr) => edit({ thicknessExpression: expr })}
       />
       <div>
         <span className={styles.paramLabel}>Direction</span>

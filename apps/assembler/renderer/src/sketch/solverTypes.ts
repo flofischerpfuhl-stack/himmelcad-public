@@ -16,6 +16,15 @@ export interface SolveRequest {
   drag?: { pointId: string; target: Vec2 }[];
   /** Also report which points/curves are fully determined (probes; slower). */
   analyze?: boolean;
+  /**
+   * Document parameter values (`model/parameters.ts`), consulted for a name a
+   * dimension expression does not find among the sketch's own dimensions.
+   * Callers normally omit this — `solverProvider.ts` fills it in from the
+   * process-wide parameter provider — but an explicit value (e.g. a
+   * transaction's staged parameters) overrides it. Array form (not `Map`) so
+   * the request stays plain, structured-clone-safe worker message data.
+   */
+  paramValues?: [string, number][];
 }
 
 export type SolveStatus =

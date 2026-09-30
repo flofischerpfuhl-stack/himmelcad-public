@@ -5,7 +5,12 @@
  * `COMMANDS` so menus, command search, the context menu, shortcuts and the
  * shortcut overlay all read the same entries.
  */
-import { isPlanarFace, type AssemblerState, type SelectionItem } from '../store.js';
+import {
+  isPlanarFace,
+  useAssemblerStore,
+  type AssemblerState,
+  type SelectionItem,
+} from '../store.js';
 import { usePreferences } from '../preferences.js';
 import { MAX_SAVED_VIEWS, useWorkspaceStore } from '../workspace.js';
 import { bodyRowKey, meshRowKey, sketchRowKey, useItemsStore } from '../items.js';
@@ -218,6 +223,21 @@ export const WORKSPACE_COMMANDS: readonly Command[] = [
     run: () => {
       useWorkspaceStore.getState().saveCurrentView();
     },
+  },
+  {
+    id: 'view.parameters',
+    get label() {
+      return useAssemblerStore.getState().panels.parameters ? 'Hide parameters' : 'Parameters';
+    },
+    group: 'view',
+    shortcut: 'Ctrl+Alt+P',
+    keywords: ['variables', 'expressions', 'wall', 'shapr3d'],
+    adaptive: false,
+    availability: () => ({
+      enabled: true,
+      recommended: useAssemblerStore.getState().panels.parameters,
+    }),
+    run: (ctx) => ctx.togglePanel('parameters'),
   },
   {
     id: 'view.settings',
