@@ -355,9 +355,19 @@ Limits (with the OCCT reason):
   faces are refused ("… wrapping onto cones or free-form faces is not
   supported"); the inside of a hole is refused too. A profile may not reach
   more than half way round from the wrap centre (the seam is opposite).
-  There is no text tool in this branch: text regions come from the sketching
-  work; any closed sketch region wraps (unknown future curve kinds are
-  sampled as fine polylines). No font is bundled (dependency policy).
+  Sketch text (Inter, see `SKETCHING.md`) is the usual source: each glyph
+  contour is a region `<textId>.<n>` and can be listed in the Emboss
+  profile. Wrapped Bézier chains (splines, glyphs) map exactly — the unroll
+  is affine in the sketch plane — ellipses are sampled as 64-point
+  polylines. Kernel evidence: `test/kernel/embossText.test.ts` (engrave and
+  emboss "HC" on a plate, wrap it around a Ø20 cylinder; volumes against
+  `area · depth` and `area · ((R ± d)² − R²) / 2R`, valid B-rep).
+- **Glyph and spline edges** are split into straight lines and
+  tangent-continuous B-spline runs (`sketchGeometry.ts#bezierRuns`). One
+  C0 B-spline per glyph contour made booleans crossing its side faces
+  (engraving from inside the part, through-cuts, joins starting inside a
+  plate) return invalid solids with wrong volumes; the split side faces
+  keep their piece name with `#n` suffixes.
 - **Planar emboss** needs a sketch parallel to the face; profiles are not
   clipped to the face outline.
 - **Draft**: OCCT needs the neutral plane to cut the drafted faces' boundary

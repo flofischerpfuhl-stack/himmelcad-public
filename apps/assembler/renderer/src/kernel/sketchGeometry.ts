@@ -33,9 +33,9 @@ import {
 import type { EvaluatedSketch } from './types.js';
 
 /**
- * One cubic B-spline edge for a whole Bézier chain (the segments elevated
- * to cubics, joined with triple knots): one edge — and so one extruded side
- * face — per region piece, whatever the number of segments.
+ * One cubic B-spline edge for a tangent-continuous run of Bézier segments
+ * (elevated to cubics, joined with triple knots); see `bezierRuns` for how
+ * a region piece is split into such runs and straight lines.
  */
 function bezierChainEdge(segs: readonly (readonly Vec3[])[]): R.Edge {
   const oc = R.getOC();
@@ -69,6 +69,62 @@ function bezierChainEdge(segs: readonly (readonly Vec3[])[]): R.Edge {
     knots.delete();
     mults.delete();
   }
+}
+
+/**
+ * Splits a Bézier chain into edges that booleans handle robustly: every
+ * straight segment on its own (a planar side face) and the curved segments
+ * in runs broken at tangent corners. One B-spline across a corner is only
+ * C0, and its extruded side face made OCCT booleans that cut it
+ * transversally (engraving text through a face, a glyph extruded from inside
+ * a plate) return invalid or wrong solids. Split pieces keep their piece
+ * name; the naming gives them `#n` suffixes.
+ */
+function bezierRuns(segs: readonly (readonly Vec3[])[]): Vec3[][][] {
+  const runs: Vec3[][][] = [];
+  let run: Vec3[][] = [];
+  const flush = () => {
+    if (run.length > 0) runs.push(run);
+    run = [];
+  };
+  const dir = (a: Vec3, b: Vec3): Vec3 | null => {
+    const d: Vec3 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+    const l = Math.hypot(d[0], d[1], d[2]);
+    return l > 1e-12 ? [d[0] / l, d[1] / l, d[2] / l] : null;
+  };
+  /** Unit end tangent of a segment (skipping coincident control points). */
+  const endTangent = (seg: readonly Vec3[]): Vec3 | null => {
+    const last = seg[seg.length - 1]!;
+    for (let i = seg.length - 2; i >= 0; i -= 1) {
+      const d = dir(seg[i]!, last);
+      if (d) return d;
+    }
+    return null;
+  };
+  const startTangent = (seg: readonly Vec3[]): Vec3 | null => {
+    for (let i = 1; i < seg.length; i += 1) {
+      const d = dir(seg[0]!, seg[i]!);
+      if (d) return d;
+    }
+    return null;
+  };
+  for (const seg of segs) {
+    if (seg.length === 2) {
+      flush();
+      runs.push([[...seg]]);
+      continue;
+    }
+    const prev = run[run.length - 1];
+    if (prev) {
+      const a = endTangent(prev);
+      const b = startTangent(seg);
+      const smooth = a && b && a[0] * b[0] + a[1] * b[1] + a[2] * b[2] > 1 - 1e-6;
+      if (!smooth) flush();
+    }
+    run.push([...seg]);
+  }
+  flush();
+  return runs;
 }
 
 /** Degree elevation of a line/quadratic Bézier (3D control points) to a cubic. */
@@ -142,7 +198,11 @@ function edgesOf(frame: SketchFrame, piece: RegionLoop['pieces'][number]): R.Edg
     const last = segs[segs.length - 1]!;
     last[last.length - 1] = end;
     if (segs.length === 1 && segs[0]!.length === 2) return [R.makeLine(start, end)];
-    return [bezierChainEdge(segs)];
+    return bezierRuns(segs).map((run) =>
+      run.length === 1 && run[0]!.length === 2
+        ? R.makeLine(run[0]![0]!, run[0]![1]!)
+        : bezierChainEdge(run),
+    );
   }
   if (isFullCircle(curve)) {
     // A whole circle touching the rest of the loop at one vertex: two halves through it.

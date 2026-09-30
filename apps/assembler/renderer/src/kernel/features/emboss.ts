@@ -264,9 +264,19 @@ function loopDrawing(
     if (piece.curve.kind === 'line') pen = pen.lineTo(end);
     else if (piece.curve.kind === 'arc')
       pen = pen.threePointsArcTo(end, map(pointAt(piece.curve, 0.5)));
-    else {
-      // Unknown curve kinds (future sketch curves): a fine polyline through the curve.
-      for (let i = 1; i < 32; i += 1) pen = pen.lineTo(map(pointAt(piece.curve, i / 32)));
+    else if (piece.curve.kind === 'bezier') {
+      // Spline and text-glyph chains: `unroll` is affine in the sketch plane, so each Bézier
+      // segment maps exactly to the Bézier of its mapped control points.
+      const segs = piece.curve.segs;
+      segs.forEach((seg, i) => {
+        const to = i === segs.length - 1 ? end : map(seg[seg.length - 1]!);
+        if (seg.length === 4) pen = pen.cubicBezierCurveTo(to, map(seg[1]!), map(seg[2]!));
+        else if (seg.length === 3) pen = pen.quadraticBezierCurveTo(to, map(seg[1]!));
+        else pen = pen.lineTo(to);
+      });
+    } else {
+      // Ellipses (and any future curve kind): a fine polyline through the curve.
+      for (let i = 1; i < 64; i += 1) pen = pen.lineTo(map(pointAt(piece.curve, i / 64)));
       pen = pen.lineTo(end);
     }
   }
@@ -280,8 +290,10 @@ function loopExtent(
   let minS = Infinity;
   let maxS = -Infinity;
   for (const piece of loop.pieces) {
-    for (let i = 0; i <= 16; i += 1) {
-      const [u, v] = pointAt(piece.curve, i / 16);
+    // Bézier chains (glyph contours) carry many segments in one piece: sample each segment.
+    const n = 16 * (piece.curve.kind === 'bezier' ? Math.max(1, piece.curve.segs.length) : 1);
+    for (let i = 0; i <= n; i += 1) {
+      const [u, v] = pointAt(piece.curve, i / n);
       const [s] = unroll(u, v);
       minS = Math.min(minS, s);
       maxS = Math.max(maxS, s);

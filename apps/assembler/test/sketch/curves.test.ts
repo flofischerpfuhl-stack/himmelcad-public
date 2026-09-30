@@ -503,7 +503,7 @@ void test('kernel: spline-, ellipse- and text-bounded regions extrude into valid
     'ellipse side face key',
   );
   assert.ok(
-    faces.some((k) => new RegExp(`:${withText.entityId}\\.\\d+$`).test(k)),
+    faces.some((k) => new RegExp(`:${withText.entityId}\\.\\d+(#\\d+)?$`).test(k)),
     'glyph side face key',
   );
 });
