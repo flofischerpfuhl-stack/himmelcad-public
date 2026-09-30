@@ -341,6 +341,74 @@ class Sketch:
             raise AssemblerError(raw_code="internal", message="the server returned no line id")
         return lines[0]
 
+    # ---- advanced geometry (one command each, the app's sketch-tool builders) ----
+
+    def spline(self, points: Sequence[tuple[float, float]], *, control: bool = False, closed: bool = False, construction: bool = False) -> str:
+        """Spline through ``points`` (or with them as control polygon, ``control=True``). Returns its entity id."""
+        result = self.doc.client.add_spline(self._ensure(), list(points), mode="control" if control else "fit", closed=closed, construction=construction)
+        return str(result["entityId"])
+
+    def ellipse(self, major_radius: float, minor_radius: float, *, center: tuple[float, float] = (0.0, 0.0), angle: float = 0.0, arc: tuple[float, float] | None = None, dimension: bool = True, construction: bool = False) -> str:
+        """Ellipse (``arc=(start°, end°)``: elliptical arc), axis radii dimensioned by default. Returns its entity id."""
+        result = self.doc.client.add_ellipse(self._ensure(), center, major_radius, minor_radius, angle=angle, arc=arc, dimension=dimension, construction=construction)
+        return str(result["entityId"])
+
+    def slot_between(self, start: tuple[float, float], end: tuple[float, float], width: float, *, construction: bool = False) -> list[str]:
+        """A true slot (one profile) between the centres ``start`` and ``end``, centre distance and width dimensioned."""
+        return list(self.doc.client.add_slot(self._ensure(), start, end, width, construction=construction)["curveIds"])
+
+    def arc_slot(self, center: tuple[float, float], start: tuple[float, float], end: tuple[float, float], width: float, *, clockwise: bool = False) -> list[str]:
+        """An arc slot along the circle around ``center`` through ``start``, to the angle of ``end``."""
+        return list(self.doc.client.add_slot(self._ensure(), start, end, width, arc_center=center, clockwise=clockwise)["curveIds"])
+
+    def polygon(self, radius: float, sides: int = 6, *, center: tuple[float, float] = (0.0, 0.0), inscribed: bool = True, angle: float = 0.0) -> list[str]:
+        """Regular polygon inscribed in (``inscribed=False``: around) a construction circle. Returns the line ids."""
+        return list(self.doc.client.add_polygon(self._ensure(), center, radius, sides=sides, inscribed=inscribed, angle=angle)["lineIds"])
+
+    def text(self, text: str, height: float, *, position: tuple[float, float] = (0.0, 0.0), angle: float = 0.0) -> str:
+        """Text (cap ``height`` mm, baseline starting at ``position``); every glyph is a profile. Returns its entity id."""
+        result = self.doc.client.add_text(self._ensure(), text, position, height, angle=angle)
+        missing = result.get("missingCharacters") or []
+        if missing:
+            raise AssemblerError(raw_code="invalidParams", message=f"characters not in the font: {' '.join(missing)}", hint="Use Latin characters.")
+        return str(result["entityId"])
+
+    def mirror(self, ids: Sequence[str], axis: str | SketchLine) -> list[str]:
+        """Mirrors curves/points about a sketch line (symmetric constraints). Returns the created ids."""
+        axis_id = axis.entity_id if isinstance(axis, SketchLine) else axis
+        return list(self.doc.client.mirror_sketch(self.id, list(ids), axis_id)["createdIds"])
+
+    def pattern(self, ids: Sequence[str], count: int, *, spacing: float | None = None, direction: tuple[float, float] = (1.0, 0.0), center: tuple[float, float] | None = None, angle: float = 360.0) -> list[str]:
+        """Linear pattern (``spacing`` along ``direction``) or circular (``center``, total ``angle``). Returns the created ids."""
+        client = self.doc.client
+        if center is not None:
+            result = client.pattern_sketch(self.id, list(ids), count, mode="circular", center=center, angle=angle)
+        else:
+            if spacing is None:
+                raise ValueError("a linear pattern needs spacing")
+            result = client.pattern_sketch(self.id, list(ids), count, direction=direction, spacing=spacing)
+        return list(result["createdIds"])
+
+    def fillet_corner(self, point: str, radius: float) -> list[str]:
+        """Rounds the corner at sketch point ``point`` between two lines."""
+        return list(self.doc.client.round_corner(self.id, point, radius)["createdIds"])
+
+    def chamfer_corner(self, point: str, distance: float) -> list[str]:
+        """Bevels the corner at sketch point ``point`` (equal set-backs)."""
+        return list(self.doc.client.round_corner(self.id, point, distance, mode="chamfer")["createdIds"])
+
+    def project(self, source: Face | Edge, *, construction: bool = True) -> list[str]:
+        """Projects a body face outline or edge into the sketch (follows the source). Returns the curve ids."""
+        if isinstance(source, Face):
+            result = self.doc.client.project(self._ensure(), face=source.ref, construction=construction)
+        else:
+            result = self.doc.client.project(self._ensure(), edge=source.ref, construction=construction)
+        return list(result["entityIds"])
+
+    def set_reference(self, name: str, reference: bool = True) -> None:
+        """Makes dimension ``name`` a reference dimension (measures only), or driving again."""
+        self.doc.client.set_reference(self.id, name, reference)
+
     def dimension(self, index: int, role: str) -> str:
         """Name of a shape's dimension (roles: rectangle x, y, width, height; circle cx, cy, diameter)."""
         try:

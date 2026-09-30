@@ -179,6 +179,66 @@ export const DEFS: Record<string, JsonSchema> = {
         ['id', 'kind', 'center', 'start', 'end'],
         'Counter-clockwise from start to end around center.',
       ),
+      obj(
+        {
+          id: str,
+          kind: { const: 'ellipse' },
+          center: str,
+          major: str,
+          minor: str,
+          construction: { type: 'boolean' },
+        },
+        ['id', 'kind', 'center', 'major', 'minor'],
+        'Ellipse by its centre and the end points of its major and minor axis (the minor point is kept perpendicular; minor radius ≤ major radius).',
+      ),
+      obj(
+        {
+          id: str,
+          kind: { const: 'ellipticArc' },
+          center: str,
+          major: str,
+          minor: str,
+          start: str,
+          end: str,
+          construction: { type: 'boolean' },
+        },
+        ['id', 'kind', 'center', 'major', 'minor', 'start', 'end'],
+        'Elliptical arc, counter-clockwise from start to end on the ellipse (centre, major, minor).',
+      ),
+      obj(
+        {
+          id: str,
+          kind: { const: 'spline' },
+          mode: { enum: ['fit', 'control'] },
+          points: { type: 'array', items: str, minItems: 2 },
+          degree: { type: 'integer', minimum: 1 },
+          knots: { type: 'array', items: num },
+          handles: {
+            type: 'array',
+            items: { anyOf: [str, { type: 'null' }] },
+            minItems: 2,
+            maxItems: 2,
+          },
+          construction: { type: 'boolean' },
+        },
+        ['id', 'kind', 'mode', 'points'],
+        'Cubic spline: `fit` passes through `points` (C2, chord-length; `handles` = end tangent handles, the first/last Bézier control point); `control` uses `points` as the control polygon of a clamped B-spline (`knots` only after a split). The same point as first and last closes it.',
+      ),
+      obj(
+        {
+          id: str,
+          kind: { const: 'text' },
+          anchor: str,
+          text: { type: 'string' },
+          height: positive,
+          angle: num,
+          font: str,
+          outline: { type: 'string' },
+          construction: { type: 'boolean' },
+        },
+        ['id', 'kind', 'anchor', 'text', 'height', 'angle', 'font', 'outline'],
+        'Text at `anchor` (baseline start): `height` is the cap height (mm), `angle` degrees; `outline` stores the glyph outlines (SVG path data, 1 = cap height) so the document needs no font. Each glyph is a profile (region keys "<textId>.<n>"). Create it with sketch.addText.',
+      ),
     ],
   },
   SketchConstraintKind: {
@@ -195,6 +255,8 @@ export const DEFS: Record<string, JsonSchema> = {
       'symmetric',
       'concentric',
       'pointOnObject',
+      'translate',
+      'rotate',
     ],
   },
   SketchDimensionKind: {
@@ -206,9 +268,10 @@ export const DEFS: Record<string, JsonSchema> = {
       kind: ref('SketchConstraintKind'),
 
       refs: { type: 'array', items: str, minItems: 1 },
+      value: num,
     },
     ['id', 'kind', 'refs'],
-    'refs: coincident 2 points; horizontal/vertical 1 line or 2 points; parallel/perpendicular 2 lines; tangent 2 curves (one round); equal 2 lines or 2 round; fixed 1 point/curve; midpoint point + line; symmetric 2 points + line/point; concentric 2 round; pointOnObject point + curve.',
+    'refs: coincident 2 points; horizontal/vertical 1 line or 2 points; parallel/perpendicular 2 lines; tangent 2 curves (one round, or line+ellipse, or a spline and a line/arc/spline sharing an end point); equal 2 lines or 2 round; fixed 1 point/curve; midpoint point + line; symmetric 2 points + line/point; concentric 2 round/elliptic; pointOnObject point + line/circle/arc/ellipse; translate points p, q, a, b (q − p = b − a, linear pattern); rotate points p, q, c with `value` degrees (circular pattern).',
   ),
   SketchDimension: obj(
     {
@@ -220,9 +283,11 @@ export const DEFS: Record<string, JsonSchema> = {
       value: { type: 'number', minimum: 0 },
       expression: { type: 'string' },
       offset: num,
+      along: num,
+      driven: { type: 'boolean' },
     },
     ['id', 'name', 'kind', 'refs', 'value'],
-    'Driving dimension (mm, angle in degrees). refs: distance 1 line / 2 points / point + line / 2 parallel lines; horizontal/verticalDistance 1 line or 2 points; radius/diameter 1 circle/arc; angle 2 lines. `expression` (e.g. "d1 / 2 + 3") uses names of other dimensions of the sketch.',
+    'Driving dimension (mm, angle in degrees); `driven: true` makes it a reference dimension that only measures (sketch.setReference). `offset`/`along` place the label. refs: distance 1 line / 2 points / point + line / 2 parallel lines; horizontal/verticalDistance 1 line or 2 points; radius/diameter 1 circle/arc; angle 2 lines. `expression` (e.g. "d1 / 2 + 3") uses names of other dimensions of the sketch.',
   ),
   SketchPlane: {
     oneOf: [
@@ -361,6 +426,18 @@ export const FEATURE_KIND_SCHEMAS: Record<string, FeatureKindSpec> = {
         entities: { type: 'array', items: ref('SketchEntity') },
         constraints: { type: 'array', items: ref('SketchConstraint') },
         dimensions: { type: 'array', items: ref('SketchDimension') },
+        projections: {
+          type: 'array',
+          items: { type: 'object' },
+          description:
+            'Projected body geometry {id, source: {kind: "edge"|"face", ref}, entities}; created by sketch.project, re-derived from the source on every evaluation.',
+        },
+        regionMemory: {
+          type: 'array',
+          items: { type: 'object' },
+          description:
+            'Region fingerprints {key, sample, area, box} recorded on every write (geometric re-binding of redrawn profiles); maintained by the server.',
+        },
         profiles: {
           type: 'array',
           items: ref('SketchShape'),
@@ -867,6 +944,204 @@ export const METHODS: Record<string, MethodSpec> = {
       ['featureId', 'ids'],
     ),
     result: '{featureId, dof, regions, revision, committed, errors}',
+  },
+  'sketch.addSpline': {
+    kind: 'command',
+    capability: 'document.write',
+    transactional: true,
+    summary:
+      'Adds a spline: `fit` (default) passes through `points` with end tangent handles (constrain tangency with sketch.addConstraint "tangent" to a line/arc/spline sharing its end point); `control` uses `points` as control polygon. `closed` ends on the first point.',
+    params: obj(
+      {
+        featureId: str,
+        points: { type: 'array', items: ref('Vec2'), minItems: 2 },
+        mode: { enum: ['fit', 'control'], default: 'fit' },
+        closed: { type: 'boolean', default: false },
+        construction: { type: 'boolean', default: false },
+        expectedRevision: revision,
+      },
+      ['featureId', 'points'],
+    ),
+    result: '{featureId, entityId, pointIds, handleIds, dof, regions, revision, committed}',
+  },
+  'sketch.addEllipse': {
+    kind: 'command',
+    capability: 'document.write',
+    transactional: true,
+    summary:
+      'Adds an ellipse (or, with `arc: [startDeg, endDeg]` parametric angles, an elliptical arc) at `center` with the major axis along `angle` degrees. `dimension: true` adds the two axis radii as dimensions.',
+    params: obj(
+      {
+        featureId: str,
+        center: ref('Vec2'),
+        majorRadius: positive,
+        minorRadius: positive,
+        angle: num,
+        arc: ref('Vec2'),
+        dimension: { type: 'boolean', default: false },
+        construction: { type: 'boolean', default: false },
+        expectedRevision: revision,
+      },
+      ['featureId', 'center', 'majorRadius', 'minorRadius'],
+    ),
+    result: '{featureId, entityId, entityIds, dof, regions, revision, committed}',
+  },
+  'sketch.addSlot': {
+    kind: 'command',
+    capability: 'document.write',
+    transactional: true,
+    summary:
+      'Adds a slot of `width` between the centres `start` and `end` (dimensioned centre distance and width unless `dimension: false`); with `arcCenter` an arc slot along the circle through `start` (counter-clockwise to the angle of `end`, `clockwise: true` the other way).',
+    params: obj(
+      {
+        featureId: str,
+        start: ref('Vec2'),
+        end: ref('Vec2'),
+        width: positive,
+        arcCenter: ref('Vec2'),
+        clockwise: { type: 'boolean', default: false },
+        dimension: { type: 'boolean', default: true },
+        construction: { type: 'boolean', default: false },
+        expectedRevision: revision,
+      },
+      ['featureId', 'start', 'end', 'width'],
+    ),
+    result: '{featureId, curveIds, entityIds, dof, regions, revision, committed}',
+  },
+  'sketch.addPolygon': {
+    kind: 'command',
+    capability: 'document.write',
+    transactional: true,
+    summary:
+      'Adds a regular polygon on a construction circle of `radius`: inscribed (vertices on the circle, default) or circumscribed (`inscribed: false`, edges tangent to it); `angle` turns the first vertex / edge midpoint.',
+    params: obj(
+      {
+        featureId: str,
+        center: ref('Vec2'),
+        radius: positive,
+        sides: { type: 'integer', minimum: 3, maximum: 64, default: 6 },
+        inscribed: { type: 'boolean', default: true },
+        angle: num,
+        construction: { type: 'boolean', default: false },
+        expectedRevision: revision,
+      },
+      ['featureId', 'center', 'radius'],
+    ),
+    result: '{featureId, lineIds, centerId, circleId, dof, regions, revision, committed}',
+  },
+  'sketch.addText': {
+    kind: 'command',
+    capability: 'document.write',
+    transactional: true,
+    summary:
+      'Adds text (font Inter, SIL OFL 1.1) with its baseline starting at `position`: `height` is the cap height (mm), `angle` degrees. Every glyph becomes a closed profile (counters stay open) for extrude/emboss.',
+    params: obj(
+      {
+        featureId: str,
+        text: str,
+        position: ref('Vec2'),
+        height: positive,
+        angle: num,
+        font: { enum: ['inter'], default: 'inter' },
+        construction: { type: 'boolean', default: false },
+        expectedRevision: revision,
+      },
+      ['featureId', 'text', 'position', 'height'],
+    ),
+    result: '{featureId, entityId, anchorId, missingCharacters, dof, regions, revision, committed}',
+  },
+  'sketch.mirror': {
+    kind: 'command',
+    capability: 'document.write',
+    transactional: true,
+    summary:
+      'Mirrors curves/points `ids` about the line `axis`; the copies are tied to the originals by symmetric constraints (they follow later edits).',
+    params: obj(
+      {
+        featureId: str,
+        ids: { type: 'array', items: str, minItems: 1 },
+        axis: str,
+        expectedRevision: revision,
+      },
+      ['featureId', 'ids', 'axis'],
+    ),
+    result: '{featureId, createdIds, dof, regions, revision, committed}',
+  },
+  'sketch.pattern': {
+    kind: 'command',
+    capability: 'document.write',
+    transactional: true,
+    summary:
+      'Repeats curves/points `ids`: linear (`direction`, `spacing` — a spacing dimension drives every copy) or circular (`center`, `angle` total degrees, 360 = full turn); `count` includes the original.',
+    params: obj(
+      {
+        featureId: str,
+        ids: { type: 'array', items: str, minItems: 1 },
+        mode: { enum: ['linear', 'circular'], default: 'linear' },
+        count: { type: 'integer', minimum: 2, maximum: 200 },
+        direction: ref('Vec2'),
+        spacing: positive,
+        center: ref('Vec2'),
+        centerPointId: str,
+        angle: num,
+        expectedRevision: revision,
+      },
+      ['featureId', 'ids', 'count'],
+    ),
+    result: '{featureId, createdIds, dof, regions, revision, committed}',
+  },
+  'sketch.roundCorner': {
+    kind: 'command',
+    capability: 'document.write',
+    transactional: true,
+    summary:
+      'Fillets (radius `size`) or chamfers (set-back `size`) the corner at point `point` between two lines; the corner point stays as a virtual sharp so dimensions to it survive.',
+    params: obj(
+      {
+        featureId: str,
+        point: str,
+        size: positive,
+        mode: { enum: ['fillet', 'chamfer'], default: 'fillet' },
+        expectedRevision: revision,
+      },
+      ['featureId', 'point', 'size'],
+    ),
+    result: '{featureId, createdIds, dof, regions, revision, committed}',
+  },
+  'sketch.project': {
+    kind: 'command',
+    capability: 'document.write',
+    transactional: true,
+    summary:
+      'Projects a body `edge` or the boundary of a `face` into the sketch along its normal (construction unless `construction: false`). Associative: the projected geometry follows the source on re-evaluation; a lost source keeps it frozen with a warning.',
+    params: obj(
+      {
+        featureId: str,
+        edge: ref('EdgeInput'),
+        face: ref('FaceInput'),
+        construction: { type: 'boolean', default: true },
+        expectedRevision: revision,
+      },
+      ['featureId'],
+    ),
+    result: '{featureId, projectionId, entityIds, dof, regions, revision, committed}',
+  },
+  'sketch.setReference': {
+    kind: 'command',
+    capability: 'document.write',
+    transactional: true,
+    summary:
+      'Makes a dimension (by id or name) a reference (driven) dimension that only measures, or driving again with `reference: false`.',
+    params: obj(
+      {
+        featureId: str,
+        dimension: str,
+        reference: { type: 'boolean', default: true },
+        expectedRevision: revision,
+      },
+      ['featureId', 'dimension'],
+    ),
+    result: '{featureId, dimensionId, name, reference, dof, regions, revision, committed}',
   },
   'transaction.begin': {
     kind: 'command',
