@@ -442,6 +442,41 @@ class Sketch:
                 return list(sketch.get("regions", []))
         return []
 
+class PrintReport:
+    """Result of ``print.analyze`` with convenience accessors; ``raw`` is the full JSON."""
+
+    def __init__(self, raw: Mapping[str, Any]) -> None:
+        self.raw = raw
+
+    @property
+    def findings(self) -> list[Mapping[str, Any]]:
+        return list(self.raw.get("findings", []))
+
+    def findings_of(self, kind: str) -> list[Mapping[str, Any]]:
+        """Findings of one kind: ``overhang``, ``thinWall``, ``smallHole``, ``smallPin``, ``notWatertight``, ``invalidBrep``, ``buildVolume``, ``notOnPlate``."""
+        return [f for f in self.findings if f.get("kind") == kind]
+
+    @property
+    def printable(self) -> bool:
+        """No error-level findings (invalid B-rep, open mesh, does not fit the build volume)."""
+        return not any(f.get("severity") == "error" for f in self.findings)
+
+    @property
+    def mass_g(self) -> float:
+        return float(self.raw["totals"]["massG"])
+
+    @property
+    def cost(self) -> float:
+        return float(self.raw["totals"]["cost"])
+
+    def body(self, body: Body | str) -> Mapping[str, Any]:
+        body_id = body if isinstance(body, str) else body.id
+        for entry in self.raw.get("bodies", []):
+            if entry["bodyId"] == body_id:
+                return entry
+        raise NotFoundError(raw_code="notFound", message=f"no body {body_id!r} in the report")
+
+
 class Transaction:
     """``with doc.transaction("Lid"):`` — staged, previewable, one undo step; cancelled on exceptions."""
 
@@ -522,7 +557,7 @@ class Document(PrintToolsMixin):
     @property
     def commands(self) -> list[str]:
         """Methods issued so far that change or export the document (for benchmarks/audits)."""
-        reads = {"api.hello", "api.describe", "document.get", "features.list", "feature.get", "bodies.list", "body.get", "faces.list", "edges.list", "sketches.list", "selection.get"}
+        reads = {"api.hello", "api.describe", "document.get", "features.list", "feature.get", "bodies.list", "body.get", "faces.list", "edges.list", "sketches.list", "selection.get", "print.analyze", "print.orientations", "export.meshStats"}
         return [call.method for call in self.log if call.method not in reads]
 
     # ---- sketches and features -------------------------------------------------------------
@@ -683,11 +718,38 @@ class Document(PrintToolsMixin):
     def transaction(self, label: str | None = None) -> Transaction:
         return Transaction(self, label)
 
-    def export_stl(self, path: str | Path, bodies: Iterable[Body] | None = None) -> Path:
-        return self.client.export_to("stl", path, body_ids=None if bodies is None else [b.id for b in bodies])
+    def export_stl(self, path: str | Path, bodies: Iterable[Body] | None = None, *, ascii: bool = False, resolution: str | None = None) -> Path:
+        """STL of the bodies in one file; ``resolution``: ``current``/``coarse``/``standard``/``fine``."""
+        return self.client.export_to("stl", path, body_ids=None if bodies is None else [b.id for b in bodies], resolution=resolution, stl_format="ascii" if ascii else None)
 
-    def export_3mf(self, path: str | Path, bodies: Iterable[Body] | None = None) -> Path:
-        return self.client.export_to("3mf", path, body_ids=None if bodies is None else [b.id for b in bodies])
+    def export_3mf(self, path: str | Path, bodies: Iterable[Body] | None = None, *, resolution: str | None = None) -> Path:
+        return self.client.export_to("3mf", path, body_ids=None if bodies is None else [b.id for b in bodies], resolution=resolution)
+
+    # ---- 3D printing ------------------------------------------------------------------------------
+    def printability(self, bodies: Iterable[Body] | None = None, **settings: Any) -> PrintReport:
+        """Printability report; ``settings`` override the defaults (``overhangAngleDeg=50``, ``minWallMm=1.2``, ``material="PETG"`` …)."""
+        report = self.client.print_analyze(body_ids=None if bodies is None else [b.id for b in bodies], settings=settings or None)
+        return PrintReport(report)
+
+    def place_on_plate(self, face: Face, *, name: str | None = None) -> Feature:
+        """Lays a planar face flat on the build plate (one transform step; the body drops to Z = 0)."""
+        result = self.client.place_on_plate(face.ref, name=name)
+        return Feature(self, str(result["featureId"]), "transform", name or "Place on Plate")
+
+    def orientations(self, body: Body, *, overhang_angle: float | None = None, limit: int = 3) -> list[Mapping[str, Any]]:
+        """Candidate print orientations of ``body``, best first (overhang area, then height)."""
+        return self.client.print_orientations(body.id, overhang_angle=overhang_angle, limit=limit)
+
+    def orient(self, body: Body, *, rank: int | None = None, down: Vec3 | None = None, name: str | None = None) -> Feature:
+        """Orients ``body`` for printing: the ``rank``-th candidate (default 1) or the outward direction ``down`` facing the plate."""
+        if rank is None and down is None:
+            rank = 1
+        result = self.client.print_orient(body.id, rank=rank, down=down, name=name)
+        return Feature(self, str(result["featureId"]), "transform", name or "Orient for Print")
+
+    def mesh_stats(self, bodies: Iterable[Body] | None = None, *, resolution: str | None = None) -> Mapping[str, Any]:
+        """Triangle counts and expected STL sizes for an export resolution (the export preview)."""
+        return self.client.mesh_stats(body_ids=None if bodies is None else [b.id for b in bodies], resolution=resolution)
 
     def export_step(self, path: str | Path, bodies: Iterable[Body] | None = None) -> Path:
         return self.client.export_to("step", path, body_ids=None if bodies is None else [b.id for b in bodies])
@@ -707,4 +769,4 @@ class Document(PrintToolsMixin):
         return self.client.new_project(name)
 
 
-__all__ = ["BBox", "Body", "Document", "Edge", "EdgeSet", "Face", "FaceSet", "Feature", "Sketch", "SketchLine", "Transaction"]
+__all__ = ["BBox", "Body", "Document", "Edge", "EdgeSet", "Face", "FaceSet", "Feature", "PrintReport", "Sketch", "SketchLine", "Transaction"]

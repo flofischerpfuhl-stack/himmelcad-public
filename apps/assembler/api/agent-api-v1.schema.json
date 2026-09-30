@@ -165,6 +165,64 @@
         }
       ]
     },
+    "PrintSettings": {
+      "type": "object",
+      "properties": {
+        "overhangAngleDeg": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 89,
+          "description": "Faces steeper than this from vertical need support (default 45)."
+        },
+        "minWallMm": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Thin-wall threshold (default 0.8)."
+        },
+        "minHoleMm": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Smallest hole diameter (default 2)."
+        },
+        "minPinMm": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Smallest pin diameter (default 1)."
+        },
+        "material": {
+          "enum": ["PLA", "PETG", "ABS", "TPU", "custom"]
+        },
+        "density": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "g/cm³ (material custom)."
+        },
+        "costPerKg": {
+          "type": "number",
+          "minimum": 0
+        },
+        "currency": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Label only (first 8 characters)."
+        },
+        "buildVolume": {
+          "enum": ["none", "bambuX1", "bambuP1", "prusaMk4", "ender3", "custom"]
+        },
+        "customVolume": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "Build volume X, Y, Z in mm (buildVolume custom)."
+        }
+      },
+      "required": [],
+      "additionalProperties": false,
+      "description": "Printability thresholds, material and printer. Build direction is +Z."
+    },
     "EdgeInput": {
       "oneOf": [
         {
@@ -2990,7 +3048,7 @@
     "export.stl": {
       "kind": "command",
       "capability": "document.read",
-      "summary": "Binary STL of all (or the given) bodies.",
+      "summary": "STL of all (or the given) bodies in one file: binary (default) or ASCII, at the display mesh or a resolution preset.",
       "params": {
         "type": "object",
         "properties": {
@@ -3006,17 +3064,26 @@
             "type": "string",
             "minLength": 1,
             "description": "Headless only (capability filesystem.write). Omit to receive base64 bytes."
+          },
+          "resolution": {
+            "enum": ["current", "coarse", "standard", "fine"],
+            "default": "current",
+            "description": "`current`: the evaluated display mesh. Presets re-tessellate the exact B-rep: coarse 0.1 mm / 0.5 rad, standard 0.025 mm / 0.25 rad, fine 0.005 mm / 0.1 rad (chordal / angular deflection)."
+          },
+          "format": {
+            "enum": ["binary", "ascii"],
+            "default": "binary"
           }
         },
         "required": [],
         "additionalProperties": false
       },
-      "result": "{mediaType, byteLength, data?: base64, path?}"
+      "result": "{mediaType, byteLength, triangles, data?: base64, path?}"
     },
     "export.3mf": {
       "kind": "command",
       "capability": "document.read",
-      "summary": "3MF package (one object per body, named and coloured).",
+      "summary": "3MF package (3MF Core + Materials): one welded, manifold object per body with its name and colour, build items with transforms.",
       "params": {
         "type": "object",
         "properties": {
@@ -3032,12 +3099,17 @@
             "type": "string",
             "minLength": 1,
             "description": "Headless only (capability filesystem.write). Omit to receive base64 bytes."
+          },
+          "resolution": {
+            "enum": ["current", "coarse", "standard", "fine"],
+            "default": "current",
+            "description": "`current`: the evaluated display mesh. Presets re-tessellate the exact B-rep: coarse 0.1 mm / 0.5 rad, standard 0.025 mm / 0.25 rad, fine 0.005 mm / 0.1 rad (chordal / angular deflection)."
           }
         },
         "required": [],
         "additionalProperties": false
       },
-      "result": "{mediaType, byteLength, data?: base64, path?}"
+      "result": "{mediaType, byteLength, triangles, data?: base64, path?}"
     },
     "export.step": {
       "kind": "command",
@@ -3173,6 +3245,177 @@
         "additionalProperties": false
       },
       "result": "{text?, path?, byteLength}"
+    },
+    "print.analyze": {
+      "kind": "query",
+      "capability": "document.read",
+      "summary": "Printability of the bodies (build direction +Z): overhang area/faces beyond the angle, sampled wall thickness, small holes/pins, B-rep validity, watertight mesh, volume, mass and cost, build-volume fit, plus a findings list.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "bodyIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
+          },
+          "settings": {
+            "$ref": "#/$defs/PrintSettings"
+          },
+          "scope": {
+            "enum": ["auto", "committed", "staged"],
+            "default": "auto",
+            "description": "`auto`: the open transaction's staged state if any, else the committed document."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "result": "{settings, totals: {bodies, volumeMm3, massG, cost}, bodies: [{bodyId, name, brepValid, watertight, boundaryEdges, nonManifoldEdges, volumeMm3, massG, cost, size, overhang: {areaMm2, totalAreaMm2, faces: [{faceKey, areaMm2, maxAngleDeg}]}, thinWall: {samples, thinSamples, minThicknessMm, faces: [{faceKey, areaMm2, minThicknessMm}]}, holes: [{faceKey, kind, diameterMm, flagged}], buildVolume}], findings: [{id, kind, severity, bodyId, faceKeys, message, value}]}"
+    },
+    "print.orientations": {
+      "kind": "query",
+      "capability": "document.read",
+      "summary": "Ranks orientations of one body for printing: the six principal directions and the largest planar faces facing the plate, by overhang area, then height.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "bodyId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "overhangAngleDeg": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 89
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 20,
+            "default": 3
+          },
+          "scope": {
+            "enum": ["auto", "committed", "staged"],
+            "default": "auto",
+            "description": "`auto`: the open transaction's staged state if any, else the committed document."
+          }
+        },
+        "required": ["bodyId"],
+        "additionalProperties": false
+      },
+      "result": "[{rank, label, down, overhangAreaMm2, heightMm, contactAreaMm2, transform: {rx, ry, rz, pivot, dx, dy, dz}}]"
+    },
+    "print.placeOnPlate": {
+      "kind": "command",
+      "capability": "document.write",
+      "transactional": true,
+      "summary": "Lays a planar face flat on the build plate: adds one transform step that rotates the body so the face points −Z and drops it to Z = 0.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "face": {
+            "$ref": "#/$defs/FaceInput"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Optimistic concurrency: the command fails with `conflict` unless the document revision still equals this value."
+          }
+        },
+        "required": ["face"],
+        "additionalProperties": false
+      },
+      "result": "{featureId, bodyId, transform, revision, committed, errors, bodies}"
+    },
+    "print.orient": {
+      "kind": "command",
+      "capability": "document.write",
+      "transactional": true,
+      "summary": "Orients a body for printing: `rank` applies that print.orientations candidate, `down` turns the given outward direction to −Z. One transform step, body dropped to Z = 0.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "bodyId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "rank": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "down": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 3,
+            "maxItems": 3
+          },
+          "overhangAngleDeg": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 89
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Optimistic concurrency: the command fails with `conflict` unless the document revision still equals this value."
+          }
+        },
+        "required": ["bodyId"],
+        "additionalProperties": false,
+        "oneOf": [
+          {
+            "required": ["rank"]
+          },
+          {
+            "required": ["down"]
+          }
+        ]
+      },
+      "result": "{featureId, bodyId, transform, candidate?, revision, committed, errors, bodies}"
+    },
+    "export.meshStats": {
+      "kind": "query",
+      "capability": "document.read",
+      "summary": "Triangle counts per body at an export resolution, with the expected binary/ASCII STL sizes (the export preview).",
+      "params": {
+        "type": "object",
+        "properties": {
+          "bodyIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
+          },
+          "resolution": {
+            "enum": ["current", "coarse", "standard", "fine"],
+            "default": "current",
+            "description": "`current`: the evaluated display mesh. Presets re-tessellate the exact B-rep: coarse 0.1 mm / 0.5 rad, standard 0.025 mm / 0.25 rad, fine 0.005 mm / 0.1 rad (chordal / angular deflection)."
+          },
+          "scope": {
+            "enum": ["auto", "committed", "staged"],
+            "default": "auto",
+            "description": "`auto`: the open transaction's staged state if any, else the committed document."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "result": "{resolution, bodies: [{id, name, triangles}], triangles, stlBinaryBytes, stlAsciiBytes}"
     }
   },
   "limits": {

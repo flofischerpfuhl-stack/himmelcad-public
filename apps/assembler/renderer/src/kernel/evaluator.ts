@@ -110,6 +110,7 @@ import { offsetBodyFaces } from './features/faceOps.js';
 import { applyModelingFeature, type FeatureKit } from './features/index.js';
 import { rebindRegion } from './regionRebind.js';
 import { FaceMeshCache } from './tessellate.js';
+import { tessellateCopy, type ExportMeshBody, type MeshExportOptions } from './meshExport.js';
 import { FacePropsCache } from './faceProps.js';
 import { KernelFatalError, isFatalKernelError } from './fatal.js';
 
@@ -213,6 +214,13 @@ export interface KernelEvaluator {
    * Uses the exact B-rep, not the tessellated mesh.
    */
   exportStep(features: readonly Feature[], bodyIds?: readonly string[]): Promise<Uint8Array>;
+  /**
+   * Replays `features` and tessellates the resulting bodies (or a subset)
+   * at the given deflection for export (STL/3MF resolution presets). Meshes
+   * a copy, so the viewport meshes and caches are not affected. Optional so
+   * test doubles of the evaluator need not implement it.
+   */
+  exportMesh?(features: readonly Feature[], options: MeshExportOptions): Promise<ExportMeshBody[]>;
   /** Sizes of the incremental-evaluation caches and of the wasm heap. */
   cacheInfo(): KernelCacheInfo;
   /** Drops every cached checkpoint and mesh (frees their OCCT shapes). */
@@ -1713,6 +1721,31 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
           } finally {
             closeArena();
           }
+        } finally {
+          releaseTransient(replay);
+        }
+      });
+    },
+
+    exportMesh(features, meshOptions) {
+      return serialized(async () => {
+        const replay = await replayFeatures(features, { cacheTail: true });
+        try {
+          const { ctx, creationOrder, errors } = replay;
+          const firstError = Object.entries(errors)[0];
+          if (firstError) throw new Error(`Cannot export: ${firstError[1]}`);
+          const wanted = meshOptions.bodyIds ? new Set(meshOptions.bodyIds) : null;
+          const out: ExportMeshBody[] = [];
+          for (const id of creationOrder) {
+            const state = ctx.bodies.get(id);
+            if (!state || (wanted && !wanted.has(state.id))) continue;
+            const mesh = inArena(() =>
+              tessellateCopy(oc, state.shape, meshOptions.tolerance, meshOptions.angularTolerance),
+            );
+            out.push({ id: state.id, name: state.name, color: state.color, mesh });
+          }
+          if (out.length === 0) throw new Error('Nothing to export');
+          return out;
         } finally {
           releaseTransient(replay);
         }

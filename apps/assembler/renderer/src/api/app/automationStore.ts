@@ -9,6 +9,7 @@ import { create } from 'zustand';
 import type { KernelAdapter } from '../../kernel/adapter.js';
 import { currentProjectText, useProjectStore } from '../../model/project/projectStore.js';
 import { useAssemblerStore } from '../../model/store.js';
+import { agentPrintability, usePrintStore } from '../../print/printStore.js';
 import { handleJsonRpcText } from '../jsonRpc.js';
 import { APP_CAPABILITIES, AgentSession, type SessionHost } from '../session.js';
 
@@ -87,6 +88,9 @@ export function appSessionHost(): SessionHost {
       newProject: (name) => useProjectStore.getState().newProject(name),
       text: (projectName) => currentProjectText(projectName),
     },
+    // Printability queries run in the print worker; defaults are the user's panel settings.
+    printability: agentPrintability,
+    printSettings: () => usePrintStore.getState().settings,
   };
 }
 

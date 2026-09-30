@@ -145,6 +145,35 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
     );
     return;
   }
+  if (message.type === 'exportMesh') {
+    void ready.then(
+      async (evaluator) => {
+        try {
+          if (!evaluator.exportMesh) throw new Error('Mesh export is not supported');
+          const bodies = await evaluator.exportMesh(message.features, {
+            ...(message.bodyIds ? { bodyIds: message.bodyIds } : {}),
+            tolerance: message.tolerance,
+            angularTolerance: message.angularTolerance,
+          });
+          const transfer = bodies.flatMap((b) => [
+            b.mesh.positions.buffer,
+            b.mesh.normals.buffer,
+            b.mesh.indices.buffer,
+            b.mesh.triangleFaces.buffer,
+          ]);
+          post({ type: 'meshResult', jobId: message.jobId, bodies }, transfer);
+        } catch (error) {
+          post({
+            type: isFatalKernelError(error) ? 'fatal' : 'meshFailed',
+            jobId: message.jobId,
+            message: error instanceof Error ? error.message : String(error),
+          });
+        }
+      },
+      () => undefined,
+    );
+    return;
+  }
   if (message.type !== 'evaluate') return;
   void ready.then(
     async (evaluator) => {

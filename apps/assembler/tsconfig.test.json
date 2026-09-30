@@ -13,6 +13,7 @@
     "electron/windowOptions.ts",
     "electron/automationServer.ts",
     "electron/recentFiles.ts",
+    "electron/slicerPaths.ts",
     "renderer/src/global.d.ts",
     "test",
     "../../types"

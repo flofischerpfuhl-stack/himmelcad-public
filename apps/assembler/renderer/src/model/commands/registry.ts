@@ -9,6 +9,7 @@
  * whether a command is enabled.
  */
 import { useAutomationStore } from '../../api/app/automationStore.js';
+import { PRINT_COMMANDS } from '../../print/printCommands.js';
 import { useProjectStore } from '../project/projectStore.js';
 import { BLEND_RULE_COMMANDS } from './blendCommands.js';
 import { FEATURE_COMMANDS } from './featureCommands.js';
@@ -326,6 +327,7 @@ export const COMMANDS: readonly Command[] = [
     run: (ctx) => ctx.requestCamera('fit'),
   },
   ...WORKSPACE_COMMANDS,
+  ...PRINT_COMMANDS,
   {
     id: 'modes.section',
     label: 'Section View',
