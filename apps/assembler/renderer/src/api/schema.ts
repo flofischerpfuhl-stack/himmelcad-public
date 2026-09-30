@@ -28,6 +28,7 @@ import { MESH_RESOLUTION_SCHEMA, PRINT_METHODS, PRINT_SETTINGS_SCHEMA } from './
 import { INTEROP_METHODS, STEP_EXPORT_PARAMS, STEP_IMPORT_STRUCTURE } from './interopApi.js';
 import { BLEND_OPTION_PARAMS, PRINT_DEFS, PRINT_FEATURE_KIND_SCHEMAS } from './printSchema.js';
 import type { JsonSchema } from './validate.js';
+import { OFFSET_FACE_MODES } from '../model/features.js';
 
 export const API_ID = 'hcasm.agent-api';
 export const API_VERSION = 1;
@@ -884,11 +885,20 @@ export const FEATURE_KIND_SCHEMAS: Record<string, FeatureKindSpec> = {
   offsetFace: {
     label: 'Offset Face',
     summary:
-      'Offsets faces of one body along their normals: positive adds material, negative removes it (e.g. enlarges a hole).',
-    params: obj({ faces: { type: 'array', items: ref('FaceInput'), minItems: 1 }, distance: num }, [
-      'faces',
-      'distance',
-    ]),
+      'Offsets faces of one body along their normals: positive adds material, negative removes it (e.g. enlarges a hole). With one face, `mode` "radius"/"diameter" sets a cylindrical face to that size and "total" sets its distance to the parallel `opposite` face; `distance` is then that target value, re-measured on every evaluation.',
+    params: obj(
+      {
+        faces: { type: 'array', items: ref('FaceInput'), minItems: 1 },
+        distance: {
+          type: 'number',
+          description:
+            'mode "offset": signed offset (mm); "radius"/"diameter"/"total": the positive target value (mm).',
+        },
+        mode: { enum: [...OFFSET_FACE_MODES], default: 'offset' },
+        opposite: ref('FaceInput'),
+      },
+      ['faces', 'distance'],
+    ),
   },
   deleteFace: {
     label: 'Delete Face',

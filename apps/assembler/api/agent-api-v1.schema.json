@@ -2271,7 +2271,7 @@
     },
     "offsetFace": {
       "label": "Offset Face",
-      "summary": "Offsets faces of one body along their normals: positive adds material, negative removes it (e.g. enlarges a hole).",
+      "summary": "Offsets faces of one body along their normals: positive adds material, negative removes it (e.g. enlarges a hole). With one face, `mode` \"radius\"/\"diameter\" sets a cylindrical face to that size and \"total\" sets its distance to the parallel `opposite` face; `distance` is then that target value, re-measured on every evaluation.",
       "params": {
         "type": "object",
         "properties": {
@@ -2283,7 +2283,15 @@
             "minItems": 1
           },
           "distance": {
-            "type": "number"
+            "type": "number",
+            "description": "mode \"offset\": signed offset (mm); \"radius\"/\"diameter\"/\"total\": the positive target value (mm)."
+          },
+          "mode": {
+            "enum": ["offset", "radius", "diameter", "total"],
+            "default": "offset"
+          },
+          "opposite": {
+            "$ref": "#/$defs/FaceInput"
           }
         },
         "required": ["faces", "distance"],

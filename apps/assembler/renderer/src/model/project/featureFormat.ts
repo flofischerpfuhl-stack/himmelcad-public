@@ -4,7 +4,7 @@
  * the first problem throws with a path-qualified message.
  */
 import type { EdgeRef, FaceRef, Feature } from '../document.js';
-import { MODELING_FEATURE_KINDS, type ModelingFeature } from '../features.js';
+import { MODELING_FEATURE_KINDS, OFFSET_FACE_MODES, type ModelingFeature } from '../features.js';
 import { isPrintFeatureKind, validatePrintFeature } from './printFeatureFormat.js';
 
 export interface FormatHelpers {
@@ -277,6 +277,10 @@ export function validateModelingFeature(r: Rec, path: string, h: FormatHelpers):
     case 'offsetFace':
       faceList('faces');
       num('distance');
+      if (r.mode !== undefined && !(OFFSET_FACE_MODES as readonly unknown[]).includes(r.mode)) {
+        h.fail(`${path}.mode`, `expected one of ${OFFSET_FACE_MODES.join(', ')}`);
+      }
+      if (r.opposite !== undefined) h.faceRef(r.opposite, `${path}.opposite`);
       break;
     case 'deleteFace':
       faceList('faces');

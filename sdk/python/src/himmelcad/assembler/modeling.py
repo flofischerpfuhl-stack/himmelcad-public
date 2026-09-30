@@ -952,6 +952,19 @@ class Document(PrintToolsMixin, InteropMixin):
             params["thickness"] = thickness
         return self._feature(self.client.create_feature("shell", params, name=name))
 
+    def offset_face(self, faces: Face | Iterable[Face], value: float, *, mode: str = "offset", opposite: Face | None = None, name: str | None = None) -> Feature:
+        """Offset Face. ``mode="offset"``: moves the faces by ``value`` mm along their normals
+        (negative removes material). With one face: ``"radius"``/``"diameter"`` set a cylindrical
+        face to ``value``; ``"total"`` sets its distance to the parallel ``opposite`` face. Target
+        values are re-measured on every evaluation."""
+        items = [faces] if isinstance(faces, Face) else list(faces)
+        params: dict[str, Any] = {"faces": [f.ref for f in items], "distance": value}
+        if mode != "offset":
+            params["mode"] = mode
+        if opposite is not None:
+            params["opposite"] = opposite.ref
+        return self._feature(self.client.create_feature("offsetFace", params, name=name))
+
     def _boolean(self, operation: str, target: Body, tools: Sequence[Body], name: str | None, keep_target: bool = False, keep_tools: bool = False) -> Feature:
         params: dict[str, Any] = {"operation": operation, "targetBodyId": target.id, "toolBodyIds": [t.id for t in tools]}
         if keep_target:

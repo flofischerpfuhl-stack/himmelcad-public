@@ -60,16 +60,74 @@ function facesOfOneBody(
 
 // ---- Offset Face -------------------------------------------------------------------
 
+/** Differences below this (mm) leave the face where it is in Radius/Diameter/Total mode. */
+const SAME_SIZE_MM = 1e-6;
+
+/**
+ * The signed offset along the outward normal that gives `feature`'s value in
+ * its mode (DIR-01), measured on the face as it is now: Radius/Diameter of a
+ * cylindrical face (a boss grows outward, a hole wall inward), Total distance
+ * to the parallel `opposite` face (the side of the opposite face is kept).
+ */
+function modeOffset(
+  kit: FeatureKit,
+  ctx: ReplayContextLike,
+  feature: OffsetFaceFeature,
+  face: ResolvedFace,
+): number {
+  const mode = feature.mode ?? 'offset';
+  const value = feature.distance;
+  if (mode === 'offset') return value;
+  if (!Number.isFinite(value) || value <= 0) {
+    kit.fail(`The ${mode === 'total' ? 'total distance' : mode} must be a positive number`);
+  }
+  const id = face.geom.id;
+  if (mode === 'radius' || mode === 'diameter') {
+    if (id.type !== 'cylinder') kit.fail(`${modeLabel(mode)} needs a cylindrical face`);
+    const target = mode === 'radius' ? value : value / 2;
+    return id.convex ? target - id.radius : id.radius - target;
+  }
+  if (!feature.opposite) kit.fail('Total needs an opposite face');
+  const normal = face.geom.normal;
+  if (face.geom.surface !== 'plane' || !normal) kit.fail('Total needs a planar face');
+  const other = kit.resolveFace(
+    bodyOrFail(kit, ctx, feature.opposite.bodyId),
+    feature.opposite,
+    ctx.warn,
+  ).geom;
+  if (other.surface !== 'plane' || !other.normal) kit.fail('Total needs a planar opposite face');
+  if (Math.abs(dot(normal, other.normal)) < 1 - 1e-6) {
+    kit.fail('Total needs an opposite face parallel to the face');
+  }
+  // Signed distance of the face from the opposite plane, along the face's outward normal.
+  const gap = dot(normal, sub(face.geom.centroid, other.centroid));
+  if (Math.abs(gap) < SAME_SIZE_MM) kit.fail('The opposite face lies in the plane of the face');
+  return Math.sign(gap) * value - gap;
+}
+
+function modeLabel(mode: 'radius' | 'diameter'): string {
+  return mode === 'radius' ? 'Radius' : 'Diameter';
+}
+
 export function applyOffsetFace(
   feature: OffsetFaceFeature,
   ctx: ReplayContextLike,
   kit: FeatureKit,
 ): void {
-  const d = feature.distance;
-  if (!Number.isFinite(d) || Math.abs(d) < MIN_FEATURE_SIZE_MM / 10) {
-    kit.fail(`Offset must be at least ${MIN_FEATURE_SIZE_MM / 10} mm in magnitude`);
+  const mode = feature.mode ?? 'offset';
+  if (mode !== 'offset' && feature.faces.length !== 1) {
+    kit.fail('Radius, Diameter and Total apply to exactly one face');
+  }
+  if (mode === 'offset') {
+    const value = feature.distance;
+    if (!Number.isFinite(value) || Math.abs(value) < MIN_FEATURE_SIZE_MM / 10) {
+      kit.fail(`Offset must be at least ${MIN_FEATURE_SIZE_MM / 10} mm in magnitude`);
+    }
   }
   const { body, resolved } = facesOfOneBody(kit, ctx, feature.faces);
+  const d = modeOffset(kit, ctx, feature, resolved[0]!);
+  // Already at the target size/distance: nothing to move.
+  if (mode !== 'offset' && Math.abs(d) < SAME_SIZE_MM) return;
   for (const r of resolved) checkOffsetFits(kit, r, d);
   // HimmelCAD OCCT build: move the faces and re-extend their neighbours.
   const exact = offsetFacesWithHistory(

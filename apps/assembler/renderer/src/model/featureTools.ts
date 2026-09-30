@@ -35,6 +35,7 @@ import {
   MAX_PATTERN_COUNT,
   worldAxisVector,
   type AxisRef,
+  type OffsetFaceMode,
   type PathRef,
   type PatternDefinition,
   type PlaneRef,
@@ -55,6 +56,15 @@ import {
   type ConstructionDraft,
 } from './constructionTools.js';
 import { findSketchContact, pointInsideBody } from './modeling.js';
+import {
+  OFFSET_FACE_MODE_LABEL,
+  availableOffsetFaceModes,
+  defaultOpposite,
+  modeGrowthSign,
+  modeValueOfOffset,
+  offsetOfModeValue,
+  totalGap,
+} from './offsetFaceModes.js';
 import { PRINT_CLEARANCES } from './printFeatures.js';
 import {
   acceptPrintPick,
@@ -120,7 +130,16 @@ export type FeatureDraft =
       offset: number;
     }
   /** `viaMove`: started from Move/Rotate on a face (Shapr3D moves faces with the gizmo). */
-  | { kind: 'offsetFace'; faces: FaceRef[]; distance: number; viaMove?: boolean }
+  | {
+      kind: 'offsetFace';
+      faces: FaceRef[];
+      /** The value in `mode` (`OffsetFaceFeature.distance`). */
+      distance: number;
+      viaMove?: boolean;
+      /** Radius / Diameter / Total (one face); absent: Offset. */
+      mode?: OffsetFaceMode;
+      opposite?: FaceRef;
+    }
   | { kind: 'deleteFace'; faces: FaceRef[] }
   // Hole, Emboss, Draft, Rib, Thicken (`printFeatureTools.ts`).
   | PrintDraft
@@ -875,7 +894,33 @@ export function acceptPick(
         return { ...draft, target: faceRef };
       }
       return draft;
-    case 'offsetFace':
+    case 'offsetFace': {
+      if (!faceRef) return draft;
+      const face = draft.faces[0];
+      // Total: a parallel planar face (not the moved one) becomes the opposite face.
+      if (
+        draft.mode === 'total' &&
+        face &&
+        faceRef.key !== face.key &&
+        totalGap(evaluation, face, faceRef) !== null
+      ) {
+        const offset = offsetOfModeValue(evaluation, draft);
+        const next = { ...draft, opposite: faceRef };
+        const value = offset === null ? null : modeValueOfOffset(evaluation, next, 'total', offset);
+        return value !== null && value > 0 ? { ...next, distance: roundMm(value) } : next;
+      }
+      if (faceRef.bodyId !== face?.bodyId) return draft;
+      const faces = toggle(draft.faces, faceRef, (a, b) => a.key === b.key);
+      if ((draft.mode ?? 'offset') === 'offset' || faces.length === 1) return { ...draft, faces };
+      // Radius/Diameter/Total are single-face modes: more faces continue as Offset.
+      const offset = offsetOfModeValue(evaluation, draft) ?? 0;
+      return {
+        kind: 'offsetFace',
+        faces,
+        distance: roundMm(offset),
+        ...(draft.viaMove ? { viaMove: true } : {}),
+      };
+    }
     case 'deleteFace':
       if (faceRef && faceRef.bodyId === draft.faces[0]?.bodyId) {
         return { ...draft, faces: toggle(draft.faces, faceRef, (a, b) => a.key === b.key) };
@@ -1042,9 +1087,20 @@ export function draftToFeature(
         center: draft.center,
         offset: draft.offset,
       };
-    case 'offsetFace':
-      if (draft.faces.length === 0 || draft.distance === 0) return null;
-      return { ...common, kind: 'offsetFace', faces: draft.faces, distance: draft.distance };
+    case 'offsetFace': {
+      const mode = draft.mode ?? 'offset';
+      if (draft.faces.length === 0) return null;
+      if (mode === 'offset' ? draft.distance === 0 : !(draft.distance > 0)) return null;
+      if (mode === 'total' && !draft.opposite) return null;
+      return {
+        ...common,
+        kind: 'offsetFace',
+        faces: draft.faces,
+        distance: draft.distance,
+        ...(mode !== 'offset' ? { mode } : {}),
+        ...(mode === 'total' && draft.opposite ? { opposite: draft.opposite } : {}),
+      };
+    }
     case 'deleteFace':
       if (draft.faces.length === 0) return null;
       return { ...common, kind: 'deleteFace', faces: draft.faces };
@@ -1146,7 +1202,12 @@ export function draftMeta(draft: FeatureDraft): DraftMeta {
         : {
             label: 'Offset Face',
             shortcut: '',
-            prompt: `Drag the arrow or type a distance (negative removes material). ${plural(draft.faces.length, 'face')}.`,
+            prompt:
+              draft.mode === 'radius' || draft.mode === 'diameter'
+                ? `Drag the arrow or type the ${draft.mode} of the face; it is kept when earlier steps change.`
+                : draft.mode === 'total'
+                  ? 'Drag the arrow or type the distance to the opposite face; click a parallel face to measure to it instead.'
+                  : `Drag the arrow or type a distance (negative removes material). ${plural(draft.faces.length, 'face')}.`,
           };
     case 'deleteFace':
       return {
@@ -1202,7 +1263,45 @@ function planeBadge(plane: PlaneRef, ariaLabel: string): DraftBadge {
   };
 }
 
-export function draftBadges(draft: FeatureDraft): DraftBadge[] {
+type OffsetFaceDraft = Extract<FeatureDraft, { kind: 'offsetFace' }>;
+
+const roundMm = (value: number) => Math.round(value * 1e6) / 1e6;
+
+/**
+ * Offset Face in another value mode (DIR-01), keeping the geometry: the
+ * value is converted (offset 1 on a Ø10 boss → radius 6), Total measures to
+ * the nearest parallel face unless one was picked. Unchanged when the face
+ * does not support `mode`.
+ */
+export function setOffsetFaceMode(
+  draft: OffsetFaceDraft,
+  mode: OffsetFaceMode,
+  evaluation: EvaluationResult,
+): OffsetFaceDraft {
+  if (mode === (draft.mode ?? 'offset')) return draft;
+  const offset = offsetOfModeValue(evaluation, draft) ?? 0;
+  const opposite =
+    mode === 'total' && draft.faces[0]
+      ? (draft.opposite ?? defaultOpposite(evaluation, draft.faces[0]) ?? undefined)
+      : undefined;
+  const value = modeValueOfOffset(evaluation, { faces: draft.faces, opposite }, mode, offset);
+  if (value === null || (mode !== 'offset' && !(value > 0))) return draft;
+  return {
+    kind: 'offsetFace',
+    faces: draft.faces,
+    ...(draft.viaMove ? { viaMove: true } : {}),
+    distance: roundMm(value),
+    ...(mode !== 'offset' ? { mode } : {}),
+    ...(opposite ? { opposite } : {}),
+  };
+}
+
+/**
+ * The running tool's option badges. `evaluation` (the document the tool
+ * edits) lets a badge offer only what the picked geometry supports (Offset
+ * Face modes); without it those badges are left out.
+ */
+export function draftBadges(draft: FeatureDraft, evaluation?: EvaluationResult): DraftBadge[] {
   if (isConstructionDraft(draft)) {
     return constructionDraftBadges(draft).map((badge) => ({
       ...badge,
@@ -1403,19 +1502,34 @@ export function draftBadges(draft: FeatureDraft): DraftBadge[] {
           apply: (d, value) => (d.kind === 'align' ? { ...d, center: value === 'center' } : d),
         },
       ];
-    case 'offsetFace':
-      // Move Face (Move/Rotate on a face) is a plain drag; no clearance presets there.
+    case 'offsetFace': {
+      // Move Face (Move/Rotate on a face) is a plain drag; no modes or clearance presets there.
       if (draft.viaMove) return [];
+      const mode = draft.mode ?? 'offset';
+      const modes = evaluation ? availableOffsetFaceModes(evaluation, draft.faces) : [mode];
+      if (!modes.includes(mode)) modes.push(mode);
+      const out: DraftBadge[] = [];
+      if (modes.length > 1) {
+        out.push({
+          ariaLabel: 'Offset mode',
+          value: mode,
+          options: modes.map((m) => ({ value: m, label: OFFSET_FACE_MODE_LABEL[m] })),
+          apply: (d, value, evaluation) =>
+            d.kind === 'offsetFace' ? setOffsetFaceMode(d, value as OffsetFaceMode, evaluation) : d,
+        });
+      }
       // Printing clearances: remove 0.1-0.4 mm from mating faces (a hole wall grows, a peg shrinks).
-      return [
-        {
+      if (mode === 'offset') {
+        out.push({
           ariaLabel: 'Clearance',
           value:
             PRINT_CLEARANCES.find((c) => Math.abs(draft.distance + c) < 1e-9)?.toString() ?? '',
           options: PRINT_CLEARANCES.map((c) => ({ value: String(c), label: `−${c}` })),
           apply: (d, value) => (d.kind === 'offsetFace' ? { ...d, distance: -Number(value) } : d),
-        },
-      ];
+        });
+      }
+      return out;
+    }
     default:
       return [];
   }
@@ -1785,17 +1899,30 @@ export function draftHandles(
       const first = draft.faces[0];
       const anchor = first ? faceAnchor(evaluation, first) : null;
       if (!anchor) return [];
+      const mode = draft.mode ?? 'offset';
+      // The arrow points the way the value grows (a hole's radius grows into the material)
+      // and reaches past the moved face.
+      const sign = modeGrowthSign(evaluation, draft);
+      const offset = offsetOfModeValue(evaluation, draft) ?? 0;
       return [
         {
           kind: 'linear',
           id: 'distance',
-          label: 'Offset distance',
+          label: mode === 'offset' ? 'Offset distance' : OFFSET_FACE_MODE_LABEL[mode],
+          ...(mode === 'diameter' ? { prefix: 'Ø' } : mode === 'radius' ? { prefix: 'R' } : {}),
           unit: 'mm',
           value: draft.distance,
           base: anchor.point,
-          dir: anchor.normal,
-          length: STEM_MM + Math.max(0, draft.distance),
-          apply: (d, value) => (d.kind === 'offsetFace' ? { ...d, distance: value } : d),
+          dir: sign === 1 ? anchor.normal : scale(anchor.normal, -1),
+          length: STEM_MM + Math.max(0, sign * offset),
+          apply: (d, value) =>
+            d.kind !== 'offsetFace'
+              ? d
+              : {
+                  ...d,
+                  // Target sizes stay positive; Offset may cross zero (add ↔ remove).
+                  distance: (d.mode ?? 'offset') === 'offset' ? value : Math.max(0.01, value),
+                },
         },
       ];
     }

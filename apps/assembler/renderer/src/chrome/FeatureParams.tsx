@@ -12,6 +12,7 @@ import {
 } from '../model/construction.js';
 import type { ExtrudeOperation, Plane } from '../model/document.js';
 import type { AxisRef, ModelingFeature } from '../model/features.js';
+import { OFFSET_FACE_MODE_LABEL } from '../model/offsetFaceModes.js';
 import type { AssemblerState, FeaturePatch } from '../model/store.js';
 import { ExpressionField } from './ExpressionField.js';
 import { PrintFeatureParams } from './PrintFeatureParams.js';
@@ -371,18 +372,28 @@ export function ModelingFeatureParams({
           </div>
         </div>
       );
-    case 'offsetFace':
+    case 'offsetFace': {
+      // Radius/Diameter/Total are target values, re-measured on every evaluation (DIR-01);
+      // the mode is chosen in the Offset Face tool, where the face geometry is known.
+      const mode = feature.mode ?? 'offset';
       return (
         <div className={styles.params}>
           <ExpressionField
-            label="Distance"
+            label={mode === 'offset' ? 'Distance' : OFFSET_FACE_MODE_LABEL[mode]}
             value={feature.distance}
             unit="mm"
             onCommit={(v) => edit({ distance: v })}
           />
-          <span className={styles.paramNote}>{plural(feature.faces.length, 'face')}</span>
+          <span className={styles.paramNote}>
+            {mode === 'offset'
+              ? plural(feature.faces.length, 'face')
+              : mode === 'total'
+                ? 'to the opposite face'
+                : `${mode} of the face`}
+          </span>
         </div>
       );
+    }
     case 'deleteFace':
       return (
         <div className={styles.params}>

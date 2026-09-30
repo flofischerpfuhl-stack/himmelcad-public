@@ -29,6 +29,7 @@ import {
   type LegacySketchProfile,
 } from '../../renderer/src/sketch/builders.js';
 import { EMPTY_SKETCH } from '../../renderer/src/sketch/types.js';
+import { selectedOcctModule } from '../../headless/occtModule.js';
 import { createNodeKernelAdapter } from '../kernel/nodeKernel.js';
 
 const store = useAssemblerStore;
@@ -487,4 +488,189 @@ void test('project files round-trip the new feature kinds and reject malformed o
   assert.deepEqual(loadProjectFile(text).features, features);
   const broken = text.replace('"angle": 90', '"angle": "90"');
   assert.throws(() => loadProjectFile(broken), /features\[2\]\.angle: expected a number/);
+});
+
+// ---- Offset Face modes (DIR-01) and Move Face -------------------------------------------------
+
+function offsetBadge(ariaLabel: string) {
+  return draftBadges(draft('offsetFace'), store.getState().evaluation).find(
+    (b) => b.ariaLabel === ariaLabel,
+  );
+}
+
+async function setMode(mode: string) {
+  const badge = offsetBadge('Offset mode');
+  assert.ok(badge, 'the mode badge is offered');
+  store.getState().updateFeatureDraft((d, ev) => badge.apply(d, mode, ev));
+  await store.getState().whenSettled();
+}
+
+void test('Offset Face modes: Radius/Diameter on a boss and a hole, Total to the opposite face', async () => {
+  await load([
+    sketch('c-s', { kind: 'plane', plane: 'XY', offset: 0 }, [
+      { kind: 'circle', cx: 0, cy: 0, radius: 5 },
+    ]),
+    {
+      id: 'c',
+      name: 'c',
+      suppressed: false,
+      kind: 'extrude',
+      profile: { kind: 'sketch', featureId: 'c-s' },
+      distance: 10,
+      symmetric: false,
+      operation: 'new',
+    },
+  ]);
+  const boss = store.getState().evaluation.bodies[0]!;
+  const side = boss.faces.find((f) => f.surface === 'cylinder')!;
+  store.getState().select({ kind: 'face', bodyId: boss.id, faceKey: side.key });
+  run('tools.offsetFace');
+  assert.equal(draft('offsetFace').distance, -1, 'starts as Offset −1');
+  assert.deepEqual(
+    offsetBadge('Offset mode')!.options.map((o) => o.value),
+    ['offset', 'radius', 'diameter'],
+  );
+  assert.ok(offsetBadge('Clearance'), 'clearances in Offset mode');
+  // The geometry is kept when the mode changes: offset −1 on R5 is radius 4, Ø8.
+  await setMode('radius');
+  assert.equal(draft('offsetFace').distance, 4);
+  assert.equal(offsetBadge('Clearance'), undefined, 'no clearance presets for a target size');
+  await setMode('diameter');
+  assert.equal(draft('offsetFace').distance, 8);
+  const [handle] = draftHandles(draft('offsetFace'), store.getState().evaluation);
+  assert.ok(handle?.kind === 'linear');
+  assert.equal(handle.label, 'Diameter');
+  store.getState().updateFeatureDraft((d) => handle.apply(d, 12));
+  store.getState().commit();
+  await store.getState().whenSettled();
+  const added = store.getState().features.at(-1)!;
+  assert.ok(added.kind === 'offsetFace');
+  assert.equal(added.mode, 'diameter');
+  assert.equal(added.distance, 12);
+  assert.ok(Math.abs(store.getState().evaluation.bodies[0]!.volume - Math.PI * 36 * 10) < 0.05);
+
+  // A hole: its radius grows into the material, so the arrow points that way.
+  await load([
+    ...box('a', 0, 0, 20, 20, 10),
+    sketch('h-s', { kind: 'plane', plane: 'XY', offset: 10 }, [
+      { kind: 'circle', cx: 10, cy: 10, radius: 3 },
+    ]),
+    {
+      id: 'h',
+      name: 'h',
+      suppressed: false,
+      kind: 'extrude',
+      profile: { kind: 'sketch', featureId: 'h-s' },
+      distance: -10,
+      symmetric: false,
+      operation: 'cut',
+      targetBodyId: 'body:a',
+    },
+  ]);
+  const plate = store.getState().evaluation.bodies[0]!;
+  const wall = plate.faces.find((f) => f.surface === 'cylinder')!;
+  store.getState().select({ kind: 'face', bodyId: plate.id, faceKey: wall.key });
+  run('tools.offsetFace');
+  await setMode('radius');
+  assert.equal(draft('offsetFace').distance, 4, 'offset −1 on a hole wall: radius 3 → 4');
+  const [arrow] = draftHandles(draft('offsetFace'), store.getState().evaluation);
+  assert.ok(arrow?.kind === 'linear');
+  const centre = [10, 10];
+  const outward = Math.hypot(
+    arrow.base[0] + arrow.dir[0] - centre[0]!,
+    arrow.base[1] + arrow.dir[1] - centre[1]!,
+  );
+  assert.ok(
+    outward > Math.hypot(arrow.base[0] - centre[0]!, arrow.base[1] - centre[1]!),
+    'arrow away from the axis',
+  );
+  store.getState().cancel();
+
+  // Total: the nearest parallel face behind the top is the bottom; offset −1 → total 9.
+  const top = plate.faces.find((f) => f.normal?.[2] === 1)!;
+  store.getState().select({ kind: 'face', bodyId: plate.id, faceKey: top.key });
+  run('tools.offsetFace');
+  assert.ok(offsetBadge('Offset mode')!.options.some((o) => o.value === 'total'));
+  await setMode('total');
+  const total = draft('offsetFace');
+  assert.equal(total.distance, 9);
+  assert.equal(
+    plate.faces.find((f) => f.key === total.opposite?.key)?.normal?.[2],
+    -1,
+    'measured to the bottom',
+  );
+  store.getState().updateFeatureDraft((d) => (d.kind === 'offsetFace' ? { ...d, distance: 6 } : d));
+  store.getState().commit();
+  await store.getState().whenSettled();
+  assert.deepEqual(store.getState().evaluation.errors, {});
+  assert.ok(Math.abs(store.getState().evaluation.bodies[0]!.max[2] - 6) < 1e-6);
+  // Adding a second face turns a single-face mode back into Offset (same geometry).
+  store.getState().undo();
+  await store.getState().whenSettled();
+  store.getState().select({ kind: 'face', bodyId: plate.id, faceKey: top.key });
+  run('tools.offsetFace');
+  await setMode('total');
+  const other = plate.faces.find((f) => f.normal?.[0] === 1)!;
+  store
+    .getState()
+    .updateFeatureDraft((d, ev) =>
+      acceptPick(d, { kind: 'face', bodyId: plate.id, faceKey: other.key }, ev),
+    );
+  const two = draft('offsetFace');
+  assert.equal(two.faces.length, 2);
+  assert.equal(two.mode, undefined);
+  assert.equal(two.distance, -1);
+  store.getState().cancel();
+});
+
+void test('Move Face on a part with inclined neighbours: true offset on the HimmelCAD build, slab on replicad', async () => {
+  const data = addPolyline(
+    EMPTY_SKETCH,
+    [
+      [0, 0],
+      [20, 0],
+      [15, 10],
+      [5, 10],
+    ],
+    { closed: true },
+  ).sketch;
+  await load([
+    {
+      id: 't-s',
+      name: 't-s',
+      suppressed: false,
+      kind: 'sketch',
+      plane: { kind: 'plane', plane: 'XZ', offset: 0 },
+      ...data,
+    },
+    {
+      id: 't',
+      name: 't',
+      suppressed: false,
+      kind: 'extrude',
+      profile: { kind: 'sketch', featureId: 't-s' },
+      distance: 10,
+      symmetric: false,
+      operation: 'new',
+    },
+  ]);
+  const prism = store.getState().evaluation.bodies[0]!;
+  const top = prism.faces.find((f) => f.normal?.[2] === 1)!;
+  store.getState().select({ kind: 'face', bodyId: prism.id, faceKey: top.key });
+  run('transform.moveRotate');
+  assert.ok(draft('offsetFace').viaMove);
+  const [arrow] = draftHandles(draft('offsetFace'), store.getState().evaluation);
+  store.getState().updateFeatureDraft((d) => arrow!.apply(d, 2));
+  store.getState().commit();
+  await store.getState().whenSettled();
+  assert.deepEqual(store.getState().evaluation.errors, {});
+  const moved = store.getState().evaluation.bodies[0]!;
+  if (selectedOcctModule() === 'himmelcad') {
+    // (20 + 8) / 2 · 12 · 10: the inclined sides re-extend to the moved top, no step.
+    assert.ok(Math.abs(moved.volume - 1680) < 1e-3, `true offset ${moved.volume}`);
+    assert.equal(moved.faces.length, 6);
+  } else {
+    // The slab route of the replicad build: a 10 × 10 × 2 slab on the top, a step at the sides.
+    assert.ok(Math.abs(moved.volume - 1700) < 1e-3, `slab ${moved.volume}`);
+  }
 });

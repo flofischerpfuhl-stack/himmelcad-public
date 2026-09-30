@@ -584,7 +584,7 @@ function ToolBadge({
     case 'feature':
       return (
         <>
-          {draftBadges(tool.draft).map((badge) => {
+          {draftBadges(tool.draft, state.evaluation).map((badge) => {
             const onChange = (value: string) =>
               state.updateFeatureDraft((draft, evaluation) =>
                 badge.apply(draft, value, evaluation),

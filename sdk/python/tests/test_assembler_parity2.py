@@ -80,6 +80,11 @@ class HelperTests(unittest.TestCase):
         self.doc.extrude(s, 1, to=top, op="intersect", distance2=3)
         p = self.params()
         self.assertEqual(p["extent"], {"kind": "toObject", "target": {"kind": "face", "face": top.ref}})
+        bottom = Face("body:b", "f:start:0", "bottom", "plane", (0, 0, -1), (0, 0, 0), 100.0)
+        self.doc.offset_face(top, 12, mode="total", opposite=bottom)
+        self.assertEqual(self.params(), {"faces": [top.ref], "distance": 12, "mode": "total", "opposite": bottom.ref})
+        self.doc.offset_face([top, bottom], -0.2)
+        self.assertEqual(self.params(), {"faces": [top.ref, bottom.ref], "distance": -0.2})
         self.assertEqual((p["operation"], p["distance2"]), ("intersect", 3))
         result = self.doc.mirror(sketches=[s], plane="YZ", axis="Z")
         self.assertEqual(self.params()["sketchIds"], [s.id])
@@ -109,6 +114,21 @@ class HeadlessParityTests(unittest.TestCase):
             axis = doc.axis_intersection("XZ", "YZ")
             self.assertEqual(len(doc.datums()), 2)
             self.assertEqual(axis.info()["kind"], "axis")
+            self.assertEqual(doc.errors(), {})
+
+    def test_offset_face_modes(self) -> None:
+        with Document(AssemblerClient(StdioTransport())) as doc:
+            s = doc.sketch("XY")
+            s.rect_corner(0, 0, 20, 20)
+            block = doc.extrude(s, 10)
+            doc.offset_face(block.face(">Z"), 15, mode="total", opposite=block.face("<Z"))
+            self.assertAlmostEqual(block.bbox.max[2], 15.0, places=6)
+            c = doc.sketch("XY")
+            c.circle(5, center=(40, 0))
+            boss = doc.extrude(c, 10)
+            side = boss.faces().filter(lambda f: f.surface == "cylinder").one()
+            doc.offset_face(side, 14, mode="diameter")
+            self.assertAlmostEqual(boss.volume, math.pi * 49 * 10, places=2)
             self.assertEqual(doc.errors(), {})
 
 

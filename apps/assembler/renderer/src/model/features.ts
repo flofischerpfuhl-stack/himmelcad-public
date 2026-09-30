@@ -204,10 +204,31 @@ export interface AlignFeature extends FeatureBase {
  * cylindrical and other smooth faces): positive adds material, negative
  * removes it (e.g. a negative offset on a hole's wall enlarges the hole).
  */
+/**
+ * How Offset Face reads its value (Shapr3D DIR-01): `offset` moves the faces
+ * by `distance` along their outward normals; with one face `radius` /
+ * `diameter` set a cylindrical face's size and `total` its distance to the
+ * parallel `opposite` face — re-measured on every evaluation, so the target
+ * holds when earlier steps change the face.
+ */
+export type OffsetFaceMode = 'offset' | 'radius' | 'diameter' | 'total';
+
+export const OFFSET_FACE_MODES: readonly OffsetFaceMode[] = [
+  'offset',
+  'radius',
+  'diameter',
+  'total',
+];
+
 export interface OffsetFaceFeature extends FeatureBase {
   kind: 'offsetFace';
   faces: FaceRef[];
+  /** The value in `mode`: offset distance (signed), target radius, diameter or total distance. */
   distance: Millimeters;
+  /** Absent: `offset`. */
+  mode?: OffsetFaceMode;
+  /** `total`: the parallel planar face the distance is measured to. */
+  opposite?: FaceRef;
 }
 
 /** Removes faces (holes, fillets, chamfers) and heals the body. */

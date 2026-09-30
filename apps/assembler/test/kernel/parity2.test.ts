@@ -27,6 +27,7 @@ import type {
 import {
   mirroredSketchId,
   type MirrorFeature,
+  type OffsetFaceFeature,
   type PatternFeature,
 } from '../../renderer/src/model/features.js';
 import { loadProjectFile, saveProjectFile } from '../../renderer/src/model/project/format.js';
@@ -462,6 +463,95 @@ void test('Mirror of a sketch, a planar face and about an axis', async () => {
   bbox(turned.bodies.find((b) => b.createdBy === 'm2')!, [-6, -4, 0], [-2, 0, 4]);
 });
 
+// ---- Offset Face modes (DIR-01) ----------------------------------------------------------
+
+function offsetFace(
+  id: string,
+  faces: FaceRef[],
+  distance: number,
+  extra: Partial<OffsetFaceFeature> = {},
+): OffsetFaceFeature {
+  return { ...base(id), kind: 'offsetFace', faces, distance, ...extra };
+}
+
+void test('Offset Face Radius/Diameter on a boss and a hole: exact target sizes', async () => {
+  const boss = [sketch('c-s', 'XY', 0, circle(0, 0, 5)), extrude('c', 'c-s', 10)];
+  const bossFirst = await evaluate(boss);
+  const side = faceRef(only(bossFirst, 'body:c'), (f) => f.surface === 'cylinder');
+  const radius = await evaluate([...boss, offsetFace('o', [side], 7, { mode: 'radius' })]);
+  noErrors(radius);
+  near(only(radius, 'body:c').volume, Math.PI * 49 * 10, 0.05, 'boss radius 5 → 7');
+  const diameter = await evaluate([...boss, offsetFace('o', [side], 8, { mode: 'diameter' })]);
+  noErrors(diameter);
+  near(only(diameter, 'body:c').volume, Math.PI * 16 * 10, 0.05, 'boss Ø10 → Ø8');
+  // Already at the size: the step changes nothing and reports nothing.
+  const same = await evaluate([...boss, offsetFace('o', [side], 5, { mode: 'radius' })]);
+  noErrors(same);
+  near(only(same, 'body:c').volume, Math.PI * 25 * 10, 0.05, 'unchanged');
+  // The target holds when an earlier step changes the face (re-measured on every replay).
+  const wider = [sketch('c-s', 'XY', 0, circle(0, 0, 6)), extrude('c', 'c-s', 10)];
+  const kept = await evaluate([...wider, offsetFace('o', [side], 7, { mode: 'radius' })]);
+  noErrors(kept);
+  near(only(kept, 'body:c').volume, Math.PI * 49 * 10, 0.05, 'radius 6 → 7');
+
+  const plate = [
+    ...box('a', 0, 0, 20, 20, 10),
+    sketch('h-s', 'XY', 10, circle(10, 10, 3)),
+    extrude('h', 'h-s', -10, { operation: 'cut', targetBodyId: 'body:a' }),
+  ];
+  const plateFirst = await evaluate(plate);
+  noErrors(plateFirst);
+  const wall = faceRef(only(plateFirst, 'body:a'), (f) => f.surface === 'cylinder');
+  const hole = await evaluate([...plate, offsetFace('o', [wall], 4, { mode: 'radius' })]);
+  noErrors(hole);
+  near(only(hole, 'body:a').volume, 4000 - Math.PI * 16 * 10, 0.05, 'hole radius 3 → 4');
+  const smaller = await evaluate([...plate, offsetFace('o', [wall], 5, { mode: 'diameter' })]);
+  noErrors(smaller);
+  near(only(smaller, 'body:a').volume, 4000 - Math.PI * 6.25 * 10, 0.05, 'hole Ø6 → Ø5');
+});
+
+void test('Offset Face Total to the opposite face; mode errors are readable', async () => {
+  const doc = (height: number) => box('a', 0, 0, 20, 20, height);
+  const first = await evaluate(doc(10));
+  const a = only(first, 'body:a');
+  const top = faceRef(a, planeAt(2, 10));
+  const bottom = faceRef(a, planeAt(2, 0, -1));
+  const total = await evaluate([
+    ...doc(10),
+    offsetFace('o', [top], 15, { mode: 'total', opposite: bottom }),
+  ]);
+  noErrors(total);
+  bbox(only(total, 'body:a'), [0, 0, 0], [20, 20, 15]);
+  // A taller box before the step: the total stays 15.
+  const taller = await evaluate([
+    ...doc(12),
+    offsetFace('o', [top], 15, { mode: 'total', opposite: bottom }),
+  ]);
+  noErrors(taller);
+  near(only(taller, 'body:a').volume, 6000, 1e-3, 'total kept at 15');
+  const thinner = await evaluate([
+    ...doc(10),
+    offsetFace('o', [top], 4, { mode: 'total', opposite: bottom }),
+  ]);
+  noErrors(thinner);
+  bbox(only(thinner, 'body:a'), [0, 0, 0], [20, 20, 4]);
+
+  const side = faceRef(a, planeAt(0, 20));
+  const errors = await evaluate([
+    ...doc(10),
+    offsetFace('r', [top], 5, { mode: 'radius' }),
+    offsetFace('n', [top], 5, { mode: 'total' }),
+    offsetFace('p', [top], 5, { mode: 'total', opposite: side }),
+    offsetFace('m', [top, bottom], 5, { mode: 'total', opposite: bottom }),
+    offsetFace('z', [top], -1, { mode: 'total', opposite: bottom }),
+  ]);
+  assert.match(errors.errors['r'] ?? '', /Radius needs a cylindrical face/);
+  assert.match(errors.errors['n'] ?? '', /Total needs an opposite face/);
+  assert.match(errors.errors['p'] ?? '', /parallel/);
+  assert.match(errors.errors['m'] ?? '', /exactly one face/);
+  assert.match(errors.errors['z'] ?? '', /total distance must be a positive number/);
+});
+
 void test('.hcasm: new extrude, construction and mirror fields round-trip; bad values are rejected', async () => {
   const features: Feature[] = [
     sketch('s', 'XY', 0, rect(0, 0, 10, 10)),
@@ -478,6 +568,10 @@ void test('.hcasm: new extrude, construction and mirror fields round-trip; bad v
       b: { kind: 'point', point: [1, 0, 0] },
     }),
     sketchOn('s2', construction('p'), rect(0, 0, 1, 1)),
+    offsetFace('o', [{ bodyId: 'body:e', key: 'e:end', signature: SIG }], 12, {
+      mode: 'total',
+      opposite: { bodyId: 'body:e', key: 'e:start', signature: SIG },
+    }),
   ];
   const text = saveProjectFile({
     projectName: 'x',
@@ -490,4 +584,15 @@ void test('.hcasm: new extrude, construction and mirror fields round-trip; bad v
   const bad = JSON.parse(text) as { features: Record<string, unknown>[] };
   bad.features[1]!.extent = { kind: 'toNowhere' };
   assert.throws(() => loadProjectFile(JSON.stringify(bad)), /extent\.kind/);
+  const badMode = JSON.parse(text) as { features: Record<string, unknown>[] };
+  badMode.features[5]!.mode = 'volume';
+  assert.throws(() => loadProjectFile(JSON.stringify(badMode)), /mode/);
 });
+
+const SIG: FaceRef['signature'] = {
+  surface: 'plane',
+  normal: [0, 0, 1],
+  centroid: [5, 5, 10],
+  area: 100,
+  adjacentFaces: 4,
+};

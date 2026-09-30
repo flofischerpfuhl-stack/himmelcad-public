@@ -281,6 +281,11 @@ function normalise(
       return out;
     case 'offsetFace':
     case 'deleteFace':
+      if (kind === 'offsetFace' && out.opposite !== undefined) {
+        out.opposite = resolveFaceInput(out.opposite, evaluation, features, 'params.opposite', {
+          single: true,
+        })[0];
+      }
       if (Array.isArray(out.faces)) {
         out.faces = out.faces.flatMap((face, i) =>
           resolveFaceInput(face, evaluation, features, `params.faces[${i}]`, { single: false }),

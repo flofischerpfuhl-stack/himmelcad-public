@@ -561,9 +561,16 @@ implementing one, and slicer checks of the 3MF/STL files.
   changes (like the UI); lock or dimension what must stay.
 - **Modelling kinds** (revolve, sweep, loft, mirror, pattern, split,
   transform, align, offsetFace, deleteFace) have closed schemas and selector
-  resolution for their face/edge fields; Python has `doc.revolve` and reaches
-  the others with `doc.create(kind, **params)`. Automatic New/Join/Cut (the UI
-  tools' default) is not applied by the API: `operation` defaults to `new`.
+  resolution for their face/edge fields; Python has `doc.revolve` and
+  `doc.offset_face` and reaches the others with `doc.create(kind, **params)`.
+  Automatic New/Join/Cut (the UI tools' default) is not applied by the API:
+  `operation` defaults to `new`. `offsetFace` takes `mode` (DIR-01): `offset`
+  (default, signed `distance`), or for one face `radius`/`diameter` (a
+  cylindrical face's target size) and `total` (target distance to the parallel
+  `opposite` face) — targets are re-measured on every evaluation. On the
+  HimmelCAD OCCT build the face moves with `BRepOffset_MakeOffset` (neighbours
+  re-extend); on the replicad build a slab is joined/cut (a step next to
+  inclined neighbours; `OCCT-BUILD-SPIKE.md`).
 - **Print-part kinds** (hole, emboss, draft, rib, thicken) and the optional
   fillet/chamfer/shell/boolean params (`radius2`, `rules`, `mode`/`distance2`/
   `angle`/`flip`, `direction`/`clearance`/`faceThickness`, `keepTools`) have closed
