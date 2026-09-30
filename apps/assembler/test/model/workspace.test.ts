@@ -6,13 +6,16 @@ import {
   COMMANDS,
   type Command,
   type CommandContext,
-} from '../../renderer/src/model/commands/registry.js';
+} from '../../renderer/src/foundation/commands/registry.js';
 import {
   shortcutConflicts,
   shortcutSections,
-} from '../../renderer/src/model/commands/shortcutSheet.js';
-import { resolveShortcut } from '../../renderer/src/model/commands/shortcuts.js';
-import { createDemoDocument, type Feature } from '../../renderer/src/model/document.js';
+} from '../../renderer/src/foundation/commands/shortcutSheet.js';
+import { resolveShortcut } from '../../renderer/src/foundation/commands/shortcuts.js';
+import {
+  createDemoDocument,
+  type Feature,
+} from '../../renderer/src/foundation/document/document.js';
 import {
   checkMove,
   directDependencies,
@@ -33,14 +36,14 @@ import {
   fromDisplayUnit,
   parsePreferences,
 } from '../../renderer/src/model/preferences.js';
-import { loadProjectFile, saveProjectFile } from '../../renderer/src/model/project/format.js';
+import { loadProjectFile, saveProjectFile } from '../../renderer/src/foundation/document/format.js';
 import {
   MAX_SAVED_VIEWS,
   parseSavedViews,
   setCameraPoseProbe,
   useWorkspaceStore,
 } from '../../renderer/src/model/workspace.js';
-import { EMPTY_EVALUATION } from '../../renderer/src/kernel/types.js';
+import { EMPTY_EVALUATION } from '../../renderer/src/foundation/geometry-kernel/types.js';
 
 const demo = createDemoDocument();
 const index = (name: string, features: readonly Feature[] = demo) =>

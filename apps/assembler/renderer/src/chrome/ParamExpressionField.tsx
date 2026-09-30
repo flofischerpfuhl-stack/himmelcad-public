@@ -24,9 +24,9 @@ import {
 import { formatExpressionValue } from './expression.js';
 import { parameterCandidates } from './expressionSuggest.js';
 import { ExpressionSuggestInput } from './ExpressionSuggestInput.js';
-import type { Parameter } from '../model/parameters.js';
-import { resolveFeatureExpression } from '../model/parameters.js';
-import { isPlainNumber } from '../sketch/expressions.js';
+import type { Parameter } from '../foundation/document/parameters.js';
+import { resolveFeatureExpression } from '../foundation/document/parameters.js';
+import { isPlainNumber } from '../foundation/sketch-solver/expressions.js';
 import styles from './ExpressionField.module.css';
 
 export interface ParamExpressionFieldProps {

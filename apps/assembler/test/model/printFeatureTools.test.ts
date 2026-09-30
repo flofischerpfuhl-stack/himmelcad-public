@@ -9,9 +9,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { findCommand } from '../../renderer/src/model/commands/registry.js';
-import type { ExtrudeFeature, Feature, SketchFeature } from '../../renderer/src/model/document.js';
-import type { EvaluationResult } from '../../renderer/src/kernel/types.js';
+import { findCommand } from '../../renderer/src/foundation/commands/registry.js';
+import type {
+  ExtrudeFeature,
+  Feature,
+  SketchFeature,
+} from '../../renderer/src/foundation/document/document.js';
+import type { EvaluationResult } from '../../renderer/src/foundation/geometry-kernel/types.js';
 import {
   acceptPick,
   draftBadges,
@@ -23,14 +27,17 @@ import {
   METRIC_HOLE_SIZES,
   fitDiameter,
 } from '../../renderer/src/model/printFeatures.js';
-import { loadProjectFile, saveProjectFile } from '../../renderer/src/model/project/format.js';
-import { useAssemblerStore, type ToolSession } from '../../renderer/src/model/store.js';
+import { loadProjectFile, saveProjectFile } from '../../renderer/src/foundation/document/format.js';
+import {
+  useAssemblerStore,
+  type ToolSession,
+} from '../../renderer/src/foundation/commands/store.js';
 import {
   addPolyline,
   sketchFromLegacyProfiles,
   type LegacySketchProfile,
-} from '../../renderer/src/sketch/builders.js';
-import { EMPTY_SKETCH } from '../../renderer/src/sketch/types.js';
+} from '../../renderer/src/foundation/sketch-solver/builders.js';
+import { EMPTY_SKETCH } from '../../renderer/src/foundation/sketch-solver/types.js';
 import { errorHighlightOf } from '../../renderer/src/viewport/errorHighlight.js';
 import { createNodeKernelAdapter } from '../kernel/nodeKernel.js';
 

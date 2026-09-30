@@ -13,16 +13,16 @@ import { installAutomationHook } from './devtools/automationHook.js';
 import { installAssemblyFolderSync } from './interop/importFolders.js';
 import { ImportRunner, setImportRunner } from './interop/importRunner.js';
 import { setInteropKernel } from './interop/interopStore.js';
-import { WorkerKernelAdapter } from './kernel/workerAdapter.js';
+import { WorkerKernelAdapter } from './foundation/geometry-kernel/workerAdapter.js';
 import { useMeasureStore } from './model/measureStore.js';
 import { useProjectStore } from './model/project/projectStore.js';
-import { useAssemblerStore } from './model/store.js';
+import { useAssemblerStore } from './foundation/commands/store.js';
 import { setPrintKernel } from './print/exporting.js';
 import { setAgentPrintRunner, setPrintRunner } from './print/printStore.js';
 import { PrintabilityRunner } from './print/runner.js';
-import { setSketchSolverFactory } from './sketch/solverProvider.js';
-import { setFontLoader } from './sketch/text/fonts.js';
-import { WorkerSketchSolver } from './sketch/workerSolver.js';
+import { setSketchSolverFactory } from './foundation/sketch-solver/solverProvider.js';
+import { setFontLoader } from './foundation/sketch-solver/text/fonts.js';
+import { WorkerSketchSolver } from './foundation/sketch-solver/workerSolver.js';
 // Sketch text font (Inter, SIL OFL 1.1 — LICENSES/THIRD_PARTY.md), bundled as an asset.
 import interWoffUrl from '@fontsource/inter/files/inter-latin-400-normal.woff?url';
 
@@ -35,7 +35,10 @@ installPreferenceEffects();
 
 // OCCT (WebAssembly) runs in its own worker; the UI stays responsive while it loads.
 const kernelAdapter = new WorkerKernelAdapter(
-  () => new Worker(new URL('./kernel/kernel.worker.ts', import.meta.url), { type: 'module' }),
+  () =>
+    new Worker(new URL('./foundation/geometry-kernel/kernel.worker.ts', import.meta.url), {
+      type: 'module',
+    }),
 );
 useAssemblerStore.getState().attachKernel(kernelAdapter);
 // Project export (STEP) shares the same adapter instance, see `model/project/projectStore.ts`.
@@ -63,7 +66,10 @@ installAssemblyFolderSync(useAssemblerStore);
 setSketchSolverFactory(
   () =>
     new WorkerSketchSolver(
-      () => new Worker(new URL('./sketch/solver.worker.ts', import.meta.url), { type: 'module' }),
+      () =>
+        new Worker(new URL('./foundation/sketch-solver/solver.worker.ts', import.meta.url), {
+          type: 'module',
+        }),
     ),
 );
 

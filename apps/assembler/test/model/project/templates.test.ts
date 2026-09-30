@@ -8,10 +8,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { useProjectStore } from '../../../renderer/src/model/project/projectStore.js';
-import { useAssemblerStore } from '../../../renderer/src/model/store.js';
+import { useAssemblerStore } from '../../../renderer/src/foundation/commands/store.js';
 import { useWorkspaceStore } from '../../../renderer/src/model/workspace.js';
 import { PROJECT_TEMPLATES } from '../../../renderer/src/templates/projectTemplates.js';
-import { setSketchSolverFactory } from '../../../renderer/src/sketch/solverProvider.js';
+import { setSketchSolverFactory } from '../../../renderer/src/foundation/sketch-solver/solverProvider.js';
 import { createNodeKernelAdapter } from '../../kernel/nodeKernel.js';
 import { loadNodeSolver } from '../../sketch/nodeSolver.js';
 

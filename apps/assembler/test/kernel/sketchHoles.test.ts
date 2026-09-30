@@ -14,12 +14,22 @@ import type {
   Feature,
   Plane,
   SketchFeature,
-} from '../../renderer/src/model/document.js';
+} from '../../renderer/src/foundation/document/document.js';
 import type { RevolveFeature } from '../../renderer/src/model/features.js';
-import { addCircle, addRectangle, addText } from '../../renderer/src/sketch/builders.js';
-import { detectRegions } from '../../renderer/src/sketch/regions.js';
-import { DEFAULT_SKETCH_FONT, textOutline } from '../../renderer/src/sketch/text/fonts.js';
-import { EMPTY_SKETCH, type SketchData } from '../../renderer/src/sketch/types.js';
+import {
+  addCircle,
+  addRectangle,
+  addText,
+} from '../../renderer/src/foundation/sketch-solver/builders.js';
+import { detectRegions } from '../../renderer/src/foundation/sketch-solver/regions.js';
+import {
+  DEFAULT_SKETCH_FONT,
+  textOutline,
+} from '../../renderer/src/foundation/sketch-solver/text/fonts.js';
+import {
+  EMPTY_SKETCH,
+  type SketchData,
+} from '../../renderer/src/foundation/sketch-solver/types.js';
 import { installNodeFonts } from '../sketch/nodeFont.js';
 import { loadNodeKernel } from './nodeKernel.js';
 

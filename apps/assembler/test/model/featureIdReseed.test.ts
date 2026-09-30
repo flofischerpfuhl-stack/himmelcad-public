@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { ImportStepFeature } from '../../renderer/src/model/document.js';
-import { useAssemblerStore } from '../../renderer/src/model/store.js';
+import type { ImportStepFeature } from '../../renderer/src/foundation/document/document.js';
+import { useAssemblerStore } from '../../renderer/src/foundation/commands/store.js';
 
 // Regression coverage for the module-level `featureIdCounter`: it must be
 // reseeded from the highest feature id in whatever document `loadDocument`

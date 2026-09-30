@@ -8,7 +8,7 @@ import test from 'node:test';
 import {
   nameMissingReference,
   nameMissingReferences,
-} from '../../renderer/src/kernel/referenceNames.js';
+} from '../../renderer/src/foundation/geometry-kernel/referenceNames.js';
 
 const names = new Map([
   ['feature-constructionPlane-4', 'Plane 2'],

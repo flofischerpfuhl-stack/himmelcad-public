@@ -5,10 +5,22 @@
  * construction circle — each with the Shapr3D-style constraints that keep
  * it a slot / polygon when dimensions change. No solving here.
  */
-import type { SketchBuilder, SnapTarget } from './edits.js';
-import { add, dist, ellipseAngle, normalize, rotate, scale, sub } from './geometry.js';
-import { naturalHandles } from './spline.js';
-import { nextDimensionName, type SketchDimensionKind, type Vec2 } from './types.js';
+import type { SketchBuilder, SnapTarget } from '../foundation/sketch-solver/edits.js';
+import {
+  add,
+  dist,
+  ellipseAngle,
+  normalize,
+  rotate,
+  scale,
+  sub,
+} from '../foundation/sketch-solver/geometry.js';
+import { naturalHandles } from '../foundation/sketch-solver/spline.js';
+import {
+  nextDimensionName,
+  type SketchDimensionKind,
+  type Vec2,
+} from '../foundation/sketch-solver/types.js';
 
 function dimension(
   b: SketchBuilder,

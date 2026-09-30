@@ -3,9 +3,9 @@
  * polylines, face centroids/normals, box) for the Move/Rotate gizmo's
  * instant preview; the committed result is always re-evaluated by the kernel.
  */
-import type { Body } from '../kernel/types.js';
-import { applyDir, applyPoint, type Affine } from '../kernel/features/rigid.js';
-import type { Vec3 } from '../model/document.js';
+import type { Body } from '../foundation/geometry-kernel/types.js';
+import { applyDir, applyPoint, type Affine } from '../foundation/geometry-kernel/features/rigid.js';
+import type { Vec3 } from '../foundation/document/document.js';
 
 function mapPoints(src: Float32Array, a: Affine): Float32Array {
   const out = new Float32Array(src.length);

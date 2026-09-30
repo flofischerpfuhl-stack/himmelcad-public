@@ -6,7 +6,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { Vec3 } from '../../renderer/src/model/document.js';
+import type { Vec3 } from '../../renderer/src/foundation/document/document.js';
 import {
   applyMat3,
   axisAngle,

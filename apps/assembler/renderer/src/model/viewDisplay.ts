@@ -4,10 +4,10 @@
  * section-only view). Pure; validated field by field so a malformed or
  * newer file never breaks Open — unknown values keep the current setting.
  */
-import type { Body, FaceInfo } from '../kernel/types.js';
+import type { Body, FaceInfo } from '../foundation/geometry-kernel/types.js';
 import { isDisplayMode } from '../viewport/displayModes.js';
-import type { ProjectViewState } from './project/format.js';
-import type { SectionPlane, ViewState } from './store.js';
+import type { ProjectViewState } from '../foundation/document/format.js';
+import type { SectionPlane, ViewState } from '../foundation/commands/store.js';
 
 type Vec3 = [number, number, number];
 

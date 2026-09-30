@@ -5,7 +5,7 @@
  * highlighting. Kept separate from `gl.ts` so geometry shape stays easy to
  * reason about without a GL context.
  */
-import type { Body, BodyMesh } from '../kernel/types.js';
+import type { Body, BodyMesh } from '../foundation/geometry-kernel/types.js';
 
 /** A body's triangles, expanded to 3 vertices per triangle, faces contiguous. */
 export interface ExpandedBody {

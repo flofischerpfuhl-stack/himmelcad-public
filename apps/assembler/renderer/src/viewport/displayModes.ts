@@ -10,8 +10,8 @@
  * "Visualized" renders the body and which density the Measure panel uses
  * for mass.
  */
-import type { Feature } from '../model/document.js';
-import type { DisplayMode } from '../model/store.js';
+import type { Feature } from '../foundation/document/document.js';
+import type { DisplayMode } from '../foundation/commands/store.js';
 
 export interface MaterialParams {
   /** 0 = mirror-like .. 1 = fully matte. */

@@ -10,8 +10,8 @@ import { useRef, useState, type CSSProperties, type ReactNode } from 'react';
 
 import { Menu, MenuItem, Tooltip } from '@himmelcad/ui';
 
-import { COMMANDS, type CommandGroup } from '../model/commands/registry.js';
-import type { AssemblerState } from '../model/store.js';
+import { COMMANDS, type CommandGroup } from '../foundation/commands/registry.js';
+import type { AssemblerState } from '../foundation/commands/store.js';
 import styles from './CommandGroupMenu.module.css';
 
 export interface CommandGroupMenuProps {

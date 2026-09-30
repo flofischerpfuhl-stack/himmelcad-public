@@ -8,7 +8,7 @@ import { Boxes, Crosshair, Layers, Scan, Search } from 'lucide-react';
 
 import { Tooltip } from '@himmelcad/ui';
 
-import { findCommand } from '../model/commands/registry.js';
+import { findCommand } from '../foundation/commands/registry.js';
 import { PrintModeButton } from '../print/ui/PrintModeButton.js';
 import { usePreferences } from '../model/preferences.js';
 
@@ -16,7 +16,7 @@ type SketchIconType = (typeof GROUP_ICON)['sketch'];
 import { AdaptiveToolbar } from './AdaptiveToolbar.js';
 import { CommandGroupMenu } from './CommandGroupMenu.js';
 import { GROUP_ICON } from './icons.js';
-import type { AssemblerState } from '../model/store.js';
+import type { AssemblerState } from '../foundation/commands/store.js';
 import styles from './LeftDock.module.css';
 
 export interface LeftDockProps {

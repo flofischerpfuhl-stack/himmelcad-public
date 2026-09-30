@@ -10,7 +10,7 @@ import {
   useAssemblerStore,
   type AssemblerState,
   type SelectionItem,
-} from '../store.js';
+} from '../../foundation/commands/store.js';
 import { usePreferences } from '../preferences.js';
 import { viewDirection } from '../../viewport/camera.js';
 import {
@@ -20,7 +20,7 @@ import {
   useWorkspaceStore,
 } from '../workspace.js';
 import { bodyRowKey, datumRowKey, meshRowKey, sketchRowKey, useItemsStore } from '../items.js';
-import type { Command, CommandAvailability } from './registry.js';
+import type { Command, CommandAvailability } from '../../foundation/commands/registry.js';
 
 const enabled: CommandAvailability = { enabled: true };
 

@@ -7,11 +7,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { ApiError } from '../../renderer/src/api/errors.js';
+import { ApiError } from '../../renderer/src/foundation/commands/api/errors.js';
 import { AgentSession, HEADLESS_CAPABILITIES } from '../../renderer/src/api/session.js';
-import type { SketchFeature } from '../../renderer/src/model/document.js';
-import { useAssemblerStore } from '../../renderer/src/model/store.js';
-import { setSketchSolverFactory } from '../../renderer/src/sketch/solverProvider.js';
+import type { SketchFeature } from '../../renderer/src/foundation/document/document.js';
+import { useAssemblerStore } from '../../renderer/src/foundation/commands/store.js';
+import { setSketchSolverFactory } from '../../renderer/src/foundation/sketch-solver/solverProvider.js';
 import { createNodeKernelAdapter } from '../kernel/nodeKernel.js';
 import { installNodeFonts } from '../sketch/nodeFont.js';
 import { loadNodeSolver } from '../sketch/nodeSolver.js';

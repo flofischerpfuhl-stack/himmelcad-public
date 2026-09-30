@@ -5,8 +5,20 @@
  * line; `translate`/`rotate` pattern constraints; tangent/coincident at a
  * rounded corner), so later dimension edits keep them consistent.
  */
-import { SketchBuilder, type EditResult, type SnapTarget } from './edits.js';
-import { add, cross, dist, dot, normalize, scale, sub } from './geometry.js';
+import {
+  SketchBuilder,
+  type EditResult,
+  type SnapTarget,
+} from '../foundation/sketch-solver/edits.js';
+import {
+  add,
+  cross,
+  dist,
+  dot,
+  normalize,
+  scale,
+  sub,
+} from '../foundation/sketch-solver/geometry.js';
 import { rotateAbout } from './shapes.js';
 import {
   curvePointIds,
@@ -19,7 +31,7 @@ import {
   type SketchData,
   type SketchEntity,
   type Vec2,
-} from './types.js';
+} from '../foundation/sketch-solver/types.js';
 
 /** Curves and loose points of a selection (curves bring their defining points). */
 function selectionGeometry(

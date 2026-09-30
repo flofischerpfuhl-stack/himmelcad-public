@@ -10,9 +10,9 @@
  * depends on every other step whose id appears in its references, plus the
  * steps that created the bodies it works on.
  */
-import type { EvaluationResult } from '../kernel/types.js';
-import type { Feature } from './document.js';
-import type { SelectionItem } from './store.js';
+import type { EvaluationResult } from '../foundation/geometry-kernel/types.js';
+import type { Feature } from '../foundation/document/document.js';
+import type { SelectionItem } from '../foundation/commands/store.js';
 
 /** All strings inside a feature's data (ids, body ids, naming keys), excluding its own id/name. */
 function referenceStrings(feature: Feature): string[] {

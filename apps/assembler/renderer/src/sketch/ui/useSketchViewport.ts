@@ -6,15 +6,15 @@
  */
 import { useEffect, useRef, type MutableRefObject } from 'react';
 
-import { framePoint, frameUv, type SketchFrame } from '../../model/document.js';
-import { isPlanarFace, useAssemblerStore } from '../../model/store.js';
+import { framePoint, frameUv, type SketchFrame } from '../../foundation/document/document.js';
+import { isPlanarFace, useAssemblerStore } from '../../foundation/commands/store.js';
 import type { CameraPose } from '../../viewport/camera.js';
 import { viewProjectionMatrix } from '../../viewport/camera.js';
 import { projectToScreen, rayPlaneIntersect, type Vec3 } from '../../viewport/math.js';
 import type { PickTarget } from '../../viewport/picking.js';
 import { useSketchStore, type SketchSession } from '../session.js';
 import { poseLookingAlong, sketchBounds, sketchViewDirection } from '../sketchCamera.js';
-import type { Vec2 } from '../types.js';
+import type { Vec2 } from '../../foundation/sketch-solver/types.js';
 import type { SketchViewApi } from './SketchOverlay.js';
 
 export interface SketchViewportRefs {

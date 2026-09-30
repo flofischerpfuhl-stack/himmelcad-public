@@ -5,7 +5,7 @@
  * Each part is a family of documents so edits and previews can use fresh
  * values (`v`) that no cache has seen before.
  */
-import { createDemoDocument } from '../../renderer/src/model/document.js';
+import { createDemoDocument } from '../../renderer/src/foundation/document/document.js';
 import type {
   EdgeRef,
   ExtrudeFeature,
@@ -14,15 +14,18 @@ import type {
   FilletFeature,
   Plane,
   SketchFeature,
-} from '../../renderer/src/model/document.js';
+} from '../../renderer/src/foundation/document/document.js';
 import type { PatternFeature, RevolveFeature } from '../../renderer/src/model/features.js';
 import {
   addCircle,
   addRectangle,
   sketchFromLegacyProfiles,
   type LegacySketchProfile,
-} from '../../renderer/src/sketch/builders.js';
-import { EMPTY_SKETCH, type SketchData } from '../../renderer/src/sketch/types.js';
+} from '../../renderer/src/foundation/sketch-solver/builders.js';
+import {
+  EMPTY_SKETCH,
+  type SketchData,
+} from '../../renderer/src/foundation/sketch-solver/types.js';
 
 const base = (id: string, name = id) => ({ id, name, suppressed: false });
 

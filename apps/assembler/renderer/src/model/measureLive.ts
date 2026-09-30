@@ -24,7 +24,7 @@ import {
   usePreferences,
   type LengthUnit,
 } from './preferences.js';
-import { useAssemblerStore, type AssemblerState } from './store.js';
+import { useAssemblerStore, type AssemblerState } from '../foundation/commands/store.js';
 
 export interface LiveMeasurement {
   refs: MeasureRef[];

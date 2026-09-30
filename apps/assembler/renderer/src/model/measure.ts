@@ -13,7 +13,7 @@
  * Values are millimetres, mm², mm³, degrees and grams; the panel formats
  * them in the user's display unit.
  */
-import type { Body, EdgeInfo, FaceInfo } from '../kernel/types.js';
+import type { Body, EdgeInfo, FaceInfo } from '../foundation/geometry-kernel/types.js';
 import {
   DEFAULT_DENSITY_MATERIAL,
   materialPreset,
@@ -21,7 +21,7 @@ import {
 } from '../viewport/displayModes.js';
 import type { ReferenceMesh } from './referenceMesh.js';
 import { referenceMeshToBody } from './referenceMesh.js';
-import type { SelectionItem } from './store.js';
+import type { SelectionItem } from '../foundation/commands/store.js';
 
 export type Vec3 = [number, number, number];
 

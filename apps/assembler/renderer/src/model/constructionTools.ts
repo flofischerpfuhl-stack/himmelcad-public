@@ -6,8 +6,13 @@
  * a Construct tool works before or after the selection. Pure (no store),
  * delegated to by `featureTools.ts`.
  */
-import { baseEdgeKey, baseFaceKey, edgeSignatureOf, faceSignatureOf } from '../kernel/naming.js';
-import type { Body, EvaluationResult } from '../kernel/types.js';
+import {
+  baseEdgeKey,
+  baseFaceKey,
+  edgeSignatureOf,
+  faceSignatureOf,
+} from '../foundation/geometry-kernel/naming.js';
+import type { Body, EvaluationResult } from '../foundation/geometry-kernel/types.js';
 import {
   AXIS_DEF_LABEL,
   PLANE_DEF_LABEL,
@@ -27,9 +32,9 @@ import {
   type Feature,
   type Plane,
   type Vec3,
-} from './document.js';
+} from '../foundation/document/document.js';
 import { worldAxisVector, type AxisRef, type PlaneRef, type WorldAxis } from './features.js';
-import type { SelectionItem } from './store.js';
+import type { SelectionItem } from '../foundation/commands/store.js';
 
 export type PlaneMode = ConstructionPlaneDef['kind'];
 export type AxisMode = ConstructionAxisDef['kind'];

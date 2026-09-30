@@ -3,7 +3,7 @@
  * in-app loopback endpoint). Contract errors travel in `error.data` as
  * `{code, message, hint?, details?}`; `error.code` is the JSON-RPC number.
  */
-import { ApiError, JSON_RPC_ERROR, toErrorPayload } from './errors.js';
+import { ApiError, JSON_RPC_ERROR, toErrorPayload } from '../foundation/commands/api/errors.js';
 
 export interface JsonRpcRequest {
   jsonrpc: '2.0';

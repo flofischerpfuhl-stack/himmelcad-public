@@ -7,8 +7,19 @@
  * Project and Text finish through the session (they need the evaluated
  * bodies / the font); their reducers only track placement.
  */
-import { SketchBuilder, type EditResult, type SnapTarget } from './edits.js';
-import { dist, entityCurves, normalize, sampleCurve, sub, type Curve2 } from './geometry.js';
+import {
+  SketchBuilder,
+  type EditResult,
+  type SnapTarget,
+} from '../foundation/sketch-solver/edits.js';
+import {
+  dist,
+  entityCurves,
+  normalize,
+  sampleCurve,
+  sub,
+  type Curve2,
+} from '../foundation/sketch-solver/geometry.js';
 import type { Inference, SketchHit } from './inference.js';
 import {
   circularPattern,
@@ -26,7 +37,13 @@ import {
   ellipseOutline,
   ellipseParam,
 } from './shapes.js';
-import { entityMap, isCurve, pointPos, type SketchData, type Vec2 } from './types.js';
+import {
+  entityMap,
+  isCurve,
+  pointPos,
+  type SketchData,
+  type Vec2,
+} from '../foundation/sketch-solver/types.js';
 
 /** Smallest size a tool creates, mm (same as the basic tools). */
 const MIN_SIZE = 0.1;

@@ -13,8 +13,8 @@
  * with Select Through the test is purely geometric (hidden geometry too).
  */
 import { referenceMeshIdOf } from '../model/referenceMesh.js';
-import type { Body, EvaluatedSketch } from '../kernel/types.js';
-import type { SelectionItem } from '../model/store.js';
+import type { Body, EvaluatedSketch } from '../foundation/geometry-kernel/types.js';
+import type { SelectionItem } from '../foundation/commands/store.js';
 import type { Vec3 } from './math.js';
 import type { PickTarget } from './picking.js';
 

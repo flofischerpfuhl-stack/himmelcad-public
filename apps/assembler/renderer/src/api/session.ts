@@ -23,12 +23,12 @@
  *   active, and a transaction commit fails with `conflict` if the document
  *   changed since `begin` (no silent merge with the user's edits).
  */
-import type { KernelAdapter } from '../kernel/adapter.js';
-import { MESH_RESOLUTIONS, type MeshResolution } from '../kernel/meshExport.js';
+import type { KernelAdapter } from '../foundation/geometry-kernel/adapter.js';
+import { MESH_RESOLUTIONS, type MeshResolution } from '../foundation/geometry-kernel/meshExport.js';
 import { stlAsciiForMeshes, stlBytes } from '../kernel/stlExport.js';
 import { buildThreeMf } from '../kernel/threeMf.js';
-import type { Body, EvaluationResult } from '../kernel/types.js';
-import type { Feature, SketchFeature } from '../model/document.js';
+import type { Body, EvaluationResult } from '../foundation/geometry-kernel/types.js';
+import type { Feature, SketchFeature } from '../foundation/document/document.js';
 import { parseMirroredSketchId, type TransformFeature } from '../model/features.js';
 import { referenceMeshIdOf } from '../model/referenceMesh.js';
 import {
@@ -59,9 +59,9 @@ import {
   type PrintSettings,
 } from '../print/settings.js';
 import { candidateJson, printReportJson } from './printApi.js';
-import { resolveFaceInput } from './references.js';
+import { resolveFaceInput } from '../foundation/commands/api/references.js';
 import { consumedSketchIds } from '../model/modeling.js';
-import { resolveParameterValues } from '../model/parameters.js';
+import { resolveParameterValues } from '../foundation/document/parameters.js';
 import type { ParameterChange } from '../model/parameterEdits.js';
 import { runMeasureQuery } from './measureApi.js';
 import {
@@ -78,9 +78,13 @@ import {
 } from './interopApi.js';
 import { stepAssemblyFromItems } from '../interop/stepTree.js';
 import { useItemsStore } from '../model/items.js';
-import { ProjectFormatError, loadProjectFile, saveProjectFile } from '../model/project/format.js';
-import type { AssemblerState, SelectionItem } from '../model/store.js';
-import { rememberRegions } from '../sketch/regionMemory.js';
+import {
+  ProjectFormatError,
+  loadProjectFile,
+  saveProjectFile,
+} from '../foundation/document/format.js';
+import type { AssemblerState, SelectionItem } from '../foundation/commands/store.js';
+import { rememberRegions } from '../foundation/sketch-solver/regionMemory.js';
 import { ADVANCED_SKETCH_METHODS, advancedSketchEdit } from './sketchAdvancedApi.js';
 import {
   describeBody,
@@ -90,7 +94,7 @@ import {
   selectEdges,
   selectFaces,
 } from './describe.js';
-import { ApiError } from './errors.js';
+import { ApiError } from '../foundation/commands/api/errors.js';
 import {
   addArcShape,
   addConstraint,
@@ -124,13 +128,13 @@ import {
   METHODS,
   type Capability,
 } from './schema.js';
-import { validateSchema, type JsonSchema } from './validate.js';
+import { validateSchema, type JsonSchema } from '../foundation/commands/api/validate.js';
 import type {
   SketchConstraintKind,
   SketchData,
   SketchDimensionKind,
   Vec2,
-} from '../sketch/types.js';
+} from '../foundation/sketch-solver/types.js';
 
 type Json = Record<string, unknown>;
 

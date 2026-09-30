@@ -8,7 +8,7 @@ import { History as HistoryIcon, Variable } from 'lucide-react';
 
 import { Tooltip } from '@himmelcad/ui';
 
-import type { AssemblerState } from '../model/store.js';
+import type { AssemblerState } from '../foundation/commands/store.js';
 import { DisplayMenu } from './DisplayMenu.js';
 import { SnapControls } from './SnapMenu.js';
 import styles from './RightDock.module.css';

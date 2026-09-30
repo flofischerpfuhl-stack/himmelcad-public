@@ -4,7 +4,11 @@
  * smooth radial normals, two circle edges). Same data layout as the kernel
  * (`kernel/types.ts`: per-face vertex blocks, `triangleFaces`, edge segments).
  */
-import type { Body, EdgeInfo, FaceInfo } from '../../renderer/src/kernel/types.js';
+import type {
+  Body,
+  EdgeInfo,
+  FaceInfo,
+} from '../../renderer/src/foundation/geometry-kernel/types.js';
 
 type V = [number, number, number];
 

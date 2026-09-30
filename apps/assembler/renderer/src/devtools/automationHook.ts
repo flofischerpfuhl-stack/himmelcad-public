@@ -8,17 +8,22 @@
  * All screen coordinates are CSS pixels relative to the page viewport, i.e.
  * directly usable with `page.mouse.move(x, y)`.
  */
-import type { Body, EdgeInfo, EvaluationResult, FaceInfo } from '../kernel/types.js';
-import type { Feature } from '../model/document.js';
+import type {
+  Body,
+  EdgeInfo,
+  EvaluationResult,
+  FaceInfo,
+} from '../foundation/geometry-kernel/types.js';
+import type { Feature } from '../foundation/document/document.js';
 import {
   COMMANDS,
   findCommand,
   resolveAdaptive,
   searchCommands,
-} from '../model/commands/registry.js';
+} from '../foundation/commands/registry.js';
 import { useItemsStore } from '../model/items.js';
 import { usePreferences } from '../model/preferences.js';
-import { isPreviewTool, useAssemblerStore } from '../model/store.js';
+import { isPreviewTool, useAssemblerStore } from '../foundation/commands/store.js';
 import { currentCameraPose, useWorkspaceStore } from '../model/workspace.js';
 import { usePrintStore } from '../print/printStore.js';
 import type { CameraPose } from '../viewport/camera.js';

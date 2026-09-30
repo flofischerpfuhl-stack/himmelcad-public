@@ -15,8 +15,12 @@ import { useEffect, useId, useState } from 'react';
 
 import { consumeEscapeBlurCommitSuppression, Select, Tooltip } from '@himmelcad/ui';
 
-import { resolveParameterValues, type Parameter, type ParameterUnit } from '../model/parameters.js';
-import type { AssemblerState } from '../model/store.js';
+import {
+  resolveParameterValues,
+  type Parameter,
+  type ParameterUnit,
+} from '../foundation/document/parameters.js';
+import type { AssemblerState } from '../foundation/commands/store.js';
 import { parameterCandidates } from './expressionSuggest.js';
 import { ExpressionSuggestInput } from './ExpressionSuggestInput.js';
 import panelStyles from './Panel.module.css';

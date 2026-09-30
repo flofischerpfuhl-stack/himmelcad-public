@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import type { Body, EvaluatedSketch, EvaluationResult } from '../kernel/types.js';
-import { MIN_FEATURE_SIZE_MM } from '../model/document.js';
+import type {
+  Body,
+  EvaluatedSketch,
+  EvaluationResult,
+} from '../foundation/geometry-kernel/types.js';
+import { MIN_FEATURE_SIZE_MM } from '../foundation/document/document.js';
 import { useSketchStore } from '../sketch/session.js';
 import { SketchOverlay } from '../sketch/ui/SketchOverlay.js';
 import { useSketchViewport } from '../sketch/ui/useSketchViewport.js';
@@ -27,7 +31,7 @@ import {
   type AssemblerState,
   type SelectionItem,
   type ToolSession,
-} from '../model/store.js';
+} from '../foundation/commands/store.js';
 import { setViewportProbe } from './automation.js';
 import { findAnchorPixel } from './automation.js';
 import {
@@ -120,8 +124,8 @@ import {
   isWorldAxes,
   withDeltaAlong,
 } from '../model/moveGizmo.js';
-import { addPick } from '../model/pickSession.js';
-import { emptyClickFinishes } from '../model/toolFinish.js';
+import { addPick } from '../foundation/commands/pickSession.js';
+import { emptyClickFinishes } from '../foundation/commands/toolFinish.js';
 import { adaptiveGridStep } from '../model/gridResolution.js';
 
 /**

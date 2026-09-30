@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { buildThreeMf } from '../../renderer/src/kernel/threeMf.js';
-import type { Feature } from '../../renderer/src/model/document.js';
+import type { Feature } from '../../renderer/src/foundation/document/document.js';
 import { boxFeatures, evaluate, mushroom, plateWithHoles } from '../print/fixtures.js';
 import { validateThreeMf, type ParsedObject } from './threeMfValidator.js';
 

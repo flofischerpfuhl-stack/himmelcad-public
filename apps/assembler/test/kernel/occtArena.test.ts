@@ -8,7 +8,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { arenaInterleavings, closeArena, openArena } from '../../renderer/src/kernel/occtArena.js';
+import {
+  arenaInterleavings,
+  closeArena,
+  openArena,
+} from '../../renderer/src/foundation/geometry-kernel/occtArena.js';
 
 class Fake {
   deleted = false;

@@ -3,7 +3,7 @@
  * called by `format.ts` for kinds it does not know itself. Same strictness:
  * the first problem throws with a path-qualified message.
  */
-import type { EdgeRef, FaceRef, Feature } from '../document.js';
+import type { EdgeRef, FaceRef, Feature } from '../../foundation/document/document.js';
 import { MODELING_FEATURE_KINDS, OFFSET_FACE_MODES, type ModelingFeature } from '../features.js';
 import { isPrintFeatureKind, validatePrintFeature } from './printFeatureFormat.js';
 

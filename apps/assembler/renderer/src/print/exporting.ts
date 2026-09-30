@@ -6,15 +6,15 @@
  * evaluated render meshes; the presets re-tessellate a copy of each body in
  * the kernel worker (`kernel/meshExport.ts`).
  */
-import type { KernelAdapter } from '../kernel/adapter.js';
-import { MESH_RESOLUTIONS, type MeshResolution } from '../kernel/meshExport.js';
+import type { KernelAdapter } from '../foundation/geometry-kernel/adapter.js';
+import { MESH_RESOLUTIONS, type MeshResolution } from '../foundation/geometry-kernel/meshExport.js';
 import { stlBytes, type StlFormat } from '../kernel/stlExport.js';
 import { buildThreeMf } from '../kernel/threeMf.js';
-import type { BodyMesh } from '../kernel/types.js';
+import type { BodyMesh } from '../foundation/geometry-kernel/types.js';
 import { useItemsStore, withDisplayNames } from '../model/items.js';
-import * as io from '../model/project/persistence.js';
+import * as io from '../foundation/document/persistence.js';
 import { referenceMeshToBody } from '../model/referenceMesh.js';
-import { shownFeatures, useAssemblerStore } from '../model/store.js';
+import { shownFeatures, useAssemblerStore } from '../foundation/commands/store.js';
 
 let kernel: KernelAdapter | null = null;
 

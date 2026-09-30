@@ -10,13 +10,13 @@ import { useEffect, useMemo, useState } from 'react';
 
 import { Button } from '@himmelcad/ui';
 
-import { COMMANDS, matchScore } from '../model/commands/registry.js';
+import { COMMANDS, matchScore } from '../foundation/commands/registry.js';
 import {
   checkShortcut,
   comboFromKey,
   defaultShortcut,
   effectiveShortcut,
-} from '../model/commands/shortcutOverrides.js';
+} from '../foundation/commands/shortcutOverrides.js';
 import { usePreferences } from '../model/preferences.js';
 import styles from './SettingsDialog.module.css';
 

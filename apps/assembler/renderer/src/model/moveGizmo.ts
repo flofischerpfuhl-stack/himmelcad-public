@@ -5,9 +5,9 @@
  * `transform` feature (world rx/ry/rz Euler angles about the pivot), so an
  * oriented move is still one ordinary, editable History step.
  */
-import type { Body } from '../kernel/types.js';
-import { opAffine, opsAffine, type RigidOp } from '../kernel/features/rigid.js';
-import { frameForFace, type Vec3 } from './document.js';
+import type { Body } from '../foundation/geometry-kernel/types.js';
+import { opAffine, opsAffine, type RigidOp } from '../foundation/geometry-kernel/features/rigid.js';
+import { frameForFace, type Vec3 } from '../foundation/document/document.js';
 
 export const WORLD_AXES: [Vec3, Vec3, Vec3] = [
   [1, 0, 0],

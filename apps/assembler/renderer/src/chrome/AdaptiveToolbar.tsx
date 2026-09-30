@@ -12,11 +12,11 @@ import { useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 
 import { Menu, MenuItem, Tooltip } from '@himmelcad/ui';
 
-import { resolveAdaptive, type Command } from '../model/commands/registry.js';
+import { resolveAdaptive, type Command } from '../foundation/commands/registry.js';
 import { adaptiveCapacity, splitAdaptive } from './adaptiveLayout.js';
 import { usePreferences } from '../model/preferences.js';
 import { commandIcon } from './icons.js';
-import type { AssemblerState } from '../model/store.js';
+import type { AssemblerState } from '../foundation/commands/store.js';
 import styles from './AdaptiveToolbar.module.css';
 
 /** Until measured (first layout): the old fixed count. */

@@ -24,7 +24,7 @@ import { ToolSession } from './chrome/ToolSession.js';
 import { TopBar } from './chrome/TopBar.js';
 import { useGlobalKeyboard } from './chrome/useGlobalKeyboard.js';
 import { InteropChrome } from './interop/ui/InteropChrome.js';
-import { useAssemblerStore, type SelectionItem } from './model/store.js';
+import { useAssemblerStore, type SelectionItem } from './foundation/commands/store.js';
 import { PrintChrome } from './print/ui/PrintChrome.js';
 import { SketchChrome } from './sketch/ui/SketchChrome.js';
 import { Viewport } from './viewport/Viewport.js';

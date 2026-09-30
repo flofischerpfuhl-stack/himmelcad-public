@@ -15,7 +15,7 @@ import {
   encodeMeshSolidPayload,
   type MeshCheck,
   type WeldedMesh,
-} from './meshSolid.js';
+} from '../foundation/geometry-kernel/meshSolidPayload.js';
 import { insunitsToMm, INSUNITS_NAME, type DxfDrawing } from './dxf.js';
 import { dxfToSketchData, type DxfImportStats } from './dxfSketch.js';
 import type { MeshImportResult } from './meshObjects.js';
@@ -24,9 +24,9 @@ import type {
   MeshSolidFeature,
   SketchFeature,
   SketchPlaneRef,
-} from '../model/document.js';
+} from '../foundation/document/document.js';
 import { IDENTITY_TRANSFORM, type ReferenceMesh } from '../model/referenceMesh.js';
-import { EMPTY_SKETCH } from '../sketch/types.js';
+import { EMPTY_SKETCH } from '../foundation/sketch-solver/types.js';
 
 export function bytesToBase64(bytes: Uint8Array): string {
   let binary = '';

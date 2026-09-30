@@ -12,10 +12,15 @@
  * allocates almost nothing for bodies; per-frame arrays are limited to the
  * grid, highlights and tool chrome.
  */
-import type { Body, EvaluatedSketch } from '../kernel/types.js';
+import type { Body, EvaluatedSketch } from '../foundation/geometry-kernel/types.js';
 import type { Bounds3 } from '../model/modeling.js';
 import { referenceMeshIdOf } from '../model/referenceMesh.js';
-import type { DisplayMode, SectionAxis, SectionPlane, SelectionItem } from '../model/store.js';
+import type {
+  DisplayMode,
+  SectionAxis,
+  SectionPlane,
+  SelectionItem,
+} from '../foundation/commands/store.js';
 import {
   billboardEye,
   cameraBasis,

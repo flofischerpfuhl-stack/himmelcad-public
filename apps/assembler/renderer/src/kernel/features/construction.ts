@@ -4,17 +4,35 @@
  * created or changed. Every reference fails with a readable
  * `Missing reference: …` when it no longer resolves (History "Fix…").
  */
-import { frameForFace, type SketchFrame, type Vec3 } from '../../model/document.js';
+import { frameForFace, type SketchFrame, type Vec3 } from '../../foundation/document/document.js';
 import type {
   ConstructionAxisFeature,
   ConstructionPlaneFeature,
   PointRef,
 } from '../../model/construction.js';
-import { edgePointAt } from '../occt.js';
-import type { EvaluatedDatum } from '../types.js';
-import type { FeatureKit, ReplayContextLike } from './kit.js';
-import { bodyOrFail, resolveAxis, resolvePlane, type Line3, type Plane3 } from './refs.js';
-import { add, cross, dot, length, normalize, opAffine, scale, sub } from './rigid.js';
+import { edgePointAt } from '../../foundation/geometry-kernel/occt.js';
+import type { EvaluatedDatum } from '../../foundation/geometry-kernel/types.js';
+import type {
+  FeatureKit,
+  ReplayContextLike,
+} from '../../foundation/geometry-kernel/features/kit.js';
+import {
+  bodyOrFail,
+  resolveAxis,
+  resolvePlane,
+  type Line3,
+  type Plane3,
+} from '../../foundation/geometry-kernel/features/refs.js';
+import {
+  add,
+  cross,
+  dot,
+  length,
+  normalize,
+  opAffine,
+  scale,
+  sub,
+} from '../../foundation/geometry-kernel/features/rigid.js';
 
 /** Default half size of a drawn plane / half length of an axis without a sized reference, mm. */
 const DEFAULT_SIZE_MM = 20;

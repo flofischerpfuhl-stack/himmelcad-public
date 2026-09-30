@@ -26,25 +26,39 @@ import {
   type SketchFeature,
   type SketchFrame,
   type SketchPlaneRef,
-} from '../model/document.js';
-import { makeEdgeRef, makeFaceRef, nextFeatureName, useAssemblerStore } from '../model/store.js';
+} from '../foundation/document/document.js';
+import {
+  makeEdgeRef,
+  makeFaceRef,
+  nextFeatureName,
+  useAssemblerStore,
+} from '../foundation/commands/store.js';
 import { initialAdvancedTool } from './advancedTools.js';
 import { constraintInfo, planConstraint } from './constraintRules.js';
-import { deleteItems, SketchBuilder, toggleConstruction, type EditResult } from './edits.js';
-import { isPlainNumber } from './expressions.js';
+import {
+  deleteItems,
+  SketchBuilder,
+  toggleConstruction,
+  type EditResult,
+} from '../foundation/sketch-solver/edits.js';
+import { isPlainNumber } from '../foundation/sketch-solver/expressions.js';
 import {
   addProjection,
   adoptProjectedEntities,
   edgeSampleFromSegments,
   projectSource,
   type EdgeSample,
-} from './projection.js';
-import { pointIdsOf } from './moveRegion.js';
-import { rememberRegions } from './regionMemory.js';
+} from '../foundation/sketch-solver/projection.js';
+import { pointIdsOf } from '../foundation/sketch-solver/moveRegion.js';
+import { rememberRegions } from '../foundation/sketch-solver/regionMemory.js';
 import { usePreferences } from '../model/preferences.js';
-import { getSketchSolver } from './solverProvider.js';
-import type { SolveResult } from './solverTypes.js';
-import { DEFAULT_SKETCH_FONT, loadSketchFont, textOutline } from './text/fonts.js';
+import { getSketchSolver } from '../foundation/sketch-solver/solverProvider.js';
+import type { SolveResult } from '../foundation/sketch-solver/solverTypes.js';
+import {
+  DEFAULT_SKETCH_FONT,
+  loadSketchFont,
+  textOutline,
+} from '../foundation/sketch-solver/text/fonts.js';
 import {
   initialTool,
   reduceTool,
@@ -63,7 +77,7 @@ import {
   type SketchDimension,
   type SketchProjection,
   type Vec2,
-} from './types.js';
+} from '../foundation/sketch-solver/types.js';
 
 export interface SketchProblem {
   message: string;

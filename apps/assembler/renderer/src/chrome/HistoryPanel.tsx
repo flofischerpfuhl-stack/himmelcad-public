@@ -54,12 +54,12 @@ import {
   relevantFeatureIds,
   stepNamePrefix,
 } from '../model/historyTools.js';
-import { nextFeatureName } from '../model/store.js';
+import { nextFeatureName } from '../foundation/commands/store.js';
 import { startFix } from '../model/fixReference.js';
-import { resolveParameterValues } from '../model/parameters.js';
+import { resolveParameterValues } from '../foundation/document/parameters.js';
 import { useWorkspaceStore } from '../model/workspace.js';
-import type { AssemblerState, FeaturePatch } from '../model/store.js';
-import type { ExtrudeOperation, Feature } from '../model/document.js';
+import type { AssemblerState, FeaturePatch } from '../foundation/commands/store.js';
+import type { ExtrudeOperation, Feature } from '../foundation/document/document.js';
 import { useSketchStore } from '../sketch/session.js';
 import { SketchParams } from '../sketch/ui/SketchParams.js';
 import panelStyles from './Panel.module.css';

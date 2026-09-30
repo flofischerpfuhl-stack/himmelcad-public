@@ -8,7 +8,7 @@ import {
   resolveFeatureExpression,
   resolveParameterValues,
   type Parameter,
-} from '../../renderer/src/model/parameters.js';
+} from '../../renderer/src/foundation/document/parameters.js';
 
 void test('isValidParameterName accepts identifiers, rejects the rest', () => {
   assert.ok(isValidParameterName('wall'));

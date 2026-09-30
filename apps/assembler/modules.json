@@ -25,15 +25,7 @@
       "id": "document",
       "layer": "foundation",
       "summary": "Feature document: value types and references, the feature-kind registry, core kinds, parameters and expressions, .hcasm format, per-kind validators and migrations, persistence.",
-      "paths": [
-        "renderer/src/foundation/document/",
-        "renderer/src/model/document.ts",
-        "renderer/src/model/blendOptions.ts",
-        "renderer/src/model/parameters.ts",
-        "renderer/src/model/project/format.ts",
-        "renderer/src/model/project/meshCodec.ts",
-        "renderer/src/model/project/persistence.ts"
-      ]
+      "paths": ["renderer/src/foundation/document/"]
     },
     {
       "id": "sketch-solver",
@@ -41,26 +33,6 @@
       "summary": "Sketch data model and the sketch kind, planeGCS solver (worker + in-process), regions, projections model, sketch migrations and validation, text outlines.",
       "paths": [
         "renderer/src/foundation/sketch-solver/",
-        "renderer/src/sketch/builders.ts",
-        "renderer/src/sketch/edits.ts",
-        "renderer/src/sketch/expressions.ts",
-        "renderer/src/sketch/geometry.ts",
-        "renderer/src/sketch/measure.ts",
-        "renderer/src/sketch/migration.ts",
-        "renderer/src/sketch/moveRegion.ts",
-        "renderer/src/sketch/planegcsSolver.ts",
-        "renderer/src/sketch/projection.ts",
-        "renderer/src/sketch/regionMemory.ts",
-        "renderer/src/sketch/regions.ts",
-        "renderer/src/sketch/solver.worker.ts",
-        "renderer/src/sketch/solverProvider.ts",
-        "renderer/src/sketch/solverTypes.ts",
-        "renderer/src/sketch/spline.ts",
-        "renderer/src/sketch/splineTangent.ts",
-        "renderer/src/sketch/text/",
-        "renderer/src/sketch/types.ts",
-        "renderer/src/sketch/validation.ts",
-        "renderer/src/sketch/workerSolver.ts",
         "headless/nodeSolver.ts",
         "headless/nodeFonts.ts"
       ]
@@ -71,18 +43,6 @@
       "summary": "The only place that knows OCCT: adapter, worker, evaluator with the per-kind evaluator registry, caches, naming, tessellation, STEP/IGES/mesh-solid exchange, OCCT module loader.",
       "paths": [
         "renderer/src/foundation/geometry-kernel/",
-        "renderer/src/kernel/",
-        "renderer/src/kernel/features/index.ts",
-        "renderer/src/kernel/features/kit.ts",
-        "renderer/src/kernel/features/refs.ts",
-        "renderer/src/kernel/features/rigid.ts",
-        "renderer/src/kernel/features/occRigid.ts",
-        "renderer/src/kernel/features/extrudeExtent.ts",
-        "renderer/src/kernel/features/blendRules.ts",
-        "renderer/src/kernel/features/faceOps.ts",
-        "renderer/src/kernel/features/exactFaceOps.ts",
-        "renderer/src/interop/meshSolid.ts",
-        "renderer/src/interop/step/",
         "headless/nodeKernel.ts",
         "headless/occtModule.ts"
       ]
@@ -91,19 +51,7 @@
       "id": "commands",
       "layer": "foundation",
       "summary": "The command gate: application store core (document state, undo transactions, evaluation, selection, tool sessions, installable slices), command registry, availability, shortcuts, pick sessions, the agent-API contract kit (method registry, schema helpers, errors, validation, reference inputs).",
-      "paths": [
-        "renderer/src/foundation/commands/",
-        "renderer/src/model/store.ts",
-        "renderer/src/model/pickSession.ts",
-        "renderer/src/model/toolFinish.ts",
-        "renderer/src/model/commands/registry.ts",
-        "renderer/src/model/commands/shortcutOverrides.ts",
-        "renderer/src/model/commands/shortcutSheet.ts",
-        "renderer/src/model/commands/shortcuts.ts",
-        "renderer/src/api/errors.ts",
-        "renderer/src/api/references.ts",
-        "renderer/src/api/validate.ts"
-      ]
+      "paths": ["renderer/src/foundation/commands/"]
     },
     {
       "id": "input",

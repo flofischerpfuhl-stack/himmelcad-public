@@ -10,19 +10,25 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { selectedOcctModule } from '../../headless/occtModule.js';
-import { faceSignatureOf } from '../../renderer/src/kernel/naming.js';
-import { occtExtras } from '../../renderer/src/kernel/occtExtras.js';
-import type { Body, EvaluationResult } from '../../renderer/src/kernel/types.js';
+import { faceSignatureOf } from '../../renderer/src/foundation/geometry-kernel/naming.js';
+import { occtExtras } from '../../renderer/src/foundation/geometry-kernel/occtExtras.js';
+import type {
+  Body,
+  EvaluationResult,
+} from '../../renderer/src/foundation/geometry-kernel/types.js';
 import type {
   ExtrudeFeature,
   FaceRef,
   Feature,
   Plane,
   SketchFeature,
-} from '../../renderer/src/model/document.js';
+} from '../../renderer/src/foundation/document/document.js';
 import type { DeleteFaceFeature, OffsetFaceFeature } from '../../renderer/src/model/features.js';
-import { addPolyline, sketchFromLegacyProfiles } from '../../renderer/src/sketch/builders.js';
-import { EMPTY_SKETCH } from '../../renderer/src/sketch/types.js';
+import {
+  addPolyline,
+  sketchFromLegacyProfiles,
+} from '../../renderer/src/foundation/sketch-solver/builders.js';
+import { EMPTY_SKETCH } from '../../renderer/src/foundation/sketch-solver/types.js';
 import type { LegacySketchProfile } from '../sketch/fixtures.js';
 import { loadNodeKernel } from './nodeKernel.js';
 

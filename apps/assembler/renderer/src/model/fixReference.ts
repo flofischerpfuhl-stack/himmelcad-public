@@ -12,7 +12,7 @@
  */
 import { create } from 'zustand';
 
-import type { EvaluationResult } from '../kernel/types.js';
+import type { EvaluationResult } from '../foundation/geometry-kernel/types.js';
 import { datumRef } from './construction.js';
 import {
   frameForFace,
@@ -21,7 +21,7 @@ import {
   type Feature,
   type SketchFrame,
   type Vec3,
-} from './document.js';
+} from '../foundation/document/document.js';
 import { parseMirroredSketchId } from './features.js';
 import {
   findEdge,
@@ -30,7 +30,7 @@ import {
   makeFaceRef,
   useAssemblerStore,
   type SelectionItem,
-} from './store.js';
+} from '../foundation/commands/store.js';
 
 /** What kind of geometry a reference needs. */
 export type FixKind = 'face' | 'edge' | 'body' | 'sketch' | 'profile' | 'plane' | 'axis';

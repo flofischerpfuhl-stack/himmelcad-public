@@ -9,7 +9,10 @@ import test from 'node:test';
 import { buildThreeMf } from '../../renderer/src/kernel/threeMf.js';
 import { importFormatOf, parseMeshFile } from '../../renderer/src/interop/importParsers.js';
 import { referenceMeshesFromImport } from '../../renderer/src/interop/importActions.js';
-import { signedVolume, weldMesh } from '../../renderer/src/interop/meshSolid.js';
+import {
+  signedVolume,
+  weldMesh,
+} from '../../renderer/src/foundation/geometry-kernel/meshSolidPayload.js';
 import type { ParsedStl } from '../../renderer/src/kernel/stlImport.js';
 import { interopFixture } from './fixtures.js';
 

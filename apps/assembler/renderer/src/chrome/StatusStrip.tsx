@@ -11,7 +11,7 @@ import { measureSelection } from '../model/modeling.js';
 import { formatLength, usePreferences, type LengthUnit } from '../model/preferences.js';
 import { referenceMeshWorldBounds } from '../model/referenceMesh.js';
 import { selectionSummary } from './format.js';
-import type { AssemblerState } from '../model/store.js';
+import type { AssemblerState } from '../foundation/commands/store.js';
 import styles from './StatusStrip.module.css';
 
 /** Bounding-box measurement for a single selected reference mesh (it has no B-rep, so only min/max is meaningful — no volume/face/edge measurement). */

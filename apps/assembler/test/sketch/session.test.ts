@@ -7,15 +7,22 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { ExtrudeFeature, SketchFeature } from '../../renderer/src/model/document.js';
-import { useAssemblerStore } from '../../renderer/src/model/store.js';
+import type {
+  ExtrudeFeature,
+  SketchFeature,
+} from '../../renderer/src/foundation/document/document.js';
+import { useAssemblerStore } from '../../renderer/src/foundation/commands/store.js';
 import { setSketchDimension } from '../../renderer/src/sketch/featureOps.js';
 import { hitTest, infer } from '../../renderer/src/sketch/inference.js';
-import { detectRegions } from '../../renderer/src/sketch/regions.js';
+import { detectRegions } from '../../renderer/src/foundation/sketch-solver/regions.js';
 import { useSketchStore } from '../../renderer/src/sketch/session.js';
-import { setSketchSolverFactory } from '../../renderer/src/sketch/solverProvider.js';
+import { setSketchSolverFactory } from '../../renderer/src/foundation/sketch-solver/solverProvider.js';
 import { segmentStart } from '../../renderer/src/sketch/tools.js';
-import { entityMap, pointPos, type Vec2 } from '../../renderer/src/sketch/types.js';
+import {
+  entityMap,
+  pointPos,
+  type Vec2,
+} from '../../renderer/src/foundation/sketch-solver/types.js';
 import { createNodeKernelAdapter } from '../kernel/nodeKernel.js';
 import { loadNodeSolver } from './nodeSolver.js';
 

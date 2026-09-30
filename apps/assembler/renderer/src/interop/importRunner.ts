@@ -8,7 +8,7 @@ import type { DxfDrawing } from './dxf.js';
 import { parseDxfBytes, parseMeshFile, prepareMeshForSolid } from './importParsers.js';
 import type { ImportWorkerRequest, ImportWorkerResponse } from './importProtocol.js';
 import { ImportCancelledError, type MeshImportResult } from './meshObjects.js';
-import type { MeshCheck, WeldedMesh } from './meshSolid.js';
+import type { MeshCheck, WeldedMesh } from '../foundation/geometry-kernel/meshSolidPayload.js';
 
 type Progress = (fraction: number) => void;
 

@@ -10,9 +10,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { opsAffine, transformOps } from '../../renderer/src/kernel/features/rigid.js';
+import {
+  opsAffine,
+  transformOps,
+} from '../../renderer/src/foundation/geometry-kernel/features/rigid.js';
 import { continuableSketchId } from '../../renderer/src/model/commands/sketchCommands.js';
-import { findCommand } from '../../renderer/src/model/commands/registry.js';
+import { findCommand } from '../../renderer/src/foundation/commands/registry.js';
 import { datumRef, type ConstructionPlaneFeature } from '../../renderer/src/model/construction.js';
 import { createConstructionDraft } from '../../renderer/src/model/constructionTools.js';
 import {
@@ -20,7 +23,7 @@ import {
   type ExtrudeFeature,
   type Feature,
   type SketchFeature,
-} from '../../renderer/src/model/document.js';
+} from '../../renderer/src/foundation/document/document.js';
 import { createDraft, draftMeta, draftToFeature } from '../../renderer/src/model/featureTools.js';
 import {
   applyFixPick,
@@ -31,23 +34,28 @@ import {
 import { historyFilterItems, relevantFeatureIds } from '../../renderer/src/model/historyTools.js';
 import { gizmoOps, gizmoTransformFields } from '../../renderer/src/model/moveGizmo.js';
 import { usePreferences } from '../../renderer/src/model/preferences.js';
-import { loadProjectFile, saveProjectFile } from '../../renderer/src/model/project/format.js';
+import { loadProjectFile, saveProjectFile } from '../../renderer/src/foundation/document/format.js';
 import {
   makeFaceRef,
   moveSketchResult,
   useAssemblerStore,
   type MoveTool,
-} from '../../renderer/src/model/store.js';
+} from '../../renderer/src/foundation/commands/store.js';
 import { bodySnapTargets } from '../../renderer/src/sketch/bodySnaps.js';
-import { addRectangle, addPolyline } from '../../renderer/src/sketch/builders.js';
+import { addRectangle, addPolyline } from '../../renderer/src/foundation/sketch-solver/builders.js';
 import { infer } from '../../renderer/src/sketch/inference.js';
-import { translateSketchRegion } from '../../renderer/src/sketch/moveRegion.js';
-import { detectRegions } from '../../renderer/src/sketch/regions.js';
+import { translateSketchRegion } from '../../renderer/src/foundation/sketch-solver/moveRegion.js';
+import { detectRegions } from '../../renderer/src/foundation/sketch-solver/regions.js';
 import { useSketchStore } from '../../renderer/src/sketch/session.js';
-import { setSketchSolverFactory } from '../../renderer/src/sketch/solverProvider.js';
+import { setSketchSolverFactory } from '../../renderer/src/foundation/sketch-solver/solverProvider.js';
 import { initialTool, reduceTool } from '../../renderer/src/sketch/tools.js';
-import { EMPTY_SKETCH, entityMap, pointPos, type Vec2 } from '../../renderer/src/sketch/types.js';
-import { frameForPlane } from '../../renderer/src/model/document.js';
+import {
+  EMPTY_SKETCH,
+  entityMap,
+  pointPos,
+  type Vec2,
+} from '../../renderer/src/foundation/sketch-solver/types.js';
+import { frameForPlane } from '../../renderer/src/foundation/document/document.js';
 import { createNodeKernelAdapter } from '../kernel/nodeKernel.js';
 import { loadNodeSolver } from '../sketch/nodeSolver.js';
 
@@ -121,7 +129,7 @@ void test('Extrude without a selection asks for the profile, then starts on it',
   store.getState().updatePickSession((s) => ({ ...s }));
   tool = store.getState().activeTool;
   assert.equal(tool?.kind, 'pick');
-  const { addPick } = await import('../../renderer/src/model/pickSession.js');
+  const { addPick } = await import('../../renderer/src/foundation/commands/pickSession.js');
   store
     .getState()
     .updatePickSession((s) => addPick(s, body, { evaluation: store.getState().evaluation }));
@@ -145,7 +153,7 @@ void test('Extrude without a selection asks for the profile, then starts on it',
 
 void test('Union before selection: target, tools, Swap, then the boolean starts with those roles', async () => {
   await load(twoBoxes());
-  const { addPick } = await import('../../renderer/src/model/pickSession.js');
+  const { addPick } = await import('../../renderer/src/foundation/commands/pickSession.js');
   store.getState().clearSelection();
   run('tools.union');
   const bodies = store.getState().evaluation.bodies.map((b) => b.id);
@@ -166,7 +174,7 @@ void test('Union before selection: target, tools, Swap, then the boolean starts 
   let tool = store.getState().activeTool;
   assert.ok(tool?.kind === 'pick');
   assert.deepEqual(tool.picks, [[{ kind: 'body', bodyId: a }], [{ kind: 'body', bodyId: b }]]);
-  const { swapPicks } = await import('../../renderer/src/model/pickSession.js');
+  const { swapPicks } = await import('../../renderer/src/foundation/commands/pickSession.js');
   store.getState().updatePickSession(swapPicks);
   tool = store.getState().activeTool;
   assert.ok(tool?.kind === 'pick');

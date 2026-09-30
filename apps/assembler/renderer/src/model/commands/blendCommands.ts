@@ -4,9 +4,13 @@
  * selected body. The rule is stored in the feature and re-evaluated on
  * every replay, so edges an earlier edit adds or removes follow.
  */
-import { makeFaceRef, type AssemblerState, type SelectionItem } from '../store.js';
-import type { EdgeRule } from '../blendOptions.js';
-import type { Command, CommandAvailability } from './registry.js';
+import {
+  makeFaceRef,
+  type AssemblerState,
+  type SelectionItem,
+} from '../../foundation/commands/store.js';
+import type { EdgeRule } from '../../foundation/document/blendOptions.js';
+import type { Command, CommandAvailability } from '../../foundation/commands/registry.js';
 
 function kernelNotReady(ctx: AssemblerState): CommandAvailability | null {
   if (ctx.kernelStatus === 'ready') return null;

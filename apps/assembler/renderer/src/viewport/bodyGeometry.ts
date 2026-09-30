@@ -11,7 +11,7 @@
  * "stable" so `gl.ts` uploads them once and keeps the GPU buffer until the
  * array is no longer drawn.
  */
-import type { Body, BodyMesh } from '../kernel/types.js';
+import type { Body, BodyMesh } from '../foundation/geometry-kernel/types.js';
 import type { Vec3 } from './math.js';
 
 const stableArrays = new WeakSet<ArrayBufferView>();

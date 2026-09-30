@@ -4,14 +4,14 @@ import test from 'node:test';
 import {
   createDemoDocument,
   type SetAppearanceFeature,
-} from '../../renderer/src/model/document.js';
+} from '../../renderer/src/foundation/document/document.js';
 import { applyBodyColour, applyBodyMaterial } from '../../renderer/src/model/appearance.js';
 import { moveFeature } from '../../renderer/src/model/historyTools.js';
 import { usePrintStore } from '../../renderer/src/print/printStore.js';
-import { useAssemblerStore } from '../../renderer/src/model/store.js';
-import { createEvaluator } from '../../renderer/src/kernel/evaluator.js';
-import type { EvaluationResult } from '../../renderer/src/kernel/types.js';
-import type { Feature } from '../../renderer/src/model/document.js';
+import { useAssemblerStore } from '../../renderer/src/foundation/commands/store.js';
+import { createEvaluator } from '../../renderer/src/foundation/geometry-kernel/evaluator.js';
+import type { EvaluationResult } from '../../renderer/src/foundation/geometry-kernel/types.js';
+import type { Feature } from '../../renderer/src/foundation/document/document.js';
 import { createNodeKernelAdapter, loadNodeKernel } from '../kernel/nodeKernel.js';
 
 const store = useAssemblerStore;

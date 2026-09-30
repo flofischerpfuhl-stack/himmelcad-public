@@ -20,9 +20,9 @@ import {
   registerEscapeRung,
 } from '@himmelcad/ui';
 
-import { COMMANDS, findCommand } from '../model/commands/registry.js';
+import { COMMANDS, findCommand } from '../foundation/commands/registry.js';
 import { usePreferences } from '../model/preferences.js';
-import type { AssemblerState } from '../model/store.js';
+import type { AssemblerState } from '../foundation/commands/store.js';
 import {
   DISPLAY_MODE_ENTRIES,
   activeDisplayEntry,

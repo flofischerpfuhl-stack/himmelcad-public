@@ -8,16 +8,22 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { QueuedKernelAdapter, type RunContext } from '../../renderer/src/kernel/adapter.js';
+import {
+  QueuedKernelAdapter,
+  type RunContext,
+} from '../../renderer/src/foundation/geometry-kernel/adapter.js';
 import {
   EMPTY_EVALUATION,
   type EvaluationRequest,
   type EvaluationResult,
-} from '../../renderer/src/kernel/types.js';
-import type { Feature, SketchFeature } from '../../renderer/src/model/document.js';
-import { setLongOperationDelay, useAssemblerStore } from '../../renderer/src/model/store.js';
-import { addRectangle } from '../../renderer/src/sketch/builders.js';
-import { EMPTY_SKETCH } from '../../renderer/src/sketch/types.js';
+} from '../../renderer/src/foundation/geometry-kernel/types.js';
+import type { Feature, SketchFeature } from '../../renderer/src/foundation/document/document.js';
+import {
+  setLongOperationDelay,
+  useAssemblerStore,
+} from '../../renderer/src/foundation/commands/store.js';
+import { addRectangle } from '../../renderer/src/foundation/sketch-solver/builders.js';
+import { EMPTY_SKETCH } from '../../renderer/src/foundation/sketch-solver/types.js';
 
 /** A kernel whose jobs finish only when the test says so; results are tagged with the feature count. */
 class ManualKernel extends QueuedKernelAdapter {

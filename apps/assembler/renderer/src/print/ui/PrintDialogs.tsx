@@ -8,9 +8,12 @@ import { useEffect, useState } from 'react';
 
 import { Button, Dialog, Select, Tooltip } from '@himmelcad/ui';
 
-import { MESH_RESOLUTIONS, type MeshResolution } from '../../kernel/meshExport.js';
+import {
+  MESH_RESOLUTIONS,
+  type MeshResolution,
+} from '../../foundation/geometry-kernel/meshExport.js';
 import type { StlFormat } from '../../kernel/stlExport.js';
-import { useAssemblerStore } from '../../model/store.js';
+import { useAssemblerStore } from '../../foundation/commands/store.js';
 import { useWorkspaceStore } from '../../model/workspace.js';
 import {
   estimateStlBytes,

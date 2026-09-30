@@ -4,8 +4,12 @@
  * commits it as one undo step.
  */
 import { bodyMaterials, type MaterialId } from '../viewport/displayModes.js';
-import type { Feature, SetAppearanceFeature } from './document.js';
-import { nextFeatureName, useAssemblerStore, type AssemblerState } from './store.js';
+import type { Feature, SetAppearanceFeature } from '../foundation/document/document.js';
+import {
+  nextFeatureName,
+  useAssemblerStore,
+  type AssemblerState,
+} from '../foundation/commands/store.js';
 
 /** Filament-like palette offered first; any `#RRGGBB` works. */
 export const BODY_PALETTE: readonly { name: string; color: string }[] = [

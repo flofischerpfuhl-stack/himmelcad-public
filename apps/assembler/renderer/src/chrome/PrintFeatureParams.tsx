@@ -15,8 +15,8 @@ import type {
   ChamferFeature,
   FilletFeature,
   ShellFeature,
-} from '../model/document.js';
-import { edgeRuleLabel } from '../model/blendOptions.js';
+} from '../foundation/document/document.js';
+import { edgeRuleLabel } from '../foundation/document/blendOptions.js';
 import {
   METRIC_HOLE_SIZES,
   holePreset,
@@ -24,8 +24,8 @@ import {
   type HoleFeature,
   type PrintFeature,
 } from '../model/printFeatures.js';
-import type { AssemblerState, FeaturePatch } from '../model/store.js';
-import { resolveParameterValues } from '../model/parameters.js';
+import type { AssemblerState, FeaturePatch } from '../foundation/commands/store.js';
+import { resolveParameterValues } from '../foundation/document/parameters.js';
 import { ExpressionField } from './ExpressionField.js';
 import { ParamExpressionField } from './ParamExpressionField.js';
 import styles from './HistoryPanel.module.css';

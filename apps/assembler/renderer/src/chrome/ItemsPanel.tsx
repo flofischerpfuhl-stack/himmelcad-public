@@ -39,7 +39,7 @@ import {
   revertEscapeField,
 } from '@himmelcad/ui';
 
-import { findCommand } from '../model/commands/registry.js';
+import { findCommand } from '../foundation/commands/registry.js';
 import {
   bodyRowKey,
   buildItemTree,
@@ -55,7 +55,7 @@ import {
   type LeafRow,
 } from '../model/items.js';
 import { consumedSketchIds, isSketchVisible } from '../model/modeling.js';
-import type { AssemblerState, SelectionItem } from '../model/store.js';
+import type { AssemblerState, SelectionItem } from '../foundation/commands/store.js';
 import { useWorkspaceStore } from '../model/workspace.js';
 import { useSketchStore } from '../sketch/session.js';
 import { anchoredMenuStyle } from './anchoredMenu.js';

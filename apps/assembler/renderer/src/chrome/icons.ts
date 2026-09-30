@@ -46,9 +46,9 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 
-import type { Command, CommandGroup } from '../model/commands/registry.js';
-import type { Feature } from '../model/document.js';
-import type { SelectionItem } from '../model/store.js';
+import type { Command, CommandGroup } from '../foundation/commands/registry.js';
+import type { Feature } from '../foundation/document/document.js';
+import type { SelectionItem } from '../foundation/commands/store.js';
 import { SKETCH_COMMAND_ICONS } from '../sketch/ui/sketchIcons.js';
 import { MODELING_COMMAND_ICON, MODELING_FEATURE_ICON } from './featureIcons.js';
 import { PRINT_COMMAND_ICONS } from '../print/printIcons.js';

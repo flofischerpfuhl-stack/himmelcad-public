@@ -10,15 +10,19 @@
  * Faces keep their keys through the builder's `Modified` history; faces
  * OCCT has to rebuild around them (rare) are named `<id>:new`.
  */
-import '../occtArena.js';
+import '../../foundation/geometry-kernel/occtArena.js';
 import * as R from 'replicad';
 
 import type { DraftFeature } from '../../model/printFeatures.js';
 import { MAX_DRAFT_ANGLE } from '../../model/printFeatures.js';
-import type { RawShape } from '../occt.js';
-import type { FeatureKit, ReplayContextLike, Shape3D } from './kit.js';
-import { bodyOrFail, resolvePlane } from './refs.js';
-import { dot, scale } from './rigid.js';
+import type { RawShape } from '../../foundation/geometry-kernel/occt.js';
+import type {
+  FeatureKit,
+  ReplayContextLike,
+  Shape3D,
+} from '../../foundation/geometry-kernel/features/kit.js';
+import { bodyOrFail, resolvePlane } from '../../foundation/geometry-kernel/features/refs.js';
+import { dot, scale } from '../../foundation/geometry-kernel/features/rigid.js';
 
 export function applyDraft(feature: DraftFeature, ctx: ReplayContextLike, kit: FeatureKit): void {
   const angle = feature.angle;

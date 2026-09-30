@@ -7,7 +7,7 @@
  * print semantics (see the legend in the Printability panel), not theme
  * tokens, so they read the same on every body colour and theme.
  */
-import type { Body } from '../kernel/types.js';
+import type { Body } from '../foundation/geometry-kernel/types.js';
 import type { FlatBatch } from '../viewport/gl.js';
 import { expandBody } from '../viewport/geometry.js';
 import { transformPositions } from './orientation.js';

@@ -19,7 +19,7 @@ import { closeApp } from './closeApp.js';
 import { dismissHome } from './home.js';
 
 import { describeBody, describeEdge, describeFace } from '../../renderer/src/api/describe.js';
-import { loadProjectFile, saveProjectFile } from '../../renderer/src/model/project/format.js';
+import { loadProjectFile, saveProjectFile } from '../../renderer/src/foundation/document/format.js';
 import { BENCH_PARTS, sixtyPartBench } from '../bench/parts.js';
 import { loadNodeKernel } from '../kernel/nodeKernel.js';
 

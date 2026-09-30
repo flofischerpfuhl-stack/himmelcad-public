@@ -8,8 +8,8 @@
  */
 import { createConstructionDraft, type AxisMode, type PlaneMode } from '../constructionTools.js';
 import { PLANE_DEF_LABEL, AXIS_DEF_LABEL } from '../construction.js';
-import type { AssemblerState } from '../store.js';
-import type { Command, CommandAvailability } from './registry.js';
+import type { AssemblerState } from '../../foundation/commands/store.js';
+import type { Command, CommandAvailability } from '../../foundation/commands/registry.js';
 
 const KERNEL_LOADING = 'The CAD kernel is still loading.';
 const KERNEL_FAILED = 'The CAD kernel failed to load.';

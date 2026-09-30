@@ -5,10 +5,10 @@
  * position of a dimension chip, and an idle wait for the solver queue.
  * Not part of the product contract.
  */
-import { framePoint, type SketchFrame } from '../model/document.js';
-import { useAssemblerStore } from '../model/store.js';
+import { framePoint, type SketchFrame } from '../foundation/document/document.js';
+import { useAssemblerStore } from '../foundation/commands/store.js';
 import { useSketchStore } from '../sketch/session.js';
-import type { Vec2 } from '../sketch/types.js';
+import type { Vec2 } from '../foundation/sketch-solver/types.js';
 import { getViewportProbe, type ScreenPoint } from '../viewport/automation.js';
 
 export interface SketchAutomation {

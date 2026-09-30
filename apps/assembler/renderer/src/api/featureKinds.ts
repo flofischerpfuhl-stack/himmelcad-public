@@ -5,20 +5,24 @@
  * (`model/project/format.ts`), so the API can never commit a feature that
  * Save/Open would reject.
  */
-import type { EvaluationResult } from '../kernel/types.js';
-import type { Feature } from '../model/document.js';
+import type { EvaluationResult } from '../foundation/geometry-kernel/types.js';
+import type { Feature } from '../foundation/document/document.js';
 import {
   CURRENT_SCHEMA_VERSION,
   ProjectFormatError,
   migrateAndValidate,
-} from '../model/project/format.js';
+} from '../foundation/document/format.js';
 import { datumRef } from '../model/construction.js';
-import { expressionFieldsOf, resolveFieldExpression } from '../model/parameters.js';
-import { ApiError } from './errors.js';
+import { expressionFieldsOf, resolveFieldExpression } from '../foundation/document/parameters.js';
+import { ApiError } from '../foundation/commands/api/errors.js';
 import { addShape, type ShapeResult, type SketchShape } from './sketchApi.js';
-import { resolveEdgeInput, resolveFaceInput, fillSignatures } from './references.js';
+import {
+  resolveEdgeInput,
+  resolveFaceInput,
+  fillSignatures,
+} from '../foundation/commands/api/references.js';
 import { DEFS, FEATURE_KIND_SCHEMAS } from './schema.js';
-import { validateSchema, type JsonSchema } from './validate.js';
+import { validateSchema, type JsonSchema } from '../foundation/commands/api/validate.js';
 
 type Json = Record<string, unknown>;
 

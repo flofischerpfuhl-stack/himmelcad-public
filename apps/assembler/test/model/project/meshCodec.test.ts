@@ -6,7 +6,7 @@ import {
   encodeMeshPayload,
   MAX_DECOMPRESSED_MESH_BYTES,
   MeshPayloadTooLargeError,
-} from '../../../renderer/src/model/project/meshCodec.js';
+} from '../../../renderer/src/foundation/document/meshCodec.js';
 
 void test('encode/decode round trip preserves positions, normals and indices exactly', async () => {
   const positions = new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]);

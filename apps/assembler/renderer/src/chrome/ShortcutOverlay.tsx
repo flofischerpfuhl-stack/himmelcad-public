@@ -9,7 +9,7 @@ import { useEffect } from 'react';
 
 import { registerEscapeRung } from '@himmelcad/ui';
 
-import { shortcutSections, type ShortcutRow } from '../model/commands/shortcutSheet.js';
+import { shortcutSections, type ShortcutRow } from '../foundation/commands/shortcutSheet.js';
 import { usePreferences } from '../model/preferences.js';
 import { useWorkspaceStore } from '../model/workspace.js';
 import { describeBindings, navigationPreset } from '../viewport/navigation.js';

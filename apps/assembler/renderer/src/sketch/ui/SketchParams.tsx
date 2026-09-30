@@ -18,11 +18,11 @@ import { ExpressionField } from '../../chrome/ExpressionField.js';
 import { sketchDimensionCandidates } from '../../chrome/expressionSuggest.js';
 import { ExpressionSuggestInput } from '../../chrome/ExpressionSuggestInput.js';
 import fieldStyles from '../../chrome/ExpressionField.module.css';
-import type { SketchFeature } from '../../model/document.js';
-import { useAssemblerStore, type AssemblerState } from '../../model/store.js';
+import type { SketchFeature } from '../../foundation/document/document.js';
+import { useAssemblerStore, type AssemblerState } from '../../foundation/commands/store.js';
 import { setSketchDimension } from '../featureOps.js';
 import { useSketchStore } from '../session.js';
-import type { SketchDimension } from '../types.js';
+import type { SketchDimension } from '../../foundation/sketch-solver/types.js';
 
 const KIND_LABEL: Record<SketchDimension['kind'], string> = {
   distance: 'Length',

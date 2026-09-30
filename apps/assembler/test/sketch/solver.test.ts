@@ -7,8 +7,8 @@ import {
   addRectangle,
   withConstraints,
   withDimension,
-} from '../../renderer/src/sketch/builders.js';
-import type { SolveResult } from '../../renderer/src/sketch/solverTypes.js';
+} from '../../renderer/src/foundation/sketch-solver/builders.js';
+import type { SolveResult } from '../../renderer/src/foundation/sketch-solver/solverTypes.js';
 import {
   EMPTY_SKETCH,
   entityMap,
@@ -19,7 +19,7 @@ import {
   type SketchData,
   type SketchEntity,
   type Vec2,
-} from '../../renderer/src/sketch/types.js';
+} from '../../renderer/src/foundation/sketch-solver/types.js';
 import { loadNodeSolver } from './nodeSolver.js';
 
 const TOL = 1e-6;

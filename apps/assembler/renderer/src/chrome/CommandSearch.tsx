@@ -8,8 +8,8 @@ import { useEffect, useRef, useState } from 'react';
 
 import { registerEscapeRung } from '@himmelcad/ui';
 
-import { searchCommands, type CommandSearchResult } from '../model/commands/registry.js';
-import type { AssemblerState } from '../model/store.js';
+import { searchCommands, type CommandSearchResult } from '../foundation/commands/registry.js';
+import type { AssemblerState } from '../foundation/commands/store.js';
 import styles from './CommandSearch.module.css';
 
 export interface CommandSearchProps {

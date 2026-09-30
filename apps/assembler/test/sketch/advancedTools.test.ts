@@ -8,10 +8,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { addCircle, addRectangle } from '../../renderer/src/sketch/builders.js';
-import { trimAt } from '../../renderer/src/sketch/edits.js';
+import { addCircle, addRectangle } from '../../renderer/src/foundation/sketch-solver/builders.js';
+import { trimAt } from '../../renderer/src/foundation/sketch-solver/edits.js';
 import type { Inference, SketchHit } from '../../renderer/src/sketch/inference.js';
-import { detectRegions } from '../../renderer/src/sketch/regions.js';
+import { detectRegions } from '../../renderer/src/foundation/sketch-solver/regions.js';
 import {
   initialTool,
   reduceTool,
@@ -27,7 +27,7 @@ import {
   pointPos,
   type SketchData,
   type Vec2,
-} from '../../renderer/src/sketch/types.js';
+} from '../../renderer/src/foundation/sketch-solver/types.js';
 import { loadNodeSolver } from './nodeSolver.js';
 
 function close(a: number, b: number, tol: number, what = ''): void {

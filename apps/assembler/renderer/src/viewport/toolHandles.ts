@@ -5,9 +5,9 @@
  * chip overlay — all three always agree. Values are written back through
  * {@link applyToolHandleValue}.
  */
-import { opsAffine } from '../kernel/features/rigid.js';
+import { opsAffine } from '../foundation/geometry-kernel/features/rigid.js';
 import { WORLD_AXES, gizmoOps, isWorldAxes } from '../model/moveGizmo.js';
-import type { Body } from '../kernel/types.js';
+import type { Body } from '../foundation/geometry-kernel/types.js';
 import {
   profileSamples,
   draftGuides,
@@ -17,7 +17,11 @@ import {
   type DraftHandle,
   type HandleUnit,
 } from '../model/featureTools.js';
-import { useAssemblerStore, type AssemblerState, type MoveTool } from '../model/store.js';
+import {
+  useAssemblerStore,
+  type AssemblerState,
+  type MoveTool,
+} from '../foundation/commands/store.js';
 import { transformBody } from './bodyTransform.js';
 import type { Vec3 } from './math.js';
 import type { ToolHandleKind } from './picking.js';

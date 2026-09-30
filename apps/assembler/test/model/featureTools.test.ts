@@ -8,27 +8,31 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { findCommand, resolveAdaptive } from '../../renderer/src/model/commands/registry.js';
-import { resolveShortcut } from '../../renderer/src/model/commands/shortcuts.js';
-import type { ExtrudeFeature, Feature, SketchFeature } from '../../renderer/src/model/document.js';
+import { findCommand, resolveAdaptive } from '../../renderer/src/foundation/commands/registry.js';
+import { resolveShortcut } from '../../renderer/src/foundation/commands/shortcuts.js';
+import type {
+  ExtrudeFeature,
+  Feature,
+  SketchFeature,
+} from '../../renderer/src/foundation/document/document.js';
 import {
   acceptPick,
   draftBadges,
   draftHandles,
   type FeatureDraft,
 } from '../../renderer/src/model/featureTools.js';
-import { loadProjectFile, saveProjectFile } from '../../renderer/src/model/project/format.js';
+import { loadProjectFile, saveProjectFile } from '../../renderer/src/foundation/document/format.js';
 import {
   makeFaceRef,
   useAssemblerStore,
   type ToolSession,
-} from '../../renderer/src/model/store.js';
+} from '../../renderer/src/foundation/commands/store.js';
 import {
   addPolyline,
   sketchFromLegacyProfiles,
   type LegacySketchProfile,
-} from '../../renderer/src/sketch/builders.js';
-import { EMPTY_SKETCH } from '../../renderer/src/sketch/types.js';
+} from '../../renderer/src/foundation/sketch-solver/builders.js';
+import { EMPTY_SKETCH } from '../../renderer/src/foundation/sketch-solver/types.js';
 import { selectedOcctModule } from '../../headless/occtModule.js';
 import { createNodeKernelAdapter } from '../kernel/nodeKernel.js';
 

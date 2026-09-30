@@ -4,7 +4,7 @@
  * (`model/blendOptions.ts`). Same strictness as `format.ts`: the first
  * problem throws with a path-qualified message.
  */
-import type { Feature } from '../document.js';
+import type { Feature } from '../../foundation/document/document.js';
 import { PRINT_FEATURE_KINDS, type PrintFeature } from '../printFeatures.js';
 import { validatePlaneRef, type FormatHelpers } from './featureFormat.js';
 

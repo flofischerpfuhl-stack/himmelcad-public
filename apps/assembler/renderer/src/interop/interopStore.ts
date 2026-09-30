@@ -16,14 +16,18 @@
  */
 import { create } from 'zustand';
 
-import type { KernelAdapter } from '../kernel/adapter.js';
-import type { IgesLengthUnit, IgesWriteMode } from '../kernel/igesExchange.js';
-import type { StepExportOptions, StepLengthUnit, StepSchema } from '../kernel/stepExport.js';
+import type { KernelAdapter } from '../foundation/geometry-kernel/adapter.js';
+import type { IgesLengthUnit, IgesWriteMode } from '../foundation/geometry-kernel/igesExchange.js';
+import type {
+  StepExportOptions,
+  StepLengthUnit,
+  StepSchema,
+} from '../foundation/geometry-kernel/stepExport.js';
 import { suggestStlUnitHint } from '../kernel/stlImport.js';
-import type { Body, KernelFormatCapabilities } from '../kernel/types.js';
-import type { Feature, SketchFeature, SketchPlaneRef } from '../model/document.js';
+import type { Body, KernelFormatCapabilities } from '../foundation/geometry-kernel/types.js';
+import type { Feature, SketchFeature, SketchPlaneRef } from '../foundation/document/document.js';
 import { meshRowKey, useItemsStore, withDisplayNames } from '../model/items.js';
-import * as io from '../model/project/persistence.js';
+import * as io from '../foundation/document/persistence.js';
 import { useProjectStore } from '../model/project/projectStore.js';
 import type { ReferenceMesh } from '../model/referenceMesh.js';
 import {
@@ -31,7 +35,7 @@ import {
   shownFeatures,
   useAssemblerStore,
   type SelectionItem,
-} from '../model/store.js';
+} from '../foundation/commands/store.js';
 import { useWorkspaceStore } from '../model/workspace.js';
 import { writeDxf, type DxfDrawing, type DxfVersion } from './dxf.js';
 import { faceOutlineToDxfEntities, sketchToDxfEntities } from './dxfSketch.js';

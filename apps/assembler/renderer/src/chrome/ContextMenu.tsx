@@ -17,8 +17,8 @@ import {
   clampMenuPosition,
 } from '@himmelcad/ui';
 
-import { findCommand, resolveAdaptive, type Command } from '../model/commands/registry.js';
-import type { AssemblerState } from '../model/store.js';
+import { findCommand, resolveAdaptive, type Command } from '../foundation/commands/registry.js';
+import type { AssemblerState } from '../foundation/commands/store.js';
 import styles from './ContextMenu.module.css';
 
 const CONTEXT_GROUPS = new Set<string>(['tools', 'transform', 'sketch']);

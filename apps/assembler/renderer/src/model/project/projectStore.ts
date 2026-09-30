@@ -10,11 +10,11 @@
 import { create } from 'zustand';
 
 import { APP_CAPABILITIES, AgentSession } from '../../api/session.js';
-import type { KernelAdapter } from '../../kernel/adapter.js';
+import type { KernelAdapter } from '../../foundation/geometry-kernel/adapter.js';
 import { parseStl, suggestStlUnitHint, type StlUnitHint } from '../../kernel/stlImport.js';
 import { exportBodyStl, stlBufferForMeshes } from '../../kernel/stlExport.js';
 import { buildThreeMf } from '../../kernel/threeMf.js';
-import type { Feature } from '../document.js';
+import type { Feature } from '../../foundation/document/document.js';
 import {
   EMPTY_ITEMS_META,
   isEmptyItemsMeta,
@@ -28,7 +28,7 @@ import {
   type ReferenceMesh,
 } from '../referenceMesh.js';
 import { parsePins, serializePins, useMeasureStore } from '../measureStore.js';
-import { shownFeatures, useAssemblerStore } from '../store.js';
+import { shownFeatures, useAssemblerStore } from '../../foundation/commands/store.js';
 import { viewDisplayToProject } from '../viewDisplay.js';
 import { parseSavedViews, useWorkspaceStore } from '../workspace.js';
 import {
@@ -39,9 +39,13 @@ import {
   type ProjectFileV1,
   type ProjectViewState,
   type ReferenceMeshRecordV1,
-} from './format.js';
-import { decodeMeshPayload, encodeMeshPayload, MeshPayloadTooLargeError } from './meshCodec.js';
-import * as io from './persistence.js';
+} from '../../foundation/document/format.js';
+import {
+  decodeMeshPayload,
+  encodeMeshPayload,
+  MeshPayloadTooLargeError,
+} from '../../foundation/document/meshCodec.js';
+import * as io from '../../foundation/document/persistence.js';
 import { renderProjectThumbnail } from './thumbnail.js';
 import { projectTemplate, type ProjectTemplateId } from '../../templates/projectTemplates.js';
 

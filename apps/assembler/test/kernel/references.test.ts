@@ -16,20 +16,26 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { edgeSignatureOf, faceSignatureOf } from '../../renderer/src/kernel/naming.js';
-import type { Body, EvaluationResult } from '../../renderer/src/kernel/types.js';
+import {
+  edgeSignatureOf,
+  faceSignatureOf,
+} from '../../renderer/src/foundation/geometry-kernel/naming.js';
+import type {
+  Body,
+  EvaluationResult,
+} from '../../renderer/src/foundation/geometry-kernel/types.js';
 import type {
   EdgeRef,
   FaceRef,
   Feature,
   SketchFeature,
-} from '../../renderer/src/model/document.js';
+} from '../../renderer/src/foundation/document/document.js';
 import type {
   OffsetFaceFeature,
   PatternFeature,
   RevolveFeature,
 } from '../../renderer/src/model/features.js';
-import { detectRegions } from '../../renderer/src/sketch/regions.js';
+import { detectRegions } from '../../renderer/src/foundation/sketch-solver/regions.js';
 import { extrude, fillet, sketch } from '../bench/parts.js';
 import { loadNodeKernel } from './nodeKernel.js';
 

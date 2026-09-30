@@ -8,21 +8,21 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { adaptiveCapacity, splitAdaptive } from '../../renderer/src/chrome/adaptiveLayout.js';
-import type { EvaluationResult } from '../../renderer/src/kernel/types.js';
+import type { EvaluationResult } from '../../renderer/src/foundation/geometry-kernel/types.js';
 import {
   COMMANDS,
   findCommand,
   resolveAdaptive,
-} from '../../renderer/src/model/commands/registry.js';
+} from '../../renderer/src/foundation/commands/registry.js';
 import {
   applyShortcutOverrides,
   checkShortcut,
   comboFromKey,
   defaultShortcut,
-} from '../../renderer/src/model/commands/shortcutOverrides.js';
-import { shortcutConflicts } from '../../renderer/src/model/commands/shortcutSheet.js';
-import { resolveShortcut } from '../../renderer/src/model/commands/shortcuts.js';
-import { createDemoDocument } from '../../renderer/src/model/document.js';
+} from '../../renderer/src/foundation/commands/shortcutOverrides.js';
+import { shortcutConflicts } from '../../renderer/src/foundation/commands/shortcutSheet.js';
+import { resolveShortcut } from '../../renderer/src/foundation/commands/shortcuts.js';
+import { createDemoDocument } from '../../renderer/src/foundation/document/document.js';
 import {
   adaptiveGridStep,
   effectiveGridStep,
@@ -34,8 +34,11 @@ import {
   stepNamePrefix,
 } from '../../renderer/src/model/historyTools.js';
 import { parsePreferences } from '../../renderer/src/model/preferences.js';
-import { useAssemblerStore, type ToolSession } from '../../renderer/src/model/store.js';
-import { emptyClickFinishes } from '../../renderer/src/model/toolFinish.js';
+import {
+  useAssemblerStore,
+  type ToolSession,
+} from '../../renderer/src/foundation/commands/store.js';
+import { emptyClickFinishes } from '../../renderer/src/foundation/commands/toolFinish.js';
 import {
   nearestOrthoDirection,
   parseSavedSection,
@@ -44,8 +47,8 @@ import {
   useWorkspaceStore,
 } from '../../renderer/src/model/workspace.js';
 import { infer } from '../../renderer/src/sketch/inference.js';
-import { addRectangle } from '../../renderer/src/sketch/builders.js';
-import { EMPTY_SKETCH } from '../../renderer/src/sketch/types.js';
+import { addRectangle } from '../../renderer/src/foundation/sketch-solver/builders.js';
+import { EMPTY_SKETCH } from '../../renderer/src/foundation/sketch-solver/types.js';
 import { createNodeKernelAdapter } from '../kernel/nodeKernel.js';
 
 useAssemblerStore.getState().attachKernel(createNodeKernelAdapter());

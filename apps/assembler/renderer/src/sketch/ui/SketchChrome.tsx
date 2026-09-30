@@ -36,8 +36,8 @@ import { useEffect, useRef } from 'react';
 import { Button, NumberInput, Tooltip } from '@himmelcad/ui';
 
 import fieldStyles from '../../chrome/ExpressionField.module.css';
-import { findCommand } from '../../model/commands/registry.js';
-import { useAssemblerStore } from '../../model/store.js';
+import { findCommand } from '../../foundation/commands/registry.js';
+import { useAssemblerStore } from '../../foundation/commands/store.js';
 import { CONSTRAINT_INFO } from '../constraintRules.js';
 import { useSketchStore, type SketchSession } from '../session.js';
 import type { SketchTool, SketchToolKind } from '../tools.js';

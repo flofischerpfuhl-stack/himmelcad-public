@@ -18,8 +18,13 @@
  *
  * No store access, no DOM; unit tested under `node:test`.
  */
-import { edgeSignatureOf, faceSignatureOf, baseEdgeKey, baseFaceKey } from '../kernel/naming.js';
-import type { Body, EvaluationResult } from '../kernel/types.js';
+import {
+  edgeSignatureOf,
+  faceSignatureOf,
+  baseEdgeKey,
+  baseFaceKey,
+} from '../foundation/geometry-kernel/naming.js';
+import type { Body, EvaluationResult } from '../foundation/geometry-kernel/types.js';
 import {
   frameForFace,
   frameForPlane,
@@ -30,7 +35,7 @@ import {
   type Feature,
   type Plane,
   type Vec3,
-} from './document.js';
+} from '../foundation/document/document.js';
 import {
   MAX_PATTERN_COUNT,
   worldAxisVector,
@@ -78,7 +83,7 @@ import {
   printDraftToFeature,
   type PrintDraft,
 } from './printFeatureTools.js';
-import type { SelectionItem } from './store.js';
+import type { SelectionItem } from '../foundation/commands/store.js';
 
 // ---- drafts -------------------------------------------------------------------------
 

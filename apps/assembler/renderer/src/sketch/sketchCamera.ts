@@ -4,9 +4,14 @@
  * are viewed so that the sketch's u axis points right and v up; a sketch on
  * a body face is viewed from outside the body (along the outward normal).
  */
-import type { SketchFrame, SketchPlaneRef } from '../model/document.js';
+import type { SketchFrame, SketchPlaneRef } from '../foundation/document/document.js';
 import type { CameraPose } from '../viewport/camera.js';
-import { entityMap, pointPos, type SketchData, type Vec2 } from './types.js';
+import {
+  entityMap,
+  pointPos,
+  type SketchData,
+  type Vec2,
+} from '../foundation/sketch-solver/types.js';
 
 const NEAR_POLE_PITCH = Math.PI / 2 - 0.02;
 

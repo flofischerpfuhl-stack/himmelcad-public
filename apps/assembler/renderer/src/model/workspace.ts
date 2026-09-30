@@ -11,7 +11,7 @@ import { create } from 'zustand';
 import type { CameraPose } from '../viewport/camera.js';
 import { usePreferences } from './preferences.js';
 import type { Vec3 } from '../viewport/math.js';
-import type { SelectionItem } from './store.js';
+import type { SelectionItem } from '../foundation/commands/store.js';
 
 export const MAX_SAVED_VIEWS = 8;
 

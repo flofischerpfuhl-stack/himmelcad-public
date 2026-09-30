@@ -13,7 +13,11 @@ import { useEffect } from 'react';
 import { Tooltip, registerEscapeRung } from '@himmelcad/ui';
 
 import { lookAtSection, sectionAtFace } from '../model/commands/displayCommands.js';
-import { isPlanarFace, type AssemblerState, type SectionAxis } from '../model/store.js';
+import {
+  isPlanarFace,
+  type AssemblerState,
+  type SectionAxis,
+} from '../foundation/commands/store.js';
 import { useViewportUi } from '../model/viewportUi.js';
 import { ExpressionField } from './ExpressionField.js';
 import styles from './SectionControls.module.css';

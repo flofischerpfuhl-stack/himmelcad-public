@@ -8,9 +8,9 @@ import {
   matchScore,
   resolveAdaptive,
   searchCommands,
-} from '../../renderer/src/model/commands/registry.js';
-import { createDemoDocument } from '../../renderer/src/model/document.js';
-import { useAssemblerStore } from '../../renderer/src/model/store.js';
+} from '../../renderer/src/foundation/commands/registry.js';
+import { createDemoDocument } from '../../renderer/src/foundation/document/document.js';
+import { useAssemblerStore } from '../../renderer/src/foundation/commands/store.js';
 import { createNodeKernelAdapter } from '../kernel/nodeKernel.js';
 
 // Captured before any kernel is attached: the store starts in 'loading'.

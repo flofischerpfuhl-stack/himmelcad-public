@@ -6,7 +6,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { MESH_RESOLUTIONS } from '../../renderer/src/kernel/meshExport.js';
+import { MESH_RESOLUTIONS } from '../../renderer/src/foundation/geometry-kernel/meshExport.js';
 import { parseStl } from '../../renderer/src/kernel/stlImport.js';
 import { stlBytes } from '../../renderer/src/kernel/stlExport.js';
 import { circle, sketchFeature } from '../sketch/fixtures.js';

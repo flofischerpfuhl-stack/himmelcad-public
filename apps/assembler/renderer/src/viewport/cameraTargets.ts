@@ -2,8 +2,8 @@
  * What the camera frames for "Zoom to selection" and "Look at face": world
  * bounding boxes of selection items, pure (unit tested).
  */
-import type { Body, EvaluationResult } from '../kernel/types.js';
-import type { SelectionItem } from '../model/store.js';
+import type { Body, EvaluationResult } from '../foundation/geometry-kernel/types.js';
+import type { SelectionItem } from '../foundation/commands/store.js';
 import type { Bounds } from './camera.js';
 import type { Vec3 } from './math.js';
 

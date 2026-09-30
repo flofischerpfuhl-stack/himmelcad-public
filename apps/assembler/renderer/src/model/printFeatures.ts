@@ -10,7 +10,12 @@
  * modelled; a hole may carry a cosmetic thread label (`thread`), which is
  * metadata for the history card, the agent API and exports only.
  */
-import type { ExtrudeOperation, FaceRef, FeatureBase, Millimeters } from './document.js';
+import type {
+  ExtrudeOperation,
+  FaceRef,
+  FeatureBase,
+  Millimeters,
+} from '../foundation/document/document.js';
 import type { PlaneRef, ProfileRef } from './features.js';
 
 // ---- Hole ---------------------------------------------------------------------------

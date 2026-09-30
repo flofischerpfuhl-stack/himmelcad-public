@@ -12,8 +12,13 @@ import {
   type ScreenPoint,
   type ScreenRect,
 } from '../../viewport/boxSelect.js';
-import { entityCurves, sampleCurve } from '../geometry.js';
-import { entityMap, isCurve, type SketchData, type Vec2 } from '../types.js';
+import { entityCurves, sampleCurve } from '../../foundation/sketch-solver/geometry.js';
+import {
+  entityMap,
+  isCurve,
+  type SketchData,
+  type Vec2,
+} from '../../foundation/sketch-solver/types.js';
 
 export type SketchBoxFilter = 'all' | 'curves' | 'points';
 export const SKETCH_BOX_FILTERS: readonly SketchBoxFilter[] = ['all', 'curves', 'points'];

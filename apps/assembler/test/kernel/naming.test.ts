@@ -11,8 +11,8 @@ import {
   sameSurface,
   type FaceGeom,
   type KeyedFace,
-} from '../../renderer/src/kernel/naming.js';
-import type { Vec3 } from '../../renderer/src/model/document.js';
+} from '../../renderer/src/foundation/geometry-kernel/naming.js';
+import type { Vec3 } from '../../renderer/src/foundation/document/document.js';
 
 function plane(normal: Vec3, offset: number, centroid: Vec3, area = 100): FaceGeom {
   return { surface: 'plane', id: { type: 'plane', normal, offset }, normal, centroid, area };

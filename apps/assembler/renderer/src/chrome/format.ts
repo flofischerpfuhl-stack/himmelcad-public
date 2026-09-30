@@ -3,10 +3,10 @@
  * text, body dimensions, and feature/command display names. Pure, no
  * store access — callers pass in the already-read state.
  */
-import type { Body } from '../kernel/types.js';
-import type { Feature } from '../model/document.js';
+import type { Body } from '../foundation/geometry-kernel/types.js';
+import type { Feature } from '../foundation/document/document.js';
 import { MODELING_FEATURE_LABEL } from '../model/features.js';
-import type { SelectionItem } from '../model/store.js';
+import type { SelectionItem } from '../foundation/commands/store.js';
 
 const KIND_LABELS: Record<SelectionItem['kind'], [string, string]> = {
   body: ['body', 'bodies'],

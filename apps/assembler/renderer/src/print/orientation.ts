@@ -6,7 +6,11 @@
  * translate — `kernel/features/rigid.ts`), so the result is one editable
  * History step. Pure TypeScript, deterministic.
  */
-import { opsAffine, transformOps, type Affine } from '../kernel/features/rigid.js';
+import {
+  opsAffine,
+  transformOps,
+  type Affine,
+} from '../foundation/geometry-kernel/features/rigid.js';
 import { overhangAngleDeg, PLATE_EPSILON_MM } from './analysis.js';
 import type { Vec3 } from './meshTools.js';
 

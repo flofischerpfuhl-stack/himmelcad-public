@@ -28,7 +28,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { Button, Spinner, registerEscapeRung } from '@himmelcad/ui';
 
-import { findCommand } from '../model/commands/registry.js';
+import { findCommand } from '../foundation/commands/registry.js';
 import {
   isElectron,
   listRecentFiles,
@@ -36,7 +36,7 @@ import {
   openRecentFile,
   removeRecentFile,
   type RecentFileInfo,
-} from '../model/project/persistence.js';
+} from '../foundation/document/persistence.js';
 import { useProjectStore } from '../model/project/projectStore.js';
 import { useWorkspaceStore } from '../model/workspace.js';
 import { PROJECT_TEMPLATES, type ProjectTemplateId } from '../templates/projectTemplates.js';

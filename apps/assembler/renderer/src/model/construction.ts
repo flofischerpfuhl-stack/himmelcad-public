@@ -9,7 +9,7 @@
  * Plain, structured-clone-safe data like the rest of `document.ts`;
  * evaluation lives in `kernel/features/construction.ts`.
  */
-import type { EvaluationResult } from '../kernel/types.js';
+import type { EvaluationResult } from '../foundation/geometry-kernel/types.js';
 import {
   frameForFace,
   frameForPlane,
@@ -19,7 +19,7 @@ import {
   type Millimeters,
   type SketchFrame,
   type Vec3,
-} from './document.js';
+} from '../foundation/document/document.js';
 import type { AxisRef, PlaneRef } from './features.js';
 
 /**

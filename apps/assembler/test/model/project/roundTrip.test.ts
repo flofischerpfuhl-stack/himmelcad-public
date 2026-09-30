@@ -9,13 +9,13 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { appSessionHost } from '../../../renderer/src/api/app/automationStore.js';
-import { ApiError } from '../../../renderer/src/api/errors.js';
+import { ApiError } from '../../../renderer/src/foundation/commands/api/errors.js';
 import { AgentSession } from '../../../renderer/src/api/session.js';
-import { createDemoDocument } from '../../../renderer/src/model/document.js';
+import { createDemoDocument } from '../../../renderer/src/foundation/document/document.js';
 import { bodyRowKey, meshRowKey, useItemsStore } from '../../../renderer/src/model/items.js';
-import { loadProjectFile } from '../../../renderer/src/model/project/format.js';
+import { loadProjectFile } from '../../../renderer/src/foundation/document/format.js';
 import { useProjectStore } from '../../../renderer/src/model/project/projectStore.js';
-import { useAssemblerStore } from '../../../renderer/src/model/store.js';
+import { useAssemblerStore } from '../../../renderer/src/foundation/commands/store.js';
 import { useWorkspaceStore } from '../../../renderer/src/model/workspace.js';
 import { createNodeKernelAdapter } from '../../kernel/nodeKernel.js';
 

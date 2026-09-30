@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { Body, EvaluatedSketch } from '../../renderer/src/kernel/types.js';
+import type { Body, EvaluatedSketch } from '../../renderer/src/foundation/geometry-kernel/types.js';
 import {
   boxFilterForKey,
   boxModeFor,

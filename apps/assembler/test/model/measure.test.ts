@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { Feature } from '../../renderer/src/model/document.js';
+import type { Feature } from '../../renderer/src/foundation/document/document.js';
 import { withBodyColour, withBodyMaterial } from '../../renderer/src/model/appearance.js';
 import {
   circleThrough,

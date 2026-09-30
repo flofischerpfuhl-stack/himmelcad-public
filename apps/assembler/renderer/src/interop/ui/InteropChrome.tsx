@@ -9,7 +9,7 @@ import { useEffect, useState } from 'react';
 
 import { Button, Checkbox, Dialog, NumberInput, ProgressBar, Select, Tooltip } from '@himmelcad/ui';
 
-import { useAssemblerStore } from '../../model/store.js';
+import { useAssemblerStore } from '../../foundation/commands/store.js';
 import { useWorkspaceStore } from '../../model/workspace.js';
 import { INTEROP_FORMATS } from '../formats.js';
 import {

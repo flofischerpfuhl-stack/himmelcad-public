@@ -5,9 +5,9 @@
  * keys name the body as it was before the failing feature, so the lines
  * come from the committed model (the preview shows the last valid result).
  */
-import { baseEdgeKey, baseFaceKey } from '../kernel/naming.js';
-import type { FeatureErrorRefs } from '../kernel/types.js';
-import { isPreviewTool, type AssemblerState } from '../model/store.js';
+import { baseEdgeKey, baseFaceKey } from '../foundation/geometry-kernel/naming.js';
+import type { FeatureErrorRefs } from '../foundation/geometry-kernel/types.js';
+import { isPreviewTool, type AssemblerState } from '../foundation/commands/store.js';
 
 export function errorHighlightOf(
   state: Pick<AssemblerState, 'activeTool' | 'selection' | 'evaluation'>,

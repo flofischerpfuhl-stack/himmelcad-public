@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { ExtrudeFeature, Feature } from '../../renderer/src/model/document.js';
+import type { ExtrudeFeature, Feature } from '../../renderer/src/foundation/document/document.js';
 import { rect, sketchFeature } from '../sketch/fixtures.js';
 import { loadNodeKernel } from './nodeKernel.js';
 

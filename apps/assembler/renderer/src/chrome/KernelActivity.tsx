@@ -10,7 +10,7 @@ import { Info, LoaderCircle, X } from 'lucide-react';
 
 import { Button, Tooltip } from '@himmelcad/ui';
 
-import type { AssemblerState } from '../model/store.js';
+import type { AssemblerState } from '../foundation/commands/store.js';
 import styles from './KernelActivity.module.css';
 
 function describe(activity: NonNullable<AssemblerState['kernelActivity']>): {

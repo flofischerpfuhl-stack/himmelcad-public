@@ -6,7 +6,7 @@
 import type { PrintReport } from '../print/analysis.js';
 import type { OrientationCandidate } from '../print/orientation.js';
 import type { MethodSpec } from './schema.js';
-import type { JsonSchema } from './validate.js';
+import type { JsonSchema } from '../foundation/commands/api/validate.js';
 
 type Json = Record<string, unknown>;
 

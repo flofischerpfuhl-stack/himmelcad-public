@@ -8,8 +8,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { Body, EvaluationResult } from '../../renderer/src/kernel/types.js';
-import { edgeSignatureOf, faceSignatureOf } from '../../renderer/src/kernel/naming.js';
+import type {
+  Body,
+  EvaluationResult,
+} from '../../renderer/src/foundation/geometry-kernel/types.js';
+import {
+  edgeSignatureOf,
+  faceSignatureOf,
+} from '../../renderer/src/foundation/geometry-kernel/naming.js';
 import type {
   ExtrudeFeature,
   FaceRef,
@@ -17,7 +23,7 @@ import type {
   FilletFeature,
   Plane,
   SketchFeature,
-} from '../../renderer/src/model/document.js';
+} from '../../renderer/src/foundation/document/document.js';
 import type {
   AlignFeature,
   AxisRef,
@@ -31,15 +37,18 @@ import type {
   SweepFeature,
   TransformFeature,
 } from '../../renderer/src/model/features.js';
-import { addPolyline, sketchFromLegacyProfiles } from '../../renderer/src/sketch/builders.js';
-import { EMPTY_SKETCH } from '../../renderer/src/sketch/types.js';
-import { detectRegions } from '../../renderer/src/sketch/regions.js';
+import {
+  addPolyline,
+  sketchFromLegacyProfiles,
+} from '../../renderer/src/foundation/sketch-solver/builders.js';
+import { EMPTY_SKETCH } from '../../renderer/src/foundation/sketch-solver/types.js';
+import { detectRegions } from '../../renderer/src/foundation/sketch-solver/regions.js';
 import type { LegacySketchProfile } from '../sketch/fixtures.js';
 import {
   CURRENT_SCHEMA_VERSION,
   PROJECT_FORMAT_ID,
   loadProjectFile,
-} from '../../renderer/src/model/project/format.js';
+} from '../../renderer/src/foundation/document/format.js';
 import { selectedOcctModule } from '../../headless/occtModule.js';
 import { loadNodeKernel } from './nodeKernel.js';
 

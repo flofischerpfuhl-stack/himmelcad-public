@@ -2,9 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { useProjectStore } from '../../../renderer/src/model/project/projectStore.js';
-import { useAssemblerStore } from '../../../renderer/src/model/store.js';
-import { addRectangle } from '../../../renderer/src/sketch/builders.js';
-import { EMPTY_SKETCH } from '../../../renderer/src/sketch/types.js';
+import { useAssemblerStore } from '../../../renderer/src/foundation/commands/store.js';
+import { addRectangle } from '../../../renderer/src/foundation/sketch-solver/builders.js';
+import { EMPTY_SKETCH } from '../../../renderer/src/foundation/sketch-solver/types.js';
 
 // Regression coverage: the dirty-flag subscription used to be established
 // lazily, only inside `newProject`/`openProject`/`save`/`saveAs` — so a

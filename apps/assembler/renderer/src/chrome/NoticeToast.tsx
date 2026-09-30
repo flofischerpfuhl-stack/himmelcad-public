@@ -13,7 +13,7 @@ import { useCallback } from 'react';
 import { Toast } from '@himmelcad/ui';
 
 import { useProjectStore } from '../model/project/projectStore.js';
-import { useAssemblerStore } from '../model/store.js';
+import { useAssemblerStore } from '../foundation/commands/store.js';
 import { useWorkspaceStore } from '../model/workspace.js';
 import styles from './NoticeToast.module.css';
 

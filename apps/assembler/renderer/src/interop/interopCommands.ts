@@ -3,7 +3,11 @@
  * search, context menu and adaptive toolbar for a selected reference
  * mesh). Spread into `COMMANDS` by `model/commands/registry.ts`.
  */
-import type { Command, CommandAvailability, CommandContext } from '../model/commands/registry.js';
+import type {
+  Command,
+  CommandAvailability,
+  CommandContext,
+} from '../foundation/commands/registry.js';
 import { dxfExportTarget, kernelFormatCapabilities, useInteropStore } from './interopStore.js';
 
 const IGES_REASON =

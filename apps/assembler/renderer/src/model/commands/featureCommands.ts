@@ -8,8 +8,12 @@
  * exactly the reason the tool could not start.
  */
 import { createDraft, type FeatureDraftKind } from '../featureTools.js';
-import type { AssemblerState, SelectionItem } from '../store.js';
-import type { Command, CommandAvailability, CommandGroup } from './registry.js';
+import type { AssemblerState, SelectionItem } from '../../foundation/commands/store.js';
+import type {
+  Command,
+  CommandAvailability,
+  CommandGroup,
+} from '../../foundation/commands/registry.js';
 
 const KERNEL_LOADING = 'The CAD kernel is still loading.';
 const KERNEL_FAILED = 'The CAD kernel failed to load.';

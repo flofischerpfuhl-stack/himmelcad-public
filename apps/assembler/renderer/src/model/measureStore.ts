@@ -8,9 +8,9 @@
  */
 import { create } from 'zustand';
 
-import type { KernelAdapter } from '../kernel/adapter.js';
-import type { DistanceTarget, EvaluationResult } from '../kernel/types.js';
-import type { Feature } from './document.js';
+import type { KernelAdapter } from '../foundation/geometry-kernel/adapter.js';
+import type { DistanceTarget, EvaluationResult } from '../foundation/geometry-kernel/types.js';
+import type { Feature } from '../foundation/document/document.js';
 import { usePreferences } from './preferences.js';
 import { refKey, type DistanceResult, type MeasureRef, type Vec3 } from './measure.js';
 

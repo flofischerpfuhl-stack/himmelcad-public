@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { createDemoDocument, type Feature } from '../../renderer/src/model/document.js';
+import {
+  createDemoDocument,
+  type Feature,
+} from '../../renderer/src/foundation/document/document.js';
 import { buildThreeMf } from '../../renderer/src/kernel/threeMf.js';
 import { circle, rect, sketchFeature } from '../sketch/fixtures.js';
 import { loadNodeKernel } from './nodeKernel.js';

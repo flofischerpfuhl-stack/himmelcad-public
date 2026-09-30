@@ -6,7 +6,7 @@
 import { readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 
-import { setFontLoader } from '../renderer/src/sketch/text/fonts.js';
+import { setFontLoader } from '../renderer/src/foundation/sketch-solver/text/fonts.js';
 
 export function installHeadlessFonts(): void {
   const require = createRequire(import.meta.url);

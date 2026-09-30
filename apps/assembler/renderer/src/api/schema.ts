@@ -23,11 +23,11 @@
  * `api.describe` returns {@link AGENT_API_SCHEMA}; the checked-in copy
  * `apps/assembler/api/agent-api-v1.schema.json` is kept identical by a test.
  */
-import { API_ERROR_CODES } from './errors.js';
+import { API_ERROR_CODES } from '../foundation/commands/api/errors.js';
 import { MESH_RESOLUTION_SCHEMA, PRINT_METHODS, PRINT_SETTINGS_SCHEMA } from './printApi.js';
 import { INTEROP_METHODS, STEP_EXPORT_PARAMS, STEP_IMPORT_STRUCTURE } from './interopApi.js';
 import { BLEND_OPTION_PARAMS, PRINT_DEFS, PRINT_FEATURE_KIND_SCHEMAS } from './printSchema.js';
-import type { JsonSchema } from './validate.js';
+import type { JsonSchema } from '../foundation/commands/api/validate.js';
 import { OFFSET_FACE_MODES } from '../model/features.js';
 
 export const API_ID = 'hcasm.agent-api';

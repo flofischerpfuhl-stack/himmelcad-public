@@ -4,13 +4,13 @@
  * one document undo step. Dependent features (extrudes of its profiles)
  * re-evaluate through the normal document evaluation.
  */
-import type { SketchFeature } from '../model/document.js';
-import { useAssemblerStore } from '../model/store.js';
-import { isPlainNumber } from './expressions.js';
-import { rememberRegions } from './regionMemory.js';
+import type { SketchFeature } from '../foundation/document/document.js';
+import { useAssemblerStore } from '../foundation/commands/store.js';
+import { isPlainNumber } from '../foundation/sketch-solver/expressions.js';
+import { rememberRegions } from '../foundation/sketch-solver/regionMemory.js';
 import { describeProblem } from './session.js';
-import { getSketchSolver } from './solverProvider.js';
-import { sketchDataOf, type SketchData } from './types.js';
+import { getSketchSolver } from '../foundation/sketch-solver/solverProvider.js';
+import { sketchDataOf, type SketchData } from '../foundation/sketch-solver/types.js';
 
 /**
  * Sets dimension `dimensionId` of sketch `featureId` to `input` (a number

@@ -19,13 +19,13 @@ import {
   revertEscapeField,
 } from '@himmelcad/ui';
 
-import { onCloseRequested, onOpenRequested } from '../model/project/persistence.js';
+import { onCloseRequested, onOpenRequested } from '../foundation/document/persistence.js';
 import { MAX_SAVED_VIEWS, useWorkspaceStore } from '../model/workspace.js';
 import { useProjectStore } from '../model/project/projectStore.js';
 import { CommandGroupMenu } from './CommandGroupMenu.js';
 import { DisplayMenuItems } from './DisplayMenu.js';
 import { RecentFilesMenu } from './RecentFilesMenu.js';
-import type { AssemblerState } from '../model/store.js';
+import type { AssemblerState } from '../foundation/commands/store.js';
 import styles from './TopBar.module.css';
 
 const PENDING_ACTION_LABEL: Record<'new' | 'open' | 'openFile' | 'template' | 'close', string> = {

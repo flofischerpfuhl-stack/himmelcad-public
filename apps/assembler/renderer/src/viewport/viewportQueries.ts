@@ -3,8 +3,8 @@
  * bodies) and the pure selection logic in `boxSelect.ts` and
  * `pickCandidates.ts`. No React; called from `Viewport.tsx` on pointer up.
  */
-import type { Body, EvaluatedSketch } from '../kernel/types.js';
-import type { SelectionItem } from '../model/store.js';
+import type { Body, EvaluatedSketch } from '../foundation/geometry-kernel/types.js';
+import type { SelectionItem } from '../foundation/commands/store.js';
 import {
   boxSelect,
   targetKey,

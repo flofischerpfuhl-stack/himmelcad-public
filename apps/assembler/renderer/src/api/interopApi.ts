@@ -22,17 +22,20 @@ import { faceOutlineToDxfEntities, sketchToDxfEntities } from '../interop/dxfSke
 import { fileRowsIntoFolders, notifyAssemblyImported } from '../interop/importFolders.js';
 import { STEP_EXPORT_FORMATS, INTEROP_FORMATS } from '../interop/formats.js';
 import { suggestStlUnitHint } from '../kernel/stlImport.js';
-import type { StepExportOptions } from '../kernel/stepExport.js';
-import type { EvaluationResult, KernelFormatCapabilities } from '../kernel/types.js';
-import type { Feature, SketchPlaneRef } from '../model/document.js';
+import type { StepExportOptions } from '../foundation/geometry-kernel/stepExport.js';
+import type {
+  EvaluationResult,
+  KernelFormatCapabilities,
+} from '../foundation/geometry-kernel/types.js';
+import type { Feature, SketchPlaneRef } from '../foundation/document/document.js';
 import { meshRowKey } from '../model/items.js';
 import { referenceMeshBodyId, referenceMeshIdOf } from '../model/referenceMesh.js';
-import type { AssemblerState, SelectionItem } from '../model/store.js';
-import { detectRegions } from '../sketch/regions.js';
-import { ApiError } from './errors.js';
-import { resolveFaceInput } from './references.js';
+import type { AssemblerState, SelectionItem } from '../foundation/commands/store.js';
+import { detectRegions } from '../foundation/sketch-solver/regions.js';
+import { ApiError } from '../foundation/commands/api/errors.js';
+import { resolveFaceInput } from '../foundation/commands/api/references.js';
 import type { MethodSpec } from './schema.js';
-import type { JsonSchema } from './validate.js';
+import type { JsonSchema } from '../foundation/commands/api/validate.js';
 
 type Json = Record<string, unknown>;
 

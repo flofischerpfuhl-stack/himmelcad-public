@@ -16,7 +16,7 @@ import {
   normalizeHexColour,
 } from '../model/appearance.js';
 import { MATERIALS, bodyMaterials, type MaterialId } from '../viewport/displayModes.js';
-import { useAssemblerStore } from '../model/store.js';
+import { useAssemblerStore } from '../foundation/commands/store.js';
 import { displayBodyName, useItemsStore } from '../model/items.js';
 import { useWorkspaceStore } from '../model/workspace.js';
 import styles from './ColourDialog.module.css';

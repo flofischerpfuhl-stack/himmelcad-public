@@ -11,7 +11,7 @@ import { useEffect, useState } from 'react';
 
 import { Button, Select, Tooltip } from '@himmelcad/ui';
 
-import { edgeRuleLabel } from '../model/blendOptions.js';
+import { edgeRuleLabel } from '../foundation/document/blendOptions.js';
 import { PRINT_CLEARANCES } from '../model/printFeatures.js';
 import { evaluateExpression } from './expression.js';
 
@@ -19,12 +19,12 @@ import {
   isPreviewTool,
   type AssemblerState,
   type ToolSession as ToolSessionState,
-} from '../model/store.js';
+} from '../foundation/commands/store.js';
 import { draftBadges, draftMeta } from '../model/featureTools.js';
 import { useFixStore } from '../model/fixReference.js';
 import { isWorldAxes } from '../model/moveGizmo.js';
-import { PICK_PLANS, removePick, swapPicks } from '../model/pickSession.js';
-import { emptyClickFinishes } from '../model/toolFinish.js';
+import { PICK_PLANS, removePick, swapPicks } from '../foundation/commands/pickSession.js';
+import { emptyClickFinishes } from '../foundation/commands/toolFinish.js';
 import styles from './ToolSession.module.css';
 
 interface ToolMeta {

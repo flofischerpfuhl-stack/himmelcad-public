@@ -15,7 +15,7 @@ import {
   openRecentFile,
   removeRecentFile,
   type RecentFileInfo,
-} from '../model/project/persistence.js';
+} from '../foundation/document/persistence.js';
 import { useProjectStore } from '../model/project/projectStore.js';
 
 export function RecentFilesMenu(): JSX.Element {

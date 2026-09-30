@@ -14,7 +14,7 @@ import { Checkbox, Radio, Select, Tooltip, registerEscapeRung } from '@himmelcad
 
 import { effectiveGridStep, formatGridStep, GRID_STEP_SERIES } from '../model/gridResolution.js';
 import { usePreferences } from '../model/preferences.js';
-import type { AssemblerState } from '../model/store.js';
+import type { AssemblerState } from '../foundation/commands/store.js';
 import { useViewportUi } from '../model/viewportUi.js';
 import type { SketchSnapToggles } from '../sketch/inference.js';
 import menuStyles from './DisplayMenu.module.css';

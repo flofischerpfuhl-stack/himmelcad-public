@@ -11,8 +11,12 @@
 import { CONSTRAINT_INFO, planConstraint } from '../../sketch/constraintRules.js';
 import { useSketchStore, type BeginSketchOptions } from '../../sketch/session.js';
 import type { SketchToolKind } from '../../sketch/tools.js';
-import { isPlanarFace, type SelectionItem } from '../store.js';
-import type { Command, CommandAvailability, CommandContext } from './registry.js';
+import { isPlanarFace, type SelectionItem } from '../../foundation/commands/store.js';
+import type {
+  Command,
+  CommandAvailability,
+  CommandContext,
+} from '../../foundation/commands/registry.js';
 
 const enabled: CommandAvailability = { enabled: true };
 const NOT_SKETCHING = 'Open a sketch first (double-click a sketch, or start one with L, R or C).';

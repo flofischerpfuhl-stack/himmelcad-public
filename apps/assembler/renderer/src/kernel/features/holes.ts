@@ -10,16 +10,29 @@
  * `<id>:wall:<i>` (the bore), `:cbore:<i>` / `:cbfloor:<i>` (counterbore wall
  * and floor), `:csink:<i>` (countersink cone), `:floor:<i>` (blind bottom).
  */
-import '../occtArena.js';
+import '../../foundation/geometry-kernel/occtArena.js';
 import * as R from 'replicad';
 
-import { MIN_FEATURE_SIZE_MM, frameForFace, framePoint, type Vec3 } from '../../model/document.js';
+import {
+  MIN_FEATURE_SIZE_MM,
+  frameForFace,
+  framePoint,
+  type Vec3,
+} from '../../foundation/document/document.js';
 import { MAX_HOLES, type HoleFeature, type HolePlacement } from '../../model/printFeatures.js';
-import { entityMap, pointPos } from '../../sketch/types.js';
-import { assignFaceKeys, type FaceGeom, type KeyedFace } from '../naming.js';
-import type { FeatureKit, ReplayContextLike, Shape3D } from './kit.js';
-import { bodyOrFail } from './refs.js';
-import { add, dot, scale, sub } from './rigid.js';
+import { entityMap, pointPos } from '../../foundation/sketch-solver/types.js';
+import {
+  assignFaceKeys,
+  type FaceGeom,
+  type KeyedFace,
+} from '../../foundation/geometry-kernel/naming.js';
+import type {
+  FeatureKit,
+  ReplayContextLike,
+  Shape3D,
+} from '../../foundation/geometry-kernel/features/kit.js';
+import { bodyOrFail } from '../../foundation/geometry-kernel/features/refs.js';
+import { add, dot, scale, sub } from '../../foundation/geometry-kernel/features/rigid.js';
 
 interface Tool {
   shape: Shape3D;

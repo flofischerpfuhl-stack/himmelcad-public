@@ -15,7 +15,7 @@
  * feature size expression that no longer resolves to a positive length
  * refuses the whole edit and nothing changes.
  */
-import type { Feature, SketchFeature } from './document.js';
+import type { Feature, SketchFeature } from '../foundation/document/document.js';
 import {
   expressionFieldsOf,
   expressionReferences,
@@ -28,11 +28,11 @@ import {
   type Parameter,
   type ParameterUnit,
   type ParameterUsage,
-} from './parameters.js';
-import { isPlainNumber } from '../sketch/expressions.js';
-import { rememberRegions } from '../sketch/regionMemory.js';
-import { getSketchSolver } from '../sketch/solverProvider.js';
-import { sketchDataOf } from '../sketch/types.js';
+} from '../foundation/document/parameters.js';
+import { isPlainNumber } from '../foundation/sketch-solver/expressions.js';
+import { rememberRegions } from '../foundation/sketch-solver/regionMemory.js';
+import { getSketchSolver } from '../foundation/sketch-solver/solverProvider.js';
+import { sketchDataOf } from '../foundation/sketch-solver/types.js';
 
 /** Creates (no `id`) or edits (`id` = parameter id or name) one parameter. */
 export interface ParameterEdit {

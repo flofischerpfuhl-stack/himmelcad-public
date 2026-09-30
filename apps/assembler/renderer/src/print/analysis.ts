@@ -17,7 +17,7 @@
  *
  * Pure TypeScript: runs in the printability worker, headless and in tests.
  */
-import type { Body } from '../kernel/types.js';
+import type { Body } from '../foundation/geometry-kernel/types.js';
 import {
   buildBvh,
   manifoldStats,

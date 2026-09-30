@@ -7,9 +7,9 @@
  * link to the body is created (Project `P` makes associative geometry).
  * Pure: bodies and the sketch frame in, sketch (u, v) targets out.
  */
-import type { Body } from '../kernel/types.js';
-import { frameUv, type SketchFrame, type Vec3 } from '../model/document.js';
-import type { Vec2 } from './types.js';
+import type { Body } from '../foundation/geometry-kernel/types.js';
+import { frameUv, type SketchFrame, type Vec3 } from '../foundation/document/document.js';
+import type { Vec2 } from '../foundation/sketch-solver/types.js';
 
 export type BodySnapKind = 'vertex' | 'edgeMidpoint' | 'circleCenter';
 

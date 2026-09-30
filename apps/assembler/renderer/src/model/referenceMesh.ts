@@ -5,7 +5,7 @@
  * the undo-tracked feature history — importing, hiding or moving one is a
  * document-level edit, not a modelling step.
  */
-import type { Body } from '../kernel/types.js';
+import type { Body } from '../foundation/geometry-kernel/types.js';
 import type { ParsedStl } from '../kernel/stlImport.js';
 
 export interface ReferenceMeshTransform {

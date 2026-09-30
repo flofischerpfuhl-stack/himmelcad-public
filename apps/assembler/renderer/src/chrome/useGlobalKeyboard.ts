@@ -17,10 +17,10 @@ import { useEffect } from 'react';
 
 import { installEscapeLadder, registerEscapeRung } from '@himmelcad/ui';
 
-import { handleEscape, resolveShortcut } from '../model/commands/shortcuts.js';
+import { handleEscape, resolveShortcut } from '../foundation/commands/shortcuts.js';
 import { useFixStore } from '../model/fixReference.js';
 import { usePreferences } from '../model/preferences.js';
-import type { AssemblerState } from '../model/store.js';
+import type { AssemblerState } from '../foundation/commands/store.js';
 import { useWorkspaceStore } from '../model/workspace.js';
 import { useSketchStore } from '../sketch/session.js';
 

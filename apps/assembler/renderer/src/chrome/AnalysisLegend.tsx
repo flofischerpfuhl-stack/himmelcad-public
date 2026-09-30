@@ -6,7 +6,7 @@
  */
 import { visibleBounds } from '../model/modeling.js';
 import { formatLength, usePreferences } from '../model/preferences.js';
-import type { AssemblerState } from '../model/store.js';
+import type { AssemblerState } from '../foundation/commands/store.js';
 import { curvatureColor, curvatureRange } from '../viewport/displayModes.js';
 import styles from './AnalysisLegend.module.css';
 

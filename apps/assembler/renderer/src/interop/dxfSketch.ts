@@ -16,17 +16,17 @@
  * (text glyphs included, construction geometry on layer `CONSTRUCTION`) or a
  * planar face's boundary edges, in the sketch/face frame, as DXF entities.
  */
-import type { Body } from '../kernel/types.js';
-import { frameForFace, frameUv, type SketchFrame } from '../model/document.js';
-import { circleThrough, sketchCurves, type Curve2 } from '../sketch/geometry.js';
-import { beziersToBspline, validKnots } from '../sketch/spline.js';
+import type { Body } from '../foundation/geometry-kernel/types.js';
+import { frameForFace, frameUv, type SketchFrame } from '../foundation/document/document.js';
+import { circleThrough, sketchCurves, type Curve2 } from '../foundation/sketch-solver/geometry.js';
+import { beziersToBspline, validKnots } from '../foundation/sketch-solver/spline.js';
 import {
   EMPTY_SKETCH,
   idAllocator,
   type SketchData,
   type SketchEntity,
   type Vec2 as SketchVec2,
-} from '../sketch/types.js';
+} from '../foundation/sketch-solver/types.js';
 import { sampleEntity, type DxfEntity, type Vec2 } from './dxf.js';
 
 export interface DxfImportOptions {

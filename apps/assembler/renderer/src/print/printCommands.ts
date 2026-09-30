@@ -4,9 +4,13 @@
  * Open in Slicer / Slicers…. Same availability for the toolbar, command
  * search, context menu and keyboard.
  */
-import type { Command, CommandAvailability, CommandContext } from '../model/commands/registry.js';
+import type {
+  Command,
+  CommandAvailability,
+  CommandContext,
+} from '../foundation/commands/registry.js';
 import { referenceMeshIdOf } from '../model/referenceMesh.js';
-import { isPlanarFace } from '../model/store.js';
+import { isPlanarFace } from '../foundation/commands/store.js';
 import { useWorkspaceStore } from '../model/workspace.js';
 import { usePrintStore } from './printStore.js';
 import { useSlicerStore } from './slicerStore.js';

@@ -16,9 +16,9 @@ import {
 } from '../../renderer/src/interop/dxf.js';
 import { dxfToSketchData, sketchToDxfEntities } from '../../renderer/src/interop/dxfSketch.js';
 import { dxfSketchFeature, dxfUnits } from '../../renderer/src/interop/importActions.js';
-import { detectRegions } from '../../renderer/src/sketch/regions.js';
-import { addCircle, addRectangle } from '../../renderer/src/sketch/builders.js';
-import { EMPTY_SKETCH } from '../../renderer/src/sketch/types.js';
+import { detectRegions } from '../../renderer/src/foundation/sketch-solver/regions.js';
+import { addCircle, addRectangle } from '../../renderer/src/foundation/sketch-solver/builders.js';
+import { EMPTY_SKETCH } from '../../renderer/src/foundation/sketch-solver/types.js';
 import { interopFixture } from './fixtures.js';
 
 const plateText = new TextDecoder().decode(interopFixture('plate.dxf'));

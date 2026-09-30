@@ -5,9 +5,14 @@
  * CadQuery-style selector language used by `faces.list`/`edges.list` and by
  * `{bodyId, select}` reference inputs. Pure functions; no store access.
  */
-import type { Body, EdgeInfo, EvaluationResult, FaceInfo } from '../kernel/types.js';
-import type { Feature, Vec3 } from '../model/document.js';
-import { ApiError } from './errors.js';
+import type {
+  Body,
+  EdgeInfo,
+  EvaluationResult,
+  FaceInfo,
+} from '../foundation/geometry-kernel/types.js';
+import type { Feature, Vec3 } from '../foundation/document/document.js';
+import { ApiError } from '../foundation/commands/api/errors.js';
 
 export interface FaceDescriptor {
   bodyId: string;

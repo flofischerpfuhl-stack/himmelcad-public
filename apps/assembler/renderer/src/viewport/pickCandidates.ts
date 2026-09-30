@@ -11,8 +11,13 @@
  * candidate; with Select Through everything along the ray is.
  */
 import { referenceMeshIdOf } from '../model/referenceMesh.js';
-import type { Body, EdgeInfo, EvaluatedSketch, FaceInfo } from '../kernel/types.js';
-import type { SelectionItem } from '../model/store.js';
+import type {
+  Body,
+  EdgeInfo,
+  EvaluatedSketch,
+  FaceInfo,
+} from '../foundation/geometry-kernel/types.js';
+import type { SelectionItem } from '../foundation/commands/store.js';
 import { targetKey, type Projector, type ScreenPoint } from './boxSelect.js';
 import type { Vec3 } from './math.js';
 import type { PickTarget } from './picking.js';

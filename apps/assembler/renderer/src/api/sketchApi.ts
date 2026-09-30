@@ -10,15 +10,20 @@
  * rejected with the solver's diagnosis (`sketchConflict`) and nothing
  * changes.
  */
-import type { EvaluatedSketch } from '../kernel/types.js';
-import type { SketchFeature } from '../model/document.js';
-import { addCircle, addPolyline, addRectangle, withConstraints } from '../sketch/builders.js';
-import { deleteItems } from '../sketch/edits.js';
-import { isPlainNumber } from '../sketch/expressions.js';
-import { adoptProjectedEntities } from '../sketch/projection.js';
-import { detectRegions } from '../sketch/regions.js';
+import type { EvaluatedSketch } from '../foundation/geometry-kernel/types.js';
+import type { SketchFeature } from '../foundation/document/document.js';
+import {
+  addCircle,
+  addPolyline,
+  addRectangle,
+  withConstraints,
+} from '../foundation/sketch-solver/builders.js';
+import { deleteItems } from '../foundation/sketch-solver/edits.js';
+import { isPlainNumber } from '../foundation/sketch-solver/expressions.js';
+import { adoptProjectedEntities } from '../foundation/sketch-solver/projection.js';
+import { detectRegions } from '../foundation/sketch-solver/regions.js';
 import { describeProblem } from '../sketch/session.js';
-import { getSketchSolver } from '../sketch/solverProvider.js';
+import { getSketchSolver } from '../foundation/sketch-solver/solverProvider.js';
 import {
   idAllocator,
   nextDimensionName,
@@ -29,9 +34,9 @@ import {
   type SketchDimensionKind,
   type SketchEntity,
   type Vec2,
-} from '../sketch/types.js';
-import { validateSketchData } from '../sketch/validation.js';
-import { ApiError } from './errors.js';
+} from '../foundation/sketch-solver/types.js';
+import { validateSketchData } from '../foundation/sketch-solver/validation.js';
+import { ApiError } from '../foundation/commands/api/errors.js';
 
 type Json = Record<string, unknown>;
 

@@ -7,7 +7,12 @@
 import { parseStl } from '../kernel/stlImport.js';
 import { parseDxf, type DxfDrawing } from './dxf.js';
 import { MeshImportError, type MeshImportResult } from './meshObjects.js';
-import { prepareSolidMesh, weldMesh, type MeshCheck, type WeldedMesh } from './meshSolid.js';
+import {
+  prepareSolidMesh,
+  weldMesh,
+  type MeshCheck,
+  type WeldedMesh,
+} from '../foundation/geometry-kernel/meshSolidPayload.js';
 import { parseObj } from './objImport.js';
 import { parseThreeMf } from './threeMfImport.js';
 

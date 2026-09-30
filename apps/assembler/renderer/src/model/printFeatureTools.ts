@@ -5,8 +5,8 @@
  * same pill, badges, handles/chips, live preview, Done/Cancel and one-step
  * commit as Revolve or Offset Face. Pure data + functions; no store access.
  */
-import { baseFaceKey, faceSignatureOf } from '../kernel/naming.js';
-import type { Body, EvaluationResult } from '../kernel/types.js';
+import { baseFaceKey, faceSignatureOf } from '../foundation/geometry-kernel/naming.js';
+import type { Body, EvaluationResult } from '../foundation/geometry-kernel/types.js';
 import {
   MIN_FEATURE_SIZE_MM,
   frameForFace,
@@ -18,7 +18,7 @@ import {
   type Feature,
   type SketchFeature,
   type Vec3,
-} from './document.js';
+} from '../foundation/document/document.js';
 import { datumRef, planeRefFrame } from './construction.js';
 import type { PlaneRef, ProfileRef } from './features.js';
 import {
@@ -37,7 +37,7 @@ import {
   type ThickenDirection,
   type ThickenSource,
 } from './printFeatures.js';
-import type { SelectionItem } from './store.js';
+import type { SelectionItem } from '../foundation/commands/store.js';
 
 // ---- drafts -------------------------------------------------------------------------------
 

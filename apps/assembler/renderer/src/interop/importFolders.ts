@@ -13,7 +13,7 @@
  *   body is never filed again afterwards: moving it elsewhere, undo/redo or
  *   reopening the project keep the user's arrangement.
  */
-import type { Body } from '../kernel/types.js';
+import type { Body } from '../foundation/geometry-kernel/types.js';
 import { bodyRowKey, useItemsStore } from '../model/items.js';
 
 export interface FolderRow {

@@ -18,7 +18,7 @@ import type {
   Millimeters,
   SketchPlaneRef,
   Vec3,
-} from './document.js';
+} from '../foundation/document/document.js';
 import {
   CONSTRUCTION_FEATURE_KINDS,
   CONSTRUCTION_FEATURE_LABEL,

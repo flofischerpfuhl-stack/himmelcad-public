@@ -21,7 +21,7 @@ import { registerEscapeRung } from '@himmelcad/ui';
 
 import { effectiveGridStep } from '../../model/gridResolution.js';
 import { usePreferences } from '../../model/preferences.js';
-import { useAssemblerStore } from '../../model/store.js';
+import { useAssemblerStore } from '../../foundation/commands/store.js';
 import { useViewportUi } from '../../model/viewportUi.js';
 import { boxModeFor, normalizeRect } from '../../viewport/boxSelect.js';
 import { SelectionBox } from '../../viewport/SelectionBox.js';
@@ -34,7 +34,7 @@ import {
 } from './sketchBoxSelect.js';
 import { bodySnapTargets } from '../bodySnaps.js';
 import { constraintInfo } from '../constraintRules.js';
-import { entityCurves, sampleCurve } from '../geometry.js';
+import { entityCurves, sampleCurve } from '../../foundation/sketch-solver/geometry.js';
 import {
   hitTest,
   infer,
@@ -42,12 +42,21 @@ import {
   type InferenceHint,
   type SketchHit,
 } from '../inference.js';
-import { constraintAnchor, dimensionLayout, formatDimension, layoutForAnchor } from '../measure.js';
-import { projectedIds } from '../projection.js';
-import { detectRegions, loopPolygon } from '../regions.js';
+import {
+  constraintAnchor,
+  dimensionLayout,
+  formatDimension,
+  layoutForAnchor,
+} from '../../foundation/sketch-solver/measure.js';
+import { projectedIds } from '../../foundation/sketch-solver/projection.js';
+import { detectRegions, loopPolygon } from '../../foundation/sketch-solver/regions.js';
 import { useSketchStore, type ProjectionPick } from '../session.js';
-import { DEFAULT_SKETCH_FONT, loadedSketchFont, textOutlineOf } from '../text/fonts.js';
-import { parseOutline, placeContours } from '../text/outline.js';
+import {
+  DEFAULT_SKETCH_FONT,
+  loadedSketchFont,
+  textOutlineOf,
+} from '../../foundation/sketch-solver/text/fonts.js';
+import { parseOutline, placeContours } from '../../foundation/sketch-solver/text/outline.js';
 import {
   segmentStart,
   toolInProgress,
@@ -63,7 +72,7 @@ import {
   type SketchData,
   type SketchDimension,
   type Vec2,
-} from '../types.js';
+} from '../../foundation/sketch-solver/types.js';
 import { chipSize, layoutBadges, layoutChips, nextChipText, type Rect } from './declutter.js';
 import { SketchDimensionChip } from './SketchDimensionChip.js';
 import { sketchDimensionCandidates } from '../../chrome/expressionSuggest.js';

@@ -8,9 +8,9 @@
  * `EdgeInput` references (keys or selectors). Read-only: nothing here
  * changes the document or the UI (pins are UI view state).
  */
-import type { KernelAdapter } from '../kernel/adapter.js';
-import type { DistanceTarget, EvaluationResult } from '../kernel/types.js';
-import type { Feature } from '../model/document.js';
+import type { KernelAdapter } from '../foundation/geometry-kernel/adapter.js';
+import type { DistanceTarget, EvaluationResult } from '../foundation/geometry-kernel/types.js';
+import type { Feature } from '../foundation/document/document.js';
 import {
   measure,
   type DistanceResult,
@@ -25,8 +25,8 @@ import {
   materialPreset,
 } from '../viewport/displayModes.js';
 import { findBody } from './describe.js';
-import { ApiError } from './errors.js';
-import { resolveEdgeInput, resolveFaceInput } from './references.js';
+import { ApiError } from '../foundation/commands/api/errors.js';
+import { resolveEdgeInput, resolveFaceInput } from '../foundation/commands/api/references.js';
 
 type Json = Record<string, unknown>;
 

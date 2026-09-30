@@ -11,11 +11,16 @@ import { displayBodyName, useItemsStore } from '../items.js';
 import { currentRefs } from '../measure.js';
 import { useMeasureStore } from '../measureStore.js';
 import { usePreferences } from '../preferences.js';
-import { findFace, isPlanarFace, useAssemblerStore, type AssemblerState } from '../store.js';
+import {
+  findFace,
+  isPlanarFace,
+  useAssemblerStore,
+  type AssemblerState,
+} from '../../foundation/commands/store.js';
 import { sectionPlaneFromFace } from '../viewDisplay.js';
 import { useViewportUi } from '../viewportUi.js';
 import { useWorkspaceStore } from '../workspace.js';
-import type { Command, CommandAvailability } from './registry.js';
+import type { Command, CommandAvailability } from '../../foundation/commands/registry.js';
 
 const enabled: CommandAvailability = { enabled: true };
 

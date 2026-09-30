@@ -26,26 +26,29 @@
  * (`--only-browser`: that part alone); `--runs n` (default 3).
  */
 import { loadOcct, selectedOcctModule, type OpenCascadeModule } from '../../headless/occtModule.js';
-import { InProcessKernelAdapter } from '../../renderer/src/kernel/adapter.js';
-import { createEvaluator, type KernelEvaluator } from '../../renderer/src/kernel/evaluator.js';
-import type { EvaluationResult } from '../../renderer/src/kernel/types.js';
+import { InProcessKernelAdapter } from '../../renderer/src/foundation/geometry-kernel/adapter.js';
+import {
+  createEvaluator,
+  type KernelEvaluator,
+} from '../../renderer/src/foundation/geometry-kernel/evaluator.js';
+import type { EvaluationResult } from '../../renderer/src/foundation/geometry-kernel/types.js';
 import {
   resolveAdaptive,
   searchCommands,
   findCommand,
-} from '../../renderer/src/model/commands/registry.js';
-import { createDemoDocument, frameUv } from '../../renderer/src/model/document.js';
+} from '../../renderer/src/foundation/commands/registry.js';
+import { createDemoDocument, frameUv } from '../../renderer/src/foundation/document/document.js';
 import { acceptPick, draftBadges } from '../../renderer/src/model/featureTools.js';
 import { useProjectStore } from '../../renderer/src/model/project/projectStore.js';
-import { isPreviewTool, useAssemblerStore } from '../../renderer/src/model/store.js';
+import { isPreviewTool, useAssemblerStore } from '../../renderer/src/foundation/commands/store.js';
 import { analyzePrintability, bodyToPrintInput } from '../../renderer/src/print/analysis.js';
 import { DEFAULT_PRINT_SETTINGS } from '../../renderer/src/print/settings.js';
 import { hitTest, infer } from '../../renderer/src/sketch/inference.js';
-import { detectRegions } from '../../renderer/src/sketch/regions.js';
+import { detectRegions } from '../../renderer/src/foundation/sketch-solver/regions.js';
 import { useSketchStore } from '../../renderer/src/sketch/session.js';
-import { setSketchSolverFactory } from '../../renderer/src/sketch/solverProvider.js';
+import { setSketchSolverFactory } from '../../renderer/src/foundation/sketch-solver/solverProvider.js';
 import { segmentStart } from '../../renderer/src/sketch/tools.js';
-import type { SketchData, Vec2 } from '../../renderer/src/sketch/types.js';
+import type { SketchData, Vec2 } from '../../renderer/src/foundation/sketch-solver/types.js';
 import { installNodeFonts } from '../sketch/nodeFont.js';
 import { loadNodeSolver } from '../sketch/nodeSolver.js';
 import { sixtyEntitySketch } from './parts.js';

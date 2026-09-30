@@ -9,13 +9,13 @@ import { useEffect, useState } from 'react';
 
 import { Button, Checkbox, Dialog, NumberInput, Select } from '@himmelcad/ui';
 
-import * as io from '../model/project/persistence.js';
+import * as io from '../foundation/document/persistence.js';
 import {
   DEFAULT_IMAGE_EXPORT,
   usePreferences,
   type ImageExportPreference,
 } from '../model/preferences.js';
-import { useAssemblerStore } from '../model/store.js';
+import { useAssemblerStore } from '../foundation/commands/store.js';
 import { currentViewportSize, renderViewportImage, useViewportUi } from '../model/viewportUi.js';
 import { useWorkspaceStore } from '../model/workspace.js';
 import { imageExportSize, imageFileName } from '../viewport/imageExport.js';

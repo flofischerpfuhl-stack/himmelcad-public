@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { useProjectStore } from '../../../renderer/src/model/project/projectStore.js';
-import { useAssemblerStore } from '../../../renderer/src/model/store.js';
-import { sketchFromLegacyProfiles } from '../../../renderer/src/sketch/builders.js';
+import { useAssemblerStore } from '../../../renderer/src/foundation/commands/store.js';
+import { sketchFromLegacyProfiles } from '../../../renderer/src/foundation/sketch-solver/builders.js';
 
 // These tests exercise the dirty-flag state machine only (New/confirm/cancel
 // transitions and the features-change subscription); Open/Save/Export go
