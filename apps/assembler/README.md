@@ -233,9 +233,11 @@ manifold objects, names, colours, item transforms) and Open in Slicer
   reference meshes; DXF becomes a sketch on a plane or planar face. Export
   STEP… (assembly from Items folders / flat / per body, AP242/AP214, mm/cm/m/in,
   all/visible/selected), Export DXF… (sketch or planar face outline, R2000/R12),
-  STL "visible bodies" scope. IGES is not in this OCCT build (entries disabled
-  with the reason). Agent API: `import.step/mesh/dxf`, `export.step/dxf`,
-  `mesh.toSolid`, `interop.formats`.
+  STL "visible bodies" scope. IGES import/export and OCCT's XCAF STEP reader
+  need the HimmelCAD OCCT build (`HIMMELCAD_OCCT=himmelcad`,
+  `assembler/OCCT-BUILD-SPIKE.md`); with the default module the IGES entries
+  are disabled with the reason. Agent API: `import.step/iges/mesh/dxf`,
+  `export.step/iges/dxf`, `mesh.toSolid`, `interop.formats`.
 - File > Open Recent (Electron): up to 8 files, missing ones greyed with
   Locate…/Remove (`electron/recentFiles.ts`, stored in `userData`). The main
   process only opens paths that are on that list.
