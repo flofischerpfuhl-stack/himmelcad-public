@@ -7,6 +7,9 @@ CAD kernel: OCCT 8.0.1 compiled to WebAssembly (`replicad-opencascadejs`),
 driven through `replicad`, running in a Web Worker behind the app-owned
 `KernelAdapter` (`renderer/src/kernel/`). Decision, measurements, the
 stable-reference scheme and open risks: `assembler/KERNEL-SPIKE.md`.
+`HIMMELCAD_OCCT=himmelcad` (build, dev server, tests, `bench:kernel`) swaps in
+the HimmelCAD OCCT build with more OCCT classes (`vendor/occt-wasm`,
+`assembler/OCCT-BUILD-SPIKE.md`); the default stays `replicad-opencascadejs`.
 
 ## Layout
 

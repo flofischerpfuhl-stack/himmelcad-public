@@ -6,10 +6,9 @@
  * deterministic across evaluator instances.
  */
 import assert from 'node:assert/strict';
-import { createRequire } from 'node:module';
 import test from 'node:test';
 
-import init from 'replicad-opencascadejs';
+import { loadOcct, type OpenCascadeModule } from '../../headless/occtModule.js';
 
 import { createEvaluator, type KernelEvaluator } from '../../renderer/src/kernel/evaluator.js';
 import type { EvaluationResult } from '../../renderer/src/kernel/types.js';
@@ -25,15 +24,12 @@ import {
   type BenchPart,
 } from '../bench/parts.js';
 
-type OpenCascade = Awaited<ReturnType<typeof init>>;
+type OpenCascade = OpenCascadeModule;
 let ocPromise: Promise<OpenCascade> | null = null;
 
 /** One OCCT instance for the file; every test makes its own evaluators (own caches). */
 function occt(): Promise<OpenCascade> {
-  ocPromise ??= (async () => {
-    const require = createRequire(import.meta.url);
-    return init({ locateFile: () => require.resolve('replicad-opencascadejs/wasm') });
-  })();
+  ocPromise ??= loadOcct();
   return ocPromise;
 }
 

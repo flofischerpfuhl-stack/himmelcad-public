@@ -1,9 +1,11 @@
 /**
  * Direct face edits: Offset Face and Delete Face.
  *
- * This OCCT build (replicad-opencascadejs 1.1.0) does not bind
- * `BRepOffset_MakeOffset` (per-face offsets) nor
- * `BRepAlgoAPI_Defeaturing`, so both are built from what is bound:
+ * On the HimmelCAD OCCT build (`HIMMELCAD_OCCT=himmelcad`, `../occtExtras.ts`)
+ * both first use OCCT's own algorithms (`./exactFaceOps.ts`: per-face
+ * `BRepOffset_MakeOffset`, `BRepAlgoAPI_Defeaturing`) and fall back to the
+ * emulations below when OCCT fails. replicad-opencascadejs 1.1.0 binds
+ * neither, so there only the emulations run:
  *
  * - **Offset Face** thickens each face into a slab
  *   (`BRepOffsetAPI_MakeThickSolid::MakeThickSolidBySimple`) and joins it
@@ -22,7 +24,16 @@ import * as R from 'replicad';
 
 import { MIN_FEATURE_SIZE_MM, type FaceRef, type Vec3 } from '../../model/document.js';
 import type { DeleteFaceFeature, OffsetFaceFeature } from '../../model/features.js';
-import { assignFaceKeys, baseFaceKey, type FaceGeom, type KeyedFace } from '../naming.js';
+import {
+  assignFaceKeys,
+  baseFaceKey,
+  sameSurface,
+  type FaceGeom,
+  type KeyedFace,
+} from '../naming.js';
+import type { HistoryResult } from '../occt.js';
+import { occtExtras } from '../occtExtras.js';
+import { defeatureWithHistory, offsetFacesWithHistory } from './exactFaceOps.js';
 import type { BodyStateLike, FeatureKit, ReplayContextLike, ResolvedFace, Shape3D } from './kit.js';
 import { alongLine, bodyOrFail, sampleEdges, type Line3 } from './refs.js';
 import { add, cross, dot, length, normalize, scale, sub } from './rigid.js';
@@ -59,17 +70,38 @@ export function applyOffsetFace(
     kit.fail(`Offset must be at least ${MIN_FEATURE_SIZE_MM / 10} mm in magnitude`);
   }
   const { body, resolved } = facesOfOneBody(kit, ctx, feature.faces);
-  const slabs = resolved.map((r, i) => {
-    if (r.geom.id.type === 'cylinder' && !r.geom.id.convex && d >= r.geom.id.radius - 1e-6) {
-      kit.fail(`Offset of ${fmt(d)} mm closes the hole (radius ${fmt(r.geom.id.radius)} mm)`);
+  for (const r of resolved) checkOffsetFits(kit, r, d);
+  // HimmelCAD OCCT build: move the faces and re-extend their neighbours.
+  const exact = offsetFacesWithHistory(
+    kit.oc,
+    body.shape,
+    resolved.map((r) => ({ face: r.face, distance: d })),
+  );
+  const geoms = exact ? kit.describeShape(exact.shape) : [];
+  // OCCT offsets tangent-continuous neighbours (a fillet, the face beyond it)
+  // together with the face. That is a different edit than "move this face",
+  // so it is only accepted when every other face still lies on its own surface;
+  // otherwise the slab route below runs.
+  const selectedKeys = new Set(resolved.map((r) => baseFaceKey(r.geom.key)));
+  if (
+    exact &&
+    !body.faces.every(
+      (f) => selectedKeys.has(baseFaceKey(f.key)) || geoms.some((g) => sameSurface(g.id, f.id)),
+    )
+  ) {
+    exact.history.delete(); // the shape is released by the feature arena (occtArena.ts)
+  } else if (exact) {
+    // OCCT's offset history does not report the moved faces as modified: find
+    // each on its offset surface (it keeps the moved face's key, like push/pull).
+    const moved = new Map<number, string>();
+    for (const r of resolved) {
+      const index = offsetFaceIndex(r.geom, geoms, Math.abs(d));
+      if (index >= 0) moved.set(index, baseFaceKey(r.geom.key));
     }
-    if (r.geom.id.type === 'cylinder' && r.geom.id.convex && -d >= r.geom.id.radius - 1e-6) {
-      kit.fail(
-        `Offset of ${fmt(d)} mm removes the whole round face (radius ${fmt(r.geom.id.radius)} mm)`,
-      );
-    }
-    return slab(kit, feature.id, i, r, d);
-  });
+    applyExact(kit, body, exact, feature.id, ctx, (index) => moved.get(index));
+    return;
+  }
+  const slabs = resolved.map((r, i) => slab(kit, feature.id, i, r, d));
   const tool = { id: '', name: '', color: '', createdBy: '', ...slabs[0]! };
   for (const next of slabs.slice(1)) {
     kit.combine(tool, next, 'join', feature.id, ctx.featureOrder);
@@ -78,6 +110,45 @@ export function applyOffsetFace(
     kit.combine(body, tool, d > 0 ? 'join' : 'cut', feature.id, ctx.featureOrder);
   } catch (error) {
     kit.fail(`Offset Face failed: ${kit.describeError(error)}`);
+  }
+  ctx.touch(body.id);
+}
+
+function checkOffsetFits(kit: FeatureKit, r: ResolvedFace, d: number): void {
+  if (r.geom.id.type === 'cylinder' && !r.geom.id.convex && d >= r.geom.id.radius - 1e-6) {
+    kit.fail(`Offset of ${fmt(d)} mm closes the hole (radius ${fmt(r.geom.id.radius)} mm)`);
+  }
+  if (r.geom.id.type === 'cylinder' && r.geom.id.convex && -d >= r.geom.id.radius - 1e-6) {
+    kit.fail(
+      `Offset of ${fmt(d)} mm removes the whole round face (radius ${fmt(r.geom.id.radius)} mm)`,
+    );
+  }
+}
+
+/**
+ * Replaces `body`'s shape by an exact face operation's result, naming its
+ * faces from OCCT's history: moved/extended faces keep their keys, faces
+ * nothing explains are `known(index)` or `<feature>:new`.
+ */
+function applyExact(
+  kit: FeatureKit,
+  body: BodyStateLike,
+  built: HistoryResult,
+  featureId: string,
+  ctx: ReplayContextLike,
+  known: (index: number) => string | undefined = () => undefined,
+): void {
+  try {
+    body.faces = kit.nameResult(
+      built.shape,
+      built.history,
+      [{ shape: body.shape, faces: body.faces }],
+      ctx.featureOrder,
+      (index) => known(index) ?? `${featureId}:new`,
+    );
+    body.shape = built.shape;
+  } finally {
+    built.history.delete();
   }
   ctx.touch(body.id);
 }
@@ -188,6 +259,9 @@ function offsetFaceIndex(source: FaceGeom, geoms: FaceGeom[], d: number): number
 const DELETE_FACE_LIMIT =
   'Delete Face can remove holes, and fillets or chamfers between two planar faces. ' +
   "Other faces need OCCT's general defeaturing (BRepAlgoAPI_Defeaturing), which is not part of this kernel build";
+const DEFEATURE_LIMIT =
+  'Delete Face could not remove this face: the neighbouring faces cannot be extended to close the gap ' +
+  '(OCCT defeaturing failed), and it is not a hole, fillet or chamfer';
 
 export function applyDeleteFace(
   feature: DeleteFaceFeature,
@@ -195,10 +269,25 @@ export function applyDeleteFace(
   kit: FeatureKit,
 ): void {
   const { body, resolved } = facesOfOneBody(kit, ctx, feature.faces);
+  // HimmelCAD OCCT build: general defeaturing (the neighbours grow over the gap).
+  const exact = defeatureWithHistory(
+    kit.oc,
+    body.shape,
+    resolved.map((r) => r.face),
+  );
+  if (exact) {
+    applyExact(kit, body, exact, feature.id, ctx);
+    const removedKeys = resolved.map((r) => baseFaceKey(r.geom.key));
+    if (body.faces.some((f) => removedKeys.includes(baseFaceKey(f.key)))) {
+      kit.fail('Delete Face failed: the face could not be healed away');
+    }
+    return;
+  }
+  const limit = occtExtras(kit.oc) ? DEFEATURE_LIMIT : DELETE_FACE_LIMIT;
   const fills: Tool[] = [];
   const removals: Tool[] = [];
   resolved.forEach((r, i) => {
-    const patch = healingPatch(kit, body, r);
+    const patch = healingPatch(kit, body, r, limit);
     const tool = namedTool(kit, feature.id, i, patch.shape);
     (patch.add ? fills : removals).push(tool);
   });
@@ -232,6 +321,7 @@ function healingPatch(
   kit: FeatureKit,
   body: BodyStateLike,
   r: ResolvedFace,
+  limit: string,
 ): { shape: Shape3D; add: boolean } {
   const { geom, topology, index } = r;
   const id = geom.id;
@@ -251,7 +341,7 @@ function healingPatch(
     const along = samples.map((p) => alongLine(axis, p));
     const t0 = Math.min(...along);
     const t1 = Math.max(...along);
-    if (!(t1 - t0 > 1e-6)) kit.fail(DELETE_FACE_LIMIT);
+    if (!(t1 - t0 > 1e-6)) kit.fail(limit);
     const fullTurn = Math.abs(geom.area - 2 * Math.PI * id.radius * (t1 - t0)) < 1e-3 * geom.area;
     if (!id.convex && fullTurn) {
       // A hole wall: fill the hole along the face's axial extent.
@@ -268,9 +358,9 @@ function healingPatch(
         Math.abs(Math.abs(dot(g.direction, id.axis)) - 1) < 1e-6
       );
     });
-    if (straight.length !== 2) kit.fail(DELETE_FACE_LIMIT);
+    if (straight.length !== 2) kit.fail(limit);
     const planes = straight.map(neighbourPlaneAcross);
-    if (planes.some((p) => p === null)) kit.fail(DELETE_FACE_LIMIT);
+    if (planes.some((p) => p === null)) kit.fail(limit);
     const wedge = cornerWedge(
       kit,
       axis.dir,
@@ -321,7 +411,7 @@ function healingPatch(
       }
     }
   }
-  kit.fail(DELETE_FACE_LIMIT);
+  kit.fail(limit);
 }
 
 /** Point in the cross-section at `t` where the two neighbour planes meet. */

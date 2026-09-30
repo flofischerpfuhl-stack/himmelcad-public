@@ -8,16 +8,15 @@
  * Every timed evaluation uses parameter values no cache has seen (fresh
  * `v`), so cache hits of identical documents never flatter the numbers.
  */
-import { createRequire } from 'node:module';
 
-import init from 'replicad-opencascadejs';
+import { loadOcct, selectedOcctModule, type OpenCascadeModule } from '../../headless/occtModule.js';
 
 import { createEvaluator, type KernelEvaluator } from '../../renderer/src/kernel/evaluator.js';
 import type { EvaluationResult } from '../../renderer/src/kernel/types.js';
 import type { Feature } from '../../renderer/src/model/document.js';
 import { BENCH_PARTS, demoBracket, type BenchPart } from './parts.js';
 
-type OpenCascade = Awaited<ReturnType<typeof init>>;
+type OpenCascade = OpenCascadeModule;
 
 interface Row {
   part: string;
@@ -178,10 +177,8 @@ async function main(): Promise<void> {
   const budgetMb = budgetIndex >= 0 ? Number(args[budgetIndex + 1]) : undefined;
   const repeats = 5;
 
-  const require = createRequire(import.meta.url);
-  const wasmPath = require.resolve('replicad-opencascadejs/wasm');
   const t0 = performance.now();
-  const oc = await init({ locateFile: () => wasmPath });
+  const oc = await loadOcct();
   const loadMs = performance.now() - t0;
   if (tableToo) {
     // JIT warm-up so the first part is not charged for it.
@@ -194,7 +191,7 @@ async function main(): Promise<void> {
       process.stdout.write(`${JSON.stringify({ loadMs, rows, heapMb: heapMb(oc) }, null, 2)}\n`);
     } else {
       const lines = [
-        `Kernel bench — Node ${process.version}, wasm load ${fmt(loadMs)} ms, medians of ${repeats} (full: 3)`,
+        `Kernel bench — Node ${process.version}, OCCT module ${selectedOcctModule()}, wasm load ${fmt(loadMs)} ms, medians of ${repeats} (full: 3)`,
         '',
         '| Part | Full eval (ms) | Edit feature #2 (ms) | Edit last feature (ms) | Preview (ms) | Triangles | Bodies |',
         '| --- | ---: | ---: | ---: | ---: | ---: | ---: |',

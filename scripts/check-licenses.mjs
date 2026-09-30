@@ -11,7 +11,8 @@
 
 import { execFileSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const ALLOWED = new Set([
   'MIT',
@@ -58,6 +59,14 @@ const ADMITTED_LGPL = [
     // runtime-loaded by the Assembler CAD-kernel worker.
     name: 'replicad-opencascadejs',
     version: '1.1.0',
+    license: 'LGPL-2.1-only',
+  },
+  {
+    // The HimmelCAD build of the same OCCT 8.0.1 / opencascade.js toolchain
+    // with extra bindings (vendor/occt-wasm, opt-in via HIMMELCAD_OCCT=himmelcad);
+    // same runtime-loaded worker module, not an npm dependency.
+    name: '@himmelcad/occt-wasm',
+    version: '8.0.1-hc.1',
     license: 'LGPL-2.1-only',
   },
   {
@@ -155,10 +164,23 @@ function* pnpmPackages() {
   }
 }
 
+// Runtime modules built in-repo (not npm dependencies) that the app can ship.
+const VENDORED_RUNTIME_MODULES = ['vendor/occt-wasm'];
+
+function* vendoredRuntimeModules() {
+  const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+  for (const dir of VENDORED_RUNTIME_MODULES) {
+    const manifest = join(root, dir, 'package.json');
+    if (!existsSync(manifest)) continue;
+    const pkg = JSON.parse(readFileSync(manifest, 'utf8'));
+    yield { name: pkg.name, version: pkg.version, license: licenseOf(pkg), path: dir };
+  }
+}
+
 const args = process.argv.slice(2);
 const packages = [];
 for (let i = 0; i < args.length; i++) {
-  if (args[i] === '--pnpm') packages.push(...pnpmPackages());
+  if (args[i] === '--pnpm') packages.push(...pnpmPackages(), ...vendoredRuntimeModules());
   else if (args[i] === '--dir') packages.push(...walkNodeModules(args[++i]));
   else {
     console.error(`Unknown argument: ${args[i]}`);

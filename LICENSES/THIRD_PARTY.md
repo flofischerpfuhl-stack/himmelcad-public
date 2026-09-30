@@ -108,6 +108,31 @@ the OCCT exception) and a future AGPL-3.0-or-later distribution of
 Assembler, provided the separate-module/replaceability conditions above
 stay true.
 
+### `@himmelcad/occt-wasm` 8.0.1-hc.1 — HimmelCAD build of OCCT 8.0.1 as WebAssembly (Assembler, opt-in)
+
+Recorded 2026-09-30 by the OCCT-build spike (`assembler/OCCT-BUILD-SPIKE.md`).
+Not shipped by default: the app uses `replicad-opencascadejs` 1.1.0 unless it
+is built with `HIMMELCAD_OCCT=himmelcad`. Before a release ships it, the
+release must publish `vendor/occt-wasm` at its commit (condition 3).
+
+| Field                   | Value                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Component               | `vendor/occt-wasm` (`package.json` name `@himmelcad/occt-wasm`, version `8.0.1-hc.1`, not an npm dependency): the `replicad-opencascadejs` 1.1.0 build configuration relinked with 6 more bindings (`BRepAlgoAPI_Defeaturing`, `IGESControl_Controller/Reader/Writer`, `STEPCAFControl_Reader`, `HimmelcadOffset`) and one added C++ file (`build-config/wrappers/himmelcad-offset.cpp`, a facade over `BRepOffset_MakeOffset`).                                                                                                                                  |
+| Contents                | Same inputs as `replicad-opencascadejs` 1.1.0 above: OCCT **8.0.1** (`V8_0_1`, `b8f597c677811d1f9f4d8a97f5ae2825c0353a42`), opencascade.js `ebd263f15337b440b391492af073662707e86482` via its published toolchain image `ghcr.io/taucad/opencascade.js:canary-ebd263f1-single-threaded` (linux/amd64 manifest `sha256:deb9be8470038652c060b47f2d2e7e2e46d899bb896ecabb007bf60307ee2d54`, Emscripten 5.0.1), replicad build configuration at `e4b05f67dc4e2393a876ce8c5064a9c93db05bf1`. No FreeType/RapidJSON code linked (same link filter as replicad's build). |
+| License variant         | `LGPL-2.1-only` for the module (OCCT: LGPL-2.1 with the Open CASCADE exception 1.0; opencascade.js: LGPL-2.1); the HimmelCAD wrapper C++ file is LGPL-2.1-only (SPDX header) because it is compiled into the module. Emscripten runtime as above.                                                                                                                                                                                                                                                                                                                 |
+| Shipped files           | Only with `HIMMELCAD_OCCT=himmelcad`: `himmelcad_occt.wasm` (25,348,445 bytes, SHA-256 `49ce9d189043ebe48d0c0bde81a368e3ee202a00c3399c55f089847f66bd123d`) → `assets/himmelcad_occt-<hash>.wasm`, and `himmelcad_occt.js` (SHA-256 `9ee3e8642f1b4bb47bb8ba4fd441d1ab160990ee98dc95d442322b40e8fa4af2`) → its own chunk `assets/himmelcad_occt-<hash>.js`. Checksums: `vendor/occt-wasm/artifacts.sha256`.                                                                                                                                                         |
+| Link type               | Identical to `replicad-opencascadejs`: runtime-loaded WebAssembly module + Emscripten loader chunk in the CAD-kernel Web Worker (the Vite build aliases the package specifier to the two files); the app talks to it through replicad and `KernelAdapter`; extra classes are detected at runtime (`kernel/occtExtras.ts`).                                                                                                                                                                                                                                        |
+| Source availability     | **Modified build** (condition 3): recipe `vendor/occt-wasm/build.sh`, binding diff `build-config/extra-bindings.yml`, added source `build-config/wrappers/himmelcad-offset.cpp`, pinned revisions in `build.sh`/`README.md`; all upstream inputs public (above). The recipe relinks replicad's unmodified configuration bit-for-bit reproducibly (two runs identical) and matches the npm files except 6 bytes of wasm code (see the spike report).                                                                                                               |
+| How a user replaces it  | `vendor/occt-wasm/build.sh` (x86_64 Linux, root; no Docker needed) or any modification of it, then overwrite `assets/himmelcad_occt-<hash>.{wasm,js}` keeping the names.                                                                                                                                                                                                                                                                                                                                                                                          |
+| Notices shipped         | `THIRD-PARTY-NOTICES.txt` section "Open CASCADE Technology" describes both variants; license texts as for `replicad-opencascadejs`.                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| Product-terms check (4) | As above.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| License gate            | `scripts/check-licenses.mjs` `ADMITTED_LGPL` entry for exactly `@himmelcad/occt-wasm@8.0.1-hc.1` / `LGPL-2.1-only`; the `--pnpm` run also reads `vendor/occt-wasm/package.json` (`VENDORED_RUNTIME_MODULES`).                                                                                                                                                                                                                                                                                                                                                     |
+
+AGPL-3.0-or-later compatibility (condition 6): the analysis of
+`replicad-opencascadejs` 1.1.0 above applies unchanged — same components,
+same license variant, same separate runtime-loaded module; the added wrapper
+is LGPL-2.1-only like the module.
+
 ### `@salusoft89/planegcs` 1.2.0 — FreeCAD planeGCS as WebAssembly (Assembler)
 
 Admitted 2026-09-29 for the Assembler sketch solver (`assembler/SKETCHING.md`).
@@ -295,8 +320,9 @@ Forbidden licenses for incorporated product code:
 
 - GPL
 - LGPL, except components admitted by name under
-  `docs/DEPENDENCY-POLICY.md` "Conditionally allowed: LGPL" (currently only
-  `replicad-opencascadejs` 1.1.0, see "Conditionally admitted LGPL
+  `docs/DEPENDENCY-POLICY.md` "Conditionally allowed: LGPL" (currently
+  `replicad-opencascadejs` 1.1.0, `@himmelcad/occt-wasm` 8.0.1-hc.1 and
+  `@salusoft89/planegcs` 1.2.0, see "Conditionally admitted LGPL
   components" above)
 - AGPL
 - SSPL

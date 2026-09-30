@@ -241,7 +241,11 @@ fillet on a revolved edge survives the profile-width edit, a fillet after a
 transform survives a sketch edit, an Offset Face follows its hole when the
 hole moves — all resolved by key, no geometric re-bind.
 
-Limits (with the OCCT reason):
+Limits (with the OCCT reason). The HimmelCAD OCCT build
+(`OCCT-BUILD-SPIKE.md`, opt-in `HIMMELCAD_OCCT=himmelcad`) lifts the first
+two: Offset Face re-extends inclined neighbours (`BRepOffset_MakeOffset`),
+Delete Face uses `BRepAlgoAPI_Defeaturing`; the text below describes the
+default `replicad-opencascadejs` build.
 
 - **Offset Face does not re-extend neighbours.** OCCT's per-face offset
   (`BRepOffset_MakeOffset::SetOffsetOnFace`) is excluded from this
@@ -345,7 +349,10 @@ cached edge-key lookup).
 
 Limits (with the OCCT reason):
 
-- **Per-face shell thickness** is emulated: `BRepOffset_MakeOffset::SetOffsetOnFace`
+- **Per-face shell thickness** is emulated on the default build (the
+  HimmelCAD OCCT build shells in one `MakeThickSolid` with
+  `SetOffsetOnFace`, thinner walls included; `OCCT-BUILD-SPIKE.md`):
+  `BRepOffset_MakeOffset::SetOffsetOnFace`
   is not reachable (`MakeOffset()` is dropped from the bindings), so a
   thicker wall is an Offset Face slab added after the shell — exact for walls
   whose neighbours are perpendicular (boxes, enclosures); inclined neighbours

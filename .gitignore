@@ -105,6 +105,9 @@ vendor/colmap/*/include/
 vendor/colmap/*/lib/
 vendor/colmap/*/share/
 vendor/msvc-runtime/*/*.dll
+# HimmelCAD OCCT WebAssembly build output (rebuilt by vendor/occt-wasm/build.sh;
+# checksums in vendor/occt-wasm/artifacts.sha256).
+vendor/occt-wasm/dist/
 
 # Local PhotoLab reference datasets and user-supplied test archives. Curated
 # manifests, concepts and golden baselines remain committed explicitly.

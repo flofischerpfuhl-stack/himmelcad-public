@@ -115,6 +115,7 @@ import {
   failingBlendEdges,
   ruleEdgeIndices,
 } from './features/blendRules.js';
+import { shellPerFaceWithHistory } from './features/exactFaceOps.js';
 import { offsetBodyFaces } from './features/faceOps.js';
 import { applyModelingFeature, type FeatureKit } from './features/index.js';
 import { rebindRegion } from './regionRebind.js';
@@ -1055,8 +1056,33 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
       }
     }
     let built: HistoryResult;
+    // HimmelCAD OCCT build: per-wall thicknesses in the shell itself
+    // (`SetOffsetOnFace`), so walls meet their neighbours without steps and
+    // may also be thinner than the shell.
+    let perFaceBuilt = false;
     try {
-      built = shellWithHistory(oc, source.shape, removed, feature.thickness, outward);
+      let exact: HistoryResult | null = null;
+      if (perFace.length > 0) {
+        const sourceTopology = topologyOf(source.shape);
+        const walls = perFace.map((entry) => {
+          const index = source.faces.findIndex((f) => baseFaceKey(f.key) === entry.key);
+          return index < 0
+            ? null
+            : { face: sourceTopology.faces[index]!, thickness: entry.thickness };
+        });
+        if (walls.every((w) => w !== null)) {
+          exact = shellPerFaceWithHistory(
+            oc,
+            source.shape,
+            removed,
+            feature.thickness,
+            walls as { face: R.Face; thickness: number }[],
+            outward,
+          );
+        }
+      }
+      perFaceBuilt = exact !== null;
+      built = exact ?? shellWithHistory(oc, source.shape, removed, feature.thickness, outward);
     } catch (error) {
       if (isFatalKernelError(error)) throw error;
       throw new FeatureError(
@@ -1106,7 +1132,9 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
       built.history.delete();
     }
     // Thicker walls: offset the wall's free side by the extra thickness (Offset Face).
-    const thicker = perFace.filter((entry) => Math.abs(entry.thickness - t) > 1e-9);
+    const thicker = perFaceBuilt
+      ? []
+      : perFace.filter((entry) => Math.abs(entry.thickness - t) > 1e-9);
     if (thicker.length > 0) {
       const walls = thicker.map((entry) => {
         const key = `${feature.id}:${role}:${entry.key}`;
