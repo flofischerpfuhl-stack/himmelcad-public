@@ -63,7 +63,12 @@ Rectangle `R`, Polygon `G` start a sketch (on XY, or on the selected planar
 face; the first click on a face moves an empty new sketch there); Trim `T`,
 Offset `O`, Dimension `D`, Construction `Q` and the constraints (Shift +
 letter) work inside it. Double-click a sketch (viewport, Items, History) to
-edit it. Snapping and inferred horizontal/vertical/perpendicular/parallel/
+edit it. Advanced tools: Spline `I` (fit/control points, tangent
+handles), Slot `U` (straight/arc), Ellipse `Y` (full/arc), Text `K`
+(Inter, stored outlines), Fillet/Chamfer `Shift+R`, Mirror `J`, Pattern
+`N` (linear/circular), Project `P` (associative body edges/faces);
+polygons inscribed or circumscribed; determined dimensions can be added as
+reference dimensions. Snapping and inferred horizontal/vertical/perpendicular/parallel/
 midpoint/point-on constraints while drawing; typed values add dimensions;
 dimensions accept expressions (`d1 / 2`). Blue = under-constrained, green =
 fully constrained; conflicting edits are rejected with a red banner and the

@@ -2,7 +2,10 @@
 
 Status: **implemented slice** (2026-09-29, branch `asm/solver-20260929`;
 merged with the modelling features and the agent API on
-`feat/assembler-phase0-20260929`). This
+`feat/assembler-phase0-20260929`), extended by **advanced sketching**
+(2026-09-30, branch `asm/sketch2-20260930`: splines, slots, ellipses,
+text, project, mirror, patterns, sketch fillet/chamfer, reference
+dimensions, editing polish — see "Advanced sketching" below). This
 records the design, the solver decision, what works and the known limits. It
 serves owner intent U1/U2 (Shapr3D-like sketching for printable parts) and the
 `PLAN.md` §2 scope item "2D-Konstruktionsskizzen … Maße, Constraints und
@@ -56,13 +59,20 @@ A `sketch` feature (`model/document.ts`, `sketch/types.ts`) stores:
 
 - **entities** in the sketch frame's (u, v) millimetres: `point`, `line`
   (two point ids), `circle` (centre point + radius), `arc` (centre, start, end
-  points; counter-clockwise), each optionally `construction`;
+  points; counter-clockwise), `ellipse`, `ellipticArc`, `spline`, `text`
+  (see "Advanced sketching"), each optionally `construction`;
+- optional `projections` (projected body geometry with its source
+  reference) and `regionMemory` (region fingerprints), both additive — the
+  schema stays 2; a file with the new entity kinds fails loudly ("unknown
+  entity kind") in older builds;
 - **constraints** `{ id, kind, refs }`: coincident, horizontal, vertical,
   parallel, perpendicular, tangent, equal, fixed (lock), midpoint, symmetric,
   concentric, pointOnObject (the table in `types.ts` lists the refs per kind);
 - **dimensions** `{ id, name: 'd<n>', kind, refs, value, expression? }`:
   distance (line length, point–point, point–line, parallel lines),
-  horizontalDistance, verticalDistance, radius, diameter, angle (degrees).
+  horizontalDistance, verticalDistance, radius, diameter, angle (degrees);
+  `driven: true` marks a reference dimension; `offset`/`along` place the
+  label.
   Expressions are `+ - * /` with parentheses and names of other dimensions of
   the sketch (`d1 / 2 + 3`), evaluated in dependency order; cycles, unknown
   names and non-positive results are rejected (`sketch/expressions.ts`).
@@ -132,7 +142,9 @@ Session store `sketch/session.ts`, overlay `sketch/ui/SketchOverlay.tsx`
   with a planar face selected on that face; _New Sketch on XY/XZ/YZ_ in
   command search. The camera animates normal to the plane (u right, v up;
   faces are viewed from outside).
-- **Tools:** Line `L` (click-click polyline, chains until it closes on its
+- **Tools** (the advanced ones — Spline, Slot, Ellipse, Text, Fillet/Chamfer,
+  Mirror, Pattern, Project — are described under "Advanced sketching"):
+  Line `L` (click-click polyline, chains until it closes on its
   start or an existing point, Enter/double-click ends), Arc `A` (3 points;
   starting on a line end — or pressing A while drawing lines — gives a tangent
   arc in two clicks), Circle `C`, Rectangle `R` (2 corners or centre),
@@ -154,8 +166,8 @@ Session store `sketch/session.ts`, overlay `sketch/ui/SketchOverlay.tsx`
   of rejecting the stroke.
 - **Values:** typing a number while drawing opens the tool's chip (length,
   diameter, width/height, offset distance) and adds the matching dimension.
-  Dimensions render as the shared `DimensionLabel` chip; click to edit, the
-  field accepts expressions.
+  Dimensions render as chips in the shared chip style; click selects,
+  double-click edits, the field accepts expressions.
 - **Feedback:** under-constrained geometry blue, fully constrained green,
   construction dashed, selection orange; the pill shows the remaining degrees
   of freedom or "Fully constrained". An edit that conflicts, is redundant, has
@@ -176,7 +188,128 @@ Session store `sketch/session.ts`, overlay `sketch/ui/SketchOverlay.tsx`
   one re-solves (`sketch/featureOps.ts` `setSketchDimension`) and commits one
   undo step; dependent extrudes follow through normal re-evaluation.
 
+## Advanced sketching (2026-09-30)
+
+### Curves beyond lines and arcs
+
+| Entity        | Stored as                                                                                                                                                                                                        | Solver (planeGCS)                                                                                                                                                               |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ellipse`     | centre, major-axis end, minor-axis end (points)                                                                                                                                                                  | planeGCS ellipse with hidden focus / opposite vertices tied by internal alignment; 5 DOF; point-on, line tangency, concentric                                                   |
+| `ellipticArc` | + start / end points, counter-clockwise in the ellipse frame                                                                                                                                                     | `arc_of_ellipse` + rules; 7 DOF                                                                                                                                                 |
+| `spline`      | `fit`: points the curve passes through (C2, chord-length) + two end tangent handles (the first/last Bézier control point); `control`: control polygon of a clamped cubic B-spline (+ `knots` after a trim split) | points only (no planeGCS B-spline): coincident on end points; **tangent** to a line / arc / spline sharing an end point keeps the second pole / handle on the tangent direction |
+| `text`        | anchor point + text, cap height, rotation, font id and the **stored glyph outline** (SVG path data normalized to the cap height) — documents evaluate without the font                                           | anchor point only (position by constraints/dimensions)                                                                                                                          |
+
+All curves reduce to one pure curve model (`sketch/geometry.ts`: segments,
+circular arcs, elliptical arcs, Bézier chains) with exact areas,
+Newton-refined intersections and closed-curve handling, so region
+detection, trim, snapping, hit testing, box selection and the kernel see
+the same geometry. The kernel builds elliptical arcs exactly and one cubic
+B-spline edge per spline/glyph piece (triple knots), so one piece gives one
+extruded side face (`<extrude>:side:<p>:<entityId>`). Text regions follow
+the font's fill rule: counters (inside of O, e, B) are holes, never
+profiles; region keys are `<textId>.<n>`. A region face with holes is
+checked against the region's exact area and rebuilt with reversed hole
+wires when OCCT's plane faced the other way (fix 2026-09-30: holes were
+added on XY/YZ sketches). Spline and glyph math: `sketch/spline.ts`,
+`sketch/text/outline.ts`.
+
+Text uses **Inter** (SIL OFL 1.1, `@fontsource/inter` 5.3.0, Latin subset)
+parsed with opentype.js 1.3.4 (MIT); the theme's Kamikaze display fonts
+are not used because their license is not recorded for embedding
+(`LICENSES/THIRD_PARTY.md`). Height is the cap height. Characters outside
+the subset are drawn as the font's missing-glyph box and reported.
+
+### Tools (toolbar, command search, shortcut; preview + value chips)
+
+| Tool                       | Input                                                                                                                                                                                                                                                                    |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Spline `I`                 | Fit points / Control points; click points, Enter, double-click or the first point ends (closed). Selected fit splines show their tangent handles, control splines their polygon.                                                                                         |
+| Slot `U`                   | Straight: centre, centre (or type the centre distance), width (click or type) — dimensioned. Arc: arc centre, start, end, width.                                                                                                                                         |
+| Ellipse `Y`                | Ellipse / Elliptical arc: centre, first axis end (or type its radius), second axis (click or type), then arc start and end.                                                                                                                                              |
+| Polygon `G`                | 3/5/6/8 or any side count; Inscribed (vertices on the construction circle) / Circumscribed (edges tangent to it).                                                                                                                                                        |
+| Text `K`                   | Click the baseline start; the text panel sets content, height, rotation; Place / Update. Double-click a text (or Edit Text) edits it in place.                                                                                                                           |
+| Fillet / Chamfer `Shift+R` | Click a corner between two lines, move or type the radius / set-back. The corner point stays as a virtual sharp on both line extensions, so dimensions to it survive; a length dimension of a shortened line is re-attached to the virtual sharp.                        |
+| Mirror `J`                 | Selection (or click curves, then Next / Enter), then click the mirror line. Copies are tied by Symmetric constraints (circles also Equal).                                                                                                                               |
+| Pattern `N`                | Linear: count, then move/click where the last copy goes or type the spacing (a spacing dimension on a construction line drives all copies, H/V inferred). Circular: count, total angle, click the centre. Copies are tied by `translate` / `rotate` pattern constraints. |
+| Project `P`                | Click body edges or faces: they are projected along the sketch normal (lines, parallel circles/arcs, otherwise fit splines). Construction by default (`Q` toggles).                                                                                                      |
+
+Every completed operation is one session undo step. Trim now also cuts
+ellipses (→ elliptical arcs on the same axis points) and splines (→ exact
+control-point splines). Tangency at a **shared end point** (line/arc,
+arc/arc, spline ends) is mapped to a direction constraint instead of the
+curve-distance form, which is degenerate there (planeGCS reported it
+redundant — the old tangent-arc tool silently dropped it).
+
+### Projection is associative
+
+A projection stores its source (`{kind: 'edge'|'face', ref}` — a naming v2
+reference) and its entities. The kernel re-derives it on every evaluation
+(`kernel/sketchProjection.ts`, one hook in `evaluateSketch`): same
+structure → the projected points move with the source (dependent profiles
+and extrudes follow); a missing source or a different structure keeps the
+stored geometry **frozen** and puts a warning on the sketch (History card,
+sketch-mode banner, amber dashed curves). Sketch mode adopts moved
+projections on entry and re-solves them as one session step. Projected
+points are fixed for the solver; fully fixed projected arcs are solved as
+fixed circles (their arc rules would be redundant).
+
+### Reference (driven) dimensions
+
+A dimension that is already determined is no longer only rejected: the
+banner offers **Add as reference**. Reference dimensions are measured after
+every solve, shown in parentheses (dashed, italic), cannot be edited or
+used in expressions, and can be toggled with **Reference Dimension**
+(command search) or `sketch.setReference`.
+
+### Constraint and dimension editing polish
+
+- Dimension chips: click selects (Delete removes, Reference Dimension
+  toggles), **double-click edits** (Enter/F2 on a focused chip too),
+  **Shift+drag moves the label** (offset + position along the dimension,
+  one undo step).
+- Dense sketches: chips are pushed apart along their normal, constraint
+  badges take the nearest free slot around their anchor
+  (`sketch/ui/declutter.ts`).
+- A selected badge shows a delete button; right-click on a badge deletes
+  that constraint. Coincident badges show for selected points.
+- Keystrokes typed right after a value chip opens are kept (the overlay
+  owns the typed text; Enter before the field has focus applies it) — the
+  known "lost keystrokes" limit is fixed.
+
+### Region keys after redraws
+
+Every sketch commit records region fingerprints (`regionMemory`: sample,
+area, bounding box, also for keys that vanished). A reference to a profile
+whose boundary was redrawn — even completely — re-binds by geometry first
+(unique free region with the same box and area ±1 %), with the warning
+"re-bound by geometry"; then the topological rebind as before.
+
+### Agent API / Python
+
+`sketch.addSpline`, `sketch.addEllipse`, `sketch.addSlot`,
+`sketch.addPolygon`, `sketch.addText`, `sketch.mirror`, `sketch.pattern`,
+`sketch.roundCorner`, `sketch.project`, `sketch.setReference`
+(`api/sketchAdvancedApi.ts`, same builders as the tools); the contract
+describes the new entity/constraint kinds. Python: `Sketch.spline`,
+`ellipse`, `slot_between`, `arc_slot`, `polygon`, `text`, `mirror`,
+`pattern`, `fillet_corner`, `chamfer_corner`, `project`, `set_reference`.
+
 ## Tests
+
+`test/sketch/curves.test.ts` (spline math, exact curve areas and
+intersections, regions with splines/ellipses/text, ellipse/elliptical-arc
+DOF and dimensions, spline tangency, pattern constraints, reference
+dimensions, kernel solids from spline/ellipse/text regions),
+`advancedTools.test.ts` (every new tool through its reducer and the real
+solver: DOF, areas, copies following their originals, trims),
+`advancedSession.test.ts` (UI-path plate with a hole, the reference offer
+and toggle, label moves as undo steps, text place/edit, associative and
+frozen projection, geometric re-binding of a completely redrawn profile),
+`declutter.test.ts`, `test/kernel/sketchHoles.test.ts` (regions with holes
+on XY/XZ/YZ, symmetric/reversed extrudes, revolve, text "OeAB" extruded and
+engraved: exact volumes, valid B-rep), `test/api/sketchAdvanced.test.ts`,
+Python `test_assembler.py`. Screens: `D:\AgentWork\HimmelCAD-Assembler\shots\s2-*.png`
+from `s2-shots.mjs` (DEV hook).
 
 `test/sketch/solver.test.ts` (DOF of each entity, every constraint kind,
 every dimension kind, value changes, expressions, conflict, redundancy,
@@ -195,17 +328,34 @@ calibration).
 
 ## Known limits and next steps
 
-- No splines, ellipses, slots, text, sketch patterns, mirror, fillet-in-sketch,
-  project/"use" of body edges, construction planes/axes; no box selection in
-  sketch mode; no reference (driven) dimensions — dimensioning an already
-  determined length is rejected as redundant instead of becoming a reference.
-- Constraint glyphs are simple stacked badges; dimension labels can overlap
-  glyphs in dense sketches. No per-constraint delete via right-click (select
-  the glyph or the dimension line, then Delete).
-- Region keys use entity ids: deleting and redrawing a boundary line gives a
-  new key. The kernel re-binds the extrude by the unchanged boundary edges
-  (warning on the feature); a region whose every edge was redrawn is only
-  re-bound when it is the sketch's single free profile, else re-pick it.
+- No construction planes/axes; no parabola/hyperbola; no offset of splines
+  or ellipses; no point-on-spline constraint (splines take coincident on
+  their end points and endpoint tangency only); a spline tangent to an
+  ellipse/elliptical arc is not supported; ellipse minor radius must stay ≤
+  the major radius (planeGCS; a dimension forcing the opposite fails).
+- Fit splines through many points are smooth but not curvature-continuous
+  at their handles; after a trim a spline becomes a control-point spline
+  with triple knots (dragging a pole then gives C0 joints).
+- Text: one line, one font (Inter Latin); editing re-generates the whole
+  text (region keys of a changed text change, re-pick them). Shapr3D
+  "text on a path" is not implemented.
+- Project: parallel projection only (no wrap onto curved faces); tilted
+  circles/ellipses/B-spline edges become fit splines through 12–16 points
+  (approximate); a face projects its boundary edges, not the silhouette of
+  a curved face; a source whose projection changes shape (e.g. a face that
+  gained an edge) freezes with "project it again". Projection reads the
+  current bodies, so it only works for sources that exist before the sketch
+  in the history.
+- Sketch patterns and mirrors: count/angle cannot be edited after creation
+  (the spacing dimension can); patterned text is not supported; the linear
+  pattern's direction line is a construction line (dimension/constrain it
+  to fix the direction).
+- Sketch fillet/chamfer: line–line corners only.
+- Label de-cluttering is greedy (chips move along their normal, badges to
+  the nearest free slot); very dense sketches can still overlap.
+- Region keys use entity ids; a redrawn profile re-binds by its recorded
+  geometry (±1 % box and area) or its unchanged edges, with a warning;
+  a redrawn profile whose size also changed must be re-picked.
 - "Fully constrained" per entity costs two solves per point (off the UI
   thread; skipped above 120 points — the global DOF is always shown).
 - planeGCS may converge to a mirrored solution for large dimension jumps
