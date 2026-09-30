@@ -111,7 +111,7 @@ Exit code 1 if any invariant broke.
 | 2           | F3/F4 fixed     | 2    | 20      | 375       | 14 993 | 5 878     | 2 565   | 533 MB   | 13           | H1                                 |
 | final A     | + arena, H1     | 101  | 20      | 435       | 17 387 | 6 623     | 3 062   | 533 MB   | 15           | F6 (F3 class, not a product bug)   |
 | final B     | + arena, H1     | 202  | 20      | 587       | 23 462 | 8 415     | 4 014   | 758 MB   | 18           | clean                              |
-| final C     | + F6 classifier | 303  | 20      | FINAL_C   |        |           |         |          |              |                                    |
+| final C     | + F6 classifier | 303  | 20      | 569       | 22 749 | 8 626     | 3 909   | 894 MB   | 15           | clean                              |
 
 ## Native crash (`kernel/embossText.test.js`)
 
