@@ -26,32 +26,33 @@ export const PROJECT_FORMAT_ID = 'himmelcad-assembler';
  */
 export const CURRENT_SCHEMA_VERSION = 3;
 
-/** View-only state worth restoring on Open; never affects geometry or undo history. */
+/**
+ * The section-view part of {@link ProjectViewState}: the document store's
+ * own fields. Modules add theirs by augmenting this interface (display: the
+ * face-aligned plane and "section only").
+ */
+export interface ProjectSectionView {
+  enabled?: boolean;
+  axis?: 'X' | 'Y' | 'Z';
+  offset?: number;
+  flipped?: boolean;
+}
+
+/**
+ * View-only state worth restoring on Open; never affects geometry or undo
+ * history. Lenient: only an object is required, parts are validated by
+ * whoever applies them and malformed ones are ignored. The document store's
+ * parts are declared here (camera preset, section, grid, panels); modules
+ * add their parts by augmenting this interface and registering the key's
+ * position in the file ({@link registerViewStatePart}): display (display
+ * mode and toggles), measure (pinned measurements), the shell (saved views).
+ */
 export interface ProjectViewState {
-  /** Unknown modes (from newer apps) are ignored on load. */
-  displayMode?: 'shaded' | 'wireframe' | 'xray' | 'visualized' | 'zebra' | 'curvature';
-  /** Display toggles (`model/viewDisplay.ts`); absent = defaults. */
-  display?: {
-    edges?: boolean;
-    hiddenEdges?: boolean;
-    axes?: boolean;
-  };
   camera?: {
     /** Last requested camera preset (e.g. `"iso"`, `"top"`); re-applied on Open. */
     preset?: string;
   };
-  section?: {
-    enabled?: boolean;
-    axis?: 'X' | 'Y' | 'Z';
-    offset?: number;
-    flipped?: boolean;
-    /** Face-aligned plane (overrides `axis`). */
-    plane?: { normal: [number, number, number]; origin: [number, number, number]; label: string };
-    /** 2D "section only" view. */
-    sectionOnly?: boolean;
-  };
-  /** Pinned measurements (`model/measure.ts` `PinnedMeasurement`); malformed entries are dropped on load. */
-  measurements?: unknown[];
+  section?: ProjectSectionView;
   grid?: {
     visible?: boolean;
     snap?: boolean;
@@ -64,42 +65,19 @@ export interface ProjectViewState {
     history?: boolean;
     parameters?: boolean;
   };
-  /** Saved camera views (up to 8, `model/workspace.ts` `SavedView`); malformed entries are dropped on load. */
-  savedViews?: unknown[];
 }
 
 /**
- * Items organisation (`model/items.ts`): body display names and folders.
- * Optional and additive — files without it load unchanged, older apps
- * ignore it (no schema bump needed: it never affects geometry).
+ * Project-level data the modules keep next to the features (the items
+ * organisation, reference meshes, …). Optional and additive: files without
+ * a field load unchanged and older apps ignore it. A module augments this
+ * interface and registers the field's strict validator and its position in
+ * the file ({@link registerProjectFileField}), so this file knows only the
+ * core fields.
  */
-export interface ProjectItems {
-  names: Record<string, string>;
-  folders: { id: string; name: string; collapsed: boolean }[];
-  parent: Record<string, string>;
-}
-
-/**
- * One imported STL, persisted as gzip+base64 mesh data
- * (`model/project/meshCodec.ts`) plus its document-level transform and
- * visibility. Never a `Feature`: a reference mesh is not a kernel/OCCT
- * input (`apps/assembler/README.md` "STL import").
- */
-export interface ReferenceMeshRecordV1 {
-  id: string;
-  name: string;
-  fileName: string;
-  /** gzip+base64 of positions/normals/indices, see `meshCodec.ts`. */
-  data: string;
-  min: [number, number, number];
-  max: [number, number, number];
-  transform: { dx: number; dy: number; dz: number };
-  hidden: boolean;
-  /** `#RRGGBB` colour from the imported file (3MF/OBJ); optional and additive. */
-  color?: string;
-}
-
-export interface ProjectFileV1 {
+// eslint-disable-next-line @typescript-eslint/no-empty-interface, @typescript-eslint/no-empty-object-type
+export interface ProjectFileFields {}
+export interface ProjectFileV1 extends ProjectFileFields {
   format: typeof PROJECT_FORMAT_ID;
   /** Always the current schema once loaded (older files are migrated). */
   schemaVersion: typeof CURRENT_SCHEMA_VERSION;
@@ -120,9 +98,7 @@ export interface ProjectFileV1 {
   features: Feature[];
   /** Document parameters ("variables"), schema v3+. Always present once loaded (defaults to `[]`). */
   parameters: Parameter[];
-  referenceMeshes?: ReferenceMeshRecordV1[];
   viewState?: ProjectViewState;
-  items?: ProjectItems;
   createdAt: string;
   modifiedAt: string;
 }
@@ -214,43 +190,6 @@ function validateEdgeRef(v: unknown, path: string): EdgeRef {
   return v as unknown as EdgeRef;
 }
 
-function validateVec3Tuple(v: unknown, path: string): [number, number, number] {
-  if (!isVec3(v)) fail(path, 'expected a Vec3');
-  return v as [number, number, number];
-}
-
-function validateReferenceMesh(v: unknown, index: number): ReferenceMeshRecordV1 {
-  const path = `referenceMeshes[${index}]`;
-  if (!isRecord(v)) fail(path, 'expected an object');
-  const r = v;
-  if (!isString(r.id) || r.id === '') fail(`${path}.id`, 'expected a non-empty string');
-  if (!isString(r.name)) fail(`${path}.name`, 'expected a string');
-  if (!isString(r.fileName)) fail(`${path}.fileName`, 'expected a string');
-  if (!isString(r.data) || r.data === '') fail(`${path}.data`, 'expected a non-empty string');
-  const min = validateVec3Tuple(r.min, `${path}.min`);
-  const max = validateVec3Tuple(r.max, `${path}.max`);
-  if (!isRecord(r.transform)) fail(`${path}.transform`, 'expected an object');
-  const t = r.transform;
-  for (const field of ['dx', 'dy', 'dz']) {
-    if (!isNumber(t[field])) fail(`${path}.transform.${field}`, 'expected a number');
-  }
-  if (!isBoolean(r.hidden)) fail(`${path}.hidden`, 'expected a boolean');
-  if (r.color !== undefined && (!isString(r.color) || !/^#[0-9a-fA-F]{6}$/.test(r.color))) {
-    fail(`${path}.color`, 'expected a "#RRGGBB" string');
-  }
-  return {
-    id: r.id,
-    name: r.name,
-    fileName: r.fileName,
-    data: r.data,
-    min,
-    max,
-    transform: { dx: t.dx as number, dy: t.dy as number, dz: t.dz as number },
-    hidden: r.hidden,
-    ...(r.color !== undefined ? { color: r.color as string } : {}),
-  };
-}
-
 function validateParameter(v: unknown, index: number): Parameter {
   const path = `parameters[${index}]`;
   if (!isRecord(v)) fail(path, 'expected an object');
@@ -322,11 +261,138 @@ function validateFeature(v: unknown, index: number): Feature {
   return r as unknown as Feature;
 }
 
+// ---- module file fields --------------------------------------------------------
+
+/** Value checks and the path-qualified failure a field validator uses. */
+export interface FileFieldHelpers {
+  /** Throws {@link ProjectFormatError} for `path`. */
+  fail(path: string, message: string): never;
+  isRecord(v: unknown): v is Record<string, unknown>;
+  isString(v: unknown): v is string;
+  isNumber(v: unknown): v is number;
+  isBoolean(v: unknown): v is boolean;
+  isVec3(v: unknown): v is [number, number, number];
+}
+
+const FIELD_HELPERS: FileFieldHelpers = { fail, isRecord, isString, isNumber, isBoolean, isVec3 };
+
+/**
+ * A top-level project-file field a module owns (`ProjectFileFields`). On
+ * load, `validate` checks the raw value strictly (any problem rejects the
+ * whole file, never a partial load) and returns what is kept; on save the
+ * field is written at `order` among the fields between `parameters` and
+ * `createdAt`, unless `include` says it is empty.
+ */
+export interface ProjectFileFieldDefinition<K extends keyof ProjectFileFields> {
+  key: K;
+  /** Owning module id (`modules.json`). */
+  module: string;
+  order: number;
+  validate(raw: unknown, helpers: FileFieldHelpers): NonNullable<ProjectFileFields[K]>;
+  /** Whether a defined value is written (`false`: an empty list is left out). Default: always. */
+  include?(value: NonNullable<ProjectFileFields[K]>): boolean;
+}
+
+interface FieldEntry {
+  key: string;
+  module: string;
+  order: number;
+  validate(raw: unknown, helpers: FileFieldHelpers): unknown;
+  include?(value: never): boolean;
+}
+
+/** `viewState`'s position among the fields (reference meshes before it, items after it). */
+export const VIEW_STATE_FIELD_ORDER = 200;
+
+const CORE_KEYS = new Set([
+  'format',
+  'schemaVersion',
+  'appVersion',
+  'units',
+  'projectName',
+  'thumbnail',
+  'features',
+  'parameters',
+  'viewState',
+  'createdAt',
+  'modifiedAt',
+]);
+
+const VIEW_STATE_FIELD: FieldEntry = {
+  key: 'viewState',
+  module: 'document',
+  order: VIEW_STATE_FIELD_ORDER,
+  validate: (raw) => {
+    if (!isRecord(raw)) fail('viewState', 'expected an object');
+    return raw;
+  },
+};
+
+const fileFields: FieldEntry[] = [VIEW_STATE_FIELD];
+
+/** Registers a module's project-file field (once per key). */
+export function registerProjectFileField<K extends keyof ProjectFileFields>(
+  definition: ProjectFileFieldDefinition<K>,
+): void {
+  const key = String(definition.key);
+  if (CORE_KEYS.has(key)) throw new Error(`"${key}" is a core project-file field`);
+  const known = fileFields.find((f) => f.key === key);
+  if (known) {
+    if (known === (definition as unknown as FieldEntry)) return;
+    throw new Error(
+      `Project-file field "${key}" is registered twice (${known.module}, ${definition.module})`,
+    );
+  }
+  fileFields.push(definition as unknown as FieldEntry);
+  fileFields.sort((a, b) => a.order - b.order);
+}
+
+const viewStateParts = new Map<string, { module: string; order: number }>();
+
+/**
+ * Registers a part of {@link ProjectViewState} and its position inside
+ * `viewState` when saved (the parts keep one stable key order whichever
+ * module writes first). Parts are lenient: they are validated where they
+ * are applied, and malformed ones are ignored.
+ */
+export function registerViewStatePart(part: {
+  key: keyof ProjectViewState;
+  module: string;
+  order: number;
+}): void {
+  const known = viewStateParts.get(part.key);
+  if (known && known.module !== part.module) {
+    throw new Error(
+      `View-state part "${part.key}" is registered twice (${known.module}, ${part.module})`,
+    );
+  }
+  viewStateParts.set(part.key, { module: part.module, order: part.order });
+}
+
+// The document store's own view-state parts (`commands/store.ts` applies them).
+registerViewStatePart({ key: 'camera', module: 'commands', order: 200 });
+registerViewStatePart({ key: 'section', module: 'commands', order: 300 });
+registerViewStatePart({ key: 'grid', module: 'commands', order: 500 });
+registerViewStatePart({ key: 'panels', module: 'commands', order: 600 });
+
+/** `view` with its parts in their registered order (unregistered parts after them, as given). */
+function orderedViewState(view: ProjectViewState): ProjectViewState {
+  const keys = Object.keys(view);
+  const rank = (key: string) => viewStateParts.get(key)?.order ?? Number.POSITIVE_INFINITY;
+  const sorted = keys
+    .map((key, index) => ({ key, index }))
+    .sort((a, b) => rank(a.key) - rank(b.key) || a.index - b.index);
+  const out: Record<string, unknown> = {};
+  for (const { key } of sorted) out[key] = (view as Record<string, unknown>)[key];
+  return out as ProjectViewState;
+}
+
 /**
  * Strictly validates a parsed JSON value as a v1 project body (everything
  * except `format`/`schemaVersion`, already checked by {@link loadProjectFile}).
  * Throws {@link ProjectFormatError} with a path-qualified message on the
- * first problem found — never returns a partially valid project.
+ * first problem found — never returns a partially valid project. The module
+ * fields are checked by the validators their modules registered.
  */
 function validateV1Body(raw: Record<string, unknown>): ProjectFileV1 {
   if (!isString(raw.appVersion)) fail('appVersion', 'expected a string');
@@ -348,18 +414,10 @@ function validateV1Body(raw: Record<string, unknown>): ProjectFileV1 {
   if (!isString(raw.modifiedAt) || Number.isNaN(Date.parse(raw.modifiedAt))) {
     fail('modifiedAt', 'expected an ISO 8601 date string');
   }
-  if (raw.viewState !== undefined && !isRecord(raw.viewState)) {
-    fail('viewState', 'expected an object');
-  }
-  const items = raw.items !== undefined ? validateItems(raw.items) : undefined;
-  let referenceMeshes: ReferenceMeshRecordV1[] | undefined;
-  if (raw.referenceMeshes !== undefined) {
-    if (!Array.isArray(raw.referenceMeshes)) fail('referenceMeshes', 'expected an array');
-    referenceMeshes = raw.referenceMeshes.map((m, i) => validateReferenceMesh(m, i));
-    const meshIds = new Set<string>();
-    for (const m of referenceMeshes) {
-      if (meshIds.has(m.id)) fail('referenceMeshes', `duplicate reference mesh id "${m.id}"`);
-      meshIds.add(m.id);
+  const fields: Record<string, unknown> = {};
+  for (const field of fileFields) {
+    if (raw[field.key] !== undefined) {
+      fields[field.key] = field.validate(raw[field.key], FIELD_HELPERS);
     }
   }
   return {
@@ -371,44 +429,11 @@ function validateV1Body(raw: Record<string, unknown>): ProjectFileV1 {
     ...(isValidThumbnail(raw.thumbnail) ? { thumbnail: raw.thumbnail } : {}),
     features,
     parameters,
-    ...(referenceMeshes !== undefined ? { referenceMeshes } : {}),
-    ...(raw.viewState !== undefined ? { viewState: raw.viewState as ProjectViewState } : {}),
-    ...(items ? { items } : {}),
+    ...fields,
     createdAt: raw.createdAt,
     modifiedAt: raw.modifiedAt,
   };
 }
-
-function validateStringRecord(v: unknown, path: string): Record<string, string> {
-  if (!isRecord(v)) fail(path, 'expected an object');
-  for (const [key, value] of Object.entries(v)) {
-    if (!isString(value)) fail(`${path}.${key}`, 'expected a string');
-  }
-  return v as Record<string, string>;
-}
-
-function validateItems(v: unknown): ProjectItems {
-  if (!isRecord(v)) fail('items', 'expected an object');
-  const names = validateStringRecord(v.names ?? {}, 'items.names');
-  const parent = validateStringRecord(v.parent ?? {}, 'items.parent');
-  const folders = v.folders ?? [];
-  if (!Array.isArray(folders)) fail('items.folders', 'expected an array');
-  const ids = new Set<string>();
-  const checked = folders.map((f, i) => {
-    const path = `items.folders[${i}]`;
-    if (!isRecord(f)) fail(path, 'expected an object');
-    if (!isString(f.id) || f.id === '') fail(`${path}.id`, 'expected a non-empty string');
-    if (ids.has(f.id)) fail(`${path}.id`, `duplicate folder id "${f.id}"`);
-    ids.add(f.id);
-    if (!isString(f.name)) fail(`${path}.name`, 'expected a string');
-    if (f.collapsed !== undefined && !isBoolean(f.collapsed)) {
-      fail(`${path}.collapsed`, 'expected a boolean');
-    }
-    return { id: f.id, name: f.name, collapsed: f.collapsed === true };
-  });
-  return { names, folders: checked, parent };
-}
-
 // ---- migration -----------------------------------------------------------------
 
 /** One migration step of a raw body from schema version `n` to `n + 1`. */
@@ -523,21 +548,35 @@ function nestingDepth(value: unknown, limit: number): number {
   return deepest;
 }
 
-/** Serializes a document into v1 project file JSON text (pretty-printed for diffability). */
-export function saveProjectFile(input: {
+/** What {@link saveProjectFile} writes: the core fields plus the modules' fields. */
+export interface ProjectFileInput extends ProjectFileFields {
   projectName: string;
   features: Feature[];
   appVersion: string;
   parameters?: Parameter[];
-  referenceMeshes?: ReferenceMeshRecordV1[];
   viewState?: ProjectViewState;
-  items?: ProjectItems;
   /** Home screen preview (`data:image/png;base64,…`); dropped when invalid or too large. */
   thumbnail?: string | null;
   createdAt: string;
   modifiedAt?: string;
-}): string {
-  const file: ProjectFileV1 = {
+}
+
+/**
+ * Serializes a document into v1 project file JSON text (pretty-printed for
+ * diffability). The module fields are written in their registered order
+ * (only registered fields are written), the view-state parts in theirs.
+ */
+export function saveProjectFile(input: ProjectFileInput): string {
+  const values = input as unknown as Record<string, unknown>;
+  const fields: Record<string, unknown> = {};
+  for (const field of fileFields) {
+    const value = values[field.key];
+    if (value === undefined || value === null) continue;
+    if (field.include && !field.include(value as never)) continue;
+    fields[field.key] =
+      field === VIEW_STATE_FIELD ? orderedViewState(value as ProjectViewState) : value;
+  }
+  const file = {
     format: PROJECT_FORMAT_ID,
     schemaVersion: CURRENT_SCHEMA_VERSION,
     appVersion: input.appVersion,
@@ -547,11 +586,7 @@ export function saveProjectFile(input: {
     ...(isValidThumbnail(input.thumbnail) ? { thumbnail: input.thumbnail } : {}),
     features: input.features,
     parameters: input.parameters ?? [],
-    ...(input.referenceMeshes && input.referenceMeshes.length > 0
-      ? { referenceMeshes: input.referenceMeshes }
-      : {}),
-    ...(input.viewState ? { viewState: input.viewState } : {}),
-    ...(input.items ? { items: input.items } : {}),
+    ...fields,
     createdAt: input.createdAt,
     modifiedAt: input.modifiedAt ?? new Date().toISOString(),
   };

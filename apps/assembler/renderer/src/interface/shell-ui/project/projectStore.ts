@@ -16,35 +16,26 @@ import type { KernelAdapter } from '../../../foundation/geometry-kernel/adapter.
 import type { Feature } from '../../../foundation/document/document.js';
 import type { ProjectPersistence } from '../../../foundation/document/projectPersistence.js';
 import {
-  EMPTY_ITEMS_META,
-  isEmptyItemsMeta,
-  itemsMetaSnapshot,
-  useItemsStore,
-} from '../../../foundation/commands/items.js';
-import type { ReferenceMesh } from '../../../foundation/commands/referenceMesh.js';
-import {
-  parsePins,
-  serializePins,
-  useMeasureStore,
-} from '../../../modules/measure/measureStore.js';
+  decodeReferenceMeshes,
+  encodeReferenceMeshes,
+} from '../../../foundation/commands/projectFields.js';
 import { useAssemblerStore } from '../../../foundation/commands/store.js';
-import { viewDisplayToProject } from '../../../modules/display/viewDisplay.js';
-import { parseSavedViews, useWorkspaceStore } from '../workspace.js';
 import {
   CURRENT_SCHEMA_VERSION,
   ProjectFormatError,
   loadProjectFile,
   saveProjectFile,
   type ProjectFileV1,
-  type ProjectViewState,
-  type ReferenceMeshRecordV1,
 } from '../../../foundation/document/format.js';
+import { MeshPayloadTooLargeError } from '../../../foundation/document/meshCodec.js';
 import {
-  decodeMeshPayload,
-  encodeMeshPayload,
-  MeshPayloadTooLargeError,
-} from '../../../foundation/document/meshCodec.js';
+  collectProjectSections,
+  loadProjectSections,
+  registerProjectSection,
+  watchProjectSections,
+} from '../../../foundation/document/projectSections.js';
 import * as io from '../../../foundation/document/persistence.js';
+import { useWorkspaceStore } from '../workspace.js';
 import { renderProjectThumbnail } from './thumbnail.js';
 import { projectTemplate, type ProjectTemplateId } from '../../../templates/projectTemplates.js';
 
@@ -164,84 +155,42 @@ function restoreExtras(project: ProjectFileV1 | null): void {
   }
 }
 
-/** Captures the current view-only state for persistence; never affects geometry or undo history. */
-function currentViewState(): ProjectViewState {
-  const doc = useAssemblerStore.getState();
-  const display = viewDisplayToProject(doc.viewState);
-  const measurements = serializePins(useMeasureStore.getState().pins);
-  return {
-    displayMode: display.displayMode,
-    display: display.display,
-    camera: doc.viewState.cameraRequest ? { preset: doc.viewState.cameraRequest.preset } : {},
-    section: {
-      enabled: doc.viewState.sectionEnabled,
-      axis: doc.viewState.sectionAxis,
-      offset: doc.viewState.sectionOffset,
-      flipped: doc.viewState.sectionFlipped,
-      ...display.sectionExtras,
-    },
-    ...(measurements.length > 0 ? { measurements } : {}),
-    grid: {
-      visible: doc.viewState.gridVisible,
-      snap: doc.viewState.snapToGrid,
-      step: doc.viewState.gridStep,
-      auto: doc.viewState.gridAuto,
-    },
-    panels: {
-      items: doc.panels.items,
-      history: doc.panels.history,
-      parameters: doc.panels.parameters,
-    },
-  };
-}
-
-/** Encodes every reference mesh's triangle data (gzip+base64, `meshCodec.ts`) for the `.hcasm` file. */
-async function encodeReferenceMeshes(
-  meshes: readonly ReferenceMesh[],
-): Promise<ReferenceMeshRecordV1[]> {
-  return Promise.all(
-    meshes.map(async (m) => ({
-      id: m.id,
-      name: m.name,
-      fileName: m.fileName,
-      data: await encodeMeshPayload({
-        positions: m.positions,
-        normals: m.normals,
-        indices: m.indices,
-      }),
-      min: m.min,
-      max: m.max,
-      transform: { ...m.transform },
-      hidden: m.hidden,
-      ...(m.color ? { color: m.color } : {}),
-    })),
-  );
-}
-
-/** Inverse of {@link encodeReferenceMeshes}; propagates {@link MeshPayloadTooLargeError} so a load that exceeds the size limit is rejected with a clear message, never a silent partial load. */
-async function decodeReferenceMeshes(
-  records: readonly ReferenceMeshRecordV1[],
-): Promise<ReferenceMesh[]> {
-  return Promise.all(
-    records.map(async (r) => {
-      const buffers = await decodeMeshPayload(r.data);
-      return {
-        id: r.id,
-        name: r.name,
-        fileName: r.fileName,
-        positions: buffers.positions,
-        normals: buffers.normals,
-        indices: buffers.indices,
-        min: r.min,
-        max: r.max,
-        transform: { ...r.transform },
-        hidden: r.hidden,
-        ...(r.color ? { color: r.color } : {}),
-      } satisfies ReferenceMesh;
-    }),
-  );
-}
-
+/**
+ * The document store's own view state (camera preset, section, grid,
+ * panels) as a project section; the modules' parts (display, pins, saved
+ * views) come from their own sections (`foundation/document/projectSections.ts`).
+ * Applied on Open by the store (`applyViewState`). View-only: never dirty.
+ */
+registerProjectSection({
+  id: 'commands.viewState',
+  order: 100,
+  save: () => {
+    const doc = useAssemblerStore.getState();
+    return {
+      viewState: {
+        camera: doc.viewState.cameraRequest ? { preset: doc.viewState.cameraRequest.preset } : {},
+        section: {
+          enabled: doc.viewState.sectionEnabled,
+          axis: doc.viewState.sectionAxis,
+          offset: doc.viewState.sectionOffset,
+          flipped: doc.viewState.sectionFlipped,
+        },
+        grid: {
+          visible: doc.viewState.gridVisible,
+          snap: doc.viewState.snapToGrid,
+          step: doc.viewState.gridStep,
+          auto: doc.viewState.gridAuto,
+        },
+        panels: {
+          items: doc.panels.items,
+          history: doc.panels.history,
+          parameters: doc.panels.parameters,
+        },
+      },
+    };
+  },
+  load: () => undefined,
+});
 /**
  * The project file text Save would write now: features, view state, saved
  * views, Items names/folders and reference meshes. Also what an agent's
@@ -259,9 +208,9 @@ export async function currentProjectText(projectName?: string): Promise<string> 
 async function currentProjectPayload(options: { thumbnail?: string | null } = {}): Promise<string> {
   const doc = useAssemblerStore.getState();
   const project = useProjectStore.getState();
-  const items = itemsMetaSnapshot(useItemsStore.getState());
-  const savedViews = useWorkspaceStore.getState().savedViews;
   const referenceMeshes = await encodeReferenceMeshes(doc.referenceMeshes);
+  // The modules' fields and view-state parts (items, display, pins, saved views …).
+  const sections = await collectProjectSections();
   return saveProjectFile({
     projectName: doc.projectName,
     ...(options.thumbnail ? { thumbnail: options.thumbnail } : {}),
@@ -269,18 +218,16 @@ async function currentProjectPayload(options: { thumbnail?: string | null } = {}
     appVersion: APP_VERSION,
     parameters: doc.parameters,
     referenceMeshes,
-    // One view-state object: display/section/grid/panels/camera plus the saved views.
-    viewState: { ...currentViewState(), ...(savedViews.length > 0 ? { savedViews } : {}) },
+    ...sections.fields,
+    // One view-state object: the store's parts and the modules' parts.
+    viewState: sections.viewState,
     createdAt: project.createdAt,
-    ...(isEmptyItemsMeta(items) ? {} : { items }),
   });
 }
 
-/** Restores the non-feature parts of a project (item names/folders, saved views). */
+/** Restores the non-feature parts of a project (the modules' sections: items, pins, saved views …). */
 function applyProjectExtras(project: ProjectFileV1 | null): void {
-  useItemsStore.getState().setItemsMeta(project?.items ?? EMPTY_ITEMS_META);
-  useWorkspaceStore.getState().setSavedViews(parseSavedViews(project?.viewState?.savedViews));
-  useMeasureStore.getState().setPins(parsePins(project?.viewState?.measurements));
+  loadProjectSections(project);
 }
 
 /** Node's `Timeout` (unlike the browser's numeric handle) exposes `unref()` so it never keeps a test process alive. */
@@ -324,7 +271,7 @@ function ensureSubscription(): void {
   if (subscribed) return;
   subscribed = true;
   baselineFeatures = useAssemblerStore.getState().features;
-  // Item names/folders, saved views and reference meshes are saved with the project too.
+  // Item names/folders, saved views, pins and reference meshes are saved with the project too.
   const markDirty = () => {
     if (restoringExtras) return;
     extrasDirty = true;
@@ -345,20 +292,9 @@ function ensureSubscription(): void {
     if (dirty !== useProjectStore.getState().dirty) useProjectStore.setState({ dirty });
     if (dirty) writeRecoverySoon();
   });
-  useItemsStore.subscribe((state, prev) => {
-    if (
-      state.names !== prev.names ||
-      state.folders !== prev.folders ||
-      state.parent !== prev.parent
-    ) {
-      markDirty();
-    }
-  });
-  useWorkspaceStore.subscribe((state, prev) => {
-    if (state.savedViews !== prev.savedViews) markDirty();
-  });
-  useMeasureStore.subscribe((state, prev) => {
-    if (state.pins !== prev.pins) markDirty();
+  // The modules' sections (items, pins, saved views …), also those registered later.
+  watchProjectSections((section) => {
+    section.subscribe?.(markDirty);
   });
   ensureAutosave();
 }

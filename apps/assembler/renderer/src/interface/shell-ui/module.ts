@@ -9,7 +9,7 @@ import { defineAssemblerModule } from '../../foundation/commands/module.js';
 import { setProjectPersistence } from '../../foundation/document/projectPersistence.js';
 import { PROJECT_PERSISTENCE } from './project/projectStore.js';
 import { FILE_COMMANDS, VIEW_COMMANDS } from './shellCommands.js';
-import { useWorkspaceStore } from './workspace.js';
+import { SAVED_VIEWS_SECTION, useWorkspaceStore } from './workspace.js';
 import { WORKSPACE_COMMANDS } from './workspaceCommands.js';
 
 export const shellUiModule = defineAssemblerModule({
@@ -19,6 +19,7 @@ export const shellUiModule = defineAssemblerModule({
     { order: COMMAND_ORDER.workspace, commands: WORKSPACE_COMMANDS },
     { order: COMMAND_ORDER.file, commands: FILE_COMMANDS },
   ],
+  fileFormatFields: [SAVED_VIEWS_SECTION],
   onInstall: () => {
     setNoticeSink((text, tone) => useWorkspaceStore.getState().notify(text, tone));
     setCameraSink((command) => useWorkspaceStore.getState().sendCamera(command));

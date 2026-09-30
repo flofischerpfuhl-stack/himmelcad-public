@@ -11,6 +11,25 @@ import type { SectionPlane, ViewState } from '../../foundation/commands/store.js
 
 type Vec3 = [number, number, number];
 
+declare module '../../foundation/document/format.js' {
+  interface ProjectViewState {
+    /** Unknown modes (from newer apps) are ignored on load. */
+    displayMode?: 'shaded' | 'wireframe' | 'xray' | 'visualized' | 'zebra' | 'curvature';
+    /** Display toggles; absent = defaults. */
+    display?: {
+      edges?: boolean;
+      hiddenEdges?: boolean;
+      axes?: boolean;
+    };
+  }
+  interface ProjectSectionView {
+    /** Face-aligned plane (overrides `axis`). */
+    plane?: { normal: [number, number, number]; origin: [number, number, number]; label: string };
+    /** 2D "section only" view. */
+    sectionOnly?: boolean;
+  }
+}
+
 function isVec3(v: unknown): v is Vec3 {
   return (
     Array.isArray(v) &&

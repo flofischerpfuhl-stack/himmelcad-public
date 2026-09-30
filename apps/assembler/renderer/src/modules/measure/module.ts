@@ -6,6 +6,7 @@
  * - commands: `measureCommands.ts` (Measure; Pin measurement, Measure
  *   points);
  * - agent API: `measureApi.ts` (the `measure.*` handlers);
+ * - project file: `projectFile.ts` (pinned measurements in `viewState`);
  * - runtime: the kernel for exact minimum distances (`BRepExtrema`).
  */
 import { COMMAND_ORDER } from '../../foundation/commands/registry.js';
@@ -13,6 +14,7 @@ import { defineAssemblerModule } from '../../foundation/commands/module.js';
 import { MEASURE_API } from './measureApi.js';
 import { MEASURE_COMMANDS, MEASURE_TOOL_COMMANDS } from './measureCommands.js';
 import { useMeasureStore } from './measureStore.js';
+import { MEASURE_PROJECT_SECTION } from './projectFile.js';
 
 export const measureModule = defineAssemblerModule({
   id: 'measure',
@@ -21,6 +23,7 @@ export const measureModule = defineAssemblerModule({
     { order: COMMAND_ORDER.measure, commands: MEASURE_COMMANDS },
   ],
   api: MEASURE_API,
+  fileFormatFields: [MEASURE_PROJECT_SECTION],
   install: (host) => {
     // Measure panel: exact minimum distances from the same kernel.
     useMeasureStore.getState().attachKernel(host.kernel);

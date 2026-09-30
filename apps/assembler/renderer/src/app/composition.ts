@@ -7,6 +7,7 @@
  * that carry an `order`; it is the order `startModules` wires runtimes in.
  */
 import '../foundation/sketch-solver/sketchFeature.js';
+import '../foundation/commands/projectFields.js';
 import { installModules, type AssemblerModule } from '../foundation/commands/module.js';
 import { agentApiModule } from '../interface/agent-api/module.js';
 import { shellUiModule } from '../interface/shell-ui/module.js';

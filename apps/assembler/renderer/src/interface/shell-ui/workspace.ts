@@ -11,6 +11,8 @@ import { create } from 'zustand';
 import type { CameraPose } from '../../platform/viewport/camera.js';
 import type { CameraCommand } from '../../platform/viewport/cameraChannel.js';
 import { usePreferences } from '../../platform/input/preferences.js';
+import { registerViewStatePart } from '../../foundation/document/format.js';
+import type { ProjectSection } from '../../foundation/document/projectSections.js';
 
 export const MAX_SAVED_VIEWS = 8;
 
@@ -250,3 +252,31 @@ export function parseSavedViews(raw: unknown): SavedView[] {
   }
   return out;
 }
+
+// ---- project file ------------------------------------------------------------------
+
+declare module '../../foundation/document/format.js' {
+  interface ProjectViewState {
+    /** Saved camera views (up to 8, {@link SavedView}); malformed entries are dropped on load. */
+    savedViews?: unknown[];
+  }
+}
+
+// Last in `viewState`, as always.
+registerViewStatePart({ key: 'savedViews', module: 'shell-ui', order: 700 });
+
+/** Saved views in the project file (`viewState.savedViews`); registered by the shell module. */
+export const SAVED_VIEWS_SECTION: ProjectSection = {
+  id: 'shell-ui.savedViews',
+  order: 400,
+  save: () => {
+    const savedViews = useWorkspaceStore.getState().savedViews;
+    return savedViews.length > 0 ? { viewState: { savedViews } } : {};
+  },
+  load: (project) =>
+    useWorkspaceStore.getState().setSavedViews(parseSavedViews(project?.viewState?.savedViews)),
+  subscribe: (onChange) =>
+    useWorkspaceStore.subscribe((state, prev) => {
+      if (state.savedViews !== prev.savedViews) onChange();
+    }),
+};
