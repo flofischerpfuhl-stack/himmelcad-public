@@ -81,7 +81,30 @@ void test('feature params schemas accept stored features and reject malformed on
     validateSchema({ edges: [{ bodyId: 'b', select: '|Z' }], radius: 1 }, fillet, root),
     [],
   );
-  assert.ok(validateSchema({ edges: [], radius: 1 }, fillet, root).length > 0);
+  // Edges may be empty when rules pick them; with neither, the project format refuses the feature.
+  assert.deepEqual(
+    validateSchema(
+      { edges: [], radius: 1, rules: [{ kind: 'concave', bodyId: 'b' }] },
+      fillet,
+      root,
+    ),
+    [],
+  );
+  assert.ok(
+    validateSchema({ radius: 1, rules: [{ kind: 'sharp', bodyId: 'b' }] }, fillet, root).length > 0,
+  );
+  assert.throws(
+    () =>
+      validateStored({
+        id: 'f',
+        name: 'F',
+        suppressed: false,
+        kind: 'fillet',
+        edges: [],
+        radius: 1,
+      }),
+    /params\.edges: expected a non-empty array/,
+  );
   assert.ok(
     validateSchema({ edges: [{ bodyId: 'b', key: 'k' }], radius: 0 }, fillet, root).length > 0,
   );

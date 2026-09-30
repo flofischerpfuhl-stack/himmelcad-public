@@ -21,7 +21,7 @@ import type { SketchFeature } from '../model/document.js';
 import type { SketchRegion } from '../sketch/regions.js';
 import type { KeyedFace } from './naming.js';
 import type { Shape3D } from './occt.js';
-import type { EvaluatedSketch } from './types.js';
+import type { EvaluatedSketch, FeatureErrorRefs } from './types.js';
 
 // ---- hashing ---------------------------------------------------------------------
 
@@ -102,6 +102,8 @@ export interface Checkpoint {
   readonly createdCount: number;
   readonly errors: Readonly<Record<string, string>>;
   readonly warnings: Readonly<Record<string, string>>;
+  /** Geometry a feature error points at (e.g. the edge a fillet failed on). */
+  readonly errorRefs?: Readonly<Record<string, FeatureErrorRefs>>;
 }
 
 interface Entry {

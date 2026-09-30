@@ -269,6 +269,117 @@ Limits (with the OCCT reason):
   is re-evaluated by the kernel; the pivot snaps to face centroids, edge
   midpoints and circle centres of the committed geometry.
 
+## Print-part features (2026-09-30)
+
+Tools for printable parts, as real kernel features (`model/printFeatures.ts`,
+`model/blendOptions.ts`, `kernel/features/{holes,emboss,draft,ribThicken,blendRules}.ts`)
+with Shapr3D-style tools in the generic feature session
+(`model/printFeatureTools.ts`), History cards, agent-API schemas
+(`api/printSchema.ts`) and Python helpers (`himmelcad.assembler.printing`).
+
+| Feature                                                                                    | OCCT route                                                                                                                                                                                                                                                                           | Naming                                                                                                                           |
+| ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
+| Hole (simple/counterbore/countersink, blind/through all, many per feature)                 | per hole a revolved half section (`revolution`) from 0.05–1 mm above the face; holes that do not touch are cut in **one** boolean with a compound tool, touching ones are fused first                                                                                                | `<id>:wall:<i>`, `:cbore:<i>`, `:cbfloor:<i>`, `:csink:<i>`, `:floor:<i>` (hole `i`), kept on the body through the cut's history |
+| Emboss / engrave (planar face)                                                             | profile moved onto the face plane along its normal, extruded out (join) or in (cut), overlapping the body by a lead                                                                                                                                                                  | `<id>:top:<p>` / `:floor:<p>`, `:side:<p>` (`#n`)                                                                                |
+| Emboss / engrave **wrapped** on a cylinder                                                 | the region drawn in the parametric space of a cylindrical surface (replicad `sketchOnFace(…, 'native')`: OCCT p-curves, lines become helices), `u = π + s/R` so the seam is opposite the label; thickened radially with `MakeThickSolidBySimple`                                     | as planar                                                                                                                        |
+| Draft (planar, cylindrical, conical faces; neutral plane = a face or a construction plane) | `BRepOffsetAPI_DraftAngle` (**bound in this build**)                                                                                                                                                                                                                                 | drafted faces keep their keys via `ModifiedShape` (its `Modified` list does not report them)                                     |
+| Rib from open sketch lines                                                                 | the line extended and swept towards the body into a strip, thickened across the sketch plane, clipped to the body's box, minus the body; the solids touching the line are joined                                                                                                     | `<id>:flank:<k>`, `:edge:<k>`                                                                                                    |
+| Thicken faces or profiles                                                                  | `MakeThickSolidBySimple` of the offset surface (`makeOffset`) back towards the face, both signs tried (orientation); several faces thickened one by one and fused                                                                                                                    | `<id>:outer:<i>`, `:inner:<i>`, `:side:<i>`                                                                                      |
+| Fillet variable radius; chamfer two distances / distance-angle                             | `BRepFilletAPI_MakeFillet::Add(R1, R2, E)` (linear law); `BRepFilletAPI_MakeChamfer::Add(d1, d2, E, F)` / `AddDA(d, a, E, F)`, F = the adjacent face with the smaller key (`flip`: the other)                                                                                        | as before (`:round:i` / `:chamfer:i`)                                                                                            |
+| Edges by rule (face edges, concave, convex)                                                | edge convexity from two `BRepExtrema_DistShapeShape::InnerSolution` classifications at the edge midpoint, ±ε along `n_A − n_B`: both inside = concave, both outside = convex, tangent joins neither; re-evaluated every replay                                                       | rule edges follow the picked edges in the generator order                                                                        |
+| Shell outward; printing clearance; per-wall thickness                                      | `MakeThickSolidByJoin` with a positive offset and `GeomAbs_Intersection` joins (sharp outer edges); a clearance shells the body first grown by it (`BRepOffsetAPI_MakeOffsetShape::PerformByJoin`, sharp); thicker walls = Offset Face slabs on the wall's free side after the shell | walls `<id>:outer:<key>` (outward) / `:inner:<key>`; grown faces keep the body keys (by geometry)                                |
+| Boolean keep tools                                                                         | unchanged booleans; tool bodies stay                                                                                                                                                                                                                                                 | unchanged                                                                                                                        |
+
+Failing fillets/chamfers are re-tried edge by edge (only after the whole
+blend failed, at most 24 edges) and the error names and **outlines the
+failing edges in the error colour** (`EvaluationResult.errorRefs`, kept in
+the checkpoints; the tool preview and a selected History card show them).
+Draft errors point at the face. Hole, emboss and rib errors are plain
+sentences ("Counterbore diameter (2 mm) must be larger than the hole (3 mm)",
+"The rib does not reach the body from this line; …").
+
+Standard hole sizes are a **table of sizes only** (M2–M10: ISO 273 close/
+normal/loose clearance, coarse-thread tap drill, DIN 974-1 counterbore for
+ISO 4762 heads with depth = head height + 0.4 mm, ISO 15065 90° countersink)
+plus printed fits around a pin of the nominal size (press +0, snug +0.1,
+clearance +0.2, loose +0.4 mm — FDM starting points, not a standard; printed
+holes typically come out 0.1–0.2 mm small). A hole stores plain diameters,
+the preset name and optionally a cosmetic thread label; no thread geometry
+is generated. Offset Face offers the same 0.1–0.4 mm clearances as presets
+(a negative offset: a hole grows, a peg shrinks), and an outward Shell a
+clearance (the cavity is the body grown by the gap on every face, e.g. a
+0.2 mm case over a 20 × 10 × 10 block: cavity 20.4 × 10.4 × 10.4, verified
+by volume).
+
+Verified by real-kernel tests (`test/kernel/printTools.test.ts`, 12 tests;
+store/tool tests `test/model/printFeatureTools.test.ts`, API tests
+`test/api/printTools.test.ts`, Python `sdk/python/tests/test_printing.py`
+incl. a headless bracket): volumes against hand calculations to 1e-3 mm³
+(through, blind, counterbore, countersink frustum; planar emboss/engrave;
+wrapped emboss `(θ/2)(R₂² − R₁²)h` with the label's height and angle; draft
+`½·h·h·tanα·L`; gusset triangle; outward shell `22·12·11 − 2000`; per-wall
+shell; thicken slabs and sleeves; two-distance and distance-angle chamfers;
+the single concave edge of an L-bracket `(1 − π/4)r²L`), `BRepCheck_Analyzer`
+validity, references after an earlier edit (holes at sketch points and a
+fillet on a hole rim survive a plate thickness edit, by key, no re-bind),
+Cancel/Done/undo, Save/Open round trip, and the error paths.
+
+Measured on this host (Node 22, warm kernel, last-feature evaluation with a
+changed hash; median of 5): 8 counterbored holes 400 ms (model 126 ms — was
+236 ms before the compound cut — and meshing the 16 new cylinders plus the
+re-meshed top face ~160–210 ms at final quality); planar emboss 42 ms;
+wrapped engrave of 4 regions 171 ms; draft of one face 22 ms; concave-edge
+fillet rule on an L-bracket 71 ms; rib 79 ms; thicken 17 ms. Previews use
+the coarser preview quality.
+
+`bench:kernel` before (d4713fd, a separate worktree) and after, four
+alternating runs each on this host while other agents were running
+(ranges): demo full eval 112–263 / 122–239 ms, edit #2 69–160 / 91–205 ms,
+last-feature edit 22–41 / 25–69 ms; features part 124–166 / 124–145,
+94–146 / 94–116, 26–42 / 26–29 ms; 60-feature plate 2725–3680 / 2779–3693,
+2670–3130 / 2678–4779, 52.9–53.9 / 52.4–80 ms. The spread is host noise; a
+focused re-run of the demo edit #2 (25 edits, median, three alternating
+runs) gave 84 / 87, 78 / 83 and 124 / 108 ms before / after: no regression
+beyond noise (the unchanged paths only gained an `errorRefs` field and a
+cached edge-key lookup).
+
+Limits (with the OCCT reason):
+
+- **Per-face shell thickness** is emulated: `BRepOffset_MakeOffset::SetOffsetOnFace`
+  is not reachable (`MakeOffset()` is dropped from the bindings), so a
+  thicker wall is an Offset Face slab added after the shell — exact for walls
+  whose neighbours are perpendicular (boxes, enclosures); inclined neighbours
+  get a step. Thinner-than-shell walls are only possible by making the shell
+  thickness the minimum.
+- **Wrap** works on the outside of cylinders. Cones, spheres and free-form
+  faces are refused ("… wrapping onto cones or free-form faces is not
+  supported"); the inside of a hole is refused too. A profile may not reach
+  more than half way round from the wrap centre (the seam is opposite).
+  There is no text tool in this branch: text regions come from the sketching
+  work; any closed sketch region wraps (unknown future curve kinds are
+  sampled as fine polylines). No font is bundled (dependency policy).
+- **Planar emboss** needs a sketch parallel to the face; profiles are not
+  clipped to the face outline.
+- **Draft**: OCCT needs the neutral plane to cut the drafted faces' boundary
+  consistently; a face parallel to the neutral plane is refused; angles are
+  limited to ±45°. Faces are drafted about their intersection with the
+  neutral plane only (no parting line split).
+- **Rib**: straight lines only; line ends extend until the body or the
+  body's bounding box, so a rib against a non-convex body may fill up to the
+  box where nothing stops it (the tool shows the preview before Done).
+- **Thicken** of several faces with sharp edges between them leaves a notch
+  on the convex side (the simple offset joins no neighbours).
+- **Edge rules** classify by point containment around the edge midpoint:
+  an edge whose midpoint region is ambiguous (e.g. a knife-edge thinner than
+  0.02 mm) belongs to no rule. Rule edges' round faces are numbered in shape
+  order, so an edit that adds edges may renumber `:round:i` of rule edges.
+- **Variable fillet** is linear per edge chain (OCCT `Law_Linear`). OCCT
+  builds some variable fillets / asymmetric chamfers that do not fit instead
+  of failing; their results are checked with `BRepCheck_Analyzer` and an
+  invalid one is reported as an error on the edge (15 → 3 mm on a 10 mm
+  block). Some oversized ones still pass the check (2 → 12 mm on a 10 mm
+  block builds a valid but visibly wrong solid) — the preview shows it.
+
 ## Incremental evaluation, memory and robustness (2026-09-29)
 
 **Prefix cache** (`kernel/evalCache.ts`). After every feature the replay

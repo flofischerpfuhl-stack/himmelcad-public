@@ -595,7 +595,12 @@ export class AgentSession {
   private assertNoFeatureErrors(touched: readonly string[], evaluation: EvaluationResult): void {
     const failures = touched
       .filter((id) => evaluation.errors[id])
-      .map((id) => ({ featureId: id, error: evaluation.errors[id]! }));
+      .map((id) => ({
+        featureId: id,
+        error: evaluation.errors[id]!,
+        // The geometry the error points at (e.g. `edgeKeys` a fillet fails on).
+        ...(evaluation.errorRefs?.[id] ? { refs: evaluation.errorRefs[id] } : {}),
+      }));
     if (failures.length === 0) return;
     const first = failures[0]!;
     throw new ApiError('featureFailed', `The kernel rejected the feature: ${first.error}`, {

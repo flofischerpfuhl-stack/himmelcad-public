@@ -41,6 +41,19 @@ import {
   type WorldAxis,
 } from './features.js';
 import { findSketchContact, pointInsideBody } from './modeling.js';
+import { PRINT_CLEARANCES } from './printFeatures.js';
+import {
+  acceptPrintPick,
+  createPrintDraft,
+  isPrintDraftKind,
+  printDraftBadges,
+  printDraftGuides,
+  printDraftHandles,
+  printDraftMeta,
+  printDraftModifiedBodyIds,
+  printDraftToFeature,
+  type PrintDraft,
+} from './printFeatureTools.js';
 import type { SelectionItem } from './store.js';
 
 // ---- drafts -------------------------------------------------------------------------
@@ -78,9 +91,15 @@ export type FeatureDraft =
       offset: number;
     }
   | { kind: 'offsetFace'; faces: FaceRef[]; distance: number }
-  | { kind: 'deleteFace'; faces: FaceRef[] };
+  | { kind: 'deleteFace'; faces: FaceRef[] }
+  // Hole, Emboss, Draft, Rib, Thicken (`printFeatureTools.ts`).
+  | PrintDraft;
 
 export type FeatureDraftKind = FeatureDraft['kind'];
+
+function isPrintDraft(draft: FeatureDraft): draft is PrintDraft {
+  return isPrintDraftKind(draft.kind);
+}
 
 /** What a draft can be started from. */
 export interface DraftContext {
@@ -354,6 +373,7 @@ function round(value: number): number {
 
 /** Starts `kind` from the selection, or explains what is missing (the command's disabled reason). */
 export function createDraft(kind: FeatureDraftKind, ctx: DraftContext): DraftStart {
+  if (isPrintDraftKind(kind)) return createPrintDraft(kind, ctx);
   switch (kind) {
     case 'revolve': {
       const profiles = selectedProfiles(ctx);
@@ -548,7 +568,17 @@ export function createDraft(kind: FeatureDraftKind, ctx: DraftContext): DraftSta
 
 export type ToolPick =
   | { kind: 'body'; bodyId: string }
-  | { kind: 'face'; bodyId: string; faceKey: string }
+  /**
+   * `point`: where the face was clicked (world), when the viewport knows it;
+   * `ray`: the pointer ray (tools that place things on their own plane, e.g. Hole).
+   */
+  | {
+      kind: 'face';
+      bodyId: string;
+      faceKey: string;
+      point?: Vec3;
+      ray?: { origin: Vec3; direction: Vec3 };
+    }
   | { kind: 'edge'; bodyId: string; edgeKey: string }
   | { kind: 'sketchProfile'; featureId: string; regionKey?: string }
   /** A straight sketch line (construction lines included): an axis or direction. */
@@ -578,7 +608,9 @@ export function acceptPick(
   draft: FeatureDraft,
   pick: ToolPick,
   evaluation: EvaluationResult,
+  features: readonly Feature[] = [],
 ): FeatureDraft {
+  if (isPrintDraft(draft)) return acceptPrintPick(draft, pick, evaluation, features);
   const faceRef = pick.kind === 'face' ? faceRefOf(evaluation, pick.bodyId, pick.faceKey) : null;
   const edgeRef = pick.kind === 'edge' ? edgeRefOf(evaluation, pick.bodyId, pick.edgeKey) : null;
   const pickedBody =
@@ -717,6 +749,7 @@ export function draftToFeature(
   draft: FeatureDraft,
   base: { id: string; name: string },
 ): Feature | null {
+  if (isPrintDraft(draft)) return printDraftToFeature(draft, base);
   const common = { id: base.id, name: base.name, suppressed: false };
   const op = (d: ProfileOperation) => ({
     operation: d.operation,
@@ -791,6 +824,7 @@ export interface DraftMeta {
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
 export function draftMeta(draft: FeatureDraft): DraftMeta {
+  if (isPrintDraft(draft)) return printDraftMeta(draft);
   switch (draft.kind) {
     case 'revolve':
       return {
@@ -905,6 +939,12 @@ function planeBadge(plane: PlaneRef, ariaLabel: string): DraftBadge {
 }
 
 export function draftBadges(draft: FeatureDraft): DraftBadge[] {
+  if (isPrintDraft(draft)) {
+    return printDraftBadges(draft).map((badge) => ({
+      ...badge,
+      apply: (d, value, evaluation) => (isPrintDraft(d) ? badge.apply(d, value, evaluation) : d),
+    }));
+  }
   switch (draft.kind) {
     case 'revolve':
       return [
@@ -1030,6 +1070,17 @@ export function draftBadges(draft: FeatureDraft): DraftBadge[] {
             { value: 'keep', label: 'Keep position' },
           ],
           apply: (d, value) => (d.kind === 'align' ? { ...d, center: value === 'center' } : d),
+        },
+      ];
+    case 'offsetFace':
+      // Printing clearances: remove 0.1-0.4 mm from mating faces (a hole wall grows, a peg shrinks).
+      return [
+        {
+          ariaLabel: 'Clearance',
+          value:
+            PRINT_CLEARANCES.find((c) => Math.abs(draft.distance + c) < 1e-9)?.toString() ?? '',
+          options: PRINT_CLEARANCES.map((c) => ({ value: String(c), label: `−${c}` })),
+          apply: (d, value) => (d.kind === 'offsetFace' ? { ...d, distance: -Number(value) } : d),
         },
       ];
     default:
@@ -1195,6 +1246,12 @@ export function draftHandles(
   evaluation: EvaluationResult,
   features: readonly Feature[] = [],
 ): DraftHandle[] {
+  if (isPrintDraft(draft)) {
+    return printDraftHandles(draft, evaluation, features).map((h) => ({
+      ...h,
+      apply: (d: FeatureDraft, value: number) => (isPrintDraft(d) ? h.apply(d, value) : d),
+    }));
+  }
   switch (draft.kind) {
     case 'revolve': {
       const line = axisLine(evaluation, draft.axis, features);
@@ -1390,7 +1447,12 @@ export interface DraftGuides {
 }
 
 /** Reference geometry the tool shows while it runs: the revolve/pattern axis, the mirror/split plane. */
-export function draftGuides(draft: FeatureDraft, evaluation: EvaluationResult): DraftGuides {
+export function draftGuides(
+  draft: FeatureDraft,
+  evaluation: EvaluationResult,
+  features: readonly Feature[] = [],
+): DraftGuides {
+  if (isPrintDraft(draft)) return printDraftGuides(draft, evaluation, features);
   const out: DraftGuides = { lines: [], planes: [] };
   const axisSegment = (ref: AxisRef | null, around: Vec3 | null, reach: number) => {
     const line = axisLine(evaluation, ref, []);
@@ -1430,6 +1492,7 @@ export function draftGuides(draft: FeatureDraft, evaluation: EvaluationResult): 
 
 /** Bodies the running tool modifies in place (shown with the preview accent). */
 export function draftModifiedBodyIds(draft: FeatureDraft): string[] {
+  if (isPrintDraft(draft)) return printDraftModifiedBodyIds(draft);
   switch (draft.kind) {
     case 'revolve':
     case 'sweep':

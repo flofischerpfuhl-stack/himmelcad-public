@@ -164,7 +164,7 @@ export function toolHandleSet(
   const tool = state.activeTool;
   if (tool?.kind === 'feature') {
     const set = featureHandles(state, draftHandles(tool.draft, state.evaluation, state.features));
-    set.guides = draftGuides(tool.draft, state.evaluation);
+    set.guides = draftGuides(tool.draft, state.evaluation, state.features);
     return set;
   }
   if (tool?.kind === 'move') return ringHandles(tool, ringColors);

@@ -27,6 +27,7 @@ import {
 import { migrateSketchesV1ToV2 } from '../../sketch/migration.js';
 import { validateSketchData } from '../../sketch/validation.js';
 import { isModelingFeatureKind, validateModelingFeature } from './featureFormat.js';
+import { validateBlendOptions } from './printFeatureFormat.js';
 
 export const PROJECT_FORMAT_ID = 'himmelcad-assembler';
 /**
@@ -220,6 +221,12 @@ function validateBase(r: Record<string, unknown>, path: string): void {
   if (!isBoolean(r.suppressed)) fail(`${path}.suppressed`, 'expected a boolean');
 }
 
+const FORMAT_HELPERS = {
+  fail,
+  faceRef: validateFaceRef,
+  edgeRef: validateEdgeRef,
+};
+
 /** Validates one feature and narrows it to {@link Feature}, or throws {@link ProjectFormatError}. */
 function validateFeature(v: unknown, index: number): Feature {
   const path = `features[${index}]`;
@@ -272,7 +279,9 @@ function validateFeature(v: unknown, index: number): Feature {
     }
     case 'fillet':
     case 'chamfer': {
-      if (!Array.isArray(r.edges) || r.edges.length === 0) {
+      // Edges picked by rule (`rules`) allow an empty `edges` list.
+      const byRule = validateBlendOptions(r, path, FORMAT_HELPERS);
+      if (!Array.isArray(r.edges) || (r.edges.length === 0 && !byRule)) {
         fail(`${path}.edges`, 'expected a non-empty array');
       }
       r.edges.forEach((e, i) => validateEdgeRef(e, `${path}.edges[${i}]`));
@@ -287,6 +296,7 @@ function validateFeature(v: unknown, index: number): Feature {
       }
       r.faces.forEach((f, i) => validateFaceRef(f, `${path}.faces[${i}]`));
       if (!isNumber(r.thickness)) fail(`${path}.thickness`, 'expected a number');
+      validateBlendOptions(r, path, FORMAT_HELPERS);
       return r as unknown as ShellFeature;
     }
     case 'boolean': {
@@ -297,6 +307,7 @@ function validateFeature(v: unknown, index: number): Feature {
       if (!Array.isArray(r.toolBodyIds) || !r.toolBodyIds.every(isString)) {
         fail(`${path}.toolBodyIds`, 'expected an array of strings');
       }
+      validateBlendOptions(r, path, FORMAT_HELPERS);
       return r as unknown as BooleanFeature;
     }
     case 'move': {
@@ -320,11 +331,7 @@ function validateFeature(v: unknown, index: number): Feature {
     }
     default:
       if (isModelingFeatureKind(r.kind)) {
-        return validateModelingFeature(r, path, {
-          fail,
-          faceRef: validateFaceRef,
-          edgeRef: validateEdgeRef,
-        });
+        return validateModelingFeature(r, path, FORMAT_HELPERS);
       }
       fail(`${path}.kind`, `unknown feature kind "${String(r.kind)}"`);
   }

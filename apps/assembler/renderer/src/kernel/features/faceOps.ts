@@ -83,6 +83,33 @@ export function applyOffsetFace(
 }
 
 /**
+ * Offsets faces of `body` (by naming key) by their own distances, one after
+ * the other (the offset surface keeps its key, so later keys still
+ * resolve). Used by Shell for walls thicker than the shell thickness.
+ */
+export function offsetBodyFaces(
+  kit: FeatureKit,
+  ctx: ReplayContextLike,
+  body: BodyStateLike,
+  faces: readonly { key: string; distance: number }[],
+  featureId: string,
+): void {
+  faces.forEach((entry, i) => {
+    const topology = kit.topologyOf(body.shape);
+    const index = body.faces.findIndex((f) => f.key === entry.key);
+    if (index < 0) kit.fail(`Missing reference: face "${entry.key}" on "${body.name}"`);
+    const resolved: ResolvedFace = {
+      face: topology.faces[index]!,
+      geom: body.faces[index]!,
+      topology,
+      index,
+    };
+    const tool = slab(kit, featureId, i, resolved, entry.distance);
+    kit.combine(body, tool, entry.distance > 0 ? 'join' : 'cut', featureId, ctx.featureOrder);
+  });
+}
+
+/**
  * The material between face `r` and its offset by `d` (along the outward
  * normal), as a positive-volume solid. The offset surface's face inherits
  * the offset face's key; the slab's side walls are `:side:<i>:<n>`.

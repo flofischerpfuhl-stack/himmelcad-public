@@ -40,6 +40,7 @@ import {
   type SurfaceKind,
   type Vec3,
 } from '../model/document.js';
+import { edgeRuleBodyId, edgeRuleLabel } from '../model/blendOptions.js';
 import { projectedEntities, refreshProjections, type EdgeSample } from '../sketch/projection.js';
 import type { SketchRegion } from '../sketch/regions.js';
 import type { SketchProjection } from '../sketch/types.js';
@@ -78,9 +79,12 @@ import {
   faceOrigins,
   facesOf,
   heapBytes,
+  isValidShape,
   meshShapeEdges,
+  offsetWithHistory,
   shapeHash,
   shellWithHistory,
+  type BlendOptions,
   type HistoryResult,
   type OwnedTopology,
   type RawShape,
@@ -94,8 +98,15 @@ import type {
   EvaluationProgress,
   EvaluationResult,
   FaceInfo,
+  FeatureErrorRefs,
   TessellationQuality,
 } from './types.js';
+import {
+  chamferReferenceFaces,
+  failingBlendEdges,
+  ruleEdgeIndices,
+} from './features/blendRules.js';
+import { offsetBodyFaces } from './features/faceOps.js';
 import { applyModelingFeature, type FeatureKit } from './features/index.js';
 import { rebindRegion } from './regionRebind.js';
 import { FaceMeshCache } from './tessellate.js';
@@ -109,7 +120,15 @@ type OpenCascade = ReturnType<typeof R.getOC>;
 type Shape3D = R.Shape3D;
 
 /** Raised for a feature that cannot be evaluated; caught per feature. */
-class FeatureError extends Error {}
+class FeatureError extends Error {
+  constructor(
+    message: string,
+    /** Geometry the error points at (highlighted in the viewport). */
+    readonly refs?: FeatureErrorRefs,
+  ) {
+    super(message);
+  }
+}
 
 /**
  * Body appearance colors, assigned by creation order. `[0]` is the neutral
@@ -811,23 +830,84 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
         `${feature.kind === 'fillet' ? 'Radius' : 'Distance'} must be positive`,
       );
     }
-    if (feature.edges.length === 0) throw new FeatureError('Select at least one edge');
-    const bodyId = feature.edges[0]!.bodyId;
+    const rules = feature.rules ?? [];
+    if (feature.edges.length === 0 && rules.length === 0) {
+      throw new FeatureError('Select at least one edge');
+    }
+    const bodyId = feature.edges[0]?.bodyId ?? edgeRuleBodyId(rules[0]!);
     const body = ctx.bodies.get(bodyId);
     if (!body) throw new FeatureError(`Missing reference: body "${bodyId}"`);
-    const { topology, indices } = resolveEdges(body, feature.edges, ctx.warn);
+    const picked = resolveEdges(body, feature.edges, ctx.warn);
+    const topology = picked.topology;
+    const ruled = rules.length > 0 ? ruleEdgeIndices(kit, body, rules, ctx.warn) : [];
+    // Picked edges keep their generator index (face names); rule edges follow.
+    const indices = [...picked.indices, ...ruled.filter((e) => !picked.indices.includes(e))];
+    if (indices.length === 0) {
+      throw new FeatureError(
+        `No edge matches: ${rules.map(edgeRuleLabel).join(', ')} found nothing on "${body.name}"`,
+      );
+    }
     // In shape order, like the edge filter the fillet used before (same OCCT input order).
     const unique = [...new Set(indices)].sort((a, b) => a - b);
     const selected = unique.map((i) => topology.edges[i]!);
     const edgeFaceKeys = indices.map((i) =>
       (topology.edgeFaces[i] ?? []).map((f) => body.faces[f]!),
     );
+    const options: BlendOptions = {};
+    if (feature.kind === 'fillet' && feature.radius2 !== undefined) {
+      if (!(feature.radius2 >= MIN_FEATURE_SIZE_MM / 10)) {
+        throw new FeatureError('End radius must be positive');
+      }
+      options.size2 = feature.radius2;
+    }
+    if (feature.kind === 'chamfer' && feature.mode && feature.mode !== 'equal') {
+      options.chamfer = feature.mode;
+      options.faces = chamferReferenceFaces(topology, body.faces, unique, feature.flip === true);
+      if (feature.mode === 'twoDistances') {
+        const d2 = feature.distance2 ?? feature.distance;
+        if (!(d2 >= MIN_FEATURE_SIZE_MM / 10))
+          throw new FeatureError('Distance 2 must be positive');
+        options.size2 = d2;
+      } else {
+        const angle = feature.angle ?? 45;
+        if (!(angle > 0.5 && angle < 89.5)) {
+          throw new FeatureError('Chamfer angle must be between 0.5° and 89.5°');
+        }
+        options.angle = (angle * Math.PI) / 180;
+      }
+    }
+    const edgeKeys = edgeKeysOf(body);
     let built: HistoryResult;
     try {
-      built = blendWithHistory(oc, feature.kind, body.shape, selected, size);
+      built = blendWithHistory(oc, feature.kind, body.shape, selected, size, options);
     } catch (error) {
       if (isFatalKernelError(error)) throw error;
-      throw new FeatureError(`${label} failed: ${describeError(error)}`);
+      // Point at the edges that fail on their own (highlighted in the viewport).
+      const failing = failingBlendEdges(kit, feature.kind, body.shape, selected, size, options);
+      const keys = failing.map((i) => edgeKeys[unique[i]!]!);
+      const hint =
+        feature.kind === 'fillet'
+          ? 'try a smaller radius, or fillet the neighbouring edges together'
+          : 'try a smaller distance';
+      const where =
+        failing.length === 0
+          ? `the edges fail together (${selected.length}); ${hint}`
+          : failing.length === 1
+            ? `it fails on the highlighted edge; ${hint}`
+            : `it fails on ${failing.length} highlighted edges; ${hint}`;
+      throw new FeatureError(`${label} failed: ${where}`, {
+        bodyId: body.id,
+        edgeKeys: failing.length > 0 ? keys : unique.map((i) => edgeKeys[i]!),
+      });
+    }
+    // OCCT builds some variable fillets / asymmetric chamfers that do not fit (a self-intersecting
+    // result instead of an error): check those results.
+    if ((options.size2 !== undefined || options.chamfer) && !isValidShape(oc, built.shape)) {
+      built.history.delete();
+      throw new FeatureError(
+        `${label} failed: ${feature.kind === 'fillet' ? 'an end radius' : 'a distance'} does not fit the faces next to the edge; try smaller values`,
+        { bodyId: body.id, edgeKeys: unique.map((i) => edgeKeys[i]!) },
+      );
     }
     const role = feature.kind === 'fillet' ? 'round' : 'chamfer';
     try {
@@ -869,41 +949,134 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
     const body = ctx.bodies.get(feature.bodyId);
     if (!body) throw new FeatureError(`Missing reference: body "${feature.bodyId}"`);
     if (feature.faces.length === 0) throw new FeatureError('Select at least one face to open');
-    const removed = feature.faces.map((ref) => {
+    const removedRefs = feature.faces.map((ref) => {
       if (ref.bodyId !== body.id)
         throw new FeatureError('Shell faces must belong to the shelled body');
-      return resolveFace(body, ref, ctx.warn).face;
+      return resolveFace(body, ref, ctx.warn);
     });
+    let removed = removedRefs.map((r) => r.face);
+    const outward = feature.direction === 'outside';
+    const clearance = feature.clearance ?? 0;
+    if (clearance !== 0 && !outward) {
+      throw new FeatureError(
+        'A clearance applies to outward shells (a case that fits over the body)',
+      );
+    }
+    if (!(clearance >= 0 && clearance <= 5)) {
+      throw new FeatureError('Clearance must be between 0 and 5 mm');
+    }
+    // Per-face walls: validated before the (expensive) shell.
+    const perFace = (feature.faceThickness ?? []).map((entry) => {
+      if (entry.face.bodyId !== body.id) {
+        throw new FeatureError('Wall thickness faces must belong to the shelled body');
+      }
+      if (!(entry.thickness >= MIN_FEATURE_SIZE_MM)) {
+        throw new FeatureError(`Wall thickness must be at least ${MIN_FEATURE_SIZE_MM} mm`);
+      }
+      const resolved = resolveFace(body, entry.face, ctx.warn);
+      if (removed.some((f) => f.isSame(resolved.face))) {
+        throw new FeatureError('An open face has no wall; remove it from the wall thicknesses');
+      }
+      return { key: baseFaceKey(resolved.geom.key), thickness: entry.thickness };
+    });
+    // With a clearance the shell grows from the body offset by it (sharp edges): the cavity is
+    // the body plus the clearance, e.g. a case or sleeve that fits over the part when printed.
+    let source: { shape: Shape3D; faces: KeyedFace[] } = { shape: body.shape, faces: body.faces };
+    if (clearance > 0) {
+      let grown: HistoryResult;
+      try {
+        grown = offsetWithHistory(oc, body.shape, clearance);
+      } catch (error) {
+        if (isFatalKernelError(error)) throw error;
+        throw new FeatureError(
+          `Shell failed: the ${clearance} mm clearance offset could not be built`,
+        );
+      }
+      try {
+        // The offset faces keep the keys of the faces they were offset from (by geometry:
+        // this builder's history does not report them).
+        const faces = nameResult(
+          grown.shape,
+          grown.history,
+          [{ shape: body.shape, faces: body.faces }],
+          ctx.featureOrder,
+          (index) => {
+            const g = describeFace(topologyOf(grown.shape).faces[index]!);
+            const original = body.faces.find((f) => isOutwardOffsetOf(g.id, f.id, clearance));
+            return original ? baseFaceKey(original.key) : `${feature.id}:new`;
+          },
+        );
+        const grownTopology = topologyOf(grown.shape);
+        removed = removedRefs.map((r) => {
+          const key = baseFaceKey(r.geom.key);
+          const index = faces.findIndex((f) => baseFaceKey(f.key) === key);
+          if (index < 0) {
+            throw new FeatureError('Shell failed: an open face was lost by the clearance offset');
+          }
+          return grownTopology.faces[index]!;
+        });
+        source = { shape: grown.shape, faces };
+      } finally {
+        grown.history.delete();
+      }
+    }
     let built: HistoryResult;
     try {
-      built = shellWithHistory(oc, body.shape, removed, feature.thickness);
+      built = shellWithHistory(oc, source.shape, removed, feature.thickness, outward);
     } catch (error) {
       if (isFatalKernelError(error)) throw error;
-      throw new FeatureError(`Shell failed: ${describeError(error)}`);
+      throw new FeatureError(
+        `Shell failed: ${describeError(error)}. A wall of ${feature.thickness} mm may not fit here; try a thinner wall`,
+      );
     }
     const t = feature.thickness;
-    const topology = topologyOf(body.shape);
+    const role = outward ? 'outer' : 'inner';
+    const topology = topologyOf(source.shape);
     try {
       body.faces = nameResult(
         built.shape,
         built.history,
-        [{ shape: body.shape, faces: body.faces }],
+        [source],
         ctx.featureOrder,
         (index) => {
           const g = describeFace(topologyOf(built.shape).faces[index]!);
-          const original = body.faces.find((f) => isOffsetOf(g.id, f.id, t));
+          const original = source.faces.find((f) =>
+            outward ? isOutwardOffsetOf(g.id, f.id, t) : isOffsetOf(g.id, f.id, t),
+          );
           return original
-            ? `${feature.id}:inner:${baseFaceKey(original.key)}`
+            ? `${feature.id}:${role}:${baseFaceKey(original.key)}`
             : `${feature.id}:new`;
         },
         topology.faces.map((face, i) => ({
           raw: face.wrapped as RawShape,
-          role: `${feature.id}:inner:${baseFaceKey(body.faces[i]!.key)}`,
+          role: `${feature.id}:${role}:${baseFaceKey(source.faces[i]!.key)}`,
         })),
       );
       body.shape = built.shape;
     } finally {
       built.history.delete();
+    }
+    // Thicker walls: offset the wall's free side by the extra thickness (Offset Face).
+    const thicker = perFace.filter((entry) => Math.abs(entry.thickness - t) > 1e-9);
+    if (thicker.length > 0) {
+      const walls = thicker.map((entry) => {
+        const key = `${feature.id}:${role}:${entry.key}`;
+        const face = body.faces.find((f) => baseFaceKey(f.key) === key);
+        if (!face) {
+          throw new FeatureError(
+            `Shell failed: the wall of face "${entry.key}" was not found after shelling`,
+          );
+        }
+        // Inside: the wall's free side faces the cavity; a thicker wall grows into it (+).
+        // Outside: the free side is the outer skin; it grows outwards (+) as well.
+        return { key: face.key, distance: entry.thickness - t };
+      });
+      try {
+        offsetBodyFaces(kit, ctx, body, walls, feature.id);
+      } catch (error) {
+        if (error instanceof FeatureError || isFatalKernelError(error)) throw error;
+        throw new FeatureError(`Shell failed: ${describeError(error)}`);
+      }
     }
     ctx.touch(body.id);
   }
@@ -912,6 +1085,9 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
     const target = ctx.bodies.get(feature.targetBodyId);
     if (!target) throw new FeatureError(`Missing reference: body "${feature.targetBodyId}"`);
     if (feature.toolBodyIds.length === 0) throw new FeatureError('Select at least one tool body');
+    if (new Set(feature.toolBodyIds).size !== feature.toolBodyIds.length) {
+      throw new FeatureError('A tool body is listed twice');
+    }
     const tools = feature.toolBodyIds.map((id) => {
       if (id === target.id) throw new FeatureError('A body cannot be combined with itself');
       const body = ctx.bodies.get(id);
@@ -927,9 +1103,11 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
     for (const tool of tools) {
       combine(target, tool, operation, feature.id, ctx.featureOrder);
     }
-    for (const tool of tools) {
-      ctx.bodies.delete(tool.id);
-      ctx.order.splice(ctx.order.indexOf(tool.id), 1);
+    if (!feature.keepTools) {
+      for (const tool of tools) {
+        ctx.bodies.delete(tool.id);
+        ctx.order.splice(ctx.order.indexOf(tool.id), 1);
+      }
     }
     ctx.touch(target.id);
   }
@@ -986,9 +1164,10 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
   /** What the modelling-feature modules (`./features/`) may use of this evaluator. */
   const kit: FeatureKit = {
     oc,
-    fail: (message) => {
-      throw new FeatureError(message);
+    fail: (message, refs) => {
+      throw new FeatureError(message, refs);
     },
+    edgeKeysOf: (body) => edgeKeysOf(body as BodyState),
     isFailure: (error) => error instanceof FeatureError || isFatalKernelError(error),
     describeError: (error) => describeError(error),
     describeFace,
@@ -1211,6 +1390,7 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
     creationOrder: string[];
     errors: Record<string, string>;
     warnings: Record<string, string>;
+    errorRefs: Record<string, FeatureErrorRefs>;
     /** Features restored from a checkpoint / evaluated now. */
     reused: number;
     evaluated: number;
@@ -1221,6 +1401,7 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
   function restore(checkpoint: Checkpoint | null, featureOrder: ReadonlyMap<string, number>) {
     const errors: Record<string, string> = { ...(checkpoint?.errors ?? {}) };
     const warnings: Record<string, string> = { ...(checkpoint?.warnings ?? {}) };
+    const errorRefs: Record<string, FeatureErrorRefs> = { ...(checkpoint?.errorRefs ?? {}) };
     let currentId = '';
     const ctx: ReplayContext = {
       bodies: new Map(
@@ -1248,6 +1429,7 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
       ctx,
       errors,
       warnings,
+      errorRefs,
       creationOrder: [...(checkpoint?.creationOrder ?? [])],
       setCurrent: (id: string) => {
         currentId = id;
@@ -1263,6 +1445,7 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
       creationOrder: string[];
       errors: Record<string, string>;
       warnings: Record<string, string>;
+      errorRefs: Record<string, FeatureErrorRefs>;
     },
     previous: Checkpoint | null,
   ): Checkpoint {
@@ -1295,6 +1478,7 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
       createdCount: replay.ctx.createdCount,
       errors: { ...replay.errors },
       warnings: { ...replay.warnings },
+      ...(Object.keys(replay.errorRefs).length > 0 ? { errorRefs: { ...replay.errorRefs } } : {}),
     };
   }
 
@@ -1382,6 +1566,8 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
               : new KernelFatalError(`CAD kernel failure: ${describeError(error)}`);
           }
           errors[feature.id] = error instanceof FeatureError ? error.message : describeError(error);
+          if (error instanceof FeatureError && error.refs)
+            replay.errorRefs[feature.id] = error.refs;
           restoreBodies(ctx, snapshot);
         }
         // Keep the bodies' shapes, release everything else the feature created.
@@ -1404,6 +1590,7 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
       creationOrder: replay.creationOrder,
       errors: replay.errors,
       warnings: replay.warnings,
+      errorRefs: replay.errorRefs,
       reused: start,
       evaluated: features.length - start,
       hashes,
@@ -1449,7 +1636,7 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
           cacheTail,
           onProgress: evaluateOptions.onProgress,
         });
-        const { ctx, creationOrder, errors, warnings } = replay;
+        const { ctx, creationOrder, errors, warnings, errorRefs } = replay;
 
         const t1 = now();
         evaluateOptions.onProgress?.({
@@ -1485,6 +1672,7 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
           sketches: [...ctx.sketches.values()],
           errors,
           warnings,
+          ...(Object.keys(errorRefs).length > 0 ? { errorRefs } : {}),
           stats: {
             modelMs: t1 - t0,
             tessellateMs: t2 - t1,
@@ -1641,6 +1829,26 @@ function isOffsetOf(inner: SurfaceId, outer: SurfaceId, thickness: number): bool
   if (inner.type === 'cylinder' && outer.type === 'cylinder') {
     return (
       inner.convex !== outer.convex &&
+      Math.abs(Math.abs(inner.radius - outer.radius) - thickness) < tol &&
+      Math.abs(dot(inner.axis, outer.axis)) > 1 - 1e-7 &&
+      distance(inner.point, outer.point) < tol
+    );
+  }
+  return false;
+}
+
+/** `outer` is `inner` moved `thickness` outwards (outward shell skin): same normal/convexity. */
+function isOutwardOffsetOf(outer: SurfaceId, inner: SurfaceId, thickness: number): boolean {
+  const tol = GEOMETRY_TOLERANCE * 10;
+  if (inner.type === 'plane' && outer.type === 'plane') {
+    return (
+      dot(inner.normal, outer.normal) > 1 - 1e-7 &&
+      Math.abs(outer.offset - (inner.offset + thickness)) < tol
+    );
+  }
+  if (inner.type === 'cylinder' && outer.type === 'cylinder') {
+    return (
+      inner.convex === outer.convex &&
       Math.abs(Math.abs(inner.radius - outer.radius) - thickness) < tol &&
       Math.abs(dot(inner.axis, outer.axis)) > 1 - 1e-7 &&
       distance(inner.point, outer.point) < tol

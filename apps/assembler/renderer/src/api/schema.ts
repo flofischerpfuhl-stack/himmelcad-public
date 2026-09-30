@@ -24,6 +24,7 @@
  * `apps/assembler/api/agent-api-v1.schema.json` is kept identical by a test.
  */
 import { API_ERROR_CODES } from './errors.js';
+import { BLEND_OPTION_PARAMS, PRINT_DEFS, PRINT_FEATURE_KIND_SCHEMAS } from './printSchema.js';
 import type { JsonSchema } from './validate.js';
 
 export const API_ID = 'hcasm.agent-api';
@@ -393,6 +394,7 @@ export const DEFS: Record<string, JsonSchema> = {
       obj({ kind: { const: 'feature' }, featureId: str }, ['kind', 'featureId']),
     ],
   },
+  ...PRINT_DEFS,
 };
 
 const operation: JsonSchema = {
@@ -465,40 +467,55 @@ export const FEATURE_KIND_SCHEMAS: Record<string, FeatureKindSpec> = {
   },
   fillet: {
     label: 'Fillet',
-    summary: 'Rounds edges of one body with a constant radius (exact B-rep fillet).',
+    summary:
+      'Rounds edges of one body (exact B-rep fillet): constant radius, or variable from `radius` to `radius2`; edges picked one by one and/or by `rules` (all edges of a face, all concave/convex edges).',
     params: obj(
-      { edges: { type: 'array', items: ref('EdgeInput'), minItems: 1 }, radius: positive },
-      ['edges', 'radius'],
+      {
+        edges: { type: 'array', items: ref('EdgeInput') },
+        radius: positive,
+        ...BLEND_OPTION_PARAMS.fillet,
+      },
+      ['radius'],
+      '`edges` defaults to [] (then `rules` must pick edges).',
     ),
   },
   chamfer: {
     label: 'Chamfer',
-    summary: 'Bevels edges of one body with a constant distance.',
+    summary:
+      'Bevels edges of one body: equal distance, two distances, or distance and angle; edges picked and/or by `rules`.',
     params: obj(
-      { edges: { type: 'array', items: ref('EdgeInput'), minItems: 1 }, distance: positive },
-      ['edges', 'distance'],
+      {
+        edges: { type: 'array', items: ref('EdgeInput') },
+        distance: positive,
+        ...BLEND_OPTION_PARAMS.chamfer,
+      },
+      ['distance'],
+      '`edges` defaults to [] (then `rules` must pick edges).',
     ),
   },
   shell: {
     label: 'Shell',
-    summary: 'Hollows a body, opening the given faces; walls grow inwards.',
+    summary:
+      'Hollows a body, opening the given faces; walls grow inwards (or outwards with `direction`), walls listed in `faceThickness` get their own thickness.',
     params: obj(
       {
         bodyId: str,
         faces: { type: 'array', items: ref('FaceInput'), minItems: 1 },
         thickness: positive,
+        ...BLEND_OPTION_PARAMS.shell,
       },
       ['faces', 'thickness'],
     ),
   },
   boolean: {
     label: 'Boolean',
-    summary: 'Union/subtract/intersect; the tool bodies are consumed.',
+    summary: 'Union/subtract/intersect; the tool bodies are consumed unless `keepTools`.',
     params: obj(
       {
         operation: { enum: ['union', 'subtract', 'intersect'] },
         targetBodyId: str,
         toolBodyIds: { type: 'array', items: str, minItems: 1 },
+        ...BLEND_OPTION_PARAMS.boolean,
       },
       ['operation', 'targetBodyId', 'toolBodyIds'],
     ),
@@ -653,6 +670,7 @@ export const FEATURE_KIND_SCHEMAS: Record<string, FeatureKindSpec> = {
     summary: 'Removes faces (holes, fillets, chamfers) of one body and heals it.',
     params: obj({ faces: { type: 'array', items: ref('FaceInput'), minItems: 1 } }, ['faces']),
   },
+  ...PRINT_FEATURE_KIND_SCHEMAS,
 };
 
 const scope: JsonSchema = {

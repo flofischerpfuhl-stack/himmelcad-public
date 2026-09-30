@@ -15,6 +15,47 @@
   border-radius: var(--hc-radius-lg);
   box-shadow: var(--hc-shadow-island);
   pointer-events: auto;
+  /* Tools with many options (Hole) wrap onto a second row instead of running under the docks. */
+  flex-wrap: wrap;
+  justify-content: center;
+  row-gap: var(--hc-space-1);
+  max-width: min(1080px, calc(100vw - 360px));
+}
+
+.badgeSelect {
+  display: inline-flex;
+  font-size: 11px;
+}
+
+.pillField {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border-radius: var(--hc-radius-sm);
+  background: var(--hc-bg-chip);
+  color: var(--hc-fg-muted);
+  font-family: var(--hc-font-ui);
+  font-size: 11px;
+}
+
+.pillField input {
+  width: 44px;
+  border: none;
+  background: transparent;
+  color: var(--hc-fg-strong);
+  font-family: var(--hc-font-mono);
+  font-size: 11px;
+  text-align: right;
+  outline: none;
+}
+
+.pillField:focus-within {
+  box-shadow: 0 0 0 1px var(--hc-accent-base);
+}
+
+.pillFieldInvalid {
+  box-shadow: 0 0 0 1px var(--hc-error);
 }
 
 .name {

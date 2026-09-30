@@ -19,6 +19,12 @@ import type {
   SketchPlaneRef,
   Vec3,
 } from './document.js';
+import {
+  PRINT_FEATURE_KINDS,
+  PRINT_FEATURE_LABEL,
+  printSketchIdsUsedBy,
+  type PrintFeature,
+} from './printFeatures.js';
 
 /** A closed profile: a sketch profile or a planar body face (the extrude profile reference). */
 export type ProfileRef = ExtrudeProfileRef;
@@ -174,7 +180,9 @@ export type ModelingFeature =
   | TransformFeature
   | AlignFeature
   | OffsetFaceFeature
-  | DeleteFaceFeature;
+  | DeleteFaceFeature
+  // Hole, Emboss, Draft, Rib, Thicken (`printFeatures.ts`).
+  | PrintFeature;
 
 export const MODELING_FEATURE_KINDS: readonly ModelingFeature['kind'][] = [
   'revolve',
@@ -187,6 +195,7 @@ export const MODELING_FEATURE_KINDS: readonly ModelingFeature['kind'][] = [
   'align',
   'offsetFace',
   'deleteFace',
+  ...PRINT_FEATURE_KINDS,
 ];
 
 export function isModelingFeature(feature: Feature): feature is ModelingFeature {
@@ -205,6 +214,7 @@ export const MODELING_FEATURE_LABEL: Record<ModelingFeature['kind'], string> = {
   align: 'Align',
   offsetFace: 'Offset Face',
   deleteFace: 'Delete Face',
+  ...PRINT_FEATURE_LABEL,
 };
 
 /** Largest pattern instance count (bounds evaluation cost). */
@@ -232,6 +242,12 @@ export function sketchIdsUsedBy(feature: ModelingFeature): string[] {
       break;
     case 'loft':
       feature.profiles.forEach(addProfile);
+      break;
+    case 'hole':
+    case 'emboss':
+    case 'rib':
+    case 'thicken':
+      out.push(...printSketchIdsUsedBy(feature));
       break;
     default:
       break;

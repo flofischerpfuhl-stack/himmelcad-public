@@ -1,15 +1,21 @@
 /** Icons of the modelling features/commands (`model/features.ts`, `commands/featureCommands.ts`). */
 import {
   AlignVerticalSpaceAround,
+  CircleDot,
   Eraser,
   Expand,
   FlipHorizontal2,
   Layers,
+  Layers2,
   LayoutGrid,
   Move3d,
   RotateCw,
   Route,
+  Spline,
+  SquareSlash,
   SquareSplitHorizontal,
+  Stamp,
+  TriangleRight,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -26,6 +32,11 @@ export const MODELING_FEATURE_ICON: Record<ModelingFeature['kind'], LucideIcon> 
   align: AlignVerticalSpaceAround,
   offsetFace: Expand,
   deleteFace: Eraser,
+  hole: CircleDot,
+  emboss: Stamp,
+  draft: TriangleRight,
+  rib: SquareSlash,
+  thicken: Layers2,
 };
 
 export const MODELING_COMMAND_ICON: Partial<Record<string, LucideIcon>> = {
@@ -38,4 +49,12 @@ export const MODELING_COMMAND_ICON: Partial<Record<string, LucideIcon>> = {
   'transform.align': AlignVerticalSpaceAround,
   'tools.offsetFace': Expand,
   'tools.deleteFace': Eraser,
+  'tools.hole': CircleDot,
+  'tools.emboss': Stamp,
+  'tools.draft': TriangleRight,
+  'tools.rib': SquareSlash,
+  'tools.thicken': Layers2,
+  'tools.filletFaceEdges': Spline,
+  'tools.filletConcave': Spline,
+  'tools.filletConvex': Spline,
 };

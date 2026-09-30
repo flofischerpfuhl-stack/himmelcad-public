@@ -310,6 +310,19 @@ the 3MF files.
   resolution for their face/edge fields; Python has `doc.revolve` and reaches
   the others with `doc.create(kind, **params)`. Automatic New/Join/Cut (the UI
   tools' default) is not applied by the API: `operation` defaults to `new`.
+- **Print-part kinds** (hole, emboss, draft, rib, thicken) and the optional
+  fillet/chamfer/shell/boolean params (`radius2`, `rules`, `mode`/`distance2`/
+  `angle`/`flip`, `direction`/`clearance`/`faceThickness`, `keepTools`) have closed
+  schemas (`api/printSchema.ts`); selectors resolve in `face`, `faces`,
+  `rules[].face`, `faceThickness[].face` and `source.faces`. Python:
+  `doc.hole` (metric size + ISO or printed fit, counterbore/countersink,
+  sketch points, cosmetic thread), `emboss`/`engrave`, `draft`, `rib`,
+  `thicken`, `fillet_variable`, `fillet_by_rule`, `chamfer_two_distances`,
+  `chamfer_distance_angle`, `shell_walls`, `boolean(…, keep_tools=True)`.
+  Hole presets are resolved client-side (the stored feature holds plain
+  diameters). A fillet the kernel cannot build fails with `featureFailed`;
+  `details.failures[].refs.edgeKeys` lists the edges that fail on their own
+  (`KERNEL-SPIKE.md` "Print-part features").
 - **Reference resolution while editing mid-history** uses the current
   (final) evaluation to fill signatures of _changed_ reference fields; keys
   are what bind, signatures are only the fallback, but a signature taken from

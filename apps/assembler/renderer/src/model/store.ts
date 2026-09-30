@@ -39,8 +39,15 @@ import {
   EMPTY_EVALUATION,
   type Body,
   type EvaluationResult,
+  type FeatureErrorRefs,
   type KernelStatus,
 } from '../kernel/types.js';
+import {
+  edgeRuleBodyId,
+  type ChamferMode,
+  type EdgeRule,
+  type ShellDirection,
+} from './blendOptions.js';
 import {
   createDemoDocument,
   type BooleanFeature,
@@ -108,6 +115,8 @@ export interface KernelPreviewFields {
   previewPending: boolean;
   /** Kernel error for the most recently evaluated parameters, else `null`. Blocks commit once current. */
   previewError: string | null;
+  /** Geometry the preview error points at (e.g. the edge a fillet fails on), highlighted in the viewport. */
+  previewErrorRefs?: FeatureErrorRefs | null;
 }
 
 /** `E` — extrudes a sketch profile or pushes/pulls a planar body face. */
@@ -131,14 +140,25 @@ export interface EdgeBlendTool extends ToolSessionBase, KernelPreviewFields {
   edges: EdgeRef[];
   /** Fillet radius or chamfer distance, mm. */
   size: number;
+  /** Variants (`model/blendOptions.ts`): end radius of a variable fillet, chamfer mode and its second value. */
+  radius2?: number;
+  chamferMode?: ChamferMode;
+  distance2?: number;
+  angle?: number;
+  flip?: boolean;
+  /** Edges chosen by rule (all edges of a face, all concave/convex edges). */
+  rules?: EdgeRule[];
 }
 
-/** `H` — hollows a body, opening the selected faces, walls grow inwards. */
+/** `H` — hollows a body, opening the selected faces, walls grow inwards (or outwards). */
 export interface ShellTool extends ToolSessionBase, KernelPreviewFields {
   kind: 'shell';
   bodyId: string;
   faces: FaceRef[];
   thickness: number;
+  direction?: ShellDirection;
+  /** Outward only: gap between the body and the shell's cavity, mm. */
+  clearance?: number;
 }
 
 /** Union/Subtract/Intersect of the selected bodies; the first selected body is the target. */
@@ -147,6 +167,8 @@ export interface BooleanTool extends ToolSessionBase, KernelPreviewFields {
   operation: BooleanFeature['operation'];
   targetBodyId: string;
   toolBodyIds: string[];
+  /** Keep the tool bodies instead of consuming them. */
+  keepTools?: boolean;
 }
 
 /**
@@ -321,6 +343,26 @@ export interface AssemblerState {
   beginEdgeBlend: (kind: 'fillet' | 'chamfer') => void;
   setBlendSize: (size: number) => void;
   setBlendKind: (kind: 'fillet' | 'chamfer') => void;
+  /** Starts the fillet/chamfer tool on edges chosen by rule (face edges, concave/convex edges). */
+  beginEdgeBlendByRule: (kind: 'fillet' | 'chamfer', rules: EdgeRule[]) => void;
+  /** Variable radius, chamfer mode and second value of the running fillet/chamfer tool. */
+  setBlendOptions: (options: {
+    [K in 'radius2' | 'chamferMode' | 'distance2' | 'angle' | 'flip']?:
+      | EdgeBlendTool[K]
+      | undefined;
+  }) => void;
+  /** Inward/outward walls of the running shell tool. */
+  setShellDirection: (direction: ShellDirection) => void;
+  /** Printing clearance of an outward shell (the cavity is the body grown by it); 0 removes it. */
+  setShellClearance: (clearance: number) => void;
+  /** Adds/removes an open face while the shell tool runs. */
+  toggleShellFace: (bodyId: string, faceKey: string) => void;
+  /** Keep or consume the tool bodies of the running boolean tool. */
+  setBooleanKeepTools: (keep: boolean) => void;
+  /** Swaps the target with the first tool body of the running boolean tool. */
+  swapBooleanTarget: () => void;
+  /** Adds/removes a tool body while the boolean tool runs. */
+  toggleBooleanTool: (bodyId: string) => void;
   /** Adds/removes an edge of the tool's body while the fillet/chamfer tool runs. */
   toggleBlendEdge: (bodyId: string, edgeKey: string) => void;
   /** `H` — starts the shell tool on the selected faces of one body (live preview). */
@@ -630,22 +672,33 @@ function buildProvisional(tool: PreviewTool): Feature | null {
   switch (tool.kind) {
     case 'extrude':
       return tool.distance === 0 ? null : buildProvisionalExtrude(tool);
-    case 'edgeBlend':
-      return tool.blend === 'fillet'
-        ? {
-            ...base,
-            name: 'Fillet (preview)',
-            kind: 'fillet',
-            edges: tool.edges,
-            radius: tool.size,
-          }
-        : {
-            ...base,
-            name: 'Chamfer (preview)',
-            kind: 'chamfer',
-            edges: tool.edges,
-            distance: tool.size,
-          };
+    case 'edgeBlend': {
+      const rules = tool.rules && tool.rules.length > 0 ? { rules: tool.rules } : {};
+      if (tool.blend === 'fillet') {
+        return {
+          ...base,
+          name: 'Fillet (preview)',
+          kind: 'fillet',
+          edges: tool.edges,
+          radius: tool.size,
+          ...(tool.radius2 !== undefined ? { radius2: tool.radius2 } : {}),
+          ...rules,
+        };
+      }
+      const mode = tool.chamferMode ?? 'equal';
+      return {
+        ...base,
+        name: 'Chamfer (preview)',
+        kind: 'chamfer',
+        edges: tool.edges,
+        distance: tool.size,
+        ...(mode !== 'equal' ? { mode } : {}),
+        ...(mode === 'twoDistances' ? { distance2: tool.distance2 ?? tool.size * 2 } : {}),
+        ...(mode === 'distanceAngle' ? { angle: tool.angle ?? 45 } : {}),
+        ...(mode !== 'equal' && tool.flip ? { flip: true } : {}),
+        ...rules,
+      };
+    }
     case 'shell':
       return {
         ...base,
@@ -654,6 +707,8 @@ function buildProvisional(tool: PreviewTool): Feature | null {
         bodyId: tool.bodyId,
         faces: tool.faces,
         thickness: tool.thickness,
+        ...(tool.direction === 'outside' ? { direction: 'outside' as const } : {}),
+        ...(tool.direction === 'outside' && tool.clearance ? { clearance: tool.clearance } : {}),
       };
     case 'boolean':
       return {
@@ -663,6 +718,7 @@ function buildProvisional(tool: PreviewTool): Feature | null {
         operation: tool.operation,
         targetBodyId: tool.targetBodyId,
         toolBodyIds: tool.toolBodyIds,
+        ...(tool.keepTools ? { keepTools: true } : {}),
       };
     case 'feature':
       return draftToFeature(tool.draft, { id: PREVIEW_FEATURE_ID, name: 'Preview' });
@@ -876,7 +932,13 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
     if (!buildProvisional(tool)) {
       // Nothing to preview (e.g. zero distance): show the committed model.
       shownPreviewRevision = previewRevision;
-      return { ...tool, previewEvaluation: null, previewPending: false, previewError: null };
+      return {
+        ...tool,
+        previewEvaluation: null,
+        previewPending: false,
+        previewError: null,
+        previewErrorRefs: null,
+      };
     }
     if (kernel && !previewJob) queueMicrotask(startPreviewJob);
     return { ...tool, previewPending: true };
@@ -912,6 +974,7 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
             // An invalid parameter keeps the last valid preview on screen.
             previewEvaluation: error ? current.previewEvaluation : outcome.result,
             previewError: error,
+            previewErrorRefs: error ? (outcome.result.errorRefs?.[provisional.id] ?? null) : null,
             previewPending: !latest,
           },
         });
@@ -1287,12 +1350,94 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
       if (tool?.kind !== 'edgeBlend' || bodyId !== tool.bodyId) return;
       const present = tool.edges.some((e) => e.key === edgeKey);
       if (present) {
-        if (tool.edges.length === 1) return; // keep at least one edge
+        // Keep at least one edge (or rule).
+        if (tool.edges.length === 1 && !(tool.rules && tool.rules.length > 0)) return;
         updatePreviewTool({ ...tool, edges: tool.edges.filter((e) => e.key !== edgeKey) });
         return;
       }
       const ref = makeEdgeRef(get().evaluation, bodyId, edgeKey);
       if (ref) updatePreviewTool({ ...tool, edges: [...tool.edges, ref] });
+    },
+    beginEdgeBlendByRule: (kind, rules) => {
+      if (rules.length === 0) return;
+      endPreview();
+      updatePreviewTool({
+        kind: 'edgeBlend',
+        phase: 'preview',
+        blend: kind,
+        bodyId: edgeRuleBodyId(rules[0]!),
+        edges: [],
+        rules,
+        size: DEFAULT_BLEND_SIZE_MM,
+        ...NO_PREVIEW,
+      });
+    },
+    setBlendOptions: (options) => {
+      const tool = get().activeTool;
+      if (tool?.kind !== 'edgeBlend') return;
+      const next = { ...tool, ...options } as EdgeBlendTool;
+      for (const key of Object.keys(options) as (keyof typeof options)[]) {
+        if (options[key] === undefined) delete next[key];
+      }
+      updatePreviewTool(next);
+    },
+    setShellDirection: (direction) => {
+      const tool = get().activeTool;
+      if (tool?.kind !== 'shell') return;
+      const next: ShellTool = { ...tool, direction };
+      if (direction === 'inside') {
+        delete next.direction;
+        delete next.clearance; // a clearance only applies outwards
+      }
+      updatePreviewTool(next);
+    },
+    setShellClearance: (clearance) => {
+      const tool = get().activeTool;
+      if (tool?.kind !== 'shell' || !Number.isFinite(clearance)) return;
+      const next: ShellTool = { ...tool, direction: 'outside', clearance };
+      if (clearance <= 0) delete next.clearance;
+      updatePreviewTool(next);
+    },
+    toggleShellFace: (bodyId, faceKey) => {
+      const tool = get().activeTool;
+      if (tool?.kind !== 'shell' || bodyId !== tool.bodyId) return;
+      const present = tool.faces.some((f) => f.key === faceKey);
+      if (present) {
+        if (tool.faces.length === 1) return; // keep at least one open face
+        updatePreviewTool({ ...tool, faces: tool.faces.filter((f) => f.key !== faceKey) });
+        return;
+      }
+      const ref = makeFaceRef(get().evaluation, bodyId, faceKey);
+      if (ref) updatePreviewTool({ ...tool, faces: [...tool.faces, ref] });
+    },
+    setBooleanKeepTools: (keep) => {
+      const tool = get().activeTool;
+      if (tool?.kind !== 'boolean') return;
+      const next: BooleanTool = { ...tool, keepTools: keep };
+      if (!keep) delete next.keepTools;
+      updatePreviewTool(next);
+    },
+    swapBooleanTarget: () => {
+      const tool = get().activeTool;
+      if (tool?.kind !== 'boolean' || tool.toolBodyIds.length === 0) return;
+      const [first, ...rest] = tool.toolBodyIds;
+      updatePreviewTool({
+        ...tool,
+        targetBodyId: first!,
+        toolBodyIds: [tool.targetBodyId, ...rest],
+      });
+    },
+    toggleBooleanTool: (bodyId) => {
+      const tool = get().activeTool;
+      if (tool?.kind !== 'boolean' || bodyId === tool.targetBodyId) return;
+      const present = tool.toolBodyIds.includes(bodyId);
+      if (present && tool.toolBodyIds.length === 1) return; // keep at least one tool body
+      updatePreviewTool({
+        ...tool,
+        toolBodyIds: present
+          ? tool.toolBodyIds.filter((id) => id !== bodyId)
+          : [...tool.toolBodyIds, bodyId],
+      });
     },
 
     beginShell: () => {

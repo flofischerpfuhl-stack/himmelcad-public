@@ -1,6 +1,7 @@
 /**
  * Commands of the modelling-feature tools (Revolve, Sweep, Loft, Mirror,
- * Pattern, Split, Align, Offset Face, Delete Face), spliced into
+ * Pattern, Split, Align, Offset Face, Delete Face, and the print-part tools
+ * Hole, Emboss, Draft, Rib, Thicken), spliced into
  * `registry.ts`'s `COMMANDS` so the menu, adaptive toolbar, search,
  * context menu and shortcuts all see them. Availability and the tool start
  * come from `featureTools.ts` (`createDraft`), so a disabled command shows
@@ -88,6 +89,55 @@ const SPECS: readonly FeatureCommandSpec[] = [
     kind: 'split',
     keywords: ['cut in two', 'divide', 'plane'],
     recommend: (ctx) => (count(ctx, 'face') === 1 && count(ctx, 'body') === 1 ? 85 : null),
+  },
+  // ---- print-part tools (`printFeatureTools.ts`) ----
+  {
+    id: 'tools.hole',
+    label: 'Hole',
+    group: 'tools',
+    kind: 'hole',
+    keywords: [
+      'drill',
+      'screw',
+      'bolt',
+      'counterbore',
+      'countersink',
+      'clearance',
+      'tap',
+      'thread',
+      'press fit',
+      'M3',
+    ],
+    recommend: (ctx) => (count(ctx, 'face') === 1 && !nonPlanarFaceSelected(ctx) ? 70 : null),
+  },
+  {
+    id: 'tools.emboss',
+    label: 'Emboss',
+    group: 'tools',
+    kind: 'emboss',
+    keywords: ['engrave', 'wrap', 'text', 'logo', 'label', 'deboss', 'raise'],
+    recommend: (ctx) => (count(ctx, 'sketchProfile') >= 1 && count(ctx, 'face') === 1 ? 108 : null),
+  },
+  {
+    id: 'tools.draft',
+    label: 'Draft',
+    group: 'tools',
+    kind: 'draft',
+    keywords: ['taper', 'mold', 'mould', 'angle faces', 'neutral plane', 'pull direction'],
+  },
+  {
+    id: 'tools.rib',
+    label: 'Rib',
+    group: 'tools',
+    kind: 'rib',
+    keywords: ['web', 'gusset', 'stiffener', 'brace', 'strut'],
+  },
+  {
+    id: 'tools.thicken',
+    label: 'Thicken',
+    group: 'tools',
+    kind: 'thicken',
+    keywords: ['surface to solid', 'offset solid', 'skin', 'sleeve', 'wall'],
   },
   {
     id: 'transform.mirror',

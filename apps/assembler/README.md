@@ -86,17 +86,22 @@ session with the same preview/commit/cancel contract. Each starts from the
 selection (a disabled command says what is missing), and clicks while it
 runs edit its references; clicking empty space finishes:
 
-| Tool                         | Start from                                           | Handles / badges                                                                                                                                                                                                       |
-| ---------------------------- | ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Revolve `V`                  | one sketch profile or planar face (+ axis edge)      | angle arc (15° snap, Shift free), New/Join/Cut, axis X/Y/Z; click an edge or sketch line (construction lines included) for the axis; default 360° about a construction line of the sketch, else an in-plane world axis |
-| Sweep `W`                    | profile + path edges (chain), or a straight line     | New/Join/Cut; line-path length arrow; click edges/a sketch outline for the path                                                                                                                                        |
-| Loft                         | two or more profiles, in selection order             | New/Join/Cut, Smooth/Straight                                                                                                                                                                                          |
-| Mirror                       | bodies (+ a planar face as plane)                    | plane YZ/XZ/XY/face with offset arrow, Keep original / Mirror in place                                                                                                                                                 |
-| Pattern                      | bodies (+ an edge as direction/axis)                 | Linear/Circular, X/Y/Z, spacing arrow or angle arc, count chip                                                                                                                                                         |
-| Split Body                   | one body (+ a planar face)                           | plane YZ/XZ/XY/face with offset arrow                                                                                                                                                                                  |
-| Align                        | a face on the moving body, then a face on the target | Face to face / Same direction, Centred / Keep position, gap arrow                                                                                                                                                      |
-| Offset Face                  | faces of one body (recommended for curved faces)     | distance arrow (negative removes material, e.g. enlarges a hole)                                                                                                                                                       |
-| Delete Face (`Del` on faces) | faces of one body                                    | — (holes, fillets and chamfers between planar faces)                                                                                                                                                                   |
+| Tool                         | Start from                                           | Handles / badges                                                                                                                                                                                                                       |
+| ---------------------------- | ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Revolve `V`                  | one sketch profile or planar face (+ axis edge)      | angle arc (15° snap, Shift free), New/Join/Cut, axis X/Y/Z; click an edge or sketch line (construction lines included) for the axis; default 360° about a construction line of the sketch, else an in-plane world axis                 |
+| Sweep `W`                    | profile + path edges (chain), or a straight line     | New/Join/Cut; line-path length arrow; click edges/a sketch outline for the path                                                                                                                                                        |
+| Loft                         | two or more profiles, in selection order             | New/Join/Cut, Smooth/Straight                                                                                                                                                                                                          |
+| Mirror                       | bodies (+ a planar face as plane)                    | plane YZ/XZ/XY/face with offset arrow, Keep original / Mirror in place                                                                                                                                                                 |
+| Pattern                      | bodies (+ an edge as direction/axis)                 | Linear/Circular, X/Y/Z, spacing arrow or angle arc, count chip                                                                                                                                                                         |
+| Split Body                   | one body (+ a planar face)                           | plane YZ/XZ/XY/face with offset arrow                                                                                                                                                                                                  |
+| Align                        | a face on the moving body, then a face on the target | Face to face / Same direction, Centred / Keep position, gap arrow                                                                                                                                                                      |
+| Offset Face                  | faces of one body (recommended for curved faces)     | distance arrow (negative removes material, e.g. enlarges a hole); printing clearance presets −0.1/−0.2/−0.3/−0.4 mm                                                                                                                    |
+| Delete Face (`Del` on faces) | faces of one body                                    | — (holes, fillets and chamfers between planar faces)                                                                                                                                                                                   |
+| Hole                         | a planar face, or a sketch with points/circles       | click the face to add a hole where clicked, click a hole to remove it; Simple/Counterbore/Countersink, Through all/Blind (depth arrow), size M2–M10 + ISO clearance/tap-drill or printed fit menu, Ø/head chips, cosmetic thread label |
+| Emboss                       | sketch profiles + a planar or cylindrical face       | height/depth arrow, Emboss/Engrave; wraps around cylinders keeping surface lengths                                                                                                                                                     |
+| Draft                        | side faces of one body                               | angle chip, pull direction; default neutral plane: the body's bottom (XY); click a flat face to make it the neutral plane                                                                                                              |
+| Rib                          | a sketch with the rib line (History card or profile) | thickness chip, Towards the body / Other side; click sketch lines to add or remove                                                                                                                                                     |
+| Thicken                      | faces of one body, or a sketch profile               | thickness arrow, Outside/Inside/Both sides, New body/Join/Cut                                                                                                                                                                          |
 
 New/Join/Cut is chosen automatically: a profile mostly inside a body cuts
 it, one touching a body (or lying on its face) joins, a free-standing one
@@ -106,6 +111,19 @@ can be dragged onto a face centroid, an edge midpoint or a circle centre
 (the rotation pivot), and a Move/Copy badge; a pure translation commits a
 `move` feature, anything else a `transform` feature. Every new feature has
 a History card with editable parameters.
+
+Variants of the kernel tools (`model/blendOptions.ts`): the Fillet/Chamfer
+pill has Constant/Variable (end radius field) and Equal/Two distances/
+Distance + angle (with Flip); **Fillet Face Edges** (selected faces),
+**Fillet Inside Edges** / **Fillet Outside Edges** (a selected body) pick
+edges by rule, re-evaluated on every edit. A fillet that fails outlines the
+failing edge in the error colour (also when its History card is selected);
+the History card lists picked edges and rules, each removable. Shell has
+Inside/Outside, a printing clearance for outward shells (+0.1…+0.4 mm: a case
+that fits over the part) and opens/closes faces clicked while it runs; its
+History card edits the clearance and per-wall thickness. Booleans keep or
+consume their tools, Swap exchanges target and tool, clicking bodies
+adds/removes tools.
 
 ## Selection, navigation and workspace
 

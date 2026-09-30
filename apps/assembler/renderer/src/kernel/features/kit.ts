@@ -18,7 +18,7 @@ import type { EdgeRef, FaceRef, SketchFeature } from '../../model/document.js';
 import type { SketchRegion } from '../../sketch/regions.js';
 import type { FaceGeom, KeyedFace, KeyedFaceKeys } from '../naming.js';
 import type { HistorySource, RawShape, Topology } from '../occt.js';
-import type { EvaluatedSketch } from '../types.js';
+import type { EvaluatedSketch, FeatureErrorRefs } from '../types.js';
 
 export type OpenCascade = ReturnType<typeof R.getOC>;
 export type Shape3D = R.Shape3D;
@@ -56,8 +56,13 @@ export interface ResolvedFace {
 
 export interface FeatureKit {
   oc: OpenCascade;
-  /** Throws the evaluator's per-feature error (shown on the history card / tool pill). */
-  fail(message: string): never;
+  /**
+   * Throws the evaluator's per-feature error (shown on the history card /
+   * tool pill); `refs` names the geometry to highlight.
+   */
+  fail(message: string, refs?: FeatureErrorRefs): never;
+  /** Naming keys of the body's edges, in topology order. */
+  edgeKeysOf(body: BodyStateLike): string[];
   /** `true` for an error raised by {@link fail} or a fatal kernel error (so wrappers don't re-wrap it). */
   isFailure(error: unknown): boolean;
   /** Readable text for an OCCT/JS exception. */
