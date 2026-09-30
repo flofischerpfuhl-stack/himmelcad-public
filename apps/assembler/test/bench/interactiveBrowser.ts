@@ -3,11 +3,13 @@
  * --browser`): starts the Vite dev server of the app on a free port,
  * replays scenarios (a) text + engrave and (b) M4 counterbore hole in
  * Chromium through the real UI (shortcuts, command search, tool panel,
- * clicks at world points via the DEV hook `window.__assembler`), with the
- * CAD kernel and the sketch solver in their Web Workers, and reports per
- * step: wall time until the kernel/solver are idle and the frame is drawn,
- * main-thread long-task time (the UI column: what blocks input), and the
- * kernel time the worker reports for the evaluation shown.
+ * clicks at world points via the DEV hook `window.__assembler`), and (c)
+ * the fillet drag and (d) the 60-entity sketch drag through the stores,
+ * with the CAD kernel and the sketch solver in their Web Workers. Per step:
+ * the response latency (first input of the step → the frame after the
+ * last store change it caused, see `measure`), main-thread long-task time
+ * (the UI column: what blocks input), and the kernel time the worker
+ * reports for the evaluation shown.
  *
  * Chromium: `ASM_CHROME` or the Playwright Chromium on this host.
  * `ASM_PROFILE=1` prints the top main-thread functions per step (CDP
@@ -77,9 +79,12 @@ async function idle(page: Page): Promise<number> {
   });
 }
 
-/** Marks a store action driven through the DEV hook as the step's input (no DOM event). */
+/**
+ * Marks a store action driven through the DEV hook as the step's input (no DOM event). Runs
+ * page-side (a twin is installed by the init script); this declaration only types it.
+ */
 function markInput(): void {
-  (window as any).__lastInput = performance.now();
+  (window as any).__lastInput ??= performance.now();
 }
 
 interface Profiled {
@@ -137,9 +142,10 @@ async function measure(
     throw error;
   }
   const settledAt = await idle(page);
-  // Response latency: from the step's last input (key, pointer, or hook-driven action) to the
-  // animation frame after the last store change it caused (the frame that shows the result) —
-  // Playwright's own overhead and the idle-wait's extra frames excluded.
+  // Response latency: from the step's first input (key/pointer event time stamp, or the
+  // hook-driven action) to the animation frame after the last store change it caused (the
+  // frame that shows the result) — Playwright's overhead before the first input and the idle
+  // wait's extra frames excluded; time the input waited behind a blocked main thread included.
   const marks = await page.evaluate(() => ({
     input: (window as any).__lastInput as number | null,
     frame: (window as any).__frameAfterChange as number | null,
@@ -514,10 +520,18 @@ export async function runBrowserBench(options: { runs: number }): Promise<StepRo
       // scope is not there).
       w.hook = () => (window as unknown as { __assembler: unknown }).__assembler;
       w.markInput = () => {
-        w.__lastInput = performance.now();
+        w.__lastInput ??= performance.now();
       };
+      // The event's own time stamp: when the input was created, so time spent queued behind a
+      // blocked main thread counts (the user waits for it too).
       for (const type of ['keydown', 'pointerdown', 'click']) {
-        window.addEventListener(type, () => w.markInput(), { capture: true });
+        window.addEventListener(
+          type,
+          (event) => {
+            w.__lastInput ??= event.timeStamp;
+          },
+          { capture: true },
+        );
       }
       w.__longTasks = [];
       new PerformanceObserver((list) => {

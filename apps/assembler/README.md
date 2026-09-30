@@ -39,6 +39,10 @@ stable-reference scheme and open risks: `assembler/KERNEL-SPIKE.md`.
   Select Through, kernel worker killed mid-edit, app killed → recovery).
   Case list and results: `assembler/ACCEPTANCE.md`.
 - `pnpm bench:kernel` — kernel performance table (`assembler/KERNEL-SPIKE.md`).
+- `pnpm bench:interactive` — interactive latency per stage (text + engrave,
+  hole, fillet drag, 60-entity sketch drag) in Node; `-- --browser` also
+  replays them in Chromium against a Vite dev server
+  (`assembler/KERNEL-SPIKE.md` "Interactive latency").
 - `pnpm package:win` — Windows installer (NSIS, per-user, no admin prompt)
   into `release/` via `electron-builder.win.yml`; `pnpm icon` regenerates the
   placeholder app icon (`scripts/generate-icon.mjs`).

@@ -20,9 +20,10 @@
  * printability re-analysis runs in its own worker, debounced; its cost is
  * listed separately (`print`) and is never on the path of a step.
  *
- * `--json` prints machine-readable rows; `--browser` also replays (a) and
- * (b) in Chromium against a Vite dev server (`interactiveBrowser.ts`),
- * with the CAD kernel and the solver in their Web Workers.
+ * `--json` prints machine-readable rows; `--browser` also replays the
+ * scenarios in Chromium against a Vite dev server (`interactiveBrowser.ts`),
+ * with the CAD kernel and the solver in their Web Workers
+ * (`--only-browser`: that part alone); `--runs n` (default 3).
  */
 import { createRequire } from 'node:module';
 
@@ -528,30 +529,34 @@ async function main(): Promise<void> {
   const json = args.includes('--json');
   const runsIndex = args.indexOf('--runs');
   const runs = runsIndex >= 0 ? Math.max(1, Number(args[runsIndex + 1]) || 3) : 3;
+  const onlyBrowser = args.includes('--only-browser');
 
-  // Warm-up (kernel load, JIT, font, solver) — not reported.
-  await scenarioText(-0.9);
-  await scenarioHole(38);
+  let rows: StepRow[] = [];
+  if (!onlyBrowser) {
+    // Warm-up (kernel load, JIT, font, solver) — not reported.
+    await scenarioText(-0.9);
+    await scenarioHole(38);
 
-  const textRuns: StepRow[][] = [];
-  const labelRuns: StepRow[][] = [];
-  const holeRuns: StepRow[][] = [];
-  const label = { text: 'HIMMELCAD 26', height: 5, shift: 22 };
-  for (let i = 0; i < runs; i += 1) {
-    textRuns.push(await scenarioText(-1 - i * 0.01));
-    labelRuns.push(await scenarioText(-1 - i * 0.01, label));
-    holeRuns.push(await scenarioHole(40 + i * 0.5));
+    const textRuns: StepRow[][] = [];
+    const labelRuns: StepRow[][] = [];
+    const holeRuns: StepRow[][] = [];
+    const label = { text: 'HIMMELCAD 26', height: 5, shift: 22 };
+    for (let i = 0; i < runs; i += 1) {
+      textRuns.push(await scenarioText(-1 - i * 0.01));
+      labelRuns.push(await scenarioText(-1 - i * 0.01, label));
+      holeRuns.push(await scenarioHole(40 + i * 0.5));
+    }
+    rows = [
+      ...medianRows(textRuns),
+      ...medianRows(labelRuns).filter((r) => /place text|Emboss|Engrave/.test(r.step)),
+      ...medianRows(holeRuns),
+      ...medianRows([await scenarioFillet(10)]),
+      ...medianRows([await scenarioSketchDrag(30)]),
+    ];
   }
-  const rows = [
-    ...medianRows(textRuns),
-    ...medianRows(labelRuns).filter((r) => /place text|Emboss|Engrave/.test(r.step)),
-    ...medianRows(holeRuns),
-    ...medianRows([await scenarioFillet(10)]),
-    ...medianRows([await scenarioSketchDrag(30)]),
-  ];
 
   let browser: StepRow[] | null = null;
-  if (args.includes('--browser')) {
+  if (args.includes('--browser') || onlyBrowser) {
     const { runBrowserBench } = await import('./interactiveBrowser.js');
     browser = await runBrowserBench({ runs });
   }
@@ -559,15 +564,17 @@ async function main(): Promise<void> {
   if (json) {
     process.stdout.write(`${JSON.stringify({ kernelLoadMs, rows, browser }, null, 2)}\n`);
   } else {
-    const lines = [
-      `Interactive bench — Node ${process.version}, in-process kernel + solver, medians of ${runs} runs (drags: of all steps)`,
-      '',
-      formatRows(rows),
-    ];
+    const lines = onlyBrowser
+      ? []
+      : [
+          `Interactive bench — Node ${process.version}, in-process kernel + solver, medians of ${runs} runs (drags: of all steps)`,
+          '',
+          formatRows(rows),
+        ];
     if (browser) {
       lines.push(
         '',
-        'Browser (Chromium, Vite dev server, kernel + solver in Web Workers; UI = main-thread long tasks; Kernel = worker-reported)',
+        'Browser (Chromium, Vite dev server, kernel + solver in Web Workers; Wall = first input → frame showing the result; UI = main-thread long tasks; Kernel = worker-reported)',
         '',
         formatRows(browser),
       );
