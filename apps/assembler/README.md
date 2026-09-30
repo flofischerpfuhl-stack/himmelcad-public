@@ -116,6 +116,47 @@ validated reordering, the shortcut sheet (hold Ctrl or `?`), Settings
 properties, colour is a `setAppearance` step) and limits:
 `assembler/SELECTION-NAVIGATION.md`.
 
+## Display, Measure, Section View and image export
+
+- **Display** (right dock, View › Display, command search, `Alt+1…7`): Shaded
+  with edges, Shaded, Wireframe, X-Ray, Visualized (per-body material: PLA
+  matte, PETG glossy, metal, resin — set with the body's colour in the
+  Appearance dialog, stored as `material` on its `setAppearance` step),
+  Zebra stripes and Curvature map; toggles for edges, hidden edges (dashed,
+  `Alt+H`), grid (`Alt+G`) and axes; High quality (screen-space ambient
+  occlusion, ground contact shadow) is a preference. The curvature map is
+  the maximum normal curvature estimated per mesh vertex from the kernel's
+  vertex normals (`viewport/bodyGeometry.ts`) — an approximation that
+  depends on the tessellation, stated in its legend; zebra stripes are view-
+  anchored reflections of parallel bars (continuity check).
+- **Renderer** (`viewport/gl.ts`): kernel meshes stay on the GPU (uploaded
+  once per tessellation), edges/silhouettes/highlights are anti-aliased
+  instanced screen-space lines of the same CSS width at any DPR, silhouettes
+  of curved faces come from per-mesh candidate edges, clip planes adapt to
+  the visible model (`camera.ts#depthRange`), picking is drawn lazily (only
+  when something reads it) with one draw per body. Idle: no frames drawn.
+  Measured 2026-09-30 (Ryzen 3 3200G, Radeon Vega 8, `viewportBenchmark`):
+  the 60-feature synthetic plate (53k triangles) costs 2.6 ms per frame at
+  1440 × 900 with High quality (1.7 ms wireframe), 5.3 ms at DPR 2.
+- **Measure** (left dock › Measure): a movable panel with the current
+  measurement (selection, or two points picked with Points — snapped to
+  vertices, edge midpoints and circle centres) and pinned ones (pin, show/hide
+  in the view, copy, delete; saved in the project's `viewState.measurements`
+  as references and re-measured on every change). Body box/volume/mass
+  (density from the material, PLA otherwise), edge length, circle/arc
+  radius/diameter, face area, cylinder diameter, parallel distances, angles
+  between faces/edges, centre distances; minimum distance between any two
+  bodies/faces/edges/points is exact from the kernel (`BRepExtrema`,
+  `KernelAdapter.measureDistance`), else (reference meshes) a mesh estimate
+  labelled "approx.". Values in the display unit (Settings).
+- **Section View**: X/Y/Z or **Face** (the selected planar face, or pick
+  one), caps in each body's own colour (stencil parity per body, hatched),
+  cut outlines, **Section only** (2D: just the cut regions, camera normal to
+  the plane) and **Look at section**. Plane and section-only are view state.
+- **File › Export image…** (`Ctrl+Shift+E`): the current view as PNG — view
+  size ×1–4, Full HD, QHD, 4K or custom, optional transparent background and
+  grid/axes; rendered offscreen (4× MSAA) without tool handles and hover.
+
 ## Files, reference meshes and the Windows installer
 
 - `.hcasm` projects (schema 2, `model/project/format.ts`) also carry the
@@ -192,6 +233,9 @@ viewport, directly usable with `page.mouse`.
 | `workspaceStore`                  | Workspace view state: Select Through, saved views, `sendCamera({ kind: 'home' \| 'fitAll' \| 'fitSelection' \| 'direction' \| 'roll' \| 'pose' \| 'lookAtFace' })`, overlays.                                                        |
 | `itemsStore` / `preferences`      | Item names and folders; user preferences (theme, units, navigation preset, projection, `animateCamera` — set `false` for deterministic shots).                                                                                       |
 | `cameraPose()`                    | The live camera pose (`yaw`, `pitch`, `roll`, `fov`, `target`, `distance`).                                                                                                                                                          |
+| `viewportStats(finish?)`          | Renderer counters: frames drawn (idle check), last frame CPU ms, uploads, draw calls, AO/shadow state; `finish` syncs the GPU after each frame.                                                                                      |
+| `viewportBenchmark(frames)`       | Mean ms per frame over `frames` back-to-back renders while orbiting (scene build + GPU, no vsync).                                                                                                                                   |
+| `measureStore`                    | Measure panel state: pins, picked points, Points tool.                                                                                                                                                                               |
 
 The view cube's cells carry `data-cell="<face>:<i>:<j>"` (e.g. `front:1:1` =
 the Front-Right-Top corner) for DOM-anchored clicks. Example (see
