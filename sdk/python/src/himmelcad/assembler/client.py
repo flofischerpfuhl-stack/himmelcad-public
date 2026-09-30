@@ -34,6 +34,7 @@ METHODS = (
     "project.new", "project.open", "project.save",
     "export.meshStats", "print.analyze", "print.orientations", "print.placeOnPlate", "print.orient",
     "interop.formats", "import.mesh", "import.dxf", "export.dxf", "mesh.toSolid",
+    "import.iges", "export.iges",
 )
 
 
@@ -249,12 +250,13 @@ class AssemblerClient:
         return self.call("history.redo")
 
     def export(self, fmt: str, *, body_ids: list[str] | None = None, resolution: str | None = None, stl_format: str | None = None, **step: Any) -> bytes:
-        """Returns the exported file bytes (``fmt``: ``stl``, ``3mf`` or ``step``).
+        """Returns the exported file bytes (``fmt``: ``stl``, ``3mf``, ``step`` or ``iges``).
 
         ``resolution`` (STL/3MF): ``current`` (display mesh), ``coarse``, ``standard`` or ``fine``;
         ``stl_format``: ``binary`` (default) or ``ascii``. STEP options (keyword arguments):
         ``schema`` (``AP242``/``AP214``), ``unit`` (``mm``/``cm``/``m``/``in``), ``structure``
-        (``flat``/``folders``) and ``visible_only``.
+        (``flat``/``folders``) and ``visible_only``. IGES options (HimmelCAD OCCT build only):
+        ``unit``, ``mode`` (``faces``/``brep``) and ``visible_only``.
         """
         params: dict[str, Any] = {"bodyIds": body_ids}
         if fmt in ("stl", "3mf"):
@@ -271,8 +273,13 @@ class AssemblerClient:
                 structure=step.get("structure"),
                 visibleOnly=step.get("visible_only"),
             )
+        elif fmt == "iges":
+            unknown = set(step) - {"unit", "mode", "visible_only"}
+            if unknown:
+                raise TypeError(f"unknown IGES option(s): {', '.join(sorted(unknown))}")
+            params.update(unit=step.get("unit"), mode=step.get("mode"), visibleOnly=step.get("visible_only"))
         elif step:
-            raise TypeError(f"{', '.join(sorted(step))} only apply to STEP exports")
+            raise TypeError(f"{', '.join(sorted(step))} only apply to STEP and IGES exports")
         result = self.call(f"export.{fmt}", params)
         return base64.b64decode(result["data"])
 
@@ -306,6 +313,11 @@ class AssemblerClient:
         names, colours and ``itemPath`` folders) or ``single`` (the whole file as one body)."""
         source = Path(path)
         return self.call("import.step", {**_file_params(source), "structure": structure})
+
+    def import_iges(self, path: str | Path) -> Mapping[str, Any]:
+        """One Import step from an IGES file (surfaces sewn into solids). Needs the HimmelCAD OCCT
+        build; raises ``unsupported`` otherwise (``formats()`` reports availability)."""
+        return self.call("import.iges", _file_params(Path(path)))
 
     # ---- import/export (interop) ----------------------------------------------------------------
     def formats(self) -> Mapping[str, Any]:

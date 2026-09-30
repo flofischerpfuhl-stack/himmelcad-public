@@ -69,6 +69,8 @@ import {
   importDxf,
   importMesh,
   importStep as importStepCommand,
+  importIges,
+  IGES_UNAVAILABLE,
   interopFormats,
   meshToSolid,
   stepExportOptions,
@@ -398,6 +400,7 @@ export class AgentSession {
       case 'export.stl':
       case 'export.3mf':
       case 'export.step':
+      case 'export.iges':
         return this.exportBodies(method, p);
       case 'export.meshStats':
         return this.meshStats(p);
@@ -411,6 +414,8 @@ export class AgentSession {
         return this.write('print.orient', (f, e) => this.printOrient(p, f, e));
       case 'import.step':
         return importStepCommand(this.interop(), p);
+      case 'import.iges':
+        return importIges(this.interop(), p);
       case 'interop.formats':
         return interopFormats(this.interop());
       case 'import.mesh':
@@ -1204,7 +1209,7 @@ export class AgentSession {
     const evaluation = await this.readEvaluation(p);
     let ids = Array.isArray(p.bodyIds) ? (p.bodyIds as string[]) : null;
     for (const id of ids ?? []) findBody(evaluation, id);
-    if (method === 'export.step' && p.visibleOnly === true) {
+    if ((method === 'export.step' || method === 'export.iges') && p.visibleOnly === true) {
       const hidden = new Set(this.store.getState().hiddenBodyIds);
       ids = (ids ?? evaluation.bodies.map((b) => b.id)).filter((id) => !hidden.has(id));
     }
@@ -1236,6 +1241,31 @@ export class AgentSession {
         bytes = buildThreeMf(meshed, { title: this.store.getState().projectName });
         mediaType = 'model/3mf';
       }
+    } else if (method === 'export.iges') {
+      await this.kernelReady();
+      if (!this.kernel.status.capabilities?.igesWrite) {
+        throw new ApiError('unsupported', IGES_UNAVAILABLE, {
+          hint: 'interop.formats reports which formats the loaded kernel supports; use STEP instead.',
+        });
+      }
+      try {
+        bytes = await this.kernel.exportIges(
+          this.readFeatures(p),
+          bodies.map((b) => b.id),
+          {
+            ...(p.unit === 'mm' || p.unit === 'cm' || p.unit === 'm' || p.unit === 'in'
+              ? { unit: p.unit }
+              : {}),
+            ...(p.mode === 'brep' || p.mode === 'faces' ? { mode: p.mode } : {}),
+          },
+        );
+      } catch (error) {
+        throw new ApiError(
+          'internal',
+          `IGES export failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+      mediaType = 'model/iges';
     } else {
       await this.kernelReady();
       const items = useItemsStore.getState();
@@ -1485,6 +1515,7 @@ export class AgentSession {
       nextFeatureName: (prefix, features) => nextFeatureName(prefix, features),
       ensureWritable: () => this.ensureWritable(),
       capabilities: () => this.kernel.status.capabilities ?? null,
+      kernelReady: () => this.kernelReady(),
     };
   }
 

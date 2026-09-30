@@ -110,10 +110,20 @@ export const INTEROP_METHODS: Record<string, MethodSpec> = {
     kind: 'query',
     capability: 'document.read',
     summary:
-      'Import and export formats with what each keeps (structure, names, colours, units) and whether the loaded kernel supports it (IGES: not in this OCCT build).',
+      'Import and export formats with what each keeps (structure, names, colours, units) and whether the loaded kernel supports it (IGES and the XCAF STEP reader only with the HimmelCAD OCCT build).',
     params: { type: 'object', properties: {}, additionalProperties: false },
     result:
       '{import: [{format, extensions, target, available, reason?, keeps}], export: [...], kernel}',
+  },
+  'import.iges': {
+    kind: 'command',
+    capability: 'document.write',
+    transactional: true,
+    summary:
+      'Imports an IGES file as one "Import" history step: surfaces are sewn and every closed shell becomes a solid body (open ones stay surface bodies, with a warning); named after the file; unit converted to mm. Needs the HimmelCAD OCCT build (interop.formats reports it); `unsupported` otherwise.',
+    params: fileInput({ expectedRevision: revision }),
+    result:
+      '{featureId, createdBodyIds, parts: [{bodyId, name, color}], warnings?, revision, committed, errors}',
   },
   'import.mesh': {
     kind: 'command',
@@ -199,7 +209,13 @@ export interface InteropContext {
   nextFeatureName(prefix: string, features: readonly Feature[]): string;
   ensureWritable(): void;
   capabilities(): KernelFormatCapabilities | null;
+  /** Resolves once the kernel is loaded (capabilities are known then). */
+  kernelReady(): Promise<void>;
 }
+
+/** Why IGES is unavailable on the default OCCT module. */
+export const IGES_UNAVAILABLE =
+  'IGES is not in this build: the CAD kernel (replicad-opencascadejs 1.1.0) has no IGES reader or writer. It needs the HimmelCAD OCCT build (HIMMELCAD_OCCT=himmelcad).';
 
 export interface WriteLike {
   features: Feature[];
@@ -208,33 +224,85 @@ export interface WriteLike {
   result: Json;
 }
 
-export function interopFormats(ctx: InteropContext): Json {
+export async function interopFormats(ctx: InteropContext): Promise<Json> {
+  // Capabilities are reported by the loaded kernel: wait for it, so an early
+  // query does not report IGES as missing on the HimmelCAD build.
+  await ctx.kernelReady().catch(() => undefined);
   const caps = ctx.capabilities();
-  const available = (format: string): { available: boolean; reason?: string } => {
-    if (format === 'iges') {
+  const importEntry = (f: (typeof INTEROP_FORMATS)[number]): Json => {
+    if (f.format === 'iges') {
       return caps?.igesRead
-        ? { available: true }
-        : {
-            available: false,
-            reason:
-              'IGES is not in this OCCT build (replicad-opencascadejs 1.1.0 exposes no IGESControl_Reader/Writer).',
-          };
-    }
-    return { available: true };
-  };
-  return {
-    import: INTEROP_FORMATS.map((f) => ({ ...f, ...available(f.format) })),
-    export: STEP_EXPORT_FORMATS.map((f) =>
-      f.format === 'iges'
         ? {
             ...f,
-            ...(caps?.igesWrite
-              ? { available: true }
-              : { available: false, reason: 'IGES is not in this OCCT build.' }),
+            keeps:
+              'surfaces sewn into solids (open shells stay surface bodies); unit converted to mm; no names or colours',
+            available: true,
           }
+        : { ...f, available: false, reason: IGES_UNAVAILABLE };
+    }
+    if (f.format === 'step') {
+      return {
+        ...f,
+        available: true,
+        reader: caps?.stepXcafRead ? 'xcaf' : 'text',
+      };
+    }
+    return { ...f, available: true };
+  };
+  return {
+    import: INTEROP_FORMATS.map(importEntry),
+    export: STEP_EXPORT_FORMATS.map((f) =>
+      f.format === 'iges'
+        ? caps?.igesWrite
+          ? {
+              ...f,
+              keeps:
+                'exact geometry as trimmed surfaces (or MSBO solids); length unit; no names or colours',
+              available: true,
+            }
+          : { ...f, available: false, reason: IGES_UNAVAILABLE }
         : { ...f, available: true },
     ),
     kernel: caps,
+  };
+}
+
+/** `import.iges`: one Import step (`format: "iges"`), bodies per solid / open surface. */
+export async function importIges(ctx: InteropContext, p: Json): Promise<Json> {
+  await ctx.kernelReady();
+  if (!ctx.capabilities()?.igesRead) {
+    throw new ApiError('unsupported', IGES_UNAVAILABLE, {
+      hint: 'interop.formats reports which formats the loaded kernel supports; use STEP instead.',
+    });
+  }
+  const { bytes, fileName } = await ctx.readFile(p, 'import.igs');
+  const data = bytesToBase64(bytes);
+  const result = await ctx.write('import.iges', (features) => {
+    const id = ctx.allocateFeatureId('import');
+    const feature = {
+      id,
+      name: ctx.nextFeatureName('Import', features),
+      suppressed: false,
+      kind: 'importStep' as const,
+      format: 'iges' as const,
+      data,
+      fileName,
+    };
+    return {
+      features: [...features, feature],
+      touched: [id],
+      selection: [{ kind: 'feature', featureId: id }],
+      result: { featureId: id, name: feature.name, kind: 'importStep', format: 'iges' },
+    };
+  });
+  const featureId = result.featureId as string;
+  const evaluation = await ctx.readEvaluation({});
+  const created = evaluation.bodies.filter((b) => b.createdBy === featureId);
+  return {
+    ...result,
+    createdBodyIds: created.map((b) => b.id),
+    parts: created.map((b) => ({ bodyId: b.id, name: b.name, color: b.color })),
+    ...(evaluation.warnings[featureId] ? { warnings: [evaluation.warnings[featureId]] } : {}),
   };
 }
 

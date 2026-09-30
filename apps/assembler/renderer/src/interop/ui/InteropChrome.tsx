@@ -12,7 +12,13 @@ import { Button, Checkbox, Dialog, NumberInput, ProgressBar, Select, Tooltip } f
 import { useAssemblerStore } from '../../model/store.js';
 import { useWorkspaceStore } from '../../model/workspace.js';
 import { INTEROP_FORMATS } from '../formats.js';
-import { dxfExportTarget, useInteropStore, type StepExportSettings } from '../interopStore.js';
+import {
+  dxfExportTarget,
+  kernelFormatCapabilities,
+  useInteropStore,
+  type IgesExportSettings,
+  type StepExportSettings,
+} from '../interopStore.js';
 import styles from './InteropChrome.module.css';
 
 function Row({ label, children }: { label: string; children: React.ReactNode }): JSX.Element {
@@ -75,7 +81,10 @@ function useFileDrop(): void {
 function DropOverlay(): JSX.Element | null {
   const active = useInteropStore((s) => s.dragActive);
   if (!active) return null;
-  const formats = INTEROP_FORMATS.filter((f) => f.format !== 'iges').map((f) => f.label);
+  const igesRead = kernelFormatCapabilities()?.igesRead === true;
+  const formats = INTEROP_FORMATS.filter((f) => igesRead || f.format !== 'iges').map(
+    (f) => f.label,
+  );
   return (
     <div className={styles.dropOverlay} aria-hidden>
       <div className={styles.dropCard}>
@@ -406,7 +415,122 @@ function StepExportDialog(): JSX.Element {
         {error ? <p className={styles.errorText}>{error}</p> : null}
         <p className={styles.hint}>
           Exact B-rep with body names and colours. The unit is written to the file; the geometry is
-          converted, not rescaled. IGES export is not in this build.
+          converted, not rescaled.
+          {kernelFormatCapabilities()?.igesWrite
+            ? ' For IGES use File › Export IGES….'
+            : ' IGES export is not in this build.'}
+        </p>
+      </div>
+    </Dialog>
+  );
+}
+
+function IgesExportDialog(): JSX.Element {
+  const open = useInteropStore((s) => s.igesExportOpen);
+  const initial = useInteropStore((s) => s.igesExportSettings);
+  const selection = useAssemblerStore((s) => s.selection);
+  const hiddenCount = useAssemblerStore((s) => s.hiddenBodyIds.length);
+  const hasSelectedBody = selection.some((s) => s.kind === 'body');
+  const [settings, setSettings] = useState<IgesExportSettings>(initial);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    setError(null);
+    setSettings({
+      ...initial,
+      scope: hasSelectedBody ? 'selected' : initial.scope === 'selected' ? 'all' : initial.scope,
+    });
+    // Only when the dialog opens.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+  const close = () => useInteropStore.getState().setIgesExportOpen(false);
+  const patch = (next: Partial<IgesExportSettings>) => setSettings((s) => ({ ...s, ...next }));
+  const run = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      if (await useInteropStore.getState().exportIges(settings)) {
+        close();
+        useWorkspaceStore.getState().notify('IGES exported.');
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Dialog
+      open={open}
+      onClose={close}
+      title="Export IGES"
+      actions={
+        <>
+          <Button variant="quiet" onClick={close}>
+            Cancel
+          </Button>
+          <Button
+            variant="primary"
+            loading={busy}
+            loadingLabel="Exporting"
+            onClick={() => void run()}
+          >
+            Export
+          </Button>
+        </>
+      }
+    >
+      <div className={styles.body}>
+        <Row label="Bodies">
+          <Select
+            aria-label="Bodies to export"
+            value={settings.scope}
+            options={[
+              { value: 'all', label: 'All bodies' },
+              {
+                value: 'visible',
+                label: 'Visible bodies only',
+                description: hiddenCount > 0 ? `${hiddenCount} hidden` : 'Nothing is hidden.',
+              },
+              {
+                value: 'selected',
+                label: 'Selected bodies',
+                disabled: !hasSelectedBody,
+                description: 'Select bodies first.',
+              },
+            ]}
+            onChange={(e) => patch({ scope: e.currentTarget.value as IgesExportSettings['scope'] })}
+          />
+        </Row>
+        <Row label="Geometry">
+          <Select
+            aria-label="IGES geometry mode"
+            value={settings.mode}
+            options={[
+              { value: 'faces', label: 'Trimmed surfaces (widest support)' },
+              { value: 'brep', label: 'Solids (MSBO, IGES 5.3)' },
+            ]}
+            onChange={(e) => patch({ mode: e.currentTarget.value as IgesExportSettings['mode'] })}
+          />
+        </Row>
+        <Row label="Units">
+          <Select
+            aria-label="IGES length unit"
+            value={settings.unit}
+            options={[
+              { value: 'mm', label: 'Millimetres' },
+              { value: 'cm', label: 'Centimetres' },
+              { value: 'm', label: 'Metres' },
+              { value: 'in', label: 'Inches' },
+            ]}
+            onChange={(e) => patch({ unit: e.currentTarget.value as IgesExportSettings['unit'] })}
+          />
+        </Row>
+        {error ? <p className={styles.errorText}>{error}</p> : null}
+        <p className={styles.hint}>
+          Exact geometry only: IGES keeps no body names, colours or assembly structure — use STEP
+          for those.
         </p>
       </div>
     </Dialog>
@@ -495,6 +619,7 @@ export function InteropChrome(): JSX.Element {
       <DxfImportDialog />
       <UnitOfferDialog />
       <StepExportDialog />
+      <IgesExportDialog />
       <DxfExportDialog />
       <ReportDialog />
     </>

@@ -1,9 +1,10 @@
-import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import react from '@vitejs/plugin-react';
 import { defineConfig, type Plugin } from 'vite';
+
+import { resolveHimmelcadOcct, selectedOcctModule } from './headless/occtModule.ts';
 
 // Dev mirror of `electron/main.ts`'s per-file CSP: the main document (its
 // `<meta>` CSP in `index.html`) stays strict — no `unsafe-eval`, no
@@ -43,49 +44,38 @@ function kernelWorkerCsp(): Plugin {
   };
 }
 
-// OCCT module selection (same variable as `headless/occtModule.ts`):
-// `HIMMELCAD_OCCT=himmelcad` swaps `replicad-opencascadejs` (glue + wasm) for
-// the HimmelCAD build in `vendor/occt-wasm/dist` — same loader contract, more
-// OCCT classes. Default: the npm package.
-function occtModuleAliases(): { find: RegExp; replacement: string }[] {
-  const selected = (process.env.HIMMELCAD_OCCT ?? '').trim().toLowerCase();
-  if (selected === '' || selected === 'replicad') return [];
-  if (selected !== 'himmelcad') {
-    throw new Error(`HIMMELCAD_OCCT must be "replicad" or "himmelcad", not "${selected}"`);
-  }
-  const dir = path.resolve(
-    process.env.HIMMELCAD_OCCT_DIR ??
-      fileURLToPath(new URL('../../vendor/occt-wasm/dist', import.meta.url)),
-  );
-  for (const file of ['himmelcad_occt.js', 'himmelcad_occt.wasm']) {
-    if (!existsSync(path.join(dir, file))) {
-      throw new Error(
-        `HIMMELCAD_OCCT=himmelcad but ${path.join(dir, file)} is missing; run vendor/occt-wasm/build.sh`,
-      );
-    }
-  }
-  const posix = dir.split(path.sep).join('/');
-  return [
-    {
-      find: /^replicad-opencascadejs\/wasm(\?url)?$/,
-      replacement: `${posix}/himmelcad_occt.wasm$1`,
-    },
-    { find: /^replicad-opencascadejs$/, replacement: `${posix}/himmelcad_occt.js` },
-  ];
-}
-
+// OCCT module selection (`headless/occtModule.ts`, shared with the headless
+// CLI and tests): `HIMMELCAD_OCCT=himmelcad` swaps `replicad-opencascadejs`
+// (glue + wasm) for the HimmelCAD build from the local artifact cache
+// (`HIMMELCAD_OCCT_DIR`, else `<cache>/<version>`), SHA-256-checked against
+// `vendor/occt-wasm/artifacts.sha256`; missing or wrong files fail the build.
+const occtSelection = (() => {
+  if (selectedOcctModule() !== 'himmelcad') return null;
+  const resolved = resolveHimmelcadOcct();
+  const posix = resolved.dir.split(path.sep).join('/');
+  return {
+    dir: resolved.dir,
+    aliases: [
+      {
+        find: /^replicad-opencascadejs\/wasm(\?url)?$/,
+        replacement: `${posix}/himmelcad_occt.wasm$1`,
+      },
+      { find: /^replicad-opencascadejs$/, replacement: `${posix}/himmelcad_occt.js` },
+    ],
+  };
+})();
 export default defineConfig({
   root: 'renderer',
   base: './',
   plugins: [react(), kernelWorkerCsp()],
-  resolve: { alias: occtModuleAliases() },
+  resolve: { alias: occtSelection?.aliases ?? [] },
   server: {
     port: 5175,
     strictPort: true,
     host: true,
-    // The HimmelCAD OCCT build (vendor/occt-wasm/dist) lives outside the workspace package.
-    ...(occtModuleAliases().length > 0
-      ? { fs: { allow: [fileURLToPath(new URL('../..', import.meta.url))] } }
+    // The HimmelCAD OCCT build lives in the artifact cache, outside the workspace.
+    ...(occtSelection
+      ? { fs: { allow: [fileURLToPath(new URL('../..', import.meta.url)), occtSelection.dir] } }
       : {}),
   },
   // The CAD kernel worker is an ES module worker (see renderer/src/kernel/kernel.worker.ts).

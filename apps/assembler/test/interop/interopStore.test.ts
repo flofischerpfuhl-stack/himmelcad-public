@@ -11,6 +11,7 @@ import { installAssemblyFolderSync } from '../../renderer/src/interop/importFold
 import { setInteropKernel, useInteropStore } from '../../renderer/src/interop/interopStore.js';
 import { EMPTY_ITEMS_META, useItemsStore } from '../../renderer/src/model/items.js';
 import { useAssemblerStore } from '../../renderer/src/model/store.js';
+import { selectedOcctModule } from '../../headless/occtModule.js';
 import { createNodeKernelAdapter } from '../kernel/nodeKernel.js';
 import { interopFixture } from './fixtures.js';
 
@@ -60,10 +61,19 @@ void test('a broken STEP file is reported and its step taken back', async () => 
   assert.equal(store.getState().features.length, 0, 'nothing half-imported stays');
 });
 
+const himmelcad = selectedOcctModule() === 'himmelcad';
+
 void test('IGES and unknown files are refused with the reason', async () => {
   await reset();
   await useInteropStore.getState().importFiles([{ name: 'part.igs', bytes: new Uint8Array(8) }]);
-  assert.match(useInteropStore.getState().report?.lines[0] ?? '', /IGES is not in this build/);
+  await store.getState().whenSettled();
+  // Default module: no IGES reader. HimmelCAD OCCT build: the reader runs, finds nothing, and
+  // the failed step is taken back.
+  assert.match(
+    useInteropStore.getState().report?.lines[0] ?? '',
+    himmelcad ? /IGES import failed/ : /IGES is not in this build/,
+  );
+  assert.equal(store.getState().features.length, 0, 'nothing half-imported stays');
   useInteropStore.getState().dismissReport();
   await useInteropStore.getState().importFiles([{ name: 'photo.png', bytes: new Uint8Array(8) }]);
   assert.match(useInteropStore.getState().report?.lines[0] ?? '', /Unsupported file type/);
@@ -145,3 +155,30 @@ void test('Mesh to Solid from the UI: step added, mesh hidden; an open mesh is r
   assert.equal(store.getState().features.length, 0);
   assert.match(useInteropStore.getState().report?.lines[0] ?? '', /4 open edges/);
 });
+
+void test(
+  'HimmelCAD OCCT build: a dropped IGES file becomes one Import step with solid bodies',
+  { skip: !himmelcad && 'needs the HimmelCAD OCCT build (HIMMELCAD_OCCT=himmelcad)' },
+  async () => {
+    await reset();
+    await useInteropStore.getState().importFiles([file('robot-assembly.step')]);
+    await store.getState().whenSettled();
+    const source = store.getState().evaluation.bodies;
+    const bytes = await kernel.exportIges(store.getState().features);
+    await reset();
+    await useInteropStore.getState().importFiles([{ name: 'robot.igs', bytes }]);
+    await store.getState().whenSettled();
+    assert.equal(useInteropStore.getState().report, null, 'no error or warning report');
+    assert.equal(store.getState().features.length, 1);
+    const feature = store.getState().features[0]!;
+    assert.equal(feature.kind === 'importStep' && feature.format, 'iges');
+    const bodies = store.getState().evaluation.bodies;
+    assert.equal(bodies.length, source.length);
+    assert.ok(bodies.every((b) => b.valid));
+    assert.equal(
+      store.getState().selection.length,
+      source.length,
+      'the imported bodies are selected',
+    );
+  },
+);

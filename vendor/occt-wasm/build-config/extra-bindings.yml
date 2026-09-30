@@ -17,5 +17,9 @@ bindings:
   # BRepOffset_MakeOffset (per-face offsets) through a facade, see
   # wrappers/himmelcad-offset.cpp.
   - symbol: HimmelcadOffset
+  # XCAF label names and children (STEP assembly import through
+  # STEPCAFControl_Reader), see wrappers/himmelcad-xcaf.cpp.
+  - symbol: HimmelcadXcaf
 additionalCppFiles:
   - wrappers/himmelcad-offset.cpp
+  - wrappers/himmelcad-xcaf.cpp

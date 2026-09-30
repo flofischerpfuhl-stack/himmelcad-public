@@ -1,8 +1,9 @@
 """Import/export helpers of :class:`~himmelcad.assembler.Document` (mixin).
 
-Every helper is exactly one canonical command (``import.step``, ``import.mesh``,
-``import.dxf``, ``export.dxf``, ``export.step``, ``mesh.toSolid``), so a script
-produces the same History steps as the app's File menu.
+Every helper is exactly one canonical command (``import.step``, ``import.iges``,
+``import.mesh``, ``import.dxf``, ``export.dxf``, ``export.step``, ``export.iges``,
+``mesh.toSolid``), so a script produces the same History steps as the app's File menu.
+IGES needs the HimmelCAD OCCT build (``formats()["kernel"]["igesRead"]``).
 
 >>> with Document.headless() as doc:                                    # doctest: +SKIP
 ...     parts = doc.import_step("robot.step")          # one Import step, one body per part
@@ -68,6 +69,16 @@ class InteropMixin:
             body.item_path = paths.get(body_id, ())
             bodies.append(body)
         return bodies
+
+    def import_iges(self, path: str | Path) -> list[Body]:
+        """Imports an IGES file as one History step: sewn surfaces become solid bodies (open ones
+        stay surface bodies), named after the file. HimmelCAD OCCT build only; raises
+        :class:`~himmelcad.assembler.AssemblerError` (``unsupported``) otherwise."""
+        from .modeling import Body
+
+        result = self.client.import_iges(path)
+        feature = self._feature(result)
+        return [Body(self, body_id, feature) for body_id in result.get("createdBodyIds", [])]  # type: ignore[arg-type]
 
     def import_mesh(self, path: str | Path) -> list[ReferenceMesh]:
         """STL, 3MF or OBJ as reference meshes (3MF: one per build item; OBJ: one per group)."""
@@ -170,6 +181,26 @@ class InteropMixin:
             schema=schema,
             unit=unit,
             structure=structure,
+            visible_only=visible_only,
+        )
+
+    def export_iges(
+        self,
+        path: str | Path,
+        bodies: Iterable[Body] | None = None,
+        *,
+        unit: str | None = None,
+        mode: str | None = None,
+        visible_only: bool | None = None,
+    ) -> Path:
+        """Exact-geometry IGES (no names/colours): ``mode`` ``faces`` (trimmed surfaces, default) or
+        ``brep`` (MSBO solids), ``unit`` ``mm``/``cm``/``m``/``in``. HimmelCAD OCCT build only."""
+        return self.client.export_to(
+            "iges",
+            path,
+            body_ids=None if bodies is None else [b.id for b in bodies],
+            unit=unit,
+            mode=mode,
             visible_only=visible_only,
         )
 

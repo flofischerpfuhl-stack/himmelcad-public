@@ -1,16 +1,23 @@
 # Assembler import/export (interop)
 
-Status 2026-09-30, branch `asm/interop-20260930`. Code: `apps/assembler/renderer/src/interop/`
-(pure TypeScript: parsers, writers, document edits, UI), `renderer/src/kernel/stepImport.ts`,
-`stepExport.ts`, `meshSolid.ts` (OCCT), agent API `renderer/src/api/interopApi.ts`, Python
+Status 2026-09-30, branch `asm/interop-20260930`, integrated with the own OCCT build
+(`OCCT-BUILD-SPIKE.md`) on `feat/assembler-phase0-20260929`. Code:
+`apps/assembler/renderer/src/interop/` (pure TypeScript: parsers, writers, document edits, UI),
+`renderer/src/kernel/stepImport.ts`, `stepXcafImport.ts`, `igesExchange.ts`, `stepExport.ts`,
+`meshSolid.ts` (OCCT), agent API `renderer/src/api/interopApi.ts`, Python
 `sdk/python/src/himmelcad/assembler/interop.py`.
+
+Two OCCT modules (`HIMMELCAD_OCCT`): the default `replicad-opencascadejs` 1.1.0, and the
+HimmelCAD build (`vendor/occt-wasm`), which adds IGES and OCCT's XCAF STEP reader. The kernel
+reports what the loaded module has (`KernelStatusInfo.capabilities`); menus, `interop.formats`
+and Python follow it.
 
 ## Formats
 
 | Format                 | Import becomes                                                   | Kept                                                                                                                                                                                                              | Export from                       | Kept                                                                                                                                                                             |
 | ---------------------- | ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | STEP (`.step`, `.stp`) | bodies, **one** `Import` History step                            | exact B-rep; product structure as nested Items folders; part names; part colours; placements (nested, rotated, shared sub-assemblies); file unit converted to mm                                                  | bodies                            | exact B-rep, names (Items names), colours, Items folders as sub-assemblies (optional), AP242 or AP214, mm/cm/m/in, flat / assembly / one file per body, all / visible / selected |
-| IGES                   | —                                                                | not in this OCCT build                                                                                                                                                                                            | —                                 | not in this OCCT build                                                                                                                                                           |
+| IGES (`.igs`, `.iges`) | bodies, one `Import` History step (HimmelCAD OCCT build only)    | exact geometry: surfaces sewn, closed shells → solids, open shells → surface bodies (warning); file unit → mm. No names, colours or structure                                                                     | bodies (HimmelCAD OCCT build)     | exact geometry as trimmed surfaces (default) or MSBO solids; mm/cm/m/in; all / visible / selected. No names or colours. Default module: disabled, "not in this build"            |
 | STL                    | reference mesh                                                   | triangles; unitless: a rescale is offered, never applied                                                                                                                                                          | bodies + visible reference meshes | print export: binary/ASCII, resolution presets; all / **visible** (new) / selected bodies in one file, or one file per body                                                      |
 | 3MF                    | reference meshes, one per build item                             | object names, item and component transforms (baked), Production-extension parts (`p:path`), colour (base material / colour group, most common per object), declared unit → mm                                     | bodies + visible reference meshes | unchanged (print export)                                                                                                                                                         |
 | OBJ                    | reference meshes, one per group (folder per file/object)         | polygons (fan-triangulated), groups/objects, vertex colours (average)                                                                                                                                             | —                                 | —                                                                                                                                                                                |
@@ -22,7 +29,9 @@ STEP…**, **Import STL…**, **Import DXF into Sketch…**, dropping files anyw
 (an overlay lists the formats), command search. Exports: **Export STEP…** (dialog), **Export
 DXF…** (dialog; enabled with a sketch or planar face selected), the print exports (STL…, 3MF,
 Open in Slicer). **Convert Mesh to Solid** is in the adaptive toolbar and context menu of a
-selected reference mesh. IGES entries are present and disabled with the reason.
+selected reference mesh. **Import IGES…** / **Export IGES…** (dialog: bodies, trimmed surfaces
+or solids, unit) are enabled with the HimmelCAD OCCT build; with the default module they stay
+disabled with the reason, and a dropped `.igs` is refused with it.
 
 Progress and Cancel: reading/parsing (3MF, OBJ, STL, DXF, the mesh-to-solid check) runs in
 the import worker (`import.worker.ts`) — a progress island with **Cancel**, which terminates
@@ -34,6 +43,21 @@ converted or skipped are reported (toast, or a dialog when there is something to
 
 ## STEP assemblies
 
+**HimmelCAD OCCT build: OCCT's XCAF reader.** `kernel/stepXcafImport.ts` reads the file with
+`STEPCAFControl_Reader` (name and colour mode) into an XCAF document and walks it: free shapes
+under the shapes label, components (`XCAFDoc_ShapeTool::IsComponent`, `GetReferredShape`,
+`GetLocation`, composed down the tree), names from `TDataStd_Name` and colours from
+`XCAFDoc_ColorTool` (instance colour, else part colour, else a solid sub-shape's, else the most
+frequent face colour; linear RGB → sRGB `#RRGGBB`). Label names and child labels come through the
+build's `HimmelcadXcaf` facade (the stock bindings lack `Standard_GUID` and the
+`TDF_LabelSequence` base). The walk reproduces the text route's conventions (depth-first in
+file order, product name else instance name, `(2)` per folder, same colour rule), so both
+routes give the **same bodies, ids and face keys** for the same file (test
+`occtInterop.test.ts`: robot fixture identical in names, colours, folders, faces, volumes and
+boxes; UTF-8 names such as `Grundplatte Größe 1`). If the XCAF reader fails, the text route
+below runs and a warning says so. `interop.formats` reports the route (`reader: xcaf | text`).
+
+**Default module (and fallback): the file text.**
 The OCCT build (`replicad-opencascadejs` 1.1.0, OCCT 8.0.1) exposes `STEPControl_Reader`,
 `STEPControl_Writer` and the XCAF **writer** (`STEPCAFControl_Writer`, `XCAFDoc_ShapeTool`,
 `XCAFDoc_ColorTool`, `TDataStd_Name`), but **no XCAF reader** (`STEPCAFControl_Reader`) and no
@@ -102,14 +126,29 @@ Fidelity checks (tests, real OCCT):
 
 ## IGES
 
-`IGESControl_Reader`/`IGESControl_Writer` are not in this build (checked in
-`replicad_single.d.ts`; `kernel/stepImport.ts#occtFormatCapabilities` checks at run time and
-the kernel reports `KernelStatusInfo.capabilities`). File › Import IGES…/Export IGES… are
-disabled with "IGES is not in this build …", a dropped `.igs` is refused with that reason,
-`interop.formats` reports `available: false`. When a custom build adds IGES (the parallel
-kernel-build spike), the import is `XSControl_Reader`-shaped like STEP: the shape-hierarchy
-path of `stepImport.ts` (`shapeHierarchyFallback`) works on any `XSControl_Reader` subclass;
-the capability flags light the menu up. Not wired: nothing is shipped that the build cannot run.
+Only with the HimmelCAD OCCT build (`IGESControl_Reader`/`IGESControl_Writer`;
+`replicad-opencascadejs` 1.1.0 has neither — `kernel/stepImport.ts#occtFormatCapabilities`
+checks at run time).
+
+- Import (`kernel/igesExchange.ts#readIges`): one `importStep` History step with
+  `format: "iges"` (the file embedded like STEP, so the project stays self-contained).
+  `TransferRoots`, then solids in the file (MSBO) are kept; loose faces are sewn
+  (`BRepBuilderAPI_Sewing`, 1e-3 mm) and every closed shell becomes a solid
+  (`ShapeFix_Solid::SolidFromShell`); open shells and unsewn faces stay surface bodies with a
+  warning. Bodies are named after the file (`kit 1`, `kit 2`, …), palette colours. The file
+  unit is converted to mm by OCCT.
+- Export (`writeIges`, `export.iges`, File › Export IGES…): `IGESControl_Writer` with the
+  chosen unit and mode `faces` (trimmed surfaces, type 144 — what every IGES reader takes;
+  default) or `brep` (MSBO solids, IGES 5.3). Geometry and unit only: the XCAF IGES writer is
+  not bound, so no names or colours (the dialog says so).
+- Default module: Import/Export IGES are disabled with "IGES is not in this build …", a dropped
+  `.igs` is refused, `import.iges`/`export.iges` answer `unsupported`, `interop.formats`
+  reports `available: false` with the reason. A project with an IGES step opened on the default
+  module shows that step failed with the same reason (the document is kept).
+- Checks (`occtInterop.test.ts`, `api/interop.test.ts`, Python): cube + disc exported in inches
+  (both modes) and re-imported → 2 valid solids, volumes to 1e-3, boxes to 1e-3 mm, same face
+  counts; the robot assembly through `export.iges` → `import.iges`; a non-IGES file fails the
+  step with "not a readable IGES file".
 
 ## Mesh → solid
 
@@ -195,9 +234,11 @@ Methods (`hcasm.agent-api@1`, schema regenerated): `interop.formats`; `import.st
 `import.mesh` (STL/3MF/OBJ → `meshes`, `unitHint`); `import.dxf` (plane/offset/face, connect,
 unitScale → one sketch step; stats, skipped, units, warnings); `export.dxf` (sketchId or face,
 R2000/R12); `mesh.toSolid` (meshId → one step, `unsupported` with the reason otherwise);
-`export.step` (`schema`, `unit`, `structure: flat | folders`, `visibleOnly`). `bodies.list`
-shows `itemPath`. Python: `Document.import_step/import_mesh/import_dxf/export_dxf/
-mesh_to_solid/export_step/formats` (`interop.py`), `AssemblerClient` counterparts.
+`export.step` (`schema`, `unit`, `structure: flat | folders`, `visibleOnly`); `import.iges`
+and `export.iges` (`unit`, `mode: faces | brep`, `visibleOnly`) — HimmelCAD OCCT build only,
+`unsupported` otherwise. `bodies.list` shows `itemPath`. Python:
+`Document.import_step/import_iges/import_mesh/import_dxf/export_dxf/mesh_to_solid/
+export_step/export_iges/formats` (`interop.py`), `AssemblerClient` counterparts.
 
 ## Evidence
 
@@ -213,10 +254,14 @@ mesh_to_solid/export_step/formats` (`interop.py`), `AssemblerClient` counterpart
 
 ## Limits
 
-- No XCAF reader: layers, per-face colours beyond the part colour, instance (over-riding)
-  colours, validation properties and PMI are not imported; the product structure comes from
-  the file text (AP203/214/242 product/NAUO entities).
-- IGES: not in this OCCT build.
+- Default module (no XCAF reader): layers, per-face colours beyond the part colour, instance
+  (over-riding) colours, validation properties and PMI are not imported; the product structure
+  comes from the file text (AP203/214/242 product/NAUO entities). The HimmelCAD build's XCAF
+  route adds instance colours; layers, PMI and validation properties are still not imported.
+- A file whose structure only the XCAF reader follows imports differently on the two
+  modules (text route: shape-hierarchy fallback). Projects stay self-contained, but body ids
+  of such an import depend on the module it is evaluated with.
+- IGES: HimmelCAD OCCT build only; geometry only (no names, colours, structure).
 - Mesh → solid: planar faces only (no surface fitting), ≤ 60 k triangles / 6 k faces, one
   closed part per conversion.
 - 3MF: one colour per object; beam lattices, slices, textures and slicer project settings

@@ -34,6 +34,7 @@ import type {
   EvaluationResult,
 } from './types.js';
 import type { ExportMeshBody, MeshExportOptions } from './meshExport.js';
+import type { IgesExportOptions } from './igesExchange.js';
 import type { StepExportOptions } from './stepExport.js';
 
 interface Pending {
@@ -295,6 +296,30 @@ export class WorkerKernelAdapter extends QueuedKernelAdapter {
       this.exportPending.set(jobId, { resolve, reject });
       const message: WorkerRequest = {
         type: 'exportStep',
+        jobId,
+        features: [...features],
+        ...(bodyIds ? { bodyIds: [...bodyIds] } : {}),
+        ...(options ? { options } : {}),
+      };
+      worker.postMessage(message);
+    });
+  }
+
+  override exportIges(
+    features: readonly Feature[],
+    bodyIds?: readonly string[],
+    options?: IgesExportOptions,
+  ): Promise<Uint8Array> {
+    return new Promise((resolve, reject) => {
+      const worker = this.worker;
+      if (!worker) {
+        reject(new Error('CAD kernel worker is not running'));
+        return;
+      }
+      const jobId = this.nextExportJobId++;
+      this.exportPending.set(jobId, { resolve, reject });
+      const message: WorkerRequest = {
+        type: 'exportIges',
         jobId,
         features: [...features],
         ...(bodyIds ? { bodyIds: [...bodyIds] } : {}),

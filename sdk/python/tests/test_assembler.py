@@ -545,7 +545,8 @@ class HeadlessIntegrationTests(unittest.TestCase):
         with Document(AssemblerClient(StdioTransport())) as doc, tempfile.TemporaryDirectory() as tmp:
             formats = doc.formats()
             iges = next(f for f in formats["import"] if f["format"] == "iges")
-            self.assertFalse(iges["available"])
+            himmelcad_occt = bool(formats["kernel"]["igesRead"])
+            self.assertEqual(iges["available"], himmelcad_occt)
             parts = doc.import_step(fixtures / "robot-assembly.step")
             self.assertEqual([p.name for p in parts], ["Base plate", "Link", "Pin", "Link", "Pin"])
             self.assertEqual(parts[4].item_path, ("Robot", "Arm (2)"))
@@ -553,6 +554,17 @@ class HeadlessIntegrationTests(unittest.TestCase):
             out = doc.export_step(Path(tmp) / "robot-ap214.step", schema="AP214", unit="in")
             self.assertIn(b"AUTOMOTIVE_DESIGN", out.read_bytes())
             self.assertIn(b"CONVERSION_BASED_UNIT('INCH'", out.read_bytes())
+            if himmelcad_occt:
+                # HimmelCAD OCCT build: IGES round trip (export.iges -> import.iges).
+                igs = doc.export_iges(Path(tmp) / "robot.igs", parts[:2], unit="in")
+                self.assertIn(b"4HINCH", igs.read_bytes())
+                back = doc.import_iges(igs)
+                self.assertEqual(len(back), 2)
+                self.assertAlmostEqual(back[0].volume, parts[0].volume, places=3)
+            else:
+                with self.assertRaises(HimmelcadError) as refused:
+                    doc.client.import_iges(fixtures / "plate.dxf")
+                self.assertIn("IGES is not in this build", str(refused.exception))
 
             meshes = doc.import_mesh(fixtures / "parts.3mf")
             self.assertEqual([(m.name, m.color, m.folder) for m in meshes], [("Cube", "#FF0000", ("parts",)), ("Pair", "#FF0000", ("parts",)), ("Wedge", "#33AA55", ("parts",))])

@@ -57,7 +57,7 @@ Builds made with the HimmelCAD OCCT module (build option
 HIMMELCAD_OCCT=himmelcad) ship instead
 
   assets/himmelcad_occt-<hash>.wasm    (HimmelCAD build "@himmelcad/occt-wasm"
-                                        8.0.1-hc.1: the same OCCT 8.0.1,
+                                        8.0.1-hc.2: the same OCCT 8.0.1,
                                         opencascade.js toolchain and
                                         replicad bindings, plus the OCCT
                                         classes BRepAlgoAPI_Defeaturing,

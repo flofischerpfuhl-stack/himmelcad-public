@@ -36,6 +36,7 @@ import type {
 } from './types.js';
 import type { KernelEvaluator } from './evaluator.js';
 import type { ExportMeshBody, MeshExportOptions } from './meshExport.js';
+import type { IgesExportOptions } from './igesExchange.js';
 import type { StepExportOptions } from './stepExport.js';
 import { isFatalKernelError } from './fatal.js';
 
@@ -88,6 +89,15 @@ export interface KernelAdapter {
    * bypasses the evaluation queue.
    */
   exportMesh(features: readonly Feature[], options: MeshExportOptions): Promise<ExportMeshBody[]>;
+  /**
+   * One-off IGES export (geometry and unit only), like {@link exportStep}.
+   * Rejects with "IGES is not in this build" on the default OCCT module.
+   */
+  exportIges(
+    features: readonly Feature[],
+    bodyIds?: readonly string[],
+    options?: IgesExportOptions,
+  ): Promise<Uint8Array>;
   /**
    * Exact minimum distance between two references of the document
    * `features` evaluates to (Measure panel). Like `exportStep` a one-off
@@ -233,6 +243,14 @@ export abstract class QueuedKernelAdapter implements KernelAdapter {
     _options?: StepExportOptions,
   ): Promise<Uint8Array> {
     return Promise.reject(new Error('STEP export is not supported by this kernel adapter'));
+  }
+
+  exportIges(
+    _features: readonly Feature[],
+    _bodyIds?: readonly string[],
+    _options?: IgesExportOptions,
+  ): Promise<Uint8Array> {
+    return Promise.reject(new Error('IGES export is not supported by this kernel adapter'));
   }
 
   exportMesh(
@@ -457,6 +475,16 @@ export class InProcessKernelAdapter extends QueuedKernelAdapter {
   ): Promise<Uint8Array> {
     const evaluator = this.evaluator ?? (await this.ready);
     return evaluator.exportStep(features, bodyIds, options);
+  }
+
+  override async exportIges(
+    features: readonly Feature[],
+    bodyIds?: readonly string[],
+    options?: IgesExportOptions,
+  ): Promise<Uint8Array> {
+    const evaluator = this.evaluator ?? (await this.ready);
+    if (!evaluator.exportIges) throw new Error('IGES export is not supported by this kernel');
+    return evaluator.exportIges(features, bodyIds, options);
   }
 
   override async exportMesh(

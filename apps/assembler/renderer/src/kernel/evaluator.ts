@@ -47,6 +47,7 @@ import { decodeMeshSolidPayload } from '../interop/meshSolid.js';
 import { buildMeshSolid } from './meshSolid.js';
 import { occtFormatCapabilities, readStepAssembly, type StepImportResult } from './stepImport.js';
 import { exportStepDocument, type StepExportOptions } from './stepExport.js';
+import { readIges, writeIges, type IgesExportOptions } from './igesExchange.js';
 import { projectedEntities, refreshProjections, type EdgeSample } from '../sketch/projection.js';
 import type { SketchRegion } from '../sketch/regions.js';
 import type { SketchProjection } from '../sketch/types.js';
@@ -229,6 +230,16 @@ export interface KernelEvaluator {
     features: readonly Feature[],
     bodyIds?: readonly string[],
     options?: StepExportOptions,
+  ): Promise<Uint8Array>;
+  /**
+   * Like {@link exportStep}, as IGES (geometry and unit only). Rejects with
+   * "IGES is not in this build" unless the HimmelCAD OCCT build is loaded.
+   * Optional so test doubles need not implement it.
+   */
+  exportIges?(
+    features: readonly Feature[],
+    bodyIds?: readonly string[],
+    options?: IgesExportOptions,
   ): Promise<Uint8Array>;
   /**
    * Replays `features` and tessellates the resulting bodies (or a subset)
@@ -1267,8 +1278,43 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
     ctx.order.push(id);
   }
 
+  /**
+   * Imports an IGES file (HimmelCAD OCCT build only): one body per solid or
+   * open surface, named after the file; faces keyed by index like STEP.
+   */
+  function applyImportIges(feature: ImportStepFeature, ctx: ReplayContext): void {
+    let parts;
+    try {
+      parts = readIges(oc, base64ToBytes(feature.data), feature.fileName);
+    } catch (error) {
+      if (isFatalKernelError(error)) throw error;
+      throw new FeatureError(`IGES import failed: ${describeError(error)}`);
+    }
+    for (const warning of parts.warnings) ctx.warn(warning);
+    parts.parts.forEach((part, i) => {
+      const id = i === 0 ? bodyIdFor(feature.id) : extraBodyId(feature.id, i);
+      const prefix = i === 0 ? feature.id : `${feature.id}:${i}`;
+      const geoms = describeShape(part.shape);
+      const created = ctx.createdCount;
+      ctx.bodies.set(id, {
+        id,
+        name: part.name,
+        color: COLOR_PALETTE[created % COLOR_PALETTE.length]!,
+        createdBy: feature.id,
+        shape: part.shape,
+        faces: geoms.map((g, k) => ({ ...g, key: `${prefix}:face:${k}`, aliases: [] })),
+      });
+      ctx.createdCount += 1;
+      ctx.order.push(id);
+    });
+  }
+
   /** Imports a STEP file as a new body (Shapr3D-style "Import"), naming its faces by index. */
   async function applyImportStep(feature: ImportStepFeature, ctx: ReplayContext): Promise<void> {
+    if (feature.format === 'iges') {
+      applyImportIges(feature, ctx);
+      return;
+    }
     if (feature.structure === 'assembly') {
       applyImportStepAssembly(feature, ctx);
       return;
@@ -1856,6 +1902,29 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
             }));
           if (bodies.length === 0) throw new Error('Nothing to export');
           return inArena(() => exportStepDocument(oc, bodies, exportOptions));
+        } finally {
+          releaseTransient(replay);
+        }
+      });
+    },
+
+    exportIges(features, bodyIds, igesOptions) {
+      return serialized(async () => {
+        const replay = await replayFeatures(features, { cacheTail: true });
+        try {
+          const { ctx, creationOrder, errors } = replay;
+          const firstError = Object.entries(errors)[0];
+          if (firstError) throw new Error(`Cannot export: ${firstError[1]}`);
+          const wanted = bodyIds ? new Set(bodyIds) : null;
+          const shapes = creationOrder
+            .map((id) => ctx.bodies.get(id))
+            .filter(
+              (state): state is BodyState =>
+                state !== undefined && (!wanted || wanted.has(state.id)),
+            )
+            .map((state) => state.shape);
+          if (shapes.length === 0) throw new Error('Nothing to export');
+          return inArena(() => writeIges(oc, shapes, igesOptions));
         } finally {
           releaseTransient(replay);
         }

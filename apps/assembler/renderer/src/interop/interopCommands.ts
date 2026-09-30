@@ -4,10 +4,20 @@
  * mesh). Spread into `COMMANDS` by `model/commands/registry.ts`.
  */
 import type { Command, CommandAvailability, CommandContext } from '../model/commands/registry.js';
-import { dxfExportTarget, useInteropStore } from './interopStore.js';
+import { dxfExportTarget, kernelFormatCapabilities, useInteropStore } from './interopStore.js';
 
 const IGES_REASON =
   'IGES is not in this build: the CAD kernel (replicad-opencascadejs 1.1.0) has no IGES reader or writer.';
+
+/** IGES needs the HimmelCAD OCCT build; known once the kernel is ready. */
+function igesAvailability(ctx: CommandContext, side: 'read' | 'write'): CommandAvailability {
+  const blocked = kernelBlocked(ctx);
+  if (blocked) return blocked;
+  const caps = kernelFormatCapabilities();
+  return (side === 'read' ? caps?.igesRead : caps?.igesWrite)
+    ? { enabled: true }
+    : { enabled: false, reason: IGES_REASON };
+}
 
 function kernelBlocked(ctx: CommandContext): CommandAvailability | null {
   if (ctx.kernelStatus === 'ready') return null;
@@ -65,8 +75,8 @@ export const INTEROP_COMMANDS: readonly Command[] = [
     group: 'file',
     keywords: ['import', 'iges', 'igs', 'cad'],
     adaptive: false,
-    availability: () => ({ enabled: false, reason: IGES_REASON }),
-    run: () => undefined,
+    availability: (ctx) => igesAvailability(ctx, 'read'),
+    run: () => void useInteropStore.getState().openImport('iges'),
   },
   {
     id: 'file.exportDxf',
@@ -85,8 +95,14 @@ export const INTEROP_COMMANDS: readonly Command[] = [
     group: 'file',
     keywords: ['export', 'iges', 'igs'],
     adaptive: false,
-    availability: () => ({ enabled: false, reason: IGES_REASON }),
-    run: () => undefined,
+    availability: (ctx) => {
+      const iges = igesAvailability(ctx, 'write');
+      if (!iges.enabled) return iges;
+      return ctx.evaluation.bodies.length > 0
+        ? iges
+        : { enabled: false, reason: 'There are no bodies to export.' };
+    },
+    run: () => useInteropStore.getState().setIgesExportOpen(true),
   },
   {
     id: 'tools.meshToSolid',

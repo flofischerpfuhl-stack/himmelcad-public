@@ -436,6 +436,9 @@ function validateFeature(v: unknown, index: number): Feature {
       if (r.structure !== undefined && r.structure !== 'assembly') {
         fail(`${path}.structure`, 'expected "assembly"');
       }
+      if (r.format !== undefined && r.format !== 'iges') {
+        fail(`${path}.format`, 'expected "iges"');
+      }
       return r as unknown as ImportStepFeature;
     }
     case 'meshSolid': {

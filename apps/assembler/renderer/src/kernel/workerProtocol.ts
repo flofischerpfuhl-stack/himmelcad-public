@@ -5,6 +5,7 @@
  */
 import type { Feature } from '../model/document.js';
 import type { ExportMeshBody } from './meshExport.js';
+import type { IgesExportOptions } from './igesExchange.js';
 import type { StepExportOptions } from './stepExport.js';
 import type {
   Body,
@@ -24,6 +25,14 @@ export type WorkerRequest =
       features: Feature[];
       bodyIds?: string[];
       options?: StepExportOptions;
+    }
+  | {
+      /** IGES export; answered like `exportStep` (`exportResult` / `exportFailed`). */
+      type: 'exportIges';
+      jobId: number;
+      features: Feature[];
+      bodyIds?: string[];
+      options?: IgesExportOptions;
     }
   | {
       type: 'exportMesh';

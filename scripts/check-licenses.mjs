@@ -66,7 +66,7 @@ const ADMITTED_LGPL = [
     // with extra bindings (vendor/occt-wasm, opt-in via HIMMELCAD_OCCT=himmelcad);
     // same runtime-loaded worker module, not an npm dependency.
     name: '@himmelcad/occt-wasm',
-    version: '8.0.1-hc.1',
+    version: '8.0.1-hc.2',
     license: 'LGPL-2.1-only',
   },
   {

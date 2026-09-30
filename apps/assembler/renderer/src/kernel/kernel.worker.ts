@@ -136,12 +136,16 @@ function toWire(result: EvaluationResult): EvaluationResult & { bodies: WireBody
 
 self.onmessage = (event: MessageEvent<WorkerRequest>) => {
   const message = event.data;
-  if (message.type === 'exportStep') {
+  if (message.type === 'exportStep' || message.type === 'exportIges') {
     void ready.then(
       async (evaluator) => {
         try {
           const bytes = (
-            await evaluator.exportStep(message.features, message.bodyIds, message.options)
+            message.type === 'exportIges'
+              ? await (evaluator.exportIges
+                  ? evaluator.exportIges(message.features, message.bodyIds, message.options)
+                  : Promise.reject(new Error('IGES export is not supported by this kernel')))
+              : await evaluator.exportStep(message.features, message.bodyIds, message.options)
           ).slice();
           post({ type: 'exportResult', jobId: message.jobId, bytes: bytes.buffer }, [bytes.buffer]);
         } catch (error) {

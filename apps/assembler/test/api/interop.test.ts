@@ -19,6 +19,7 @@ import { EMPTY_ITEMS_META, useItemsStore } from '../../renderer/src/model/items.
 import { useAssemblerStore } from '../../renderer/src/model/store.js';
 import { parseStepStructure } from '../../renderer/src/interop/step/stepStructure.js';
 import { parseDxf } from '../../renderer/src/interop/dxf.js';
+import { selectedOcctModule } from '../../headless/occtModule.js';
 import { setSketchSolverFactory } from '../../renderer/src/sketch/solverProvider.js';
 import { createNodeKernelAdapter } from '../kernel/nodeKernel.js';
 import { loadNodeSolver } from '../sketch/nodeSolver.js';
@@ -56,17 +57,102 @@ async function reset(): Promise<void> {
   await store.getState().whenSettled();
 }
 
-void test('interop.formats lists what each format keeps; IGES is reported as not in this build', async () => {
+const himmelcad = selectedOcctModule() === 'himmelcad';
+const needsHimmelcad = !himmelcad && 'needs the HimmelCAD OCCT build (HIMMELCAD_OCCT=himmelcad)';
+
+void test('interop.formats lists what each format keeps and what the loaded OCCT build supports', async () => {
   await reset();
   const formats = await call<{ import: Json[]; export: Json[]; kernel: Json }>('interop.formats');
   const iges = formats.import.find((f) => f.format === 'iges')!;
-  assert.equal(iges.available, false);
-  assert.match(String(iges.reason), /not in this OCCT build/);
-  assert.equal(formats.kernel.igesRead, false);
+  const igesOut = formats.export.find((f) => f.format === 'iges')!;
+  const step = formats.import.find((f) => f.format === 'step')!;
   assert.equal(formats.kernel.stepXcafWrite, true);
-  assert.equal(formats.kernel.stepXcafRead, false);
+  if (himmelcad) {
+    assert.equal(iges.available, true);
+    assert.equal(igesOut.available, true);
+    assert.equal(formats.kernel.igesRead, true);
+    assert.equal(formats.kernel.igesWrite, true);
+    assert.equal(formats.kernel.stepXcafRead, true);
+    assert.equal(step.reader, 'xcaf');
+  } else {
+    assert.equal(iges.available, false);
+    assert.match(String(iges.reason), /IGES is not in this build/);
+    assert.equal(igesOut.available, false);
+    assert.equal(formats.kernel.igesRead, false);
+    assert.equal(formats.kernel.stepXcafRead, false);
+    assert.equal(step.reader, 'text');
+  }
   assert.ok(formats.import.some((f) => f.format === 'dxf' && f.available === true));
 });
+
+void test('import.iges / export.iges are refused with "unsupported" on the default OCCT build', async (t) => {
+  if (himmelcad) {
+    t.skip('the HimmelCAD OCCT build supports IGES');
+    return;
+  }
+  await reset();
+  await assert.rejects(
+    call('import.iges', { data: Buffer.from('x').toString('base64'), fileName: 'a.igs' }),
+    (error: unknown) =>
+      error instanceof ApiError &&
+      error.code === 'unsupported' &&
+      /IGES is not in this build/.test(error.message),
+  );
+  await call('import.step', { path: `${INTEROP_FIXTURES}/robot-assembly.step` });
+  await assert.rejects(
+    call('export.iges', {}),
+    (error: unknown) => error instanceof ApiError && error.code === 'unsupported',
+  );
+});
+
+void test(
+  'IGES round trip through the agent API: export.iges → import.iges gives the same solids',
+  { skip: needsHimmelcad },
+  async () => {
+    await reset();
+    await call('import.step', { path: `${INTEROP_FIXTURES}/robot-assembly.step` });
+    const source = store.getState().evaluation.bodies;
+    for (const mode of ['faces', 'brep'] as const) {
+      const exported = await call<Json>('export.iges', { mode, unit: 'in' });
+      assert.equal(exported.mediaType, 'model/iges');
+      const text = Buffer.from(String(exported.data), 'base64').toString('latin1');
+      assert.match(text, /,1\.,1,4HINCH,/, 'unit flag 1 (inch)');
+      await reset();
+      const imported = await call<Json>('import.iges', {
+        data: exported.data,
+        fileName: `robot-${mode}.igs`,
+      });
+      assert.equal(imported.committed, true);
+      const bodies = store.getState().evaluation.bodies;
+      assert.equal(bodies.length, source.length, `${mode}: one body per exported solid`);
+      assert.equal(
+        store.getState().evaluation.warnings[String(imported.featureId)],
+        undefined,
+        `${mode}: every shell closed into a solid`,
+      );
+      const volumes = (list: readonly { volume: number }[]) =>
+        list.map((b) => b.volume).sort((a, b) => a - b);
+      volumes(bodies).forEach((v, i) =>
+        assert.ok(
+          Math.abs(v - volumes(source)[i]!) < 1e-3 * Math.max(1, volumes(source)[i]!),
+          `${mode}: volume ${v} vs ${volumes(source)[i]}`,
+        ),
+      );
+      assert.ok(
+        bodies.every((b) => b.valid),
+        `${mode}: valid solids`,
+      );
+      assert.deepEqual((imported.parts as { name: string }[]).map((p) => p.name).slice(0, 2), [
+        `robot-${mode} 1`,
+        `robot-${mode} 2`,
+      ]);
+      // One Import step, undoable.
+      assert.equal(store.getState().features.length, 1);
+      await reset();
+      await call('import.step', { path: `${INTEROP_FIXTURES}/robot-assembly.step` });
+    }
+  },
+);
 
 void test('import.step (path): one step, parts with names/colours/folders, filed once into Items', async () => {
   await reset();

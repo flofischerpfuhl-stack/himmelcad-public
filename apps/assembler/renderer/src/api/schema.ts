@@ -582,11 +582,11 @@ export const FEATURE_KIND_SCHEMAS: Record<string, FeatureKindSpec> = {
   importStep: {
     label: 'Import',
     summary:
-      'A STEP file embedded (base64) as one history step producing bodies (`structure: "assembly"`: one per placed part, named, coloured, with folder paths; import.step sets it).',
-    params: obj({ data: str, fileName: str, structure: { enum: ['assembly'] } }, [
-      'data',
-      'fileName',
-    ]),
+      'A STEP file (or, with `format: "iges"`, an IGES file; HimmelCAD OCCT build only) embedded (base64) as one history step producing bodies (`structure: "assembly"`: one per placed part, named, coloured, with folder paths; import.step sets it; import.iges sets `format`).',
+    params: obj(
+      { data: str, fileName: str, structure: { enum: ['assembly'] }, format: { enum: ['iges'] } },
+      ['data', 'fileName'],
+    ),
   },
   meshSolid: {
     label: 'Mesh to Solid',
@@ -1395,6 +1395,23 @@ export const METHODS: Record<string, MethodSpec> = {
     params: obj({
       ...(exportParams.properties as Record<string, JsonSchema>),
       ...STEP_EXPORT_PARAMS,
+    }),
+    result: '{mediaType, byteLength, bodyIds, data?: base64, path?}',
+  },
+  'export.iges': {
+    kind: 'command',
+    capability: 'document.read',
+    summary:
+      'Exact-B-rep IGES of all (or the given) bodies: geometry and length unit only (no names or colours). `faces` (default: trimmed surfaces, read by every IGES system) or `brep` (MSBO solids, IGES 5.3). Needs the HimmelCAD OCCT build (interop.formats reports it); `unsupported` otherwise.',
+    params: obj({
+      ...(exportParams.properties as Record<string, JsonSchema>),
+      unit: { enum: ['mm', 'cm', 'm', 'in'], default: 'mm' },
+      mode: { enum: ['faces', 'brep'], default: 'faces' },
+      visibleOnly: {
+        type: 'boolean',
+        default: false,
+        description: 'Leave out bodies hidden in the app (Items eye).',
+      },
     }),
     result: '{mediaType, byteLength, bodyIds, data?: base64, path?}',
   },

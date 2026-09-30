@@ -3,11 +3,16 @@
 # himmelcad_occt.{js,wasm,d.ts}) from pinned public inputs. Linux x86_64,
 # run as root (chroot); no Docker needed. See README.md.
 #
-#   sudo vendor/occt-wasm/build.sh [--verify-replicad] [--work DIR]
+#   sudo vendor/occt-wasm/build.sh [--verify-replicad] [--work DIR] [--install CACHE_ROOT]
 #
 # --verify-replicad also relinks replicad's unmodified configuration and
 # checks it against the published replicad-opencascadejs 1.1.0 files (proves
 # the toolchain before trusting the HimmelCAD build).
+#
+# --install also copies the outputs into the local artifact cache
+# CACHE_ROOT/<version of package.json> (e.g. /mnt/d/AgentWork/HimmelCAD-Assembler/
+# occt-wasm), where the app build and headless loader look for them
+# (apps/assembler/headless/occtModule.ts). The module is never committed.
 set -euo pipefail
 
 # ---- pinned inputs (keep in sync with PINS.md and LICENSES/THIRD_PARTY.md) ----
@@ -23,10 +28,12 @@ REPLICAD_JS_SHA256=018e57538fcb773f0124eae60aee4de693d3aae01c55b2b883a874911ab12
 HERE="$(cd "$(dirname "$0")" && pwd)"
 WORK="${OCCT_WASM_WORK:-/root/occt-asm}"
 VERIFY=0
+INSTALL=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --verify-replicad) VERIFY=1 ;;
     --work) shift; WORK="$1" ;;
+    --install) shift; INSTALL="$1" ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
   shift
@@ -98,4 +105,14 @@ if ( cd "$HERE" && sha256sum -c --quiet artifacts.sha256 ); then
   echo "== identical to the recorded build (artifacts.sha256)"
 else
   echo "== WARNING: differs from artifacts.sha256 (changed inputs or a non-reproducible step)"
+fi
+
+if [ -n "$INSTALL" ]; then
+  VERSION="$(sed -n 's/^ *"version": *"\([^"]*\)".*/\1/p' "$HERE/package.json")"
+  [ -n "$VERSION" ] || { echo "no version in package.json" >&2; exit 1; }
+  echo "== 5. install into the artifact cache $INSTALL/$VERSION"
+  mkdir -p "$INSTALL/$VERSION"
+  for f in himmelcad_occt.js himmelcad_occt.wasm himmelcad_occt.d.ts himmelcad_occt.yml himmelcad_occt.build-manifest.json SHA256SUMS; do
+    cp "$HERE/dist/$f" "$INSTALL/$VERSION/$f"
+  done
 fi

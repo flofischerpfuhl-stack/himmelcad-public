@@ -30,6 +30,8 @@ import {
   type StepProductNode,
   type StepStructure,
 } from '../interop/step/stepStructure.js';
+import { isFatalKernelError } from './fatal.js';
+import { readStepAssemblyXcaf, xcafClasses } from './stepXcafImport.js';
 import type { KernelFormatCapabilities } from './types.js';
 
 type OpenCascade = ReturnType<typeof R.getOC>;
@@ -49,6 +51,12 @@ export interface StepImportResult {
   warnings: string[];
   /** `products`: placed per the product structure; `shapes`: fell back to the shape hierarchy. */
   structure: 'products' | 'shapes';
+  /**
+   * `xcaf`: OCCT's `STEPCAFControl_Reader` (HimmelCAD OCCT build);
+   * `text`: the product structure read from the file text, one component
+   * transferred at a time (`replicad-opencascadejs`, or when XCAF fails).
+   */
+  reader: 'xcaf' | 'text';
   protocol: StepStructure['protocol'];
   lengthUnit: string | null;
 }
@@ -63,7 +71,7 @@ export function occtFormatCapabilities(oc: OpenCascade): KernelFormatCapabilitie
     stepRead: has('STEPControl_Reader'),
     stepWrite: has('STEPControl_Writer'),
     stepXcafWrite: has('STEPCAFControl_Writer'),
-    stepXcafRead: has('STEPCAFControl_Reader'),
+    stepXcafRead: xcafClasses(oc) !== null,
     igesRead: has('IGESControl_Reader'),
     igesWrite: has('IGESControl_Writer'),
   };
@@ -133,6 +141,10 @@ export function readStepAssembly(
   bytes: Uint8Array,
   fileName: string,
   onProgress?: StepImportProgress,
+  options: {
+    /** `text` skips the XCAF reader even when the build has it (tests, comparisons). */
+    reader?: 'auto' | 'text';
+  } = {},
 ): StepImportResult {
   const text = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
   let structure: StepStructure | null = null;
@@ -143,6 +155,34 @@ export function readStepAssembly(
     throw new StepImportError(
       `This is not a readable STEP file (${error instanceof Error ? error.message : String(error)})`,
     );
+  }
+
+  // HimmelCAD OCCT build: OCCT's XCAF reader resolves structure, names,
+  // colours and placements itself; the text route stays the fallback.
+  const xcaf = options.reader === 'text' ? null : xcafClasses(oc);
+  if (xcaf) {
+    try {
+      const read = readStepAssemblyXcaf(
+        oc,
+        xcaf,
+        bytes,
+        fileName,
+        (raw) => bodiesOf(oc, raw),
+        onProgress,
+      );
+      return {
+        ...read,
+        structure: 'products',
+        reader: 'xcaf',
+        protocol: structure.protocol,
+        lengthUnit: structure.lengthUnit,
+      };
+    } catch (error) {
+      if (isFatalKernelError(error)) throw error;
+      warnings.push(
+        `OCCT's STEP assembly reader failed (${error instanceof Error ? error.message : String(error)}); read by the file's product structure instead`,
+      );
+    }
   }
 
   fileSerial += 1;
@@ -287,8 +327,10 @@ export function readStepAssembly(
       return {
         ...shapeHierarchyFallback(oc, reader, fileName, progressRange),
         warnings: [
+          ...warnings.filter((w) => w.startsWith("OCCT's STEP assembly reader failed")),
           `Imported by shape hierarchy (${reason}): names and colours from the file are not applied`,
         ],
+        reader: 'text',
         protocol: structure.protocol,
         lengthUnit: structure.lengthUnit,
       };
@@ -297,6 +339,7 @@ export function readStepAssembly(
       parts,
       warnings,
       structure: 'products',
+      reader: 'text',
       protocol: structure.protocol,
       lengthUnit: structure.lengthUnit,
     };

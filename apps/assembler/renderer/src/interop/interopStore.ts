@@ -17,9 +17,10 @@
 import { create } from 'zustand';
 
 import type { KernelAdapter } from '../kernel/adapter.js';
+import type { IgesLengthUnit, IgesWriteMode } from '../kernel/igesExchange.js';
 import type { StepExportOptions, StepLengthUnit, StepSchema } from '../kernel/stepExport.js';
 import { suggestStlUnitHint } from '../kernel/stlImport.js';
-import type { Body } from '../kernel/types.js';
+import type { Body, KernelFormatCapabilities } from '../kernel/types.js';
 import type { Feature, SketchFeature, SketchPlaneRef } from '../model/document.js';
 import { meshRowKey, useItemsStore, withDisplayNames } from '../model/items.js';
 import * as io from '../model/project/persistence.js';
@@ -53,6 +54,15 @@ let kernel: KernelAdapter | null = null;
 export function setInteropKernel(adapter: KernelAdapter): void {
   kernel = adapter;
 }
+
+/** Exchange formats of the loaded OCCT build (`null` until the kernel is ready). */
+export function kernelFormatCapabilities(): KernelFormatCapabilities | null {
+  return kernel?.status.capabilities ?? null;
+}
+
+/** Why IGES is unavailable (the default OCCT module). */
+export const IGES_UNAVAILABLE_TEXT =
+  'IGES is not in this build: the CAD kernel (replicad-opencascadejs 1.1.0) has no IGES reader or writer. It needs the HimmelCAD OCCT build. Export the part as STEP from the source system instead.';
 
 export interface ImportJob {
   id: number;
@@ -96,6 +106,12 @@ export interface StepExportSettings {
   unit: StepLengthUnit;
 }
 
+export interface IgesExportSettings {
+  scope: StepExportScope;
+  unit: IgesLengthUnit;
+  mode: IgesWriteMode;
+}
+
 export interface InteropState {
   job: ImportJob | null;
   report: ImportReport | null;
@@ -104,6 +120,8 @@ export interface InteropState {
   stepExportOpen: boolean;
   stepExportSettings: StepExportSettings;
   dxfExportOpen: boolean;
+  igesExportOpen: boolean;
+  igesExportSettings: IgesExportSettings;
   /** Files are dragged over the window. */
   dragActive: boolean;
 
@@ -124,6 +142,9 @@ export interface InteropState {
   convertMeshToSolid: (meshId: string) => Promise<void>;
   setStepExportOpen: (open: boolean) => void;
   exportStep: (settings: StepExportSettings) => Promise<number>;
+  setIgesExportOpen: (open: boolean) => void;
+  /** Writes one IGES file; resolves `true` when written, `false` when the save was cancelled. */
+  exportIges: (settings: IgesExportSettings) => Promise<boolean>;
   setDxfExportOpen: (open: boolean) => void;
   exportDxf: (options: { version: DxfVersion; includeConstruction: boolean }) => Promise<boolean>;
   setDragActive: (active: boolean) => void;
@@ -201,7 +222,7 @@ export const useInteropStore = create<InteropState>((set, get) => {
     useAssemblerStore.getState().addFeature(feature, selection);
   };
 
-  const importStep = async (name: string, bytes: Uint8Array) => {
+  const importStep = async (name: string, bytes: Uint8Array, format: 'step' | 'iges' = 'step') => {
     const store = useAssemblerStore.getState();
     if (store.activeTool) {
       fail(`Could not import "${name}"`, ['Finish or cancel the active tool first.']);
@@ -209,13 +230,21 @@ export const useInteropStore = create<InteropState>((set, get) => {
     }
     const job = startJob(`Importing ${name}`, 'Building geometry', 'kernel');
     const id = store.allocateFeatureId('import');
-    const feature = importStepFeature({
-      id,
-      name: nextFeatureName('Import', store.features),
-      data: bytesToBase64(bytes),
-      fileName: name,
-    });
-    notifyAssemblyImported(id);
+    const data = bytesToBase64(bytes);
+    const featureName = nextFeatureName('Import', store.features);
+    const feature: Feature =
+      format === 'iges'
+        ? {
+            id,
+            name: featureName,
+            suppressed: false,
+            kind: 'importStep',
+            format: 'iges',
+            data,
+            fileName: name,
+          }
+        : importStepFeature({ id, name: featureName, data, fileName: name });
+    if (format === 'step') notifyAssemblyImported(id);
     addStep(feature);
     if (!(await settled(job))) return;
     endJob(job);
@@ -350,6 +379,8 @@ export const useInteropStore = create<InteropState>((set, get) => {
     stepExportOpen: false,
     stepExportSettings: { scope: 'all', structure: 'folders', schema: 'AP242', unit: 'mm' },
     dxfExportOpen: false,
+    igesExportOpen: false,
+    igesExportSettings: { scope: 'all', unit: 'mm', mode: 'faces' },
     dragActive: false,
 
     openImport: async (format) => {
@@ -357,11 +388,13 @@ export const useInteropStore = create<InteropState>((set, get) => {
       const accept =
         format === 'step'
           ? '.step,.stp'
-          : format === 'stl'
-            ? '.stl'
-            : format === 'dxf'
-              ? '.dxf'
-              : importAccept(igesAvailable);
+          : format === 'iges'
+            ? '.igs,.iges'
+            : format === 'stl'
+              ? '.stl'
+              : format === 'dxf'
+                ? '.dxf'
+                : importAccept(igesAvailable);
       const files = await pickFiles(accept, format === undefined);
       if (files.length > 0) await get().importFiles(files);
     },
@@ -383,13 +416,9 @@ export const useInteropStore = create<InteropState>((set, get) => {
             break;
           case 'iges':
             if (kernel?.status.capabilities?.igesRead) {
-              fail(`Could not import "${file.name}"`, [
-                'IGES import is not wired up yet in this app.',
-              ]);
+              await importStep(file.name, file.bytes, 'iges');
             } else {
-              fail(`Could not import "${file.name}"`, [
-                'IGES is not in this build: the CAD kernel (OCCT 8.0.1 as replicad-opencascadejs 1.1.0) has no IGES reader. Export the part as STEP from the source system instead.',
-              ]);
+              fail(`Could not import "${file.name}"`, [IGES_UNAVAILABLE_TEXT]);
             }
             break;
           case 'stl':
@@ -402,7 +431,7 @@ export const useInteropStore = create<InteropState>((set, get) => {
             break;
           default:
             fail(`Could not import "${file.name}"`, [
-              'Unsupported file type. Import takes STEP, STL, 3MF, OBJ, DXF and HimmelCAD projects (.hcasm).',
+              `Unsupported file type. Import takes STEP, ${kernel?.status.capabilities?.igesRead ? 'IGES, ' : ''}STL, 3MF, OBJ, DXF and HimmelCAD projects (.hcasm).`,
             ]);
         }
         if (get().report?.tone === 'error' || get().dxfPending) break;
@@ -600,6 +629,43 @@ export const useInteropStore = create<InteropState>((set, get) => {
         'model/step',
       );
       return result ? 1 : 0;
+    },
+
+    setIgesExportOpen: (open) => set({ igesExportOpen: open }),
+
+    exportIges: async (settings) => {
+      set({ igesExportSettings: settings });
+      if (!kernel) throw new Error('The CAD kernel is not available.');
+      if (!kernel.status.capabilities?.igesWrite) throw new Error(IGES_UNAVAILABLE_TEXT);
+      const state = useAssemblerStore.getState();
+      const hidden = new Set(state.hiddenBodyIds);
+      const selected = new Set(
+        state.selection
+          .filter((s) => s.kind === 'body')
+          .map((s) => (s as { bodyId: string }).bodyId),
+      );
+      const bodies = withDisplayNames(state.evaluation.bodies, useItemsStore.getState()).filter(
+        (b) =>
+          settings.scope === 'visible'
+            ? !hidden.has(b.id)
+            : settings.scope === 'selected'
+              ? selected.has(b.id)
+              : true,
+      );
+      if (bodies.length === 0) throw new Error('No bodies to export.');
+      const bytes = await kernel.exportIges(
+        state.features,
+        bodies.map((b) => b.id),
+        { unit: settings.unit, mode: settings.mode },
+      );
+      const name = bodies.length === 1 ? bodies[0]!.name : state.projectName;
+      const result = await io.exportBinary(
+        bytes,
+        `${sanitizeFileName(name)}.igs`,
+        [{ name: 'IGES', extensions: ['igs', 'iges'] }],
+        'model/iges',
+      );
+      return result !== null;
     },
 
     setDxfExportOpen: (open) => set({ dxfExportOpen: open }),

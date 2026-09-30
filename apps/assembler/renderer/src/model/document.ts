@@ -244,6 +244,11 @@ export interface ImportStepFeature extends FeatureBase {
    * references to that body stay valid.
    */
   structure?: 'assembly';
+  /**
+   * `iges`: the embedded file is IGES (HimmelCAD OCCT build only; bodies
+   * per solid/open surface, no structure). Absent: STEP.
+   */
+  format?: 'iges';
 }
 
 /**

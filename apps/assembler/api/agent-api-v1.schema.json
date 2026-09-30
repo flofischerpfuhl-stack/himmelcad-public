@@ -1538,7 +1538,7 @@
     },
     "importStep": {
       "label": "Import",
-      "summary": "A STEP file embedded (base64) as one history step producing bodies (`structure: \"assembly\"`: one per placed part, named, coloured, with folder paths; import.step sets it).",
+      "summary": "A STEP file (or, with `format: \"iges\"`, an IGES file; HimmelCAD OCCT build only) embedded (base64) as one history step producing bodies (`structure: \"assembly\"`: one per placed part, named, coloured, with folder paths; import.step sets it; import.iges sets `format`).",
       "params": {
         "type": "object",
         "properties": {
@@ -1552,6 +1552,9 @@
           },
           "structure": {
             "enum": ["assembly"]
+          },
+          "format": {
+            "enum": ["iges"]
           }
         },
         "required": ["data", "fileName"],
@@ -3556,6 +3559,45 @@
       },
       "result": "{mediaType, byteLength, bodyIds, data?: base64, path?}"
     },
+    "export.iges": {
+      "kind": "command",
+      "capability": "document.read",
+      "summary": "Exact-B-rep IGES of all (or the given) bodies: geometry and length unit only (no names or colours). `faces` (default: trimmed surfaces, read by every IGES system) or `brep` (MSBO solids, IGES 5.3). Needs the HimmelCAD OCCT build (interop.formats reports it); `unsupported` otherwise.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "bodyIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Headless only (capability filesystem.write). Omit to receive base64 bytes."
+          },
+          "unit": {
+            "enum": ["mm", "cm", "m", "in"],
+            "default": "mm"
+          },
+          "mode": {
+            "enum": ["faces", "brep"],
+            "default": "faces"
+          },
+          "visibleOnly": {
+            "type": "boolean",
+            "default": false,
+            "description": "Leave out bodies hidden in the app (Items eye)."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "result": "{mediaType, byteLength, bodyIds, data?: base64, path?}"
+    },
     "import.step": {
       "kind": "command",
       "capability": "document.write",
@@ -3844,13 +3886,53 @@
     "interop.formats": {
       "kind": "query",
       "capability": "document.read",
-      "summary": "Import and export formats with what each keeps (structure, names, colours, units) and whether the loaded kernel supports it (IGES: not in this OCCT build).",
+      "summary": "Import and export formats with what each keeps (structure, names, colours, units) and whether the loaded kernel supports it (IGES and the XCAF STEP reader only with the HimmelCAD OCCT build).",
       "params": {
         "type": "object",
         "properties": {},
         "additionalProperties": false
       },
       "result": "{import: [{format, extensions, target, available, reason?, keeps}], export: [...], kernel}"
+    },
+    "import.iges": {
+      "kind": "command",
+      "capability": "document.write",
+      "transactional": true,
+      "summary": "Imports an IGES file as one \"Import\" history step: surfaces are sewn and every closed shell becomes a solid body (open ones stay surface bodies, with a warning); named after the file; unit converted to mm. Needs the HimmelCAD OCCT build (interop.formats reports it); `unsupported` otherwise.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Headless only (filesystem.read)."
+          },
+          "data": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Base64 file bytes."
+          },
+          "fileName": {
+            "type": "string",
+            "minLength": 1
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Optimistic concurrency: the command fails with `conflict` unless the document revision still equals this value."
+          }
+        },
+        "additionalProperties": false,
+        "anyOf": [
+          {
+            "required": ["path"]
+          },
+          {
+            "required": ["data", "fileName"]
+          }
+        ]
+      },
+      "result": "{featureId, createdBodyIds, parts: [{bodyId, name, color}], warnings?, revision, committed, errors}"
     },
     "import.mesh": {
       "kind": "command",
