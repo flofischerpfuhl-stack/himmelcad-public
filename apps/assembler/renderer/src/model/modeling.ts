@@ -145,16 +145,167 @@ export function extrudeStartDepth(
   return (-contact.sign * Math.round(depth * 1000)) / 1000;
 }
 
+/** Fixed direction of the parity ray (skewed so it rarely runs along mesh edges). */
+const PARITY_DIR = normalize3([0.5773, 0.5774, 0.5775]);
+
+/**
+ * Triangles of a mesh binned by their projection onto the plane normal to
+ * {@link PARITY_DIR}: a ray along that direction can only hit triangles
+ * whose projected box contains the projected origin, so a query tests one
+ * cell's triangles instead of the whole mesh. Built once per mesh (meshes
+ * are immutable) and dropped with it.
+ */
+interface ParityGrid {
+  /** Projection basis (orthonormal to the ray). */
+  ex: Vec3;
+  ey: Vec3;
+  minX: number;
+  minY: number;
+  cellW: number;
+  cellH: number;
+  nx: number;
+  ny: number;
+  /** CSR: triangle ids (index into `indices / 3`) of cell `c` are `ids[start[c]..start[c+1])`. */
+  start: Uint32Array;
+  ids: Uint32Array;
+}
+
+const parityGrids = new WeakMap<Body['mesh'], ParityGrid>();
+
+function parityGrid(body: Body): ParityGrid {
+  const cached = parityGrids.get(body.mesh);
+  if (cached) return cached;
+  const { positions, indices } = body.mesh;
+  const ex = normalize3(cross3(PARITY_DIR, [0, 0, 1]));
+  const ey = cross3(PARITY_DIR, ex);
+  const triangles = indices.length / 3;
+  const px = new Float64Array(positions.length / 3);
+  const py = new Float64Array(positions.length / 3);
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (let v = 0; v < px.length; v += 1) {
+    const x = positions[v * 3]!;
+    const y = positions[v * 3 + 1]!;
+    const z = positions[v * 3 + 2]!;
+    px[v] = x * ex[0] + y * ex[1] + z * ex[2];
+    py[v] = x * ey[0] + y * ey[1] + z * ey[2];
+    minX = Math.min(minX, px[v]!);
+    maxX = Math.max(maxX, px[v]!);
+    minY = Math.min(minY, py[v]!);
+    maxY = Math.max(maxY, py[v]!);
+  }
+  const side = Math.max(1, Math.min(64, Math.ceil(Math.sqrt(triangles / 2))));
+  const cellW = Math.max((maxX - minX) / side, 1e-9);
+  const cellH = Math.max((maxY - minY) / side, 1e-9);
+  // Generous margin: a triangle is binned into every cell its projected box (grown) touches,
+  // so the candidate set always contains every triangle the exact ray test could hit.
+  const margin = 1e-6 * Math.max(1, maxX - minX, maxY - minY);
+  const cellRange = (t: number): [number, number, number, number] => {
+    let x0 = Infinity;
+    let x1 = -Infinity;
+    let y0 = Infinity;
+    let y1 = -Infinity;
+    for (let k = 0; k < 3; k += 1) {
+      const v = indices[t * 3 + k]!;
+      x0 = Math.min(x0, px[v]!);
+      x1 = Math.max(x1, px[v]!);
+      y0 = Math.min(y0, py[v]!);
+      y1 = Math.max(y1, py[v]!);
+    }
+    const clamp = (c: number) => Math.max(0, Math.min(side - 1, c));
+    return [
+      clamp(Math.floor((x0 - margin - minX) / cellW)),
+      clamp(Math.floor((x1 + margin - minX) / cellW)),
+      clamp(Math.floor((y0 - margin - minY) / cellH)),
+      clamp(Math.floor((y1 + margin - minY) / cellH)),
+    ];
+  };
+  const counts = new Uint32Array(side * side + 1);
+  for (let t = 0; t < triangles; t += 1) {
+    const [cx0, cx1, cy0, cy1] = cellRange(t);
+    for (let cy = cy0; cy <= cy1; cy += 1)
+      for (let cx = cx0; cx <= cx1; cx += 1) counts[cy * side + cx + 1]! += 1;
+  }
+  for (let c = 1; c < counts.length; c += 1) counts[c]! += counts[c - 1]!;
+  const start = counts;
+  const fill = start.slice(0, side * side);
+  const ids = new Uint32Array(start[side * side]!);
+  for (let t = 0; t < triangles; t += 1) {
+    const [cx0, cx1, cy0, cy1] = cellRange(t);
+    for (let cy = cy0; cy <= cy1; cy += 1)
+      for (let cx = cx0; cx <= cx1; cx += 1) ids[fill[cy * side + cx]!++] = t;
+  }
+  const grid = { ex, ey, minX, minY, cellW, cellH, nx: side, ny: side, start, ids };
+  parityGrids.set(body.mesh, grid);
+  return grid;
+}
+
 /** `true` if `point` is inside the body's closed mesh (ray parity). */
 export function pointInsideBody(body: Body, point: Vec3): boolean {
   if (point.some((v, i) => v < body.min[i]! - 1e-6 || v > body.max[i]! + 1e-6)) return false;
-  const dir = normalize3([0.5773, 0.5774, 0.5775]);
+  const grid = parityGrid(body);
+  const x = dot(point, grid.ex);
+  const y = dot(point, grid.ey);
+  const fx = (x - grid.minX) / grid.cellW;
+  const fy = (y - grid.minY) / grid.cellH;
+  // Clearly outside the projected mesh (by more than a cell's margin): the ray misses everything.
+  if (fx < -0.5 || fy < -0.5 || fx > grid.nx + 0.5 || fy > grid.ny + 0.5) return false;
+  const cx = Math.max(0, Math.min(grid.nx - 1, Math.floor(fx)));
+  const cy = Math.max(0, Math.min(grid.ny - 1, Math.floor(fy)));
+  const cell = cy * grid.nx + cx;
+  const { positions, indices } = body.mesh;
   let hits = 0;
-  forEachTriangle(body, (tri) => {
-    const d = rayTriangle(point, dir, tri);
+  for (let k = grid.start[cell]!; k < grid.start[cell + 1]!; k += 1) {
+    const d = rayTriangleAt(point, PARITY_DIR, positions, indices, grid.ids[k]!);
     if (d !== null && d > 1e-9) hits += 1;
-  });
+  }
   return hits % 2 === 1;
+}
+
+/**
+ * Möller–Trumbore ray/triangle distance on triangle `t` of an indexed mesh
+ * (`null` = no hit), without allocating.
+ */
+function rayTriangleAt(
+  origin: Vec3,
+  dir: Vec3,
+  positions: Float32Array,
+  indices: Uint32Array,
+  t: number,
+): number | null {
+  const ia = indices[t * 3]! * 3;
+  const ib = indices[t * 3 + 1]! * 3;
+  const ic = indices[t * 3 + 2]! * 3;
+  const ax = positions[ia]!;
+  const ay = positions[ia + 1]!;
+  const az = positions[ia + 2]!;
+  const e1x = positions[ib]! - ax;
+  const e1y = positions[ib + 1]! - ay;
+  const e1z = positions[ib + 2]! - az;
+  const e2x = positions[ic]! - ax;
+  const e2y = positions[ic + 1]! - ay;
+  const e2z = positions[ic + 2]! - az;
+  // p = dir × e2
+  const pxv = dir[1] * e2z - dir[2] * e2y;
+  const pyv = dir[2] * e2x - dir[0] * e2z;
+  const pzv = dir[0] * e2y - dir[1] * e2x;
+  const det = e1x * pxv + e1y * pyv + e1z * pzv;
+  if (Math.abs(det) < 1e-12) return null;
+  const inv = 1 / det;
+  const sx = origin[0] - ax;
+  const sy = origin[1] - ay;
+  const sz = origin[2] - az;
+  const u = (sx * pxv + sy * pyv + sz * pzv) * inv;
+  if (u < 0 || u > 1) return null;
+  // q = s × e1
+  const qx = sy * e1z - sz * e1y;
+  const qy = sz * e1x - sx * e1z;
+  const qz = sx * e1y - sy * e1x;
+  const v = (dir[0] * qx + dir[1] * qy + dir[2] * qz) * inv;
+  if (v < 0 || u + v > 1) return null;
+  return (e2x * qx + e2y * qy + e2z * qz) * inv;
 }
 
 /**
@@ -168,36 +319,12 @@ export function depthInsideBody(body: Body, point: Vec3, dir: Vec3): number | nu
     point[2] + dir[2] * 1e-4,
   ];
   let nearest = Infinity;
-  forEachTriangle(body, (tri) => {
-    const d = rayTriangle(start, dir, tri);
-    if (d !== null && d > 1e-6) nearest = Math.min(nearest, d);
-  });
-  return Number.isFinite(nearest) ? nearest + 1e-4 : null;
-}
-
-function forEachTriangle(body: Body, visit: (tri: [Vec3, Vec3, Vec3]) => void): void {
   const { positions, indices } = body.mesh;
-  const vertex = (i: number): Vec3 => {
-    const v = indices[i]! * 3;
-    return [positions[v]!, positions[v + 1]!, positions[v + 2]!];
-  };
-  for (let t = 0; t < indices.length; t += 3) visit([vertex(t), vertex(t + 1), vertex(t + 2)]);
-}
-
-function rayTriangle(origin: Vec3, dir: Vec3, [a, b, c]: [Vec3, Vec3, Vec3]): number | null {
-  const e1 = sub(b, a);
-  const e2 = sub(c, a);
-  const p = cross3(dir, e2);
-  const det = dot(e1, p);
-  if (Math.abs(det) < 1e-12) return null;
-  const inv = 1 / det;
-  const s = sub(origin, a);
-  const u = dot(s, p) * inv;
-  if (u < 0 || u > 1) return null;
-  const q = cross3(s, e1);
-  const v = dot(dir, q) * inv;
-  if (v < 0 || u + v > 1) return null;
-  return dot(e2, q) * inv;
+  for (let t = 0; t < indices.length / 3; t += 1) {
+    const d = rayTriangleAt(start, dir, positions, indices, t);
+    if (d !== null && d > 1e-6) nearest = Math.min(nearest, d);
+  }
+  return Number.isFinite(nearest) ? nearest + 1e-4 : null;
 }
 
 function cross3(a: Vec3, b: Vec3): Vec3 {

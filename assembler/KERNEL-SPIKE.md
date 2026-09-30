@@ -284,7 +284,7 @@ with Shapr3D-style tools in the generic feature session
 | Feature                                                                                    | OCCT route                                                                                                                                                                                                                                                                           | Naming                                                                                                                           |
 | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
 | Hole (simple/counterbore/countersink, blind/through all, many per feature)                 | per hole a revolved half section (`revolution`) from 0.05–1 mm above the face; holes that do not touch are cut in **one** boolean with a compound tool, touching ones are fused first                                                                                                | `<id>:wall:<i>`, `:cbore:<i>`, `:cbfloor:<i>`, `:csink:<i>`, `:floor:<i>` (hole `i`), kept on the body through the cut's history |
-| Emboss / engrave (planar face)                                                             | profile moved onto the face plane along its normal, extruded out (join) or in (cut), overlapping the body by a lead                                                                                                                                                                  | `<id>:top:<p>` / `:floor:<p>`, `:side:<p>` (`#n`)                                                                                |
+| Emboss / engrave (planar face)                                                             | profile moved onto the face plane along its normal, extruded out (join) or in (cut) from that plane; all profiles in one boolean (non-touching tools in a compound, since 2026-09-30 — "Interactive latency")                                                                        | `<id>:top:<p>` / `:floor:<p>`, `:side:<p>` (`#n`)                                                                                |
 | Emboss / engrave **wrapped** on a cylinder                                                 | the region drawn in the parametric space of a cylindrical surface (replicad `sketchOnFace(…, 'native')`: OCCT p-curves, lines become helices), `u = π + s/R` so the seam is opposite the label; thickened radially with `MakeThickSolidBySimple`                                     | as planar                                                                                                                        |
 | Draft (planar, cylindrical, conical faces; neutral plane = a face or a construction plane) | `BRepOffsetAPI_DraftAngle` (**bound in this build**)                                                                                                                                                                                                                                 | drafted faces keep their keys via `ModifiedShape` (its `Modified` list does not report them)                                     |
 | Rib from open sketch lines                                                                 | the line extended and swept towards the body into a strip, thickened across the sketch plane, clipped to the body's box, minus the body; the solids touching the line are joined                                                                                                     | `<id>:flank:<k>`, `:edge:<k>`                                                                                                    |
@@ -524,6 +524,149 @@ per-operation leakage (the demo's boolean alone leaks ~260 KB per call).
 Recycling at 1 GiB restarts the kernel roughly every 900 such edits.
 Not explained: the median edit time creeps from 20 to 36 ms over the
 session (more live JS objects/GC; the kernel caches stay bounded).
+
+## Interactive latency (2026-09-30)
+
+The Block-5 demo (dev build, this host) needed ~17 s to place text "HC"
+on the lid, ~24 s for the Engrave preview and ~16 s for an M4 counterbore
+Hole. Profiled with a new harness before changing anything:
+`pnpm --filter @himmelcad/assembler bench:interactive` replays the flows
+through the app's stores in Node (in-process kernel and solver) and, with
+`-- --browser`, in Chromium against a Vite dev server with the kernel and
+solver in their workers (`test/bench/interactiveBench.ts`,
+`interactiveBrowser.ts`): (a) enclosure → sketch on the lid top → text
+"HC" → Emboss tool → Engrave −1 mm → Done, (a2) an 11-glyph label
+"HIMMELCAD 26" (Node), (b) Hole on the enclosure floor → position → M4 →
+counterbore → Done, (c) a fillet drag on the demo bracket, (d) dragging a
+point of a 60-entity sketch. Per step: wall/response time, main-thread
+work (Node: every command's availability, as a toolbar + command-search
+render computes it; browser: long tasks), solver, region detection,
+kernel split into feature / validity / naming (describe + history) /
+tessellation, prefix-cache reuse, and the printability analysis
+(informational: it runs in its own worker, 350 ms debounced, only in print
+mode, on committed evaluations — never on a step's path). Browser rows are
+the response latency: the step's first input (event time stamp, so time
+queued behind a blocked main thread counts) to the frame after the last
+store change it caused. `ASM_PROFILE=1` prints the top main-thread
+functions per browser step.
+
+**Finding: the kernel was not the problem, the UI thread was.** Every
+render of the adaptive toolbar and of the command search asks each
+profile tool (Extrude, Revolve, Sweep, Loft, Emboss …) for its
+availability, which ran `autoProfileOperation` → `pointInsideBody` for
+every outline sample of the selected profile/face, each ray-cast against
+every triangle of every body with a fresh vector per triangle. With the
+enclosure and the glyph outlines that was 0.5–2 s per render, repeated
+for every keystroke in the command search: selecting the lid face 2.0 s,
+K 2.3 s, Esc out of the sketch 1.1 s, starting Emboss 23.7 s and the Hole
+tool 7.7 s of long tasks. The kernel's share of the demo was 0.2–0.3 s
+per preview. Fixes (`model/modeling.ts`, `model/featureTools.ts`):
+
+- `pointInsideBody` bins each mesh's triangles once into a grid in the
+  plane normal to the fixed parity ray (WeakMap per immutable mesh); a
+  query tests one cell's triangles with an allocation-free Möller–Trumbore
+  test (same arithmetic). Tested against the brute-force test on a
+  lattice through the demo bracket and every mesh vertex.
+- `autoProfileOperation` answers repeated questions about the same
+  evaluation from a per-evaluation cache.
+- `depthInsideBody` (extrude start depth) uses the allocation-free test;
+  the sketch overlay computes one view-projection matrix per camera pose
+  instead of one per mapped point (glyph outlines map thousands).
+
+Kernel side (`kernel/features/emboss.ts`), measured before changing:
+the Emboss boolean of the glyph tool with the lid is ~70–80 % of the
+feature (OCCT intersecting the glyphs' B-spline side faces), and a label
+paid one fuse per extra glyph over the growing union:
+
+- **Batched tool**: profiles whose tools cannot touch (boxes apart by a
+  margin) go into one compound — one boolean for the whole label; only
+  overlapping tools are fused (in profile order, as before). Names are the
+  per-profile fuse's (pinned: face count + digest of all keys and aliases
+  of an 11-glyph label; a touching/separate mix listed exactly).
+- **Planar tools start on the face plane** (no lead into the material),
+  like an extrude from a sketch on a face: ~30 % less boolean time on
+  glyphs, same names and volumes on the face, and a profile hanging over
+  the face edge no longer gets a lead-thick skirt (test: exactly area ×
+  height). Wrapped tools keep their radial lead.
+
+Not changed, verified instead: text is already a rigid block for the
+solver (only its anchor point, 2 DOF; the glyph outline is stored data,
+never solver geometry) — placing "HC" solves in 0.2–0.4 ms; region
+detection prunes curve pairs by bounding box (1 ms for "HC", 8–16 ms for
+11 glyphs); previews reuse the prefix cache (18 of 19 features restored)
+and skip validity (checked on commit, per new face); tessellation is per
+new face at preview quality; naming costs 2–13 ms (12–90 ms for the
+label).
+
+Node, medians of 3 runs, host shared with other agents (± 30 %); ms:
+
+| Step                                   | Before: wall (UI / kernel / feature) | After: wall (UI / kernel / feature) |
+| -------------------------------------- | -----------------------------------: | ----------------------------------: |
+| (a) select the lid top face            |                1 584 (1 584 / – / –) |                   8.8 (8.7 / – / –) |
+| (a) place text "HC" (solved)           |                    1.8 (0.3 / – / –) |                   1.9 (0.3 / – / –) |
+| (a) leave the sketch (Esc)             |                  895 (893 / 0.4 / –) |                 7.6 (4.8 / 0.4 / –) |
+| (a) select profile + face              |                1 288 (1 288 / – / –) |                 10.7 (10.5 / – / –) |
+| (a) Emboss tool, first preview (+1 mm) |            1 805 (1 545 / 321 / 263) |               170 (0.4 / 169 / 113) |
+| (a) Engrave preview (−1 mm)            |            1 692 (1 410 / 287 / 230) |               301 (0.4 / 299 / 170) |
+| (a) Engrave commit (validity 27 → 23)  |                357 (0.2 / 356 / 231) |               236 (0.2 / 236 / 115) |
+| (a2) 11-glyph label, Emboss preview    |        5 662 (3 221 / 2 823 / 2 552) |               900 (0.4 / 900 / 714) |
+| (a2) 11-glyph label, Engrave preview   |        6 065 (3 861 / 2 227 / 1 975) |               850 (0.4 / 849 / 683) |
+| (a2) 11-glyph label, Engrave commit    |          2 542 (0.3 / 2 541 / 2 118) |           1 322 (0.4 / 1 321 / 890) |
+| (b) select the floor face              |                    604 (604 / – / –) |                   1.6 (1.6 / – / –) |
+| (b) Hole tool, first preview           |                  591 (554 / 38 / 27) |                  39 (0.7 / 38 / 24) |
+| (b) M4 / counterbore preview           |            590 / 581 (553 / 37 / 24) |             36 / 38 (0.4 / 35 / 25) |
+| (b) Hole commit (cached tail)          |                                  1.4 |                                 0.9 |
+| (c) fillet drag step (×10)             |             21.4 (0.2 / 20.9 / 14.9) |            15.6 (0.2 / 15.1 / 10.8) |
+| (d) 60-entity drag step (×30; solver)  |                            1.3 (0.9) |                           1.2 (0.8) |
+
+Browser (Chromium dev build, workers), response latency (UI long tasks),
+one warm run each, same session order; ms:
+
+| Step                                        |          Before |        After |
+| ------------------------------------------- | --------------: | -----------: |
+| (a) select the lid top face                 |   2 005 (2 009) |       25 (0) |
+| (a) K: Text tool on the face                |   2 278 (2 261) |      90 (72) |
+| (a) place text "HC" (Enter → solved, drawn) |       162 (111) |       64 (0) |
+| (a) leave the sketch (Esc)                  |   1 465 (1 126) |      246 (0) |
+| (a) select profile + face                   |   1 570 (1 567) |       27 (0) |
+| (a) Ctrl+F "Emboss" Enter → first preview   | 24 388 (23 651) |      521 (0) |
+| (a) Engrave preview (kernel 302 → 175)      |         332 (0) |      221 (0) |
+| (a) Engrave commit (speculative, kernel ~1) |          53 (0) |       74 (0) |
+| (b) select the floor face                   |       698 (696) |       19 (0) |
+| (b) Ctrl+F "Hole" Enter → first preview     |   7 915 (7 674) |     311 (69) |
+| (b) size M4 (menu + option) / counterbore   |    359 / 92 (0) | 353 / 85 (0) |
+| (b) Hole commit                             |          49 (0) |       68 (0) |
+| (c) fillet drag step (kernel 14 → 13)       |          62 (0) |       30 (0) |
+| (d) 60-entity drag step                     |        19.8 (0) |     13.1 (0) |
+
+Targets on this host: text placement < 300 ms — **met** (64 ms from
+Enter; the whole face → K → click → type → Enter flow has no step above
+120 ms); engrave preview < 500 ms — **met** for "HC" (221 ms browser, 301
+ms Node) but **not for long labels** (11 glyphs: 850 ms Node — the OCCT
+boolean of many B-spline side faces; halved, not solved); engrave commit
+< 1.5 s — **met** (74 ms browser with the worker's speculative commit,
+236 ms Node; the 11-glyph label 1.3 s); hole preview < 300 ms and commit
+< 1 s — **met** (85 ms / 68 ms; Node 36–39 ms kernel); fillet drag
+preview < 150 ms — **met** (30 ms browser, 16 ms Node); 60-entity drag <
+30 ms per solve — **met** (13 ms input → frame, 0.8 ms solve). Steps that
+start a tool through the command search include typing the command name.
+
+`bench:kernel` (its parts contain no emboss and no main-thread code),
+three alternating runs before (159fe7c) / after, host loaded by other
+agents: demo full eval 100–174 / 101–145 ms, edit #2 68–197 / 82–146,
+last-feature edit 21–46 / 23–36, preview 24–93 / 23–64; 60-feature plate
+last-feature edit 51–86 / 55–163, preview 54–56 / 56–137 — ranges
+overlap, no regression beyond noise.
+
+Memory: the 500-edit leak session is unchanged (wasm heap 100 → 595 MB,
+caches 55 MB). Repeated Emboss previews of the 11-glyph label grow the
+heap ~8 MB each (was ~15 MB: one boolean instead of eleven) — OCCT's own
+per-boolean leakage on B-spline faces; the adapters' 1 GiB recycling
+still applies (~100 label previews per recycle).
+
+Found for the UI lane (not changed here): right after a click in the
+viewport, the first click on the Hole tool's size menu button does not
+open it (the harness clicks until it is expanded).
 
 ## Open risks
 

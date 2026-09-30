@@ -234,6 +234,30 @@ export function autoProfileOperation(
   evaluation: EvaluationResult,
   profiles: readonly ProfileRef[],
 ): { operation: ExtrudeOperation; targetBodyId?: string } {
+  // Command availability asks this for every profile tool on every toolbar/search render:
+  // answer repeated questions about the same evaluation from a cache.
+  let cache = autoOperationCache.get(evaluation);
+  if (!cache) {
+    cache = new Map();
+    autoOperationCache.set(evaluation, cache);
+  }
+  const key = JSON.stringify(profiles);
+  const known = cache.get(key);
+  if (known) return { ...known };
+  const result = computeAutoProfileOperation(evaluation, profiles);
+  cache.set(key, result);
+  return { ...result };
+}
+
+const autoOperationCache = new WeakMap<
+  EvaluationResult,
+  Map<string, { operation: ExtrudeOperation; targetBodyId?: string }>
+>();
+
+function computeAutoProfileOperation(
+  evaluation: EvaluationResult,
+  profiles: readonly ProfileRef[],
+): { operation: ExtrudeOperation; targetBodyId?: string } {
   for (const ref of profiles) {
     const samples = profileSamples(evaluation, ref);
     if (!samples) continue;

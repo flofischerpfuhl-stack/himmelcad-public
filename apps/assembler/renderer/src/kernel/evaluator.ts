@@ -1368,6 +1368,7 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
       nameResult(result, history, inputs, featureOrder, nameNew, generators),
     withKeys,
     diagonalOf,
+    boundsOf,
     addBody: (ctx, body, color) => {
       const created = ctx.createdCount;
       const state: BodyState = {

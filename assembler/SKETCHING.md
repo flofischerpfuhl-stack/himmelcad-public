@@ -300,6 +300,21 @@ describes the new entity/constraint kinds. Python: `Sketch.spline`,
 `ellipse`, `slot_between`, `arc_slot`, `polygon`, `text`, `mirror`,
 `pattern`, `fillet_corner`, `chamfer_corner`, `project`, `set_reference`.
 
+### Interactive latency (2026-09-30)
+
+Measured with `bench:interactive` (`KERNEL-SPIKE.md` "Interactive
+latency"): text is a rigid block for the solver — only its anchor point
+(2 DOF) is solved, the glyph outline is stored data — so placing "HC"
+solves in 0.2–0.4 ms and shows 64 ms after Enter in the browser (dev
+build, workers). Region detection prunes curve pairs by bounding box
+before the Newton-refined intersections: 1 ms for "HC", 8–16 ms for an
+11-glyph label, 0.5 ms per drag frame of a 60-entity sketch. Dragging a
+point of that sketch: 0.8 ms per solve, 13 ms input → frame. The 17 s the
+Block-5 demo took around text placement were the UI thread computing
+command availability (profile-in-body ray casts against every triangle
+per outline sample, per render) — fixed in `model/modeling.ts` /
+`model/featureTools.ts`, not in the sketch code.
+
 ## Tests
 
 `test/sketch/curves.test.ts` (spline math, exact curve areas and

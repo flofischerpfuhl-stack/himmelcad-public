@@ -107,6 +107,8 @@ export interface FeatureKit {
   ): KeyedFace[];
   withKeys(geoms: FaceGeom[], keys: KeyedFaceKeys[]): KeyedFace[];
   diagonalOf(shape: Shape3D): number;
+  /** Cached bounding box `[min, max]` of `shape` (world, mm). */
+  boundsOf(shape: Shape3D): [[number, number, number], [number, number, number]];
   /** Adds a body to the replay (creation order, default colour from the palette unless given). */
   addBody(
     ctx: ReplayContextLike,
