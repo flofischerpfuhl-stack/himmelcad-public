@@ -189,7 +189,14 @@ export function useGlobalKeyboard(
       );
       if (!command) return;
       const availability = command.availability(state);
-      if (!availability.enabled) return;
+      if (!availability.enabled) {
+        // A tool hotkey that cannot run says why (e.g. E while the sketch is still open)
+        // instead of doing nothing silently.
+        if (plain && /^[a-z]$/i.test(event.key) && availability.reason) {
+          useWorkspaceStore.getState().notify(`${command.label}: ${availability.reason}`);
+        }
+        return;
+      }
       event.preventDefault();
       command.run(state);
       state.pushRecentCommand(command.id);
