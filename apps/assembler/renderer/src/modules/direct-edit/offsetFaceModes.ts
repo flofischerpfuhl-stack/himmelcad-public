@@ -3,7 +3,7 @@
  * face offers, the opposite face `Total` measures to, and the conversion
  * between a mode's value and the offset along the outward normal — the
  * same arithmetic the kernel does on the exact surfaces
- * (`kernel/features/faceOps.ts#modeOffset`), here on the evaluated face
+ * (`faceEdits.ts#modeOffset`), here on the evaluated face
  * (radius from its circular edges, hole or boss from the mesh normals).
  */
 import type { Body, EvaluationResult, FaceInfo } from '../../foundation/geometry-kernel/types.js';

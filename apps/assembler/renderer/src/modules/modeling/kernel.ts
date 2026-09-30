@@ -1,17 +1,10 @@
 /**
  * Kernel part of the modelling module: the evaluators of the kinds declared
- * in `model/features.ts` and `model/printFeatures.ts`, registered with the
+ * in `features.ts` and `printFeatures.ts` (`kernel/`), registered with the
  * evaluator's per-kind registry (`foundation/geometry-kernel/features/registry.ts`).
  * Loaded by the kernel-worker composition (`renderer/src/app/kernelModules.ts`).
- *
- * Offset Face and Delete Face still evaluate in
- * `foundation/geometry-kernel/features/faceOps.ts` (shared with the core
- * shell/push-pull code) until the direct-edit module takes them over.
+ * OCCT only through `FeatureKit` and the kernel's exports (`occtApi.ts`).
  */
-import {
-  applyDeleteFace,
-  applyOffsetFace,
-} from '../../foundation/geometry-kernel/features/faceOps.js';
 import { defineKernelModule } from '../../foundation/geometry-kernel/features/registry.js';
 import './kinds.js';
 import {
@@ -40,8 +33,6 @@ export const modelingKernel = defineKernelModule({
     transform: applyTransform,
     rotateAxis: applyRotateAxis,
     align: applyAlign,
-    offsetFace: applyOffsetFace,
-    deleteFace: applyDeleteFace,
     hole: applyHole,
     emboss: applyEmboss,
     draft: applyDraft,

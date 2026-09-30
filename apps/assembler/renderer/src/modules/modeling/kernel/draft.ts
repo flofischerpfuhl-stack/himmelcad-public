@@ -11,7 +11,7 @@
  * OCCT has to rebuild around them (rare) are named `<id>:new`.
  */
 import '../../../foundation/geometry-kernel/occtArena.js';
-import * as R from 'replicad';
+import * as R from '../../../foundation/geometry-kernel/features/occtApi.js';
 
 import type { DraftFeature } from '../printFeatures.js';
 import { MAX_DRAFT_ANGLE } from '../printFeatures.js';

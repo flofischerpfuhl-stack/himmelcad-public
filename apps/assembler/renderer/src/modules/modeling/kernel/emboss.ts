@@ -24,7 +24,7 @@
  * `<id>:side:<p>` (`#n` pieces) for profile `p`.
  */
 import '../../../foundation/geometry-kernel/occtArena.js';
-import * as R from 'replicad';
+import * as R from '../../../foundation/geometry-kernel/features/occtApi.js';
 
 import { MIN_FEATURE_SIZE_MM, framePoint, type Vec3 } from '../../../foundation/document/document.js';
 import type { EmbossFeature } from '../printFeatures.js';

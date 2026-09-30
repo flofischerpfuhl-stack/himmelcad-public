@@ -6,7 +6,7 @@
  * source keys (a reference is `bodyId` + key, so they stay unambiguous).
  */
 import '../../../foundation/geometry-kernel/occtArena.js';
-import * as R from 'replicad';
+import * as R from '../../../foundation/geometry-kernel/features/occtApi.js';
 
 import {
   bodyIdFor,

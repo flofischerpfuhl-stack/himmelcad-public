@@ -15,7 +15,7 @@
  * notch on its convex side: OCCT's simple offset joins no neighbours).
  */
 import '../../../foundation/geometry-kernel/occtArena.js';
-import * as R from 'replicad';
+import * as R from '../../../foundation/geometry-kernel/features/occtApi.js';
 
 import {
   MIN_FEATURE_SIZE_MM,

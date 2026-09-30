@@ -7,7 +7,7 @@
  * report falls back to the segment lying on its surface, else `:new`.
  */
 import '../../../foundation/geometry-kernel/occtArena.js';
-import * as R from 'replicad';
+import * as R from '../../../foundation/geometry-kernel/features/occtApi.js';
 
 import {
   MIN_FEATURE_SIZE_MM,

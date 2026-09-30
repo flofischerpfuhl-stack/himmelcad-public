@@ -44,14 +44,18 @@
       "to": "measure",
       "rule": "cross-domain",
       "reason": "Known at the start of the ADR 0032 restructure (phase A): domain modules talk through foundation contracts and registrations, not directly.",
-      "edges": ["renderer/src/modules/direct-edit/offsetFaceModes.ts -> renderer/src/model/measure.ts"]
+      "edges": [
+        "renderer/src/modules/direct-edit/offsetFaceModes.ts -> renderer/src/model/measure.ts"
+      ]
     },
     {
       "from": "direct-edit",
       "to": "modeling",
       "rule": "cross-domain",
       "reason": "Known at the start of the ADR 0032 restructure (phase A): domain modules talk through foundation contracts and registrations, not directly.",
-      "edges": ["renderer/src/modules/direct-edit/offsetFaceModes.ts -> renderer/src/modules/modeling/features.ts"]
+      "edges": [
+        "renderer/src/modules/direct-edit/offsetFaceModes.ts -> renderer/src/modules/modeling/features.ts"
+      ]
     },
     {
       "from": "display",
@@ -85,15 +89,6 @@
       ]
     },
     {
-      "from": "geometry-kernel",
-      "to": "modeling",
-      "rule": "upward",
-      "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
-      "edges": [
-        "renderer/src/foundation/geometry-kernel/features/faceOps.ts -> renderer/src/modules/modeling/features.ts"
-      ]
-    },
-    {
       "from": "interop",
       "to": "shell-ui",
       "rule": "upward",
@@ -119,11 +114,11 @@
       "rule": "cross-domain",
       "reason": "Known at the start of the ADR 0032 restructure (phase A): domain modules talk through foundation contracts and registrations, not directly.",
       "edges": [
-        "renderer/src/modules/modeling/ui/FeatureParams.tsx -> renderer/src/model/construction.ts",
         "renderer/src/modules/modeling/featureTools.ts -> renderer/src/model/construction.ts",
         "renderer/src/modules/modeling/featureTools.ts -> renderer/src/model/constructionTools.ts",
         "renderer/src/modules/modeling/features.ts -> renderer/src/model/construction.ts",
-        "renderer/src/modules/modeling/printFeatureTools.ts -> renderer/src/model/construction.ts"
+        "renderer/src/modules/modeling/printFeatureTools.ts -> renderer/src/model/construction.ts",
+        "renderer/src/modules/modeling/ui/FeatureParams.tsx -> renderer/src/model/construction.ts"
       ]
     },
     {
@@ -132,22 +127,8 @@
       "rule": "cross-domain",
       "reason": "Known at the start of the ADR 0032 restructure (phase A): domain modules talk through foundation contracts and registrations, not directly.",
       "edges": [
-        "renderer/src/modules/modeling/ui/FeatureParams.tsx -> renderer/src/modules/direct-edit/offsetFaceModes.ts",
-        "renderer/src/modules/modeling/featureTools.ts -> renderer/src/modules/direct-edit/offsetFaceModes.ts"
-      ]
-    },
-    {
-      "from": "modeling",
-      "to": "replicad",
-      "rule": "external-owner",
-      "reason": "Known at the start of the ADR 0032 restructure (phase A): reach this library through its owning module.",
-      "edges": [
-        "renderer/src/modules/modeling/kernel/bodyOps.ts -> replicad",
-        "renderer/src/modules/modeling/kernel/draft.ts -> replicad",
-        "renderer/src/modules/modeling/kernel/emboss.ts -> replicad",
-        "renderer/src/modules/modeling/kernel/holes.ts -> replicad",
-        "renderer/src/modules/modeling/kernel/profileSolids.ts -> replicad",
-        "renderer/src/modules/modeling/kernel/ribThicken.ts -> replicad"
+        "renderer/src/modules/modeling/featureTools.ts -> renderer/src/modules/direct-edit/offsetFaceModes.ts",
+        "renderer/src/modules/modeling/ui/FeatureParams.tsx -> renderer/src/modules/direct-edit/offsetFaceModes.ts"
       ]
     },
     {
