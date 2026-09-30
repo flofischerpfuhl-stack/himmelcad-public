@@ -356,7 +356,7 @@ export function SketchOverlay({
       unregister();
       window.removeEventListener('keydown', onKeyDown, true);
     };
-  }, [active]);
+  }, [active, commitChipValue, setChipTyping]);
 
   const lastInference = useRef<Inference | null>(null);
   lastInference.current = inference;
