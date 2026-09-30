@@ -97,18 +97,25 @@ function castRaw(raw: RawShape): R.AnyShape {
   }
 }
 
-/** A profile that crosses the axis would revolve into a self-intersecting solid. */
+/**
+ * A profile point `p` moves with velocity `dir × (p − point)`; its component
+ * along the profile normal, `(p − point) · (n × dir)`, is linear in `p`. If
+ * it changes sign inside the profile, part of the profile sweeps back
+ * through space it already swept: a self-intersecting (invalid) solid. For
+ * an axis in the sketch plane that is "the profile crosses the axis"; for an
+ * axis parallel to or oblique to the plane it is the line of the plane that
+ * the axis passes over (fuzzer finding F2, `assembler/ROBUSTNESS.md`: such
+ * revolves used to give an invalid body without an error).
+ */
 function checkAxisOutsideProfile(kit: FeatureKit, axis: Line3, section: ProfileSection): void {
   const n = section.normal;
   const inPlane =
     Math.abs(dot(axis.dir, n)) < 1e-6 && Math.abs(dot(sub(axis.point, section.center), n)) < 1e-6;
-  if (!inPlane) {
-    if (Math.abs(Math.abs(dot(axis.dir, n)) - 1) < 1e-6) {
-      kit.fail('The revolve axis must not be perpendicular to the profile');
-    }
-    return;
+  const across = cross(n, axis.dir);
+  if (Math.hypot(across[0], across[1], across[2]) < 1e-6) {
+    kit.fail('The revolve axis must not be perpendicular to the profile');
   }
-  const side = normalize(cross(n, axis.dir));
+  const side = normalize(across);
   let min = Infinity;
   let max = -Infinity;
   for (const p of section.outline) {
@@ -117,8 +124,16 @@ function checkAxisOutsideProfile(kit: FeatureKit, axis: Line3, section: ProfileS
     max = Math.max(max, s);
   }
   const tol = 1e-6;
-  if (min < -tol && max > tol) kit.fail('The profile crosses the revolve axis');
-  if (Math.max(Math.abs(min), Math.abs(max)) < tol) kit.fail('The profile lies on the axis');
+  if (min < -tol && max > tol) {
+    kit.fail(
+      inPlane
+        ? 'The profile crosses the revolve axis'
+        : 'The profile would revolve through itself (the axis passes over it); move the axis beside the profile or into the sketch plane',
+    );
+  }
+  if (inPlane && Math.max(Math.abs(min), Math.abs(max)) < tol) {
+    kit.fail('The profile lies on the axis');
+  }
 }
 
 // ---- Sweep -----------------------------------------------------------------------
