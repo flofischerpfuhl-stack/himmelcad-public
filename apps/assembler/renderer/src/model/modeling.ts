@@ -113,10 +113,12 @@ export function extrudeStartDepth(
   const frame =
     sketch.plane.kind === 'plane'
       ? frameForPlane(sketch.plane.plane, sketch.plane.offset)
-      : frameForFace(
-          sketch.plane.face.signature.normal ?? face.normal,
-          sketch.plane.face.signature.centroid,
-        );
+      : sketch.plane.kind === 'construction'
+        ? sketch.plane.frame
+        : frameForFace(
+            sketch.plane.face.signature.normal ?? face.normal,
+            sketch.plane.face.signature.centroid,
+          );
   // Regions straight from the sketch data (it may not be evaluated yet), like the kernel detects them.
   const all = detectRegions(sketch);
   const regions = regionKeys ? all.filter((r) => regionKeys.includes(r.key)) : all;

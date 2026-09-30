@@ -644,6 +644,20 @@ export function BooleanParams({
           }
         />
       </div>
+      <div>
+        <span className={styles.paramLabel}>Target</span>
+        <Select
+          aria-label={`${feature.name} keep target`}
+          value={feature.keepTarget ? 'keep' : 'modify'}
+          options={[
+            { value: 'modify', label: 'Modified' },
+            { value: 'keep', label: 'Kept (result is a new body)' },
+          ]}
+          onChange={(event) =>
+            edit({ keepTarget: event.currentTarget.value === 'keep' || undefined })
+          }
+        />
+      </div>
       <span className={styles.paramNote}>
         {plural(feature.toolBodyIds.length, 'tool body', 'tool bodies')}
       </span>

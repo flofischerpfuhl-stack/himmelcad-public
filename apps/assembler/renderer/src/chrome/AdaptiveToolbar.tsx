@@ -2,8 +2,8 @@
  * Adaptive toolbar (interaction research §2): when the selection is
  * non-empty and no tool is active, replaces the main menu icons in the
  * left column with `resolveAdaptive(ctx)` — recommended command first and
- * visually emphasised — a "More" button for the rest, and a clear-selection
- * (x) button. Availability only ever reads `ctx.selection`, never
+ * visually emphasised — as many as fit the window height, a "More" button
+ * only for the rest (Shapr3D 26.20), and a clear-selection (x) button. Availability only ever reads `ctx.selection`, never
  * `ctx.hover`, so this never reflows on mouse-over, only on a committed
  * selection change.
  */
@@ -13,21 +13,58 @@ import { useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { Menu, MenuItem, Tooltip } from '@himmelcad/ui';
 
 import { resolveAdaptive, type Command } from '../model/commands/registry.js';
+import { adaptiveCapacity, splitAdaptive } from './adaptiveLayout.js';
 import { usePreferences } from '../model/preferences.js';
 import { commandIcon } from './icons.js';
 import type { AssemblerState } from '../model/store.js';
 import styles from './AdaptiveToolbar.module.css';
 
-const MAX_VISIBLE = 4;
+/** Until measured (first layout): the old fixed count. */
+const INITIAL_CAPACITY = 5;
+/** Button pitch with captions under the icons (Settings › Toolbar labels › Always). */
+const LABELLED_SLOT_PX = 56;
 
 export function AdaptiveToolbar({ state }: { state: AssemblerState }): JSX.Element {
   const labels = usePreferences((p) => p.labels);
   const commands = resolveAdaptive(state);
-  const visible = commands.slice(0, MAX_VISIBLE);
-  const overflow = commands.slice(MAX_VISIBLE);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const clearRef = useRef<HTMLButtonElement | null>(null);
+  const [capacity, setCapacity] = useState(INITIAL_CAPACITY);
+  const split = splitAdaptive(commands.length, capacity);
+  const visible = commands.slice(0, split.visible);
+  const overflow = commands.slice(split.visible);
   const [moreOpen, setMoreOpen] = useState(false);
   const moreRef = useRef<HTMLButtonElement | null>(null);
   const [menuStyle, setMenuStyle] = useState<CSSProperties>();
+
+  // The bar fills the left column down to the mode buttons (Section / Isolate /
+  // Measure / Print); "More" appears only when the selection's actions do not fit.
+  useLayoutEffect(() => {
+    const root = rootRef.current;
+    const dock = root?.parentElement;
+    if (!root || !dock) return;
+    const measure = () => {
+      const modes = dock.lastElementChild;
+      if (!modes || modes === root) return;
+      const button = clearRef.current?.getBoundingClientRect().height ?? 34;
+      const slot = labels === 'always' ? LABELLED_SLOT_PX : button + 4;
+      // Padding, border, divider and the clear-selection button stay in the bar.
+      const chrome = 8 + 2 + 9 + button + 4;
+      const gap = 8;
+      // From the dock's fixed bottom (not the mode group's top, which an overflowing bar pushes down).
+      const available =
+        dock.getBoundingClientRect().bottom -
+        modes.getBoundingClientRect().height -
+        root.getBoundingClientRect().top -
+        gap -
+        chrome;
+      setCapacity(adaptiveCapacity(available, slot));
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(dock);
+    return () => observer.disconnect();
+  }, [labels]);
 
   useLayoutEffect(() => {
     if (!moreOpen || !moreRef.current) return;
@@ -41,7 +78,12 @@ export function AdaptiveToolbar({ state }: { state: AssemblerState }): JSX.Eleme
   };
 
   return (
-    <div className={styles.root} role="toolbar" aria-label="Adaptive commands for selection">
+    <div
+      ref={rootRef}
+      className={styles.root}
+      role="toolbar"
+      aria-label="Adaptive commands for selection"
+    >
       {visible.map((command, index) => {
         const Icon = commandIcon(command);
         const recommended = index === 0;
@@ -75,9 +117,9 @@ export function AdaptiveToolbar({ state }: { state: AssemblerState }): JSX.Eleme
           </Tooltip>
         );
       })}
-      {overflow.length > 0 ? (
+      {split.more && overflow.length > 0 ? (
         <div style={{ position: 'relative' }}>
-          <Tooltip content="More commands">
+          <Tooltip content={`More for this selection (${overflow.length})`}>
             <button
               ref={moreRef}
               type="button"
@@ -115,6 +157,7 @@ export function AdaptiveToolbar({ state }: { state: AssemblerState }): JSX.Eleme
       <div className={styles.divider} />
       <Tooltip content="Clear selection (Esc)">
         <button
+          ref={clearRef}
           type="button"
           className={`${styles.button} ${styles.clear}`}
           aria-label="Clear selection"

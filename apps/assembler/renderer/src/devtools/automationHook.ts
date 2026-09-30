@@ -10,6 +10,12 @@
  */
 import type { Body, EdgeInfo, EvaluationResult, FaceInfo } from '../kernel/types.js';
 import type { Feature } from '../model/document.js';
+import {
+  COMMANDS,
+  findCommand,
+  resolveAdaptive,
+  searchCommands,
+} from '../model/commands/registry.js';
 import { useItemsStore } from '../model/items.js';
 import { usePreferences } from '../model/preferences.js';
 import { isPreviewTool, useAssemblerStore } from '../model/store.js';
@@ -17,6 +23,7 @@ import { currentCameraPose, useWorkspaceStore } from '../model/workspace.js';
 import { usePrintStore } from '../print/printStore.js';
 import type { CameraPose } from '../viewport/camera.js';
 import { getViewportProbe, type ScreenPoint, type ViewportProbe } from '../viewport/automation.js';
+import { useFixStore } from '../model/fixReference.js';
 import { useMeasureStore } from '../model/measureStore.js';
 import { useProjectStore } from '../model/project/projectStore.js';
 import { useInteropStore } from '../interop/interopStore.js';
@@ -86,6 +93,23 @@ export interface AssemblerAutomation {
   projectStore: typeof useProjectStore;
   /** Import/export: `importFiles`, the running job (Cancel), DXF/STEP dialogs, `convertMeshToSolid`. */
   interopStore: typeof useInteropStore;
+  /** The command registry as the UI sees it (gap inventory / smoke scripts). */
+  commands: {
+    /** Every registered command: id, label, group, shortcut, keywords. */
+    list(): { id: string; label: string; group: string; shortcut?: string; keywords?: string[] }[];
+    /** Adaptive toolbar order for the current selection (`resolveAdaptive`), with recommendation flags. */
+    adaptive(): { id: string; label: string; recommended: boolean; priority: number }[];
+    /** Command search results for `query` (enabled first), as the search popover shows them. */
+    search(query: string): { id: string; label: string; enabled: boolean; reason?: string }[];
+    /** Runs a command if it is enabled; returns whether it ran. */
+    run(id: string): boolean;
+  };
+  /** Construction planes/axes as evaluated (`EvaluatedDatum`) — the shown evaluation. */
+  datums(): { featureId: string; kind: 'plane' | 'axis'; center: number[]; size: number }[];
+  /** A visible pixel of a construction plane's/axis' outline (pick ribbon), or `null`. */
+  datumAnchor(featureId: string): ScreenPoint | null;
+  /** History `Fix…` session (`model/fixReference.ts`): `session`, `end`. */
+  fixStore: typeof useFixStore;
 }
 
 declare global {
@@ -217,6 +241,53 @@ export function installAutomationHook(store: typeof useAssemblerStore): void {
     measureStore: useMeasureStore,
     projectStore: useProjectStore,
     interopStore: useInteropStore,
+    datums: () =>
+      (displayed().datums ?? []).map((d) => ({
+        featureId: d.featureId,
+        kind: d.kind,
+        center: [...d.center],
+        size: d.size,
+      })),
+    datumAnchor: (featureId) =>
+      getViewportProbe()?.anchor((t) => t.kind === 'datum' && t.featureId === featureId) ?? null,
+    fixStore: useFixStore,
+    commands: {
+      list: () =>
+        COMMANDS.map((c) => ({
+          id: c.id,
+          label: c.label,
+          group: c.group,
+          ...(c.shortcut ? { shortcut: c.shortcut } : {}),
+          ...(c.keywords ? { keywords: [...c.keywords] } : {}),
+        })),
+      adaptive: () => {
+        const state = store.getState();
+        return resolveAdaptive(state).map((c) => {
+          const availability = c.availability(state);
+          return {
+            id: c.id,
+            label: c.label,
+            recommended: availability.recommended === true,
+            priority: availability.priority ?? 0,
+          };
+        });
+      },
+      search: (query) =>
+        searchCommands(query, store.getState()).map((r) => ({
+          id: r.command.id,
+          label: r.command.label,
+          enabled: r.enabled,
+          ...(r.reason !== undefined ? { reason: r.reason } : {}),
+        })),
+      run: (id) => {
+        const state = store.getState();
+        const command = findCommand(id);
+        if (!command || !command.availability(state).enabled) return false;
+        command.run(state);
+        state.pushRecentCommand(command.id);
+        return true;
+      },
+    },
     waitForKernelIdle: async () => {
       await store.getState().whenSettled();
       // Let React commit and the viewport draw (and pick-render) the settled state.

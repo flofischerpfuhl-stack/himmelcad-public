@@ -49,6 +49,11 @@ export function cameraTargetBounds(
   evaluation: {
     bodies: readonly EvaluationResult['bodies'][number][];
     sketches: readonly EvaluationResult['sketches'][number][];
+    datums?: readonly {
+      featureId: string;
+      center: readonly [number, number, number];
+      size: number;
+    }[];
   },
   selection: readonly SelectionItem[],
 ): Bounds[] {
@@ -72,6 +77,14 @@ export function cameraTargetBounds(
         sketch?.profiles.filter((p) => item.regionKey === undefined || p.key === item.regionKey) ??
         [];
       b = boundsOfPoints(profiles.flatMap((p) => p.outline));
+    } else if (item.kind === 'datum') {
+      // A construction plane/axis: the cube around its drawn square/segment.
+      const datum = evaluation.datums?.find((d) => d.featureId === item.featureId);
+      if (datum) {
+        const [x, y, z] = datum.center;
+        const s = datum.size;
+        b = { min: [x - s, y - s, z - s], max: [x + s, y + s, z + s] };
+      }
     }
     if (b) out.push(b);
   }

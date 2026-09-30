@@ -20,6 +20,11 @@ import type {
   Vec3,
 } from './document.js';
 import {
+  CONSTRUCTION_FEATURE_KINDS,
+  CONSTRUCTION_FEATURE_LABEL,
+  type ConstructionFeature,
+} from './construction.js';
+import {
   PRINT_FEATURE_KINDS,
   PRINT_FEATURE_LABEL,
   printSketchIdsUsedBy,
@@ -40,7 +45,9 @@ export type WorldAxis = 'X' | 'Y' | 'Z';
 export type AxisRef =
   | { kind: 'world'; axis: WorldAxis; origin?: Vec3 }
   | { kind: 'edge'; edge: EdgeRef }
-  | { kind: 'sketchLine'; featureId: string; entityId: string };
+  | { kind: 'sketchLine'; featureId: string; entityId: string }
+  /** A construction axis (`construction.ts`) by feature id; `line` is its last evaluated line (signature). */
+  | { kind: 'construction'; featureId: string; line: { point: Vec3; dir: Vec3 } };
 
 /**
  * Sweep path: a chain of body edges, the closed outer outline of a sketch
@@ -87,12 +94,37 @@ export interface LoftFeature extends FeatureBase {
   resultBodyName?: string;
 }
 
-/** Mirrors bodies across a plane; with `keepOriginal` the mirror images are new bodies. */
+/**
+ * Mirrors bodies across a plane (a world plane, a planar face or a
+ * construction plane) or, with `axis`, about a line (a half turn about it —
+ * the in-plane mirror of a sketch); with `keepOriginal` the mirror images
+ * of bodies are new bodies. Sketches (every profile) and planar faces can
+ * be mirrored too: each becomes a mirrored sketch whose profiles later
+ * steps reference as `{ kind: 'sketch', featureId: mirroredSketchId(...) }`
+ * (the originals stay).
+ */
 export interface MirrorFeature extends FeatureBase {
   kind: 'mirror';
   bodyIds: string[];
   plane: PlaneRef;
   keepOriginal: boolean;
+  /** Sketch feature ids to mirror. */
+  sketchIds?: string[];
+  /** Planar faces to mirror as profiles. */
+  faces?: FaceRef[];
+  /** Mirror about this line instead of `plane`. */
+  axis?: AxisRef;
+}
+
+/** Id of the `index`-th mirrored sketch (`sketchIds` first, then `faces`) of a Mirror step. */
+export function mirroredSketchId(mirrorId: string, index: number): string {
+  return `${mirrorId}:sketch:${index}`;
+}
+
+/** The Mirror step and index a mirrored-sketch id stands for, or `null`. */
+export function parseMirroredSketchId(id: string): { mirrorId: string; index: number } | null {
+  const match = /^(.*):sketch:(\d+)$/.exec(id);
+  return match ? { mirrorId: match[1]!, index: Number(match[2]) } : null;
 }
 
 export type PatternDefinition =
@@ -138,6 +170,20 @@ export interface TransformFeature extends FeatureBase {
 }
 
 /**
+ * Rotates bodies by `angle` degrees about an axis — a straight edge, the
+ * axis of a circular edge, a sketch line or a world axis (Shapr3D "Rotate
+ * Around Axis"). With `copy` the rotated bodies are new bodies and the
+ * originals stay.
+ */
+export interface RotateAxisFeature extends FeatureBase {
+  kind: 'rotateAxis';
+  bodyIds: string[];
+  axis: AxisRef;
+  angle: number;
+  copy: boolean;
+}
+
+/**
  * Moves body `bodyId` so its planar `face` lies on the plane of `target`
  * (a planar face of another body): opposed (touching) by default,
  * facing the same way with `flip`; `offset` leaves a gap along the target
@@ -178,11 +224,14 @@ export type ModelingFeature =
   | PatternFeature
   | SplitFeature
   | TransformFeature
+  | RotateAxisFeature
   | AlignFeature
   | OffsetFaceFeature
   | DeleteFaceFeature
   // Hole, Emboss, Draft, Rib, Thicken (`printFeatures.ts`).
-  | PrintFeature;
+  | PrintFeature
+  // Construction planes and axes (`construction.ts`).
+  | ConstructionFeature;
 
 export const MODELING_FEATURE_KINDS: readonly ModelingFeature['kind'][] = [
   'revolve',
@@ -192,10 +241,12 @@ export const MODELING_FEATURE_KINDS: readonly ModelingFeature['kind'][] = [
   'pattern',
   'split',
   'transform',
+  'rotateAxis',
   'align',
   'offsetFace',
   'deleteFace',
   ...PRINT_FEATURE_KINDS,
+  ...CONSTRUCTION_FEATURE_KINDS,
 ];
 
 export function isModelingFeature(feature: Feature): feature is ModelingFeature {
@@ -211,10 +262,12 @@ export const MODELING_FEATURE_LABEL: Record<ModelingFeature['kind'], string> = {
   pattern: 'Pattern',
   split: 'Split',
   transform: 'Move/Rotate',
+  rotateAxis: 'Rotate',
   align: 'Align',
   offsetFace: 'Offset Face',
   deleteFace: 'Delete Face',
   ...PRINT_FEATURE_LABEL,
+  ...CONSTRUCTION_FEATURE_LABEL,
 };
 
 /** Largest pattern instance count (bounds evaluation cost). */

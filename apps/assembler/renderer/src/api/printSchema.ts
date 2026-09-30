@@ -132,6 +132,12 @@ export const BLEND_OPTION_PARAMS: Record<
   },
   boolean: {
     keepTools: { type: 'boolean', default: false, description: 'Keep the tool bodies.' },
+    keepTarget: {
+      type: 'boolean',
+      default: false,
+      description:
+        'Keep the target body as it was; the result becomes a new body `body:<featureId>` (Shapr3D "Keep Target").',
+    },
   },
 };
 

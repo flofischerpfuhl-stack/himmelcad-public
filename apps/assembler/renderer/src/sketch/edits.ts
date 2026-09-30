@@ -62,6 +62,11 @@ export interface EditResult {
   optional: string[];
   /** Ids to select after the edit. */
   select?: string[];
+  /**
+   * Constraints that only steer this solve (e.g. the item that stays put
+   * when a constraint is added): removed from the solved sketch.
+   */
+  transient?: string[];
 }
 
 /** Mutable edit builder: accumulates entities/constraints with fresh ids. */

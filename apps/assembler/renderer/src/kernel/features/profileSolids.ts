@@ -353,6 +353,18 @@ function finishProfileSolid(
     ctx.touch(target.id);
     return;
   }
+  if (feature.operation === 'intersect') {
+    if (!target) kit.fail('Nothing to intersect: the document has no body');
+    const before = { shape: target.shape, faces: target.faces };
+    kit.combine(target, tool, 'intersect', feature.id, ctx.featureOrder);
+    if (!(R.measureVolume(target.shape) > 1e-9)) {
+      target.shape = before.shape;
+      target.faces = before.faces;
+      kit.fail(`Intersect: the ${label.toLowerCase()} does not overlap "${target.name}"`);
+    }
+    ctx.touch(target.id);
+    return;
+  }
   kit.addBody(ctx, {
     id: bodyIdFor(feature.id),
     // Named after its creating feature ("Revolve 1"), not the global body count.

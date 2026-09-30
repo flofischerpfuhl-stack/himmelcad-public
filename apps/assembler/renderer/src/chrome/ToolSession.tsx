@@ -21,6 +21,10 @@ import {
   type ToolSession as ToolSessionState,
 } from '../model/store.js';
 import { draftBadges, draftMeta } from '../model/featureTools.js';
+import { useFixStore } from '../model/fixReference.js';
+import { isWorldAxes } from '../model/moveGizmo.js';
+import { PICK_PLANS, removePick, swapPicks } from '../model/pickSession.js';
+import { emptyClickFinishes } from '../model/toolFinish.js';
 import styles from './ToolSession.module.css';
 
 interface ToolMeta {
@@ -36,17 +40,33 @@ function toolMeta(tool: ToolSessionState): ToolMeta {
         label: 'Extrude',
         shortcut: 'E',
         prompt:
-          tool.distance === 0
-            ? 'Drag the arrow or type a distance.'
-            : 'Drag the arrow or type a distance, then Done.',
+          tool.extent === 'toObject'
+            ? tool.extentTarget
+              ? 'To Object: click another face or body to change it; drag the arrow to flip the direction.'
+              : 'To Object: click the face or body to extrude up to.'
+            : tool.extent === 'throughAll'
+              ? 'Through All: drag the arrow to flip the direction, then Done.'
+              : tool.distance === 0
+                ? 'Drag the arrow or type a distance.'
+                : 'Drag the arrow or type a distance, then Done.',
       };
     case 'move':
       return {
-        label: 'Move/Rotate',
+        label: tool.sketch ? 'Move Profile' : 'Move/Rotate',
         shortcut: 'M',
-        prompt:
-          'Drag an arrow or ring, or type a value. Rings snap to 15° (Shift: free); drag the centre to move the pivot.',
+        prompt: tool.sketch
+          ? 'Drag an arrow or the plane tile to move the profile in its sketch plane, or type a value.'
+          : 'Drag an arrow, a plane tile or a ring, or type a value. Rings snap to 15° (Shift: free); drag the centre to move the pivot.',
       };
+    case 'pick': {
+      const plan = PICK_PLANS[tool.commandId];
+      const step = plan?.steps[Math.min(tool.step, (plan?.steps.length ?? 1) - 1)];
+      return {
+        label: plan?.label ?? 'Tool',
+        shortcut: plan?.shortcut ?? '',
+        prompt: step?.prompt ?? '',
+      };
+    }
     case 'feature':
       return draftMeta(tool.draft);
     case 'edgeBlend': {
@@ -71,7 +91,7 @@ function toolMeta(tool: ToolSessionState): ToolMeta {
       return {
         label: 'Boolean',
         shortcut: '',
-        prompt: `Keeps the target body; ${tool.toolBodyIds.length === 1 ? '1 tool body' : `${tool.toolBodyIds.length} tool bodies`} ${tool.keepTools ? 'kept' : 'consumed'}. Click bodies to add or remove tools.`,
+        prompt: `${tool.keepTarget ? 'Keeps the target unchanged, the result is a new body' : 'Changes the target body'}; ${tool.toolBodyIds.length === 1 ? '1 tool body' : `${tool.toolBodyIds.length} tool bodies`} ${tool.keepTools ? 'kept' : 'consumed'}. Click bodies to add or remove tools.`,
       };
   }
 }
@@ -229,6 +249,203 @@ function BlendVariantControls({
   );
 }
 
+/** Extrude: operation (New/Join/Cut/Intersect), extent, sides, second distance, start offset. */
+function ExtrudeControls({
+  state,
+  tool,
+}: {
+  state: AssemblerState;
+  tool: Extract<ToolSessionState, { kind: 'extrude' }>;
+}): JSX.Element {
+  const sides = tool.sides ?? 'one';
+  return (
+    <>
+      {tool.profile.kind === 'sketch' ? (
+        <Badge
+          ariaLabel="Extrude operation"
+          value={tool.operation}
+          options={[
+            { value: 'new', label: 'New body' },
+            { value: 'join', label: 'Join' },
+            { value: 'cut', label: 'Cut' },
+            { value: 'intersect', label: 'Intersect' },
+          ]}
+          onChange={(operation) => state.setExtrudeOperation(operation)}
+        />
+      ) : (
+        <Badge
+          ariaLabel="Extrude operation"
+          value={tool.operation === 'intersect' ? 'intersect' : 'auto'}
+          options={[
+            { value: 'auto', label: tool.distance < 0 ? 'Cut' : 'Join' },
+            { value: 'intersect', label: 'Intersect' },
+          ]}
+          onChange={(value) =>
+            state.setExtrudeOperation(value === 'intersect' ? 'intersect' : 'join')
+          }
+        />
+      )}
+      <Badge
+        ariaLabel="Extent"
+        value={tool.extent ?? 'distance'}
+        options={[
+          { value: 'distance', label: 'Distance' },
+          { value: 'toObject', label: 'To Object' },
+          { value: 'throughAll', label: 'Through All' },
+        ]}
+        onChange={(extent) => state.setExtrudeOptions({ extent })}
+      />
+      <Badge
+        ariaLabel="Sides"
+        value={sides}
+        options={[
+          { value: 'one', label: 'One side' },
+          { value: 'symmetric', label: 'Symmetric' },
+          { value: 'two', label: 'Two sides' },
+        ]}
+        onChange={(value) => state.setExtrudeOptions({ sides: value })}
+      />
+      {sides === 'two' ? (
+        <PillNumber
+          label="Side 2"
+          value={tool.distance2 ?? 0}
+          unit="mm"
+          onCommit={(v) => state.setExtrudeOptions({ distance2: Math.max(0, v) })}
+        />
+      ) : null}
+      <PillNumber
+        label="Start"
+        value={tool.startOffset ?? 0}
+        unit="mm"
+        onCommit={(v) => state.setExtrudeOptions({ startOffset: v === 0 ? undefined : v })}
+      />
+    </>
+  );
+}
+
+/** Tool before selection: one badge per reference step with its picks (× removes), Swap. */
+function PickBadges({
+  state,
+  tool,
+}: {
+  state: AssemblerState;
+  tool: Extract<ToolSessionState, { kind: 'pick' }>;
+}): JSX.Element | null {
+  const plan = PICK_PLANS[tool.commandId];
+  if (!plan) return null;
+  const label = (item: (typeof tool.picks)[number][number]) => pickItemLabel(state, item);
+  return (
+    <>
+      {plan.steps.map((step, index) => {
+        const picks = tool.picks[index] ?? [];
+        const current = index === Math.min(tool.step, plan.steps.length - 1);
+        const missing = picks.length < step.min;
+        return (
+          <span
+            key={step.role}
+            className={`${styles.refBadge} ${current ? styles.refBadgeCurrent : ''} ${missing ? styles.refBadgeMissing : ''}`}
+            role="group"
+            aria-label={`${step.role}: ${picks.length} picked${missing ? ', needed' : ''}`}
+          >
+            <span className={styles.refRole}>{step.role}</span>
+            {picks.length === 0 ? (
+              <span className={styles.refEmpty}>{step.min === 0 ? 'optional' : 'pick'}</span>
+            ) : (
+              picks.map((item, i) => (
+                <button
+                  key={`${index}:${i}`}
+                  type="button"
+                  className={styles.refChip}
+                  aria-label={`Remove ${label(item)} from ${step.role}`}
+                  title="Remove"
+                  onClick={() =>
+                    state.updatePickSession((session) => removePick(session, index, i))
+                  }
+                >
+                  {label(item)}
+                  <X size={11} aria-hidden />
+                </button>
+              ))
+            )}
+          </span>
+        );
+      })}
+      {plan.swap && (tool.picks[plan.swap[1]]?.length ?? 0) > 0 ? (
+        <Tooltip content="Swap target and tools">
+          <Button
+            variant="secondary"
+            size="small"
+            icon={<ArrowLeftRight size={13} />}
+            aria-label="Swap target and tools"
+            onClick={() => state.updatePickSession(swapPicks)}
+          >
+            Swap
+          </Button>
+        </Tooltip>
+      ) : null}
+      {tool.problem ? <span className={styles.pickProblem}>{tool.problem}</span> : null}
+    </>
+  );
+}
+
+/** Short badge text of a picked reference ("Body 2", "face", "Sketch 1 profile"). */
+function pickItemLabel(
+  state: AssemblerState,
+  item: Extract<ToolSessionState, { kind: 'pick' }>['picks'][number][number],
+): string {
+  const bodyName = (id: string) => state.evaluation.bodies.find((b) => b.id === id)?.name ?? 'body';
+  const featureName = (id: string) => state.features.find((f) => f.id === id)?.name ?? id;
+  switch (item.kind) {
+    case 'body':
+      return bodyName(item.bodyId);
+    case 'face':
+      return `${bodyName(item.bodyId)} face`;
+    case 'edge':
+      return `${bodyName(item.bodyId)} edge`;
+    case 'sketchProfile':
+      return item.regionKey
+        ? `${featureName(item.featureId)} profile`
+        : featureName(item.featureId);
+    case 'datum':
+      return featureName(item.featureId);
+    default:
+      return item.kind;
+  }
+}
+
+/** History "Fix…": what to pick, the problem with the last pick, Cancel. */
+function FixPill(): JSX.Element | null {
+  const session = useFixStore((s) => s.session);
+  if (!session) return null;
+  return (
+    <>
+      <div className={styles.pill} role="status" aria-label={`Fix ${session.featureName}`}>
+        <span className={styles.name}>Fix {session.featureName}</span>
+        <span className={styles.divider} aria-hidden />
+        <span className={styles.prompt}>
+          Pick a replacement {session.missing.label}
+          {session.missing.ghost ? ' — the missing one is outlined in red' : ''}.
+          {session.total > 1 ? ` (${session.total} missing references)` : ''}
+        </span>
+        {session.problem ? <span className={styles.pickProblem}>{session.problem}</span> : null}
+      </div>
+      <div className={styles.actions}>
+        <Tooltip content="Stop fixing (Esc)">
+          <Button
+            variant="secondary"
+            size="small"
+            icon={<X size={14} />}
+            aria-label="Stop fixing"
+            onClick={() => useFixStore.getState().end()}
+          >
+            Cancel
+          </Button>
+        </Tooltip>
+      </div>
+    </>
+  );
+}
+
 function ToolBadge({
   state,
   tool,
@@ -238,19 +455,9 @@ function ToolBadge({
 }): JSX.Element | null {
   switch (tool.kind) {
     case 'extrude':
-      if (tool.profile.kind !== 'sketch') return null;
-      return (
-        <Badge
-          ariaLabel="Extrude operation"
-          value={tool.operation}
-          options={[
-            { value: 'new', label: 'New body' },
-            { value: 'join', label: 'Join' },
-            { value: 'cut', label: 'Cut' },
-          ]}
-          onChange={(operation) => state.setExtrudeOperation(operation)}
-        />
-      );
+      return <ExtrudeControls state={state} tool={tool} />;
+    case 'pick':
+      return <PickBadges state={state} tool={tool} />;
     case 'edgeBlend':
       return (
         <>
@@ -314,6 +521,15 @@ function ToolBadge({
             ]}
             onChange={(value) => state.setBooleanKeepTools(value === 'keep')}
           />
+          <Badge
+            ariaLabel="Target body"
+            value={tool.keepTarget ? 'keep' : 'modify'}
+            options={[
+              { value: 'modify', label: 'Modify target' },
+              { value: 'keep', label: 'Keep target' },
+            ]}
+            onChange={(value) => state.setBooleanKeepTarget(value === 'keep')}
+          />
           <Tooltip content="Swap target and tool">
             <Button
               variant="secondary"
@@ -329,15 +545,41 @@ function ToolBadge({
       );
     case 'move':
       return (
-        <Badge
-          ariaLabel="Move or copy"
-          value={tool.copy ? 'copy' : 'move'}
-          options={[
-            { value: 'move', label: 'Move' },
-            { value: 'copy', label: 'Copy' },
-          ]}
-          onChange={(value) => state.setMoveCopy(value === 'copy')}
-        />
+        <>
+          {tool.sketch ? null : (
+            <Badge
+              ariaLabel="Move or copy"
+              value={tool.copy ? 'copy' : 'move'}
+              options={[
+                { value: 'move', label: 'Move' },
+                { value: 'copy', label: 'Copy' },
+              ]}
+              onChange={(value) => state.setMoveCopy(value === 'copy')}
+            />
+          )}
+          {tool.sketch ? null : (
+            <Badge
+              ariaLabel="Auto-orientation"
+              value={tool.autoOrient === false ? 'off' : 'on'}
+              options={[
+                { value: 'on', label: 'Auto-orient' },
+                { value: 'off', label: 'Fixed' },
+              ]}
+              onChange={(value) => state.setMoveAutoOrient(value === 'on')}
+            />
+          )}
+          {!tool.sketch && tool.axes && !isWorldAxes(tool.axes) ? (
+            <Button
+              variant="secondary"
+              size="small"
+              aria-label="Align the gizmo with the world axes"
+              onClick={() => state.setMoveAxes(null)}
+            >
+              World axes
+            </Button>
+          ) : null}
+          {tool.problem ? <span className={styles.pickProblem}>{tool.problem}</span> : null}
+        </>
       );
     case 'feature':
       return (
@@ -376,11 +618,16 @@ function ToolBadge({
 
 export function ToolSession({ state }: { state: AssemblerState }): JSX.Element | null {
   const tool = state.activeTool;
-  if (!tool) return null;
+  if (!tool) return <FixPill />;
   const meta = toolMeta(tool);
   const preview = isPreviewTool(tool) ? tool : null;
   const error = preview?.previewError ?? null;
   const blocked = error !== null && !(preview?.previewPending ?? false);
+  // A pick session's primary action is "Next" (or "Start" when everything is picked).
+  const pickPlan = tool.kind === 'pick' ? PICK_PLANS[tool.commandId] : undefined;
+  const pickLast =
+    tool.kind === 'pick' && pickPlan ? tool.step >= pickPlan.steps.length - 1 : false;
+  const doneLabel = tool.kind === 'pick' ? (pickLast ? 'Start' : 'Next') : 'Done';
 
   return (
     <>
@@ -390,19 +637,28 @@ export function ToolSession({ state }: { state: AssemblerState }): JSX.Element |
         <span className={styles.divider} aria-hidden />
         <span className={styles.prompt}>{meta.prompt}</span>
         <ToolBadge state={state} tool={tool} />
+        {emptyClickFinishes(tool) ? (
+          // Empty-space click = Done competes with "deselect": say so (interaction research §4).
+          <span
+            className={styles.finishHint}
+            title="A click on empty space finishes this tool, like Done (Enter). Esc cancels."
+          >
+            Click empty space to finish
+          </span>
+        ) : null}
         {preview?.previewPending ? (
           <span className={styles.busy} aria-label="Computing preview">
             <LoaderCircle size={13} />
           </span>
         ) : null}
+        {error ? (
+          <div className={styles.error} role="alert">
+            <AlertTriangle size={13} aria-hidden />
+            <span>{error}</span>
+            <span className={styles.errorHint}>Showing the last valid preview.</span>
+          </div>
+        ) : null}
       </div>
-      {error ? (
-        <div className={styles.error} role="alert">
-          <AlertTriangle size={13} aria-hidden />
-          <span>{error}</span>
-          <span className={styles.errorHint}>Showing the last valid preview.</span>
-        </div>
-      ) : null}
       <div className={styles.actions}>
         <Tooltip content="Cancel (Esc)">
           <Button
@@ -415,7 +671,7 @@ export function ToolSession({ state }: { state: AssemblerState }): JSX.Element |
             Cancel
           </Button>
         </Tooltip>
-        <Tooltip content={blocked ? 'Fix the error first' : 'Done (Enter)'}>
+        <Tooltip content={blocked ? 'Fix the error first' : `${doneLabel} (Enter)`}>
           <Button
             variant="primary"
             size="small"
@@ -424,7 +680,7 @@ export function ToolSession({ state }: { state: AssemblerState }): JSX.Element |
             disabled={blocked}
             onClick={() => state.commit()}
           >
-            Done
+            {doneLabel}
           </Button>
         </Tooltip>
       </div>

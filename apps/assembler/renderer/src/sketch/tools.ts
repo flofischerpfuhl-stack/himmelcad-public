@@ -68,16 +68,26 @@ export type SketchTool =
     }
   | {
       kind: 'arc';
+      /**
+       * `endsBulge` (default, Shapr3D Arc): both end points, then the bulge (the arc's height
+       * follows the pointer across the chord). `threePoint`: start, a point on the arc, end.
+       */
+      mode: 'endsBulge' | 'threePoint';
       start: SnapTarget | null;
       end: SnapTarget | null;
+      /** `threePoint`: the point on the arc (second click). */
+      through: SnapTarget | null;
       /** Tangent continuation of a line end (two clicks instead of three). */
       tangent: { lineId: string; pointId: string } | null;
     }
   | { kind: 'circle'; center: SnapTarget | null }
   | {
       kind: 'rectangle';
-      mode: 'corner' | 'center';
+      /** Two corners, centre + corner, or three points (base line, then height: a rotated rectangle). */
+      mode: 'corner' | 'center' | 'threePoint';
       first: SnapTarget | null;
+      /** `threePoint`: the end of the base line (second click). */
+      second?: SnapTarget | null;
       /** Typed width/height (locks that side). */
       width: number | null;
       height: number | null;
@@ -140,7 +150,7 @@ export function initialTool(kind: SketchToolKind, selection: readonly string[] =
     case 'line':
       return { kind, start: null, lastPointId: null, lastLineId: null, firstPointId: null };
     case 'arc':
-      return { kind, start: null, end: null, tangent: null };
+      return { kind, mode: 'endsBulge', start: null, end: null, through: null, tangent: null };
     case 'circle':
       return { kind, center: null };
     case 'rectangle':
@@ -341,7 +351,28 @@ function reduceArc(
   event: Exclude<ToolEvent, { type: 'finish' }>,
   ctx: ToolContext,
 ): ToolStep {
-  if (event.type !== 'click') return { tool };
+  if (event.type !== 'click') {
+    // A typed bulge height (ends-then-bulge): the arc bulges that far on the pointer's side.
+    if (
+      event.field === 'height' &&
+      tool.mode === 'endsBulge' &&
+      tool.start &&
+      tool.end &&
+      !tool.tangent &&
+      event.value >= MIN_SKETCH_SIZE / 10
+    ) {
+      const through = bulgePoint(tool.start.pos, tool.end.pos, event.snap.pos, event.value);
+      if (!through) return { tool };
+      const b = new SketchBuilder(sketch);
+      const id = addThreePointArc(b, tool.start, through, tool.end);
+      if (!id) return { tool };
+      if (ctx.construction) {
+        b.entities = b.entities.map((e) => (e.id === id ? { ...e, construction: true } : e));
+      }
+      return { tool: initialTool('arc'), edit: b.result() };
+    }
+    return { tool };
+  }
   const snap = event.snap;
   if (!tool.start) {
     const lineId = snap.pointId ? lineEndedAt(sketch, snap.pointId) : null;
@@ -349,7 +380,10 @@ function reduceArc(
       tool: {
         ...tool,
         start: snap,
-        tangent: lineId && snap.pointId ? { lineId, pointId: snap.pointId } : null,
+        tangent:
+          tool.mode === 'endsBulge' && lineId && snap.pointId
+            ? { lineId, pointId: snap.pointId }
+            : null,
       },
     };
   }
@@ -370,17 +404,52 @@ function reduceArc(
     b.constrain('tangent', [tool.tangent.lineId, id], true);
     return { tool: initialTool('arc'), edit: b.result() };
   }
+  if (tool.mode === 'threePoint') {
+    // Start, a point on the arc, end.
+    if (!tool.through) {
+      if (dist(tool.start.pos, snap.pos) < MIN_SKETCH_SIZE) return { tool };
+      return { tool: { ...tool, through: snap } };
+    }
+    if (dist(tool.start.pos, snap.pos) < MIN_SKETCH_SIZE) return { tool };
+    const b = new SketchBuilder(sketch);
+    const id = addThreePointArc(b, tool.start, tool.through.pos, snap);
+    if (!id) return { tool };
+    if (ctx.construction) {
+      b.entities = b.entities.map((e) => (e.id === id ? { ...e, construction: true } : e));
+    }
+    return { tool: { ...initialTool('arc'), mode: 'threePoint' } as SketchTool, edit: b.result() };
+  }
   if (!tool.end) {
     if (dist(tool.start.pos, snap.pos) < MIN_SKETCH_SIZE) return { tool };
     return { tool: { ...tool, end: snap } };
   }
+  // Ends then bulge: the pointer sets the arc's height over the chord (a typed height too).
+  const through = bulgePoint(tool.start.pos, tool.end.pos, snap.pos, null);
+  if (!through) return { tool };
   const b = new SketchBuilder(sketch);
-  const id = addThreePointArc(b, tool.start, snap.pos, tool.end);
+  const id = addThreePointArc(b, tool.start, through, tool.end);
   if (!id) return { tool };
   if (ctx.construction) {
     b.entities = b.entities.map((e) => (e.id === id ? { ...e, construction: true } : e));
   }
   return { tool: initialTool('arc'), edit: b.result() };
+}
+
+/**
+ * The point on an arc from `a` to `b` whose height over the chord follows
+ * `cursor` (its signed distance from the chord line), or a given `height`
+ * on the cursor's side. `null` for a height too small to make an arc.
+ */
+export function bulgePoint(a: Vec2, b: Vec2, cursor: Vec2, height: number | null): Vec2 | null {
+  const chord = sub(b, a);
+  const length = Math.hypot(chord[0], chord[1]);
+  if (length < MIN_SKETCH_SIZE) return null;
+  const n: Vec2 = [-chord[1] / length, chord[0] / length];
+  const mid: Vec2 = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+  const signed = (cursor[0] - mid[0]) * n[0] + (cursor[1] - mid[1]) * n[1];
+  const h = height === null ? signed : (Math.sign(signed) || 1) * Math.abs(height);
+  if (Math.abs(h) < MIN_SKETCH_SIZE / 10) return null;
+  return [mid[0] + n[0] * h, mid[1] + n[1] * h];
 }
 
 // ---- circle ----------------------------------------------------------------------------
@@ -457,12 +526,92 @@ export function rectangleCorners(
   ];
 }
 
+/**
+ * Corners of a three-point rectangle: the base from `a` to `b`, the height
+ * the pointer's signed distance from the base line (Shapr3D "three points").
+ * `height` overrides the distance (typed), on the pointer's side.
+ */
+export function threePointCorners(
+  a: Vec2,
+  b: Vec2,
+  cursor: Vec2,
+  height: number | null = null,
+): [Vec2, Vec2, Vec2, Vec2] | null {
+  const base = sub(b, a);
+  const length = Math.hypot(base[0], base[1]);
+  if (length < MIN_SKETCH_SIZE) return null;
+  const n: Vec2 = [-base[1] / length, base[0] / length];
+  const signed = (cursor[0] - a[0]) * n[0] + (cursor[1] - a[1]) * n[1];
+  const h = height === null ? signed : (Math.sign(signed) || 1) * Math.abs(height);
+  if (Math.abs(h) < MIN_SKETCH_SIZE) return null;
+  return [a, b, [b[0] + n[0] * h, b[1] + n[1] * h], [a[0] + n[0] * h, a[1] + n[1] * h]];
+}
+
+function reduceThreePointRectangle(
+  sketch: SketchData,
+  tool: Extract<SketchTool, { kind: 'rectangle' }>,
+  event: Exclude<ToolEvent, { type: 'finish' }>,
+  ctx: ToolContext,
+): ToolStep {
+  if (!tool.first) {
+    return event.type === 'click' ? { tool: { ...tool, first: event.snap } } : { tool };
+  }
+  if (!tool.second) {
+    if (event.type === 'value') {
+      if (event.field !== 'width' || !(event.value >= MIN_SKETCH_SIZE)) return { tool };
+      const pos = withLength(tool.first.pos, event.snap.pos, event.value);
+      return { tool: { ...tool, second: { pos }, width: event.value } };
+    }
+    if (dist(tool.first.pos, event.snap.pos) < MIN_SKETCH_SIZE) return { tool };
+    return { tool: { ...tool, second: event.snap } };
+  }
+  const typed = event.type === 'value' && event.field === 'height' ? event.value : null;
+  if (event.type === 'value' && typed === null) return { tool };
+  const corners = threePointCorners(tool.first.pos, tool.second.pos, event.snap.pos, typed);
+  if (!corners) return { tool };
+  const b = new SketchBuilder(sketch);
+  const ids = [
+    b.pointFor(tool.first),
+    b.pointFor(tool.second),
+    b.addPoint(corners[2]),
+    b.addPoint(corners[3]),
+  ];
+  const lines = ids.map((id, i) => b.addLine(id, ids[(i + 1) % 4]!, ctx.construction));
+  // A rotated rectangle: right angles and parallel sides, no horizontal/vertical.
+  b.constrain('perpendicular', [lines[0]!, lines[1]!]);
+  b.constrain('parallel', [lines[0]!, lines[2]!]);
+  b.constrain('parallel', [lines[1]!, lines[3]!]);
+  if (tool.width !== null) {
+    b.dimensions.push({
+      id: b.id('m'),
+      name: nextDimensionName(b.data),
+      kind: 'distance',
+      refs: [lines[0]!],
+      value: tool.width,
+    });
+  }
+  if (typed !== null) {
+    b.dimensions.push({
+      id: b.id('m'),
+      name: nextDimensionName(b.data),
+      kind: 'distance',
+      refs: [lines[1]!],
+      value: typed,
+    });
+  }
+  return {
+    tool: { ...initialTool('rectangle'), mode: 'threePoint' } as SketchTool,
+    edit: b.result(),
+  };
+}
+
 function reduceRectangle(
   sketch: SketchData,
   tool: Extract<SketchTool, { kind: 'rectangle' }>,
   event: Exclude<ToolEvent, { type: 'finish' }>,
   ctx: ToolContext,
 ): ToolStep {
+  if (tool.mode === 'threePoint') return reduceThreePointRectangle(sketch, tool, event, ctx);
   if (!tool.first) {
     return event.type === 'click' ? { tool: { ...tool, first: event.snap } } : { tool };
   }
@@ -759,19 +908,43 @@ export function toolPreview(
           curves: [sampleCurve(arcCurve(arc.center, arc.ccw ? s : c, arc.ccw ? c : s))],
         };
       }
+      // The arc through `start`, `through`, `end` (three points in order along the arc).
+      const arcThrough = (start: Vec2, through: Vec2, end: Vec2): Vec2[] | null => {
+        const circle = circleThrough(start, through, end);
+        if (!circle) return null;
+        const ccw =
+          (through[0] - start[0]) * (end[1] - through[1]) -
+            (through[1] - start[1]) * (end[0] - through[0]) >
+          0;
+        const [s, e] = ccw ? [start, end] : [end, start];
+        return sampleCurve(arcCurve(circle.c, s, e));
+      };
+      if (tool.mode === 'threePoint') {
+        if (!tool.through) {
+          return { ...EMPTY_PREVIEW, curves: [[tool.start.pos, c]], points: [tool.start.pos, c] };
+        }
+        const arc = arcThrough(tool.start.pos, tool.through.pos, c);
+        return {
+          ...EMPTY_PREVIEW,
+          curves: [arc ?? [tool.start.pos, tool.through.pos, c]],
+          points: [tool.start.pos, tool.through.pos, c],
+        };
+      }
       if (!tool.end)
         return { ...EMPTY_PREVIEW, curves: [[tool.start.pos, c]], points: [tool.start.pos, c] };
-      const circle = circleThrough(tool.start.pos, c, tool.end.pos);
-      if (!circle) return { ...EMPTY_PREVIEW, curves: [[tool.start.pos, tool.end.pos]] };
-      const ccw =
-        (c[0] - tool.start.pos[0]) * (tool.end.pos[1] - c[1]) -
-          (c[1] - tool.start.pos[1]) * (tool.end.pos[0] - c[0]) >
-        0;
-      const [s, e] = ccw ? [tool.start.pos, tool.end.pos] : [tool.end.pos, tool.start.pos];
+      const through = bulgePoint(tool.start.pos, tool.end.pos, c, null);
+      const arc = through ? arcThrough(tool.start.pos, through, tool.end.pos) : null;
+      if (!arc || !through) return { ...EMPTY_PREVIEW, curves: [[tool.start.pos, tool.end.pos]] };
+      const mid: Vec2 = [
+        (tool.start.pos[0] + tool.end.pos[0]) / 2,
+        (tool.start.pos[1] + tool.end.pos[1]) / 2,
+      ];
       return {
         ...EMPTY_PREVIEW,
-        curves: [sampleCurve(arcCurve(circle.c, s, e))],
-        points: [tool.start.pos, tool.end.pos],
+        curves: [arc, [mid, through]],
+        points: [tool.start.pos, tool.end.pos, through],
+        // The bulge (height over the chord) can be typed.
+        chips: [{ field: 'height', value: dist(mid, through), at: through }],
       };
     }
     case 'circle': {
@@ -790,6 +963,36 @@ export function toolPreview(
       };
     }
     case 'rectangle': {
+      if (tool.mode === 'threePoint') {
+        if (!tool.first) return { ...EMPTY_PREVIEW, points: [c] };
+        if (!tool.second) {
+          const f = tool.first.pos;
+          return {
+            ...EMPTY_PREVIEW,
+            curves: [[f, c]],
+            points: [f, c],
+            chips: [
+              { field: 'width', value: dist(f, c), at: [(f[0] + c[0]) / 2, (f[1] + c[1]) / 2] },
+            ],
+          };
+        }
+        const corners3 = threePointCorners(tool.first.pos, tool.second.pos, c);
+        if (!corners3) {
+          return { ...EMPTY_PREVIEW, curves: [[tool.first.pos, tool.second.pos]], points: [c] };
+        }
+        return {
+          ...EMPTY_PREVIEW,
+          curves: [[...corners3, corners3[0]]],
+          points: corners3,
+          chips: [
+            {
+              field: 'height',
+              value: dist(corners3[1], corners3[2]),
+              at: [(corners3[1][0] + corners3[2][0]) / 2, (corners3[1][1] + corners3[2][1]) / 2],
+            },
+          ],
+        };
+      }
       const corners = rectangleCorners(tool, c);
       if (!corners) return { ...EMPTY_PREVIEW, points: [c] };
       return {

@@ -41,9 +41,51 @@ export function selectedSketchId(ctx: CommandContext): string | null {
   return null;
 }
 
+/** The single selected construction plane's feature id, if any (a new sketch goes there). */
+function selectedDatumPlane(ctx: CommandContext): string | null {
+  if (ctx.selection.length !== 1) return null;
+  const item = ctx.selection[0]!;
+  if (item.kind !== 'datum') return null;
+  return ctx.evaluation.datums?.find((d) => d.featureId === item.featureId)?.kind === 'plane'
+    ? item.featureId
+    : null;
+}
+
+/**
+ * Shapr3D (modelling research §2): sketching again on the same plane right
+ * after a sketch was made edits that sketch instead of starting a new one.
+ * "Right after" = it is the last step of the History (above the rollback
+ * bar); "the same plane" = the plane a new sketch would get (the selected
+ * face or construction plane, else XY).
+ */
+export function continuableSketchId(ctx: CommandContext): string | null {
+  const marker = ctx.rollbackBefore
+    ? ctx.features.findIndex((f) => f.id === ctx.rollbackBefore)
+    : -1;
+  const active = marker >= 0 ? ctx.features.slice(0, marker) : ctx.features;
+  const last = active[active.length - 1];
+  if (!last || last.kind !== 'sketch' || last.suppressed) return null;
+  const face = selectedPlanarFace(ctx);
+  const datum = selectedDatumPlane(ctx);
+  const plane = last.plane;
+  if (face) {
+    return plane.kind === 'face' &&
+      plane.face.bodyId === face.bodyId &&
+      plane.face.key === face.faceKey
+      ? last.id
+      : null;
+  }
+  if (datum) return plane.kind === 'construction' && plane.featureId === datum ? last.id : null;
+  if (ctx.selection.length > 0) return null;
+  return plane.kind === 'plane' && plane.plane === 'XY' && plane.offset === 0 ? last.id : null;
+}
+
 function beginNew(ctx: CommandContext, options: BeginSketchOptions): void {
   const face = selectedPlanarFace(ctx);
-  useSketchStore.getState().begin({ ...(face ? { face } : {}), ...options });
+  const datum = selectedDatumPlane(ctx);
+  useSketchStore
+    .getState()
+    .begin({ ...(face ? { face } : {}), ...(datum ? { datum } : {}), ...options });
 }
 
 /** A drawing tool: switches tools in sketch mode, otherwise starts a new sketch with it. */
@@ -62,11 +104,19 @@ function drawingTool(
     keywords: ['sketch', 'draw', ...keywords],
     availability: (ctx) => {
       if (session()) return { enabled: true, recommended: session()!.tool.kind === tool };
-      const face = selectedPlanarFace(ctx);
-      return { enabled: true, recommended: face !== null, priority: face ? 65 : 0 };
+      // On a selected planar face the tools start a sketch there: listed for the
+      // face, but not "recommended" — New Sketch is the one sketch suggestion.
+      const face = selectedPlanarFace(ctx) ?? selectedDatumPlane(ctx);
+      return { enabled: true, priority: face ? 30 : 0 };
     },
     run: (ctx) => {
-      if (session()) useSketchStore.getState().setTool(tool);
+      if (session()) {
+        useSketchStore.getState().setTool(tool);
+        return;
+      }
+      // Continuing on the same plane right after a sketch edits that sketch (Shapr3D).
+      const previous = continuableSketchId(ctx);
+      if (previous) useSketchStore.getState().begin({ featureId: previous, tool });
       else beginNew(ctx, { tool });
     },
   };
@@ -124,7 +174,11 @@ export const SKETCH_COMMANDS: readonly Command[] = [
     availability: (ctx) =>
       session()
         ? { enabled: false, reason: 'Finish the current sketch first.' }
-        : { enabled: true, recommended: selectedPlanarFace(ctx) !== null, priority: 60 },
+        : {
+            enabled: true,
+            recommended: selectedPlanarFace(ctx) !== null || selectedDatumPlane(ctx) !== null,
+            priority: 60,
+          },
     run: (ctx) => beginNew(ctx, { tool: 'line' }),
   },
   ...(['XY', 'XZ', 'YZ'] as const).map(

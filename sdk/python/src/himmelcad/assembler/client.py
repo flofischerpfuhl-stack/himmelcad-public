@@ -20,7 +20,7 @@ API_VERSION = 1
 METHODS = (
     "api.hello", "api.describe",
     "document.get", "features.list", "feature.get", "bodies.list", "body.get",
-    "faces.list", "edges.list", "sketches.list", "selection.get", "selection.set",
+    "faces.list", "edges.list", "sketches.list", "datums.list", "selection.get", "selection.set",
     "parameters.list", "parameter.create", "parameter.edit", "parameter.delete",
     "measure.get", "measure.distance", "measure.angle", "measure.area", "measure.volume",
     "feature.create", "feature.edit", "feature.delete", "feature.suppress", "feature.rename",
@@ -114,6 +114,9 @@ class AssemblerClient:
 
     def sketches(self, scope: str | None = None) -> list[Mapping[str, Any]]:
         return self.call("sketches.list", {"scope": scope})
+
+    def datums(self, scope: str | None = None) -> list[Mapping[str, Any]]:
+        return self.call("datums.list", {"scope": scope})
 
     def selection(self) -> list[Mapping[str, Any]]:
         return self.call("selection.get")

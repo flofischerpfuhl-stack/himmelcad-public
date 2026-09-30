@@ -41,6 +41,7 @@ export function LeftDock({ state, onOpenSearch }: LeftDockProps): JSX.Element {
   const AddIcon = GROUP_ICON.add;
   const TransformIcon = GROUP_ICON.transform;
   const ToolsIcon = GROUP_ICON.tools;
+  const ConstructIcon = GROUP_ICON.construct;
 
   const sectionCommand = findCommand('modes.section')!;
   const isolateCommand = findCommand('modes.isolate')!;
@@ -95,6 +96,14 @@ export function LeftDock({ state, onOpenSearch }: LeftDockProps): JSX.Element {
             triggerClassName={styles.iconButton}
             trigger={trigger(AddIcon, 'Add')}
             emptyHint="No Add commands in Phase 0"
+          />
+          <CommandGroupMenu
+            label="Construct"
+            group="construct"
+            getState={() => state}
+            tooltip={tip('Construct')}
+            triggerClassName={styles.iconButton}
+            trigger={trigger(ConstructIcon, 'Construct')}
           />
           <CommandGroupMenu
             label="Transform"

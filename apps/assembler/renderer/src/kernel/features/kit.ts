@@ -18,7 +18,7 @@ import type { EdgeRef, FaceRef, SketchFeature } from '../../model/document.js';
 import type { SketchRegion } from '../../sketch/regions.js';
 import type { FaceGeom, KeyedFace, KeyedFaceKeys } from '../naming.js';
 import type { HistorySource, RawShape, Topology } from '../occt.js';
-import type { EvaluatedSketch, FeatureErrorRefs } from '../types.js';
+import type { EvaluatedDatum, EvaluatedSketch, FeatureErrorRefs } from '../types.js';
 
 export type OpenCascade = ReturnType<typeof R.getOC>;
 export type Shape3D = R.Shape3D;
@@ -41,6 +41,8 @@ export interface ReplayContextLike {
   sketchFeatures: Map<string, SketchFeature>;
   /** Detected regions (closed profiles) per sketch feature id. */
   sketchRegions: Map<string, SketchRegion[]>;
+  /** Construction planes/axes per feature id (`construction.ts`). */
+  datums: Map<string, EvaluatedDatum>;
   featureOrder: ReadonlyMap<string, number>;
   createdCount: number;
   warn: (message: string) => void;

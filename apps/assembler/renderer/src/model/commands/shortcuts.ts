@@ -10,6 +10,7 @@
  */
 import type { Command, CommandContext, ShortcutScope } from './registry.js';
 import { COMMANDS } from './registry.js';
+import { useFixStore } from '../fixReference.js';
 
 /**
  * A framework-agnostic view of a keyboard event. The chrome agent builds
@@ -54,15 +55,28 @@ function normalizeCombo(event: KeyEvent): string {
   return parts.join('+');
 }
 
-/** Every command per shortcut (several only in disjoint `shortcutScope`s, see `shortcutSheet.ts`). */
-const SHORTCUT_MAP: ReadonlyMap<string, readonly Command[]> = (() => {
+/**
+ * Every command per shortcut (several only in disjoint `shortcutScope`s, see
+ * `shortcutSheet.ts`). Rebuilt after custom shortcuts change
+ * (`shortcutOverrides.ts` → {@link invalidateShortcutMap}).
+ */
+let shortcutMap: ReadonlyMap<string, readonly Command[]> | null = null;
+
+function currentShortcutMap(): ReadonlyMap<string, readonly Command[]> {
+  if (shortcutMap) return shortcutMap;
   const map = new Map<string, Command[]>();
   for (const c of COMMANDS) {
     if (c.shortcut === undefined) continue;
     map.set(c.shortcut, [...(map.get(c.shortcut) ?? []), c]);
   }
+  shortcutMap = map;
   return map;
-})();
+}
+
+/** Drops the cached key → command map (the commands' shortcuts changed). */
+export function invalidateShortcutMap(): void {
+  shortcutMap = null;
+}
 
 /**
  * Resolves a key event to the command it should trigger, or `null` if
@@ -88,7 +102,7 @@ export function resolveShortcut(
   const hasModifier = event.ctrlKey || event.metaKey || event.altKey;
   if (!hasModifier && ctx.activeTool?.phase === 'numericEditing') return null;
   const combo = normalizeCombo(event);
-  const candidates = SHORTCUT_MAP.get(combo) ?? [];
+  const candidates = currentShortcutMap().get(combo) ?? [];
   return candidates.find((c) => c.shortcutScope === undefined || c.shortcutScope === scope) ?? null;
 }
 
@@ -106,6 +120,11 @@ export function handleEscape(ctx: CommandContext): void {
   }
   if (ctx.activeTool) {
     ctx.cancel();
+    return;
+  }
+  // History "Fix…" is a mode of its own: Esc leaves it before touching the selection.
+  if (useFixStore.getState().session) {
+    useFixStore.getState().end();
     return;
   }
   if (ctx.selection.length > 0) ctx.clearSelection();

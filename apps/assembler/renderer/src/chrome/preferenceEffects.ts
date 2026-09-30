@@ -4,6 +4,7 @@
  * class switched) and the grid defaults of the view state. Installed once
  * from `main.tsx`.
  */
+import { applyShortcutOverrides } from '../model/commands/shortcutOverrides.js';
 import { usePreferences, type ThemeName } from '../model/preferences.js';
 import { useAssemblerStore } from '../model/store.js';
 
@@ -16,11 +17,13 @@ export function applyThemeClass(theme: ThemeName): void {
 export function installPreferenceEffects(): () => void {
   const initial = usePreferences.getState();
   applyThemeClass(initial.theme);
+  applyShortcutOverrides(initial.shortcuts);
   const store = useAssemblerStore.getState();
   store.setGridVisible(initial.gridVisible);
   store.setGridStep(initial.gridStep);
   return usePreferences.subscribe((prefs, previous) => {
     if (prefs.theme !== previous.theme) applyThemeClass(prefs.theme);
+    if (prefs.shortcuts !== previous.shortcuts) applyShortcutOverrides(prefs.shortcuts);
     if (prefs.gridVisible !== previous.gridVisible) {
       useAssemblerStore.getState().setGridVisible(prefs.gridVisible);
     }

@@ -36,6 +36,7 @@ import { baseEdgeKey, baseFaceKey, edgeSignatureOf, faceSignatureOf } from '../k
 import type { ProjectViewState } from './project/format.js';
 import type { ReferenceMesh, ReferenceMeshTransform } from './referenceMesh.js';
 import { viewDisplayFromProject } from './viewDisplay.js';
+import { setSectionAccess } from './workspace.js';
 import {
   EMPTY_EVALUATION,
   type Body,
@@ -51,10 +52,13 @@ import {
 } from './blendOptions.js';
 import {
   createDemoDocument,
+  frameForPlane,
+  MIN_FEATURE_SIZE_MM,
   type BooleanFeature,
   type ChamferFeature,
   type EdgeRef,
   type ExtrudeFeature,
+  type ExtrudeObjectRef,
   type ExtrudeOperation,
   type ExtrudeProfileRef,
   type FaceRef,
@@ -65,10 +69,14 @@ import {
   type Plane,
   type ShellFeature,
   type SketchFeature,
+  type SketchFrame,
   type Vec3,
 } from './document.js';
 import { MODELING_FEATURE_LABEL, type TransformFeature } from './features.js';
 import { draftToFeature, type FeatureDraft } from './featureTools.js';
+import { readyToFinish, startSession, type PickSessionState } from './pickSession.js';
+import { gizmoTransformFields } from './moveGizmo.js';
+import { regionCentre, translateSketchRegion } from '../sketch/moveRegion.js';
 import {
   autoExtrudeOperation,
   extrudeStartDepth,
@@ -104,7 +112,9 @@ export type SelectionItem =
   | { kind: 'sketchProfile'; featureId: string; regionKey?: string }
   | { kind: 'feature'; featureId: string }
   /** A reference mesh (imported STL) — always selected as a whole, never per-triangle/per-face. */
-  | { kind: 'mesh'; meshId: string };
+  | { kind: 'mesh'; meshId: string }
+  /** A construction plane or axis (`model/construction.ts`), by its feature id. */
+  | { kind: 'datum'; featureId: string };
 
 /** Explicit lifecycle every tool session moves through. `cancel()` is valid from any of these except after commit. */
 export type ToolPhase = 'collectingReferences' | 'preview' | 'numericEditing' | 'committing';
@@ -148,7 +158,23 @@ export interface ExtrudeTool extends ToolSessionBase, KernelPreviewFields {
   operationLocked: boolean;
   /** Body face the sketch lies on (drives the automatic New/Join/Cut choice), else `null`. */
   contact: SketchContact | null;
+  /** Extent (Shapr3D "Distance / To Object / Through All"); absent = distance. */
+  extent?: 'distance' | 'throughAll' | 'toObject';
+  /** The object a "To Object" extrude runs up to (picked while the tool runs). */
+  extentTarget?: ExtrudeObjectRef;
+  /** One side (default), symmetric, or two sides with `distance2` on the other side. */
+  sides?: 'one' | 'symmetric' | 'two';
+  distance2?: number;
+  /** Start offset from the profile along its normal, mm. */
+  startOffset?: number;
 }
+
+/** The extrude options a tool/History card can change (`setExtrudeOptions`); `undefined` clears one. */
+export type ExtrudeToolOptions = {
+  [K in 'extent' | 'extentTarget' | 'sides' | 'distance2' | 'startOffset']?:
+    | ExtrudeTool[K]
+    | undefined;
+};
 
 /** `F` — fillets or chamfers the selected edges of one body. */
 export interface EdgeBlendTool extends ToolSessionBase, KernelPreviewFields {
@@ -187,6 +213,8 @@ export interface BooleanTool extends ToolSessionBase, KernelPreviewFields {
   toolBodyIds: string[];
   /** Keep the tool bodies instead of consuming them. */
   keepTools?: boolean;
+  /** Keep the target as it was; the result becomes a new body. */
+  keepTarget?: boolean;
 }
 
 /**
@@ -197,13 +225,88 @@ export interface BooleanTool extends ToolSessionBase, KernelPreviewFields {
  */
 export interface MoveTool extends ToolSessionBase {
   kind: 'move';
+  /** The moved body (`''` while a sketch profile is moved). */
   bodyId: string;
   delta: { dx: number; dy: number; dz: number };
+  /**
+   * Degrees about the gizmo axes (`axes`, default world X, Y, Z), applied
+   * in that order through `pivot` — for world axes exactly the `transform`
+   * feature's rx/ry/rz.
+   */
   rotation: { rx: number; ry: number; rz: number };
   /** Rotation centre (world, before the translation). Defaults to the body's box centre. */
   pivot: Vec3;
   /** Creates a copy instead of moving the body. */
   copy: boolean;
+  /**
+   * Gizmo orientation (unit axes; absent = world X, Y, Z). Set when the
+   * centre snaps to geometry with auto-orientation on (Shapr3D, int §4).
+   */
+  axes?: [Vec3, Vec3, Vec3];
+  /** Orient the gizmo to the geometry its centre is dropped on. */
+  autoOrient?: boolean;
+  /**
+   * Moving a sketch profile (Shapr3D Move/Rotate on sketch regions): the
+   * profile's curves translate in the sketch plane (`sketch/moveRegion.ts`).
+   */
+  sketch?: { featureId: string; regionKey?: string; frame: SketchFrame };
+  /** Why Done cannot apply the move (shown in the pill), else absent. */
+  problem?: string;
+}
+
+/**
+ * The sketch feature after moving a profile with the gizmo: the move's
+ * in-plane part translates the curves; the part along the normal moves a
+ * whole sketch on a world plane (its offset); rotations are refused (they
+ * would break horizontal/vertical constraints).
+ */
+export function moveSketchResult(
+  features: readonly Feature[],
+  tool: MoveTool,
+): { ok: true; feature: SketchFeature } | { ok: false; reason: string } {
+  const target = tool.sketch;
+  if (!target) return { ok: false, reason: 'Not a sketch move.' };
+  const feature = features.find(
+    (f): f is SketchFeature => f.id === target.featureId && f.kind === 'sketch',
+  );
+  if (!feature) return { ok: false, reason: 'The sketch no longer exists.' };
+  const { rx, ry, rz } = tool.rotation;
+  if (rx !== 0 || ry !== 0 || rz !== 0) {
+    return {
+      ok: false,
+      reason:
+        'Sketch profiles move, they do not rotate here (it would break horizontal/vertical constraints); rotate the body, or the curves in sketch mode.',
+    };
+  }
+  const { u, v, normal } = target.frame;
+  const d: Vec3 = [tool.delta.dx, tool.delta.dy, tool.delta.dz];
+  const along = (a: Vec3) => a[0] * d[0] + a[1] * d[1] + a[2] * d[2];
+  const du = along(u);
+  const dv = along(v);
+  const dn = along(normal);
+  let plane = feature.plane;
+  if (Math.abs(dn) > 1e-9) {
+    if (target.regionKey !== undefined || plane.kind !== 'plane') {
+      return {
+        ok: false,
+        reason:
+          target.regionKey !== undefined
+            ? 'A profile moves within its sketch plane; move the whole sketch (double-click it) to lift it.'
+            : 'Only a sketch on a world plane can be lifted off its plane; move it within the plane.',
+      };
+    }
+    const k = frameForPlane(plane.plane, 0).normal;
+    plane = {
+      ...plane,
+      offset: plane.offset + dn * (k[0] * normal[0] + k[1] * normal[1] + k[2] * normal[2]),
+    };
+  }
+  const moved =
+    Math.abs(du) > 1e-12 || Math.abs(dv) > 1e-12
+      ? translateSketchRegion(feature, target.regionKey, du, dv)
+      : ({ ok: true, sketch: feature } as const);
+  if (!moved.ok) return moved;
+  return { ok: true, feature: { ...feature, ...moved.sketch, plane } };
 }
 
 /**
@@ -218,6 +321,15 @@ export interface FeatureTool extends ToolSessionBase, KernelPreviewFields {
 }
 
 /**
+ * Tool before selection (`pickSession.ts`): a command started without its
+ * references asks for them step by step; when they are complete the
+ * command starts as if they had been selected first (`pickSessionRunner.ts`).
+ */
+export interface PickTool extends ToolSessionBase, PickSessionState {
+  kind: 'pick';
+}
+
+/**
  * Tool sessions of the 3D modelling context. Sketching (Line, Arc, Circle,
  * Rectangle, …) happens in a sketch session instead (`sketch/session.ts`).
  */
@@ -227,7 +339,14 @@ export type ToolSession =
   | EdgeBlendTool
   | ShellTool
   | BooleanTool
-  | FeatureTool;
+  | FeatureTool
+  | PickTool;
+
+/** Finishes a pick session (set by `pickSessionRunner.ts`: starts the command). */
+let pickFinisher: (() => void) | null = null;
+export function setPickFinisher(finish: (() => void) | null): void {
+  pickFinisher = finish;
+}
 
 /** Tools that show a live kernel preview. */
 export type PreviewTool = ExtrudeTool | EdgeBlendTool | ShellTool | BooleanTool | FeatureTool;
@@ -278,7 +397,10 @@ export interface ViewState {
   measureEnabled: boolean;
   gridVisible: boolean;
   snapToGrid: boolean;
+  /** Locked grid resolution, mm (used while `gridAuto` is off). */
   gridStep: number;
+  /** The grid follows the zoom (Shapr3D default); off = locked at `gridStep` (`model/gridResolution.ts`). */
+  gridAuto: boolean;
   /** Bumping `nonce` is the signal to (re-)apply `preset`. */
   cameraRequest: { preset: CameraPreset; nonce: number } | null;
   /** B-rep edge lines on shaded bodies ("Shaded with edges"). */
@@ -369,6 +491,8 @@ export interface AssemblerState {
   beginExtrude: (profile: ExtrudeProfileRef) => void;
   setDistance: (distanceMm: number) => void;
   setExtrudeOperation: (operation: ExtrudeOperation) => void;
+  /** Extent, sides, second distance, start offset, To Object target of the running Extrude. */
+  setExtrudeOptions: (options: ExtrudeToolOptions) => void;
   beginMove: (bodyId: string) => void;
   setDelta: (dx: number, dy: number, dz: number) => void;
   /** Move/Rotate gizmo rings: degrees about world X, Y, Z through the pivot. */
@@ -377,8 +501,17 @@ export interface AssemblerState {
   setPivot: (pivot: Vec3) => void;
   /** Copy badge of the Move/Rotate tool. */
   setMoveCopy: (copy: boolean) => void;
+  /** Gizmo orientation: unit axes, or `null` for world X/Y/Z. Keeps the move so far. */
+  setMoveAxes: (axes: [Vec3, Vec3, Vec3] | null) => void;
+  setMoveAutoOrient: (on: boolean) => void;
+  /** Move/Rotate on a sketch profile (a region, or the whole sketch without `regionKey`). */
+  beginMoveSketch: (featureId: string, regionKey?: string) => boolean;
   /** Starts a modelling-feature tool (Revolve, Sweep, Loft, …) with a live preview. */
   beginFeatureTool: (draft: FeatureDraft) => void;
+  /** Starts `commandId` before its selection: the pill asks for the references (`pickSession.ts`). */
+  beginPickSession: (commandId: string) => void;
+  /** Updates the running pick session (a click, a removed badge, Swap, Next). */
+  updatePickSession: (update: (session: PickSessionState) => PickSessionState) => void;
   /** Updates the running feature tool's draft (references/parameters) and re-previews. */
   updateFeatureDraft: (
     update: (draft: FeatureDraft, evaluation: EvaluationResult) => FeatureDraft,
@@ -403,6 +536,8 @@ export interface AssemblerState {
   toggleShellFace: (bodyId: string, faceKey: string) => void;
   /** Keep or consume the tool bodies of the running boolean tool. */
   setBooleanKeepTools: (keep: boolean) => void;
+  /** Keep the target unchanged (result as a new body) in the running boolean tool. */
+  setBooleanKeepTarget: (keep: boolean) => void;
   /** Swaps the target with the first tool body of the running boolean tool. */
   swapBooleanTarget: () => void;
   /** Adds/removes a tool body while the boolean tool runs. */
@@ -552,6 +687,8 @@ export interface AssemblerState {
   setGridVisible: (visible: boolean) => void;
   setSnapToGrid: (enabled: boolean) => void;
   setGridStep: (step: number) => void;
+  /** Grid resolution follows the zoom (`true`) or is locked at `gridStep`. */
+  setGridAuto: (auto: boolean) => void;
   requestCamera: (preset: CameraPreset) => void;
 
   panels: PanelsState;
@@ -675,6 +812,8 @@ function selectionKeysEqual(a: SelectionItem, b: SelectionItem): boolean {
       return b.kind === 'feature' && a.featureId === b.featureId;
     case 'mesh':
       return b.kind === 'mesh' && a.meshId === b.meshId;
+    case 'datum':
+      return b.kind === 'datum' && a.featureId === b.featureId;
   }
 }
 
@@ -714,6 +853,8 @@ function remapSelectionItem(
     // a re-evaluation; removal is handled explicitly by `removeReferenceMesh`.
     case 'mesh':
       return item;
+    case 'datum':
+      return evaluation.datums?.some((d) => d.featureId === item.featureId) ? item : null;
   }
 }
 
@@ -745,12 +886,20 @@ export function nextFeatureName(prefix: string, features: readonly Feature[]): s
   return `${prefix} ${count + 1}`;
 }
 
-function buildProvisionalExtrude(tool: {
-  profile: ExtrudeProfileRef;
-  distance: number;
-  operation: ExtrudeOperation;
-  targetBodyId?: string;
-}): ExtrudeFeature {
+function buildProvisionalExtrude(
+  tool: {
+    profile: ExtrudeProfileRef;
+    distance: number;
+    operation: ExtrudeOperation;
+    targetBodyId?: string;
+  } & ExtrudeToolOptions,
+): ExtrudeFeature {
+  const extent =
+    tool.extent === 'throughAll'
+      ? { kind: 'throughAll' as const }
+      : tool.extent === 'toObject' && tool.extentTarget
+        ? { kind: 'toObject' as const, target: tool.extentTarget }
+        : null;
   return {
     id: PREVIEW_EXTRUDE_FEATURE_ID,
     name: 'Extrude (preview)',
@@ -758,10 +907,22 @@ function buildProvisionalExtrude(tool: {
     kind: 'extrude',
     profile: tool.profile,
     distance: tool.distance,
-    symmetric: false,
+    symmetric: tool.sides === 'symmetric',
     operation: tool.operation,
     ...(tool.targetBodyId !== undefined ? { targetBodyId: tool.targetBodyId } : {}),
+    ...(extent ? { extent } : {}),
+    ...(tool.sides === 'two' && tool.distance2 !== undefined && tool.distance2 > 0
+      ? { distance2: tool.distance2 }
+      : {}),
+    ...(tool.startOffset ? { startOffset: tool.startOffset } : {}),
   };
+}
+
+/** `false` while an extrude has nothing to build yet (zero distance, To Object without a target). */
+function extrudeReady(tool: ExtrudeTool): boolean {
+  if (tool.extent === 'toObject') return tool.extentTarget !== undefined;
+  if (tool.extent === 'throughAll') return true;
+  return tool.distance !== 0;
 }
 
 /** Provisional feature of a preview tool, or `null` when its parameters have no geometry yet. */
@@ -769,7 +930,7 @@ function buildProvisional(tool: PreviewTool): Feature | null {
   const base = { id: PREVIEW_FEATURE_ID, suppressed: false };
   switch (tool.kind) {
     case 'extrude':
-      return tool.distance === 0 ? null : buildProvisionalExtrude(tool);
+      return extrudeReady(tool) ? buildProvisionalExtrude(tool) : null;
     case 'edgeBlend': {
       const rules = tool.rules && tool.rules.length > 0 ? { rules: tool.rules } : {};
       if (tool.blend === 'fillet') {
@@ -817,6 +978,7 @@ function buildProvisional(tool: PreviewTool): Feature | null {
         targetBodyId: tool.targetBodyId,
         toolBodyIds: tool.toolBodyIds,
         ...(tool.keepTools ? { keepTools: true } : {}),
+        ...(tool.keepTarget ? { keepTarget: true } : {}),
       };
     case 'feature':
       return draftToFeature(tool.draft, { id: PREVIEW_FEATURE_ID, name: 'Preview' });
@@ -1477,7 +1639,7 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
       if (!tool || tool.kind !== 'extrude') return;
       const operation =
         tool.operationLocked || tool.profile.kind === 'face'
-          ? tool.profile.kind === 'face'
+          ? tool.profile.kind === 'face' && tool.operation !== 'intersect'
             ? distanceMm < 0
               ? 'cut'
               : 'join'
@@ -1485,9 +1647,36 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
           : autoExtrudeOperation(tool.contact, distanceMm);
       updatePreviewTool({ ...tool, phase: 'preview', distance: distanceMm, operation });
     },
+    setExtrudeOptions: (options) => {
+      const tool = get().activeTool;
+      if (tool?.kind !== 'extrude') return;
+      const next: ExtrudeTool = { ...tool, ...options } as ExtrudeTool;
+      for (const key of Object.keys(options) as (keyof ExtrudeToolOptions)[]) {
+        if (options[key] === undefined) delete next[key];
+      }
+      if (next.extent !== 'toObject') delete next.extentTarget;
+      if (next.sides === 'two' && next.distance2 === undefined) {
+        next.distance2 = Math.max(MIN_FEATURE_SIZE_MM, Math.abs(next.distance) || 5);
+      }
+      // Through All / To Object need a direction: keep the sign, default into the material for a cut.
+      if (next.extent && next.extent !== 'distance' && next.distance === 0) {
+        next.distance = next.operation === 'cut' && next.contact ? -next.contact.sign : 1;
+      }
+      updatePreviewTool({ ...next, phase: 'preview' });
+    },
     setExtrudeOperation: (operation) => {
       const tool = get().activeTool;
-      if (!tool || tool.kind !== 'extrude' || tool.profile.kind === 'face') return;
+      if (!tool || tool.kind !== 'extrude') return;
+      if (tool.profile.kind === 'face') {
+        // Push/pull stays automatic except for Intersect.
+        const next: ExtrudeTool = {
+          ...tool,
+          operation: operation === 'intersect' ? 'intersect' : tool.distance < 0 ? 'cut' : 'join',
+          operationLocked: operation === 'intersect',
+        };
+        updatePreviewTool(next);
+        return;
+      }
       // Join/Cut need a target: the touched body, else the most recently changed one.
       const targetBodyId = tool.contact?.bodyId ?? tool.targetBodyId;
       const next: ExtrudeTool = { ...tool, operation, operationLocked: true };
@@ -1593,6 +1782,13 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
       if (!keep) delete next.keepTools;
       updatePreviewTool(next);
     },
+    setBooleanKeepTarget: (keep) => {
+      const tool = get().activeTool;
+      if (tool?.kind !== 'boolean') return;
+      const next: BooleanTool = { ...tool, keepTarget: keep };
+      if (!keep) delete next.keepTarget;
+      updatePreviewTool(next);
+    },
     swapBooleanTarget: () => {
       const tool = get().activeTool;
       if (tool?.kind !== 'boolean' || tool.toolBodyIds.length === 0) return;
@@ -1671,7 +1867,8 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
     setDelta: (dx, dy, dz) => {
       const tool = get().activeTool;
       if (!tool || tool.kind !== 'move') return;
-      set({ activeTool: { ...tool, phase: 'preview', delta: { dx, dy, dz } } });
+      const { problem: _problem, ...rest } = tool;
+      set({ activeTool: { ...rest, phase: 'preview', delta: { dx, dy, dz } } });
     },
     setRotation: (rx, ry, rz) => {
       const tool = get().activeTool;
@@ -1685,12 +1882,80 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
     },
     setMoveCopy: (copy) => {
       const tool = get().activeTool;
-      if (tool?.kind !== 'move') return;
+      if (tool?.kind !== 'move' || tool.sketch) return;
       set({ activeTool: { ...tool, copy } });
+    },
+    setMoveAxes: (axes) => {
+      const tool = get().activeTool;
+      if (tool?.kind !== 'move' || tool.sketch) return;
+      const next: MoveTool = { ...tool };
+      if (axes) next.axes = axes;
+      else delete next.axes;
+      // Rotations so far are kept as the transform they make (re-expressed about the new axes
+      // only when none were made yet; otherwise the orientation waits for the next tool).
+      if (tool.rotation.rx !== 0 || tool.rotation.ry !== 0 || tool.rotation.rz !== 0) return;
+      set({ activeTool: next });
+    },
+    setMoveAutoOrient: (on) => {
+      const tool = get().activeTool;
+      if (tool?.kind !== 'move') return;
+      set({ activeTool: { ...tool, autoOrient: on } });
+    },
+    beginMoveSketch: (featureId, regionKey) => {
+      const state = get();
+      const feature = state.features.find(
+        (f): f is SketchFeature => f.id === featureId && f.kind === 'sketch',
+      );
+      const evaluated = state.evaluation.sketches.find((s) => s.featureId === featureId);
+      if (!feature || !evaluated) return false;
+      const frame = evaluated.frame;
+      const centre = regionCentre(feature, regionKey);
+      if (!centre) return false;
+      endPreview();
+      set({
+        activeTool: {
+          kind: 'move',
+          phase: 'collectingReferences',
+          bodyId: '',
+          delta: { dx: 0, dy: 0, dz: 0 },
+          rotation: { rx: 0, ry: 0, rz: 0 },
+          pivot: [
+            frame.origin[0] + frame.u[0] * centre[0] + frame.v[0] * centre[1],
+            frame.origin[1] + frame.u[1] * centre[0] + frame.v[1] * centre[1],
+            frame.origin[2] + frame.u[2] * centre[0] + frame.v[2] * centre[1],
+          ],
+          copy: false,
+          // The gizmo lies in the sketch plane: u, v and the normal.
+          axes: [frame.u, frame.v, frame.normal],
+          sketch: { featureId, ...(regionKey !== undefined ? { regionKey } : {}), frame },
+        },
+      });
+      return true;
     },
     beginFeatureTool: (draft) => {
       endPreview();
       updatePreviewTool({ kind: 'feature', phase: featureToolPhase(draft), draft, ...NO_PREVIEW });
+    },
+    beginPickSession: (commandId) => {
+      const state = get();
+      const session = startSession(commandId, state.selection, { evaluation: state.evaluation });
+      if (!session) return;
+      endPreview();
+      set({
+        activeTool: { kind: 'pick', phase: 'collectingReferences', ...session },
+        selection: [],
+      });
+      // The selection already held everything: start right away.
+      if (readyToFinish(session)) get().commit();
+    },
+    updatePickSession: (update) => {
+      const tool = get().activeTool;
+      if (tool?.kind !== 'pick') return;
+      const { kind: _kind, phase, ...session } = tool;
+      const next = update(session);
+      if (next === session) return;
+      set({ activeTool: { kind: 'pick', phase, ...next } });
+      if (readyToFinish(next)) get().commit();
     },
     updateFeatureDraft: (update) => {
       const state = get();
@@ -1718,7 +1983,15 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
       // A kernel error for the current parameters blocks Done (the tool stays open).
       if (isPreviewTool(tool) && tool.previewError !== null && !tool.previewPending) return;
 
+      if (tool.kind === 'pick') {
+        // Next step, or (all references there) start the command.
+        pickFinisher?.();
+        return;
+      }
+
       if (tool.kind === 'extrude') {
+        // "To Object" without its object (or a zero distance) has nothing to commit yet.
+        if (!extrudeReady(tool)) return;
         const provisional = buildProvisionalExtrude(tool);
         const id = createFeatureId('extrude');
         const feature: ExtrudeFeature = {
@@ -1762,6 +2035,18 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
       }
 
       const { rotation } = tool;
+      if (tool.sketch) {
+        const result = moveSketchResult(state.features, tool);
+        if (!result.ok) {
+          set({ activeTool: { ...tool, problem: result.reason } });
+          return;
+        }
+        commitFeatures(
+          state.features.map((f) => (f.id === result.feature.id ? result.feature : f)),
+          [{ kind: 'sketchProfile', featureId: result.feature.id }],
+        );
+        return;
+      }
       if (tool.copy || rotation.rx !== 0 || rotation.ry !== 0 || rotation.rz !== 0) {
         const transform: TransformFeature = {
           id: createFeatureId('transform'),
@@ -1769,9 +2054,8 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
           suppressed: false,
           kind: 'transform',
           bodyId: tool.bodyId,
-          ...tool.delta,
-          ...rotation,
-          pivot: tool.pivot,
+          // Rotations about an oriented gizmo become the equivalent world rotations.
+          ...gizmoTransformFields(tool),
           copy: tool.copy,
         };
         commitFeatures([...state.features, transform]);
@@ -2037,6 +2321,7 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
       gridVisible: true,
       snapToGrid: true,
       gridStep: 5,
+      gridAuto: true,
       cameraRequest: null,
       edgesVisible: true,
       hiddenEdgesVisible: false,
@@ -2090,6 +2375,7 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
     setSnapToGrid: (enabled) =>
       set((s) => ({ viewState: { ...s.viewState, snapToGrid: enabled } })),
     setGridStep: (step) => set((s) => ({ viewState: { ...s.viewState, gridStep: step } })),
+    setGridAuto: (auto) => set((s) => ({ viewState: { ...s.viewState, gridAuto: auto } })),
     requestCamera: (preset) =>
       set((s) => ({
         viewState: {
@@ -2129,6 +2415,12 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
           ...(view.grid?.visible !== undefined ? { gridVisible: view.grid.visible } : {}),
           ...(view.grid?.snap !== undefined ? { snapToGrid: view.grid.snap } : {}),
           ...(typeof view.grid?.step === 'number' ? { gridStep: view.grid.step } : {}),
+          // Projects written before the zoom-dependent grid kept a fixed step: they reopen locked.
+          ...(typeof view.grid?.auto === 'boolean'
+            ? { gridAuto: view.grid.auto }
+            : typeof view.grid?.step === 'number'
+              ? { gridAuto: false }
+              : {}),
           ...viewDisplayFromProject(view),
         };
         const preset = view.camera?.preset;
@@ -2202,6 +2494,33 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
       return id;
     },
   };
+});
+
+// Saved views carry the section state (`workspace.ts` `SavedSection`).
+setSectionAccess({
+  read: () => {
+    const v = useAssemblerStore.getState().viewState;
+    return {
+      enabled: v.sectionEnabled,
+      axis: v.sectionAxis,
+      offset: v.sectionOffset,
+      flipped: v.sectionFlipped,
+      plane: v.sectionPlane,
+      sectionOnly: v.sectionOnly,
+    };
+  },
+  apply: (section) =>
+    useAssemblerStore.setState((s) => ({
+      viewState: {
+        ...s.viewState,
+        sectionEnabled: section.enabled,
+        sectionAxis: section.axis,
+        sectionOffset: section.offset,
+        sectionFlipped: section.flipped,
+        sectionPlane: section.plane,
+        sectionOnly: section.enabled && section.sectionOnly,
+      },
+    })),
 });
 
 export type { Body, EvaluationResult, ExtrudeProfileRef, Feature, Plane };

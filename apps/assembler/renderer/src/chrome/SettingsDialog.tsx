@@ -17,6 +17,7 @@ import {
   navigationPreset,
   type NavigationPresetId,
 } from '../viewport/navigation.js';
+import { ShortcutSettings } from './ShortcutSettings.js';
 import styles from './SettingsDialog.module.css';
 
 const GRID_STEPS = [0.5, 1, 2, 5, 10, 20, 50];
@@ -192,6 +193,23 @@ export function SettingsDialog(): JSX.Element {
             aria-label="Single-key hotkeys"
             checked={prefs.singleKeyHotkeys}
             onChange={(e) => set('singleKeyHotkeys', e.currentTarget.checked)}
+          />
+        </Row>
+        <ShortcutSettings />
+
+        <h3 className={styles.section}>Selection</h3>
+        <Row
+          label="Selection extension"
+          hint={
+            prefs.selectionExtension
+              ? 'Every click adds to the selection; Esc or empty space clears it'
+              : 'Shift+click adds to the selection'
+          }
+        >
+          <Checkbox
+            aria-label="Selection extension"
+            checked={prefs.selectionExtension}
+            onChange={(e) => set('selectionExtension', e.currentTarget.checked)}
           />
         </Row>
       </div>

@@ -299,6 +299,48 @@ class SketchLine:
         return {"kind": "sketchLine", "featureId": self.feature_id, "entityId": self.entity_id}
 
 
+class Datum:
+    """A construction plane or axis (a History step without a body); ``ref`` plugs it into
+    sketch planes, mirror/split planes and revolve/pattern/mirror axes."""
+
+    def __init__(self, doc: Document, feature: Feature, kind: str) -> None:
+        self.doc = doc
+        self.feature = feature
+        self.kind = kind
+
+    def __repr__(self) -> str:
+        return f"Datum({self.kind} {self.feature.id!r})"
+
+    @property
+    def id(self) -> str:
+        return self.feature.id
+
+    @property
+    def ref(self) -> dict[str, str]:
+        return {"kind": "construction", "featureId": self.feature.id}
+
+    def info(self) -> Mapping[str, Any]:
+        """``{featureId, kind, frame, center, size}`` as evaluated (``datums.list``)."""
+        for datum in self.doc.datums():
+            if datum.get("featureId") == self.feature.id:
+                return datum
+        raise NotFoundError(raw_code="notFound", message=f"datum {self.feature.id} not found")
+
+
+@dataclass(frozen=True)
+class MirroredSketch:
+    """A mirrored sketch or face of a Mirror step: its profiles extrude/revolve like a sketch's."""
+
+    id: str
+    on_body: str | None = None
+
+
+@dataclass(frozen=True)
+class MirrorResult:
+    feature: Feature
+    sketches: list[MirroredSketch]
+
+
 class Sketch:
     """A constrained sketch; the first shape creates the sketch feature, later ones are added (one command each).
 
@@ -668,8 +710,10 @@ class Document(PrintToolsMixin, InteropMixin):
         return self.client.measure([self._target(i) for i in items])
 
     # ---- sketches and features -------------------------------------------------------------
-    def sketch(self, plane: str | Face = "XY", offset: float = 0.0) -> Sketch:
-        """A sketch on ``"XY"``/``"XZ"``/``"YZ"`` (at ``offset`` mm) or on a planar :class:`Face`."""
+    def sketch(self, plane: str | Face | Datum = "XY", offset: float = 0.0) -> Sketch:
+        """A sketch on ``"XY"``/``"XZ"``/``"YZ"`` (at ``offset`` mm), on a planar :class:`Face` or on a construction plane :class:`Datum`."""
+        if isinstance(plane, Datum):
+            return Sketch(self, plane.ref, None)
         if isinstance(plane, Face):
             return Sketch(self, {"kind": "face", "face": plane.ref}, plane.body_id)
         return Sketch(self, {"kind": "plane", "plane": plane.upper(), "offset": offset}, None)
@@ -677,13 +721,18 @@ class Document(PrintToolsMixin, InteropMixin):
     def _feature(self, result: Mapping[str, Any]) -> Feature:
         return Feature(self, str(result["featureId"]), str(result["kind"]), str(result["name"]))
 
-    def extrude(self, profile: Sketch | Face, distance: float | None = None, *, expression: str | None = None, op: str = "new", target: Body | None = None, symmetric: bool = False, regions: Sequence[str] | None = None, name: str | None = None, body_name: str | None = None) -> Body:
+    def extrude(self, profile: Sketch | MirroredSketch | Face, distance: float | None = None, *, expression: str | None = None, op: str = "new", target: Body | None = None, symmetric: bool = False, regions: Sequence[str] | None = None, name: str | None = None, body_name: str | None = None, through_all: bool = False, to: Face | Body | None = None, distance2: float | None = None, start_offset: float | None = None) -> Body:
         """Extrudes a sketch (all regions, or the region keys in ``regions``) or pushes/pulls a planar face.
 
         ``distance`` or ``expression`` (a formula over ``doc.param(...)`` names, e.g.
-        ``"wall * 2"``). ``op``: ``"new"`` body, ``"join"`` or ``"cut"`` (into
-        ``target``; default: the body the sketch lies on, else the last changed
-        body). Returns the new or modified body.
+        ``"wall * 2"``). ``op``: ``"new"`` body, ``"join"``, ``"cut"`` or
+        ``"intersect"`` (with ``target``; default: the body the sketch lies on,
+        else the last changed body). Extents (Shapr3D): ``through_all=True``
+        goes through every body, ``to=`` a face (planar: its plane) or body
+        stops at it — both in the direction of ``distance``'s sign (default
+        +1). ``distance2`` extrudes the other side too (two sides),
+        ``start_offset`` starts the extrude away from the profile. Returns the
+        new or modified body.
         """
         if isinstance(profile, Face):
             ref: dict[str, Any] = {"kind": "face", "face": profile.ref}
@@ -697,8 +746,20 @@ class Document(PrintToolsMixin, InteropMixin):
         if expression is not None:
             params["distanceExpression"] = expression
         else:
-            params["distance"] = distance
-        if isinstance(profile, Sketch):
+            params["distance"] = distance if distance is not None else 1.0
+        if through_all and to is not None:
+            raise ValueError("choose through_all or to=, not both")
+        if through_all:
+            params["extent"] = {"kind": "throughAll"}
+        elif isinstance(to, Face):
+            params["extent"] = {"kind": "toObject", "target": {"kind": "face", "face": to.ref}}
+        elif isinstance(to, Body):
+            params["extent"] = {"kind": "toObject", "target": {"kind": "body", "bodyId": to.id}}
+        if distance2 is not None:
+            params["distance2"] = distance2
+        if start_offset is not None:
+            params["startOffset"] = start_offset
+        if not isinstance(profile, Face) or op == "intersect":
             params["operation"] = op
             if op != "new" and target_id:
                 params["targetBodyId"] = target_id
@@ -706,10 +767,109 @@ class Document(PrintToolsMixin, InteropMixin):
                 params["resultBodyName"] = body_name
         result = self.client.create_feature("extrude", params, name=name)
         feature = self._feature(result)
-        if isinstance(profile, Sketch) and op == "new":
+        if not isinstance(profile, Face) and op == "new":
             return Body(self, f"body:{feature.id}", feature)
         body_id = target_id or self._last_body_id(result)
         return Body(self, body_id, feature)
+
+    # ---- construction planes and axes (Shapr3D "Construct") -------------------------------
+    def _plane_ref(self, plane: str | Face | Datum | tuple[str, float]) -> dict[str, Any]:
+        """``"XY"``/``"XZ"``/``"YZ"`` (or ``("XY", offset)``), a planar :class:`Face` or a plane :class:`Datum`."""
+        if isinstance(plane, Datum):
+            return plane.ref
+        if isinstance(plane, Face):
+            return {"kind": "face", "face": plane.ref}
+        if isinstance(plane, tuple):
+            return {"kind": "plane", "plane": plane[0].upper(), "offset": float(plane[1])}
+        return {"kind": "plane", "plane": plane.upper(), "offset": 0.0}
+
+    @staticmethod
+    def _axis_ref(axis: str | Edge | SketchLine | Datum) -> dict[str, Any]:
+        if isinstance(axis, str):
+            return {"kind": "world", "axis": axis.upper()}
+        if isinstance(axis, Edge):
+            return {"kind": "edge", "edge": axis.ref}
+        return dict(axis.ref)
+
+    @staticmethod
+    def _point_ref(point: Sequence[float] | Edge, near: Sequence[float] | None = None) -> dict[str, Any]:
+        """A world point, or an :class:`Edge`: a circle's centre, else its midpoint (``near``: the end nearest to it)."""
+        if isinstance(point, Edge):
+            if near is not None:
+                return {"kind": "edgeEnd", "edge": point.ref, "near": [float(v) for v in near]}
+            return {"kind": "circleCenter" if point.curve == "circle" else "edgeMid", "edge": point.ref}
+        return {"kind": "point", "point": [float(v) for v in point]}
+
+    def _datum(self, kind: str, definition: dict[str, Any], flip: bool, name: str | None) -> Datum:
+        params: dict[str, Any] = {"definition": definition}
+        if flip:
+            params["flip"] = True
+        feature = self._feature(self.client.create_feature(kind, params, name=name))
+        return Datum(self, feature, "plane" if kind == "constructionPlane" else "axis")
+
+    def plane_offset(self, base: str | Face | Datum | tuple[str, float], distance: float, *, flip: bool = False, name: str | None = None) -> Datum:
+        """Construction plane parallel to ``base`` (world plane, planar face or plane), ``distance`` along its normal."""
+        return self._datum("constructionPlane", {"kind": "offset", "base": self._plane_ref(base), "distance": distance}, flip, name)
+
+    def plane_angle(self, base: str | Face | Datum | tuple[str, float], axis: str | Edge | SketchLine | Datum, angle: float, *, flip: bool = False, name: str | None = None) -> Datum:
+        """Construction plane through ``axis`` (parallel to ``base``), turned ``angle`` degrees from ``base``."""
+        return self._datum("constructionPlane", {"kind": "angle", "base": self._plane_ref(base), "axis": self._axis_ref(axis), "angle": angle}, flip, name)
+
+    def plane_through(self, a: Sequence[float] | Edge, b: Sequence[float] | Edge, c: Sequence[float] | Edge, *, flip: bool = False, name: str | None = None) -> Datum:
+        """Construction plane through three points (world points or edges: circle centre / midpoint)."""
+        points = [self._point_ref(p) for p in (a, b, c)]
+        return self._datum("constructionPlane", {"kind": "threePoints", "points": points}, flip, name)
+
+    def midplane(self, a: str | Face | Datum | tuple[str, float], b: str | Face | Datum | tuple[str, float], *, flip: bool = False, name: str | None = None) -> Datum:
+        """Construction plane halfway between two parallel planes/faces."""
+        return self._datum("constructionPlane", {"kind": "midplane", "a": self._plane_ref(a), "b": self._plane_ref(b)}, flip, name)
+
+    def plane_tangent(self, face: Face, angle: float = 0.0, *, flip: bool = False, name: str | None = None) -> Datum:
+        """Construction plane tangent to a cylindrical face, ``angle`` degrees around its axis."""
+        return self._datum("constructionPlane", {"kind": "tangent", "face": face.ref, "angle": angle}, flip, name)
+
+    def axis_along(self, edge: Edge, *, flip: bool = False, name: str | None = None) -> Datum:
+        """Construction axis along a straight edge (a circular edge: its axis)."""
+        return self._datum("constructionAxis", {"kind": "edge", "edge": edge.ref}, flip, name)
+
+    def axis_through(self, a: Sequence[float] | Edge, b: Sequence[float] | Edge, *, flip: bool = False, name: str | None = None) -> Datum:
+        """Construction axis through two points."""
+        return self._datum("constructionAxis", {"kind": "twoPoints", "a": self._point_ref(a), "b": self._point_ref(b)}, flip, name)
+
+    def axis_of(self, face: Face, *, flip: bool = False, name: str | None = None) -> Datum:
+        """Construction axis of a cylindrical face (e.g. a hole)."""
+        return self._datum("constructionAxis", {"kind": "cylinder", "face": face.ref}, flip, name)
+
+    def axis_intersection(self, a: str | Face | Datum | tuple[str, float], b: str | Face | Datum | tuple[str, float], *, flip: bool = False, name: str | None = None) -> Datum:
+        """Construction axis where two planes meet."""
+        return self._datum("constructionAxis", {"kind": "planes", "a": self._plane_ref(a), "b": self._plane_ref(b)}, flip, name)
+
+    def datums(self) -> list[Mapping[str, Any]]:
+        """Construction planes/axes as evaluated (``datums.list``)."""
+        return list(self.client.datums())
+
+    def mirror(self, bodies: Iterable[Body] = (), *, plane: str | Face | Datum | tuple[str, float] = "YZ", axis: str | Edge | SketchLine | Datum | None = None, sketches: Iterable[Sketch] = (), faces: Iterable[Face] = (), keep: bool = True, name: str | None = None) -> MirrorResult:
+        """Mirrors bodies, sketches and planar faces across ``plane`` (or about ``axis``: a half turn).
+
+        Mirrored sketches/faces are profiles: ``result.sketches[i]`` (sketches first, then faces)
+        can be extruded or revolved like a sketch.
+        """
+        sketch_list = list(sketches)
+        face_list = list(faces)
+        params: dict[str, Any] = {
+            "bodyIds": [b.id for b in bodies],
+            "plane": self._plane_ref(plane),
+            "keepOriginal": keep,
+        }
+        if sketch_list:
+            params["sketchIds"] = [s.id for s in sketch_list]
+        if face_list:
+            params["faces"] = [f.ref for f in face_list]
+        if axis is not None:
+            params["axis"] = self._axis_ref(axis)
+        feature = self._feature(self.client.create_feature("mirror", params, name=name))
+        derived = [MirroredSketch(f"{feature.id}:sketch:{i}") for i in range(len(sketch_list) + len(face_list))]
+        return MirrorResult(feature, derived)
 
     def _last_body_id(self, result: Mapping[str, Any]) -> str:
         bodies = result.get("bodies") or []
@@ -727,7 +887,7 @@ class Document(PrintToolsMixin, InteropMixin):
         distance = -abs(depth) if sketch.on_body else abs(depth)
         return self.extrude(sketch, distance, op="cut", target=target, **kwargs)
 
-    def revolve(self, profile: Sketch | Face, axis: str | Edge | SketchLine, angle: float = 360.0, *, op: str = "new", target: Body | None = None, regions: Sequence[str] | None = None, name: str | None = None, body_name: str | None = None) -> Body:
+    def revolve(self, profile: Sketch | MirroredSketch | Face, axis: str | Edge | SketchLine | Datum, angle: float = 360.0, *, op: str = "new", target: Body | None = None, regions: Sequence[str] | None = None, name: str | None = None, body_name: str | None = None) -> Body:
         """Revolves a sketch (all regions, or ``regions``) or a planar face about ``axis``:
         ``"X"``/``"Y"``/``"Z"`` (world axis through the origin), a straight/circular :class:`Edge`,
         or a :class:`SketchLine` (e.g. ``s.line((0, 0), (0, 10), construction=True)``)."""
@@ -792,17 +952,23 @@ class Document(PrintToolsMixin, InteropMixin):
             params["thickness"] = thickness
         return self._feature(self.client.create_feature("shell", params, name=name))
 
-    def _boolean(self, operation: str, target: Body, tools: Sequence[Body], name: str | None) -> Feature:
-        return self._feature(self.client.create_feature("boolean", {"operation": operation, "targetBodyId": target.id, "toolBodyIds": [t.id for t in tools]}, name=name))
+    def _boolean(self, operation: str, target: Body, tools: Sequence[Body], name: str | None, keep_target: bool = False, keep_tools: bool = False) -> Feature:
+        params: dict[str, Any] = {"operation": operation, "targetBodyId": target.id, "toolBodyIds": [t.id for t in tools]}
+        if keep_target:
+            params["keepTarget"] = True
+        if keep_tools:
+            params["keepTools"] = True
+        return self._feature(self.client.create_feature("boolean", params, name=name))
 
-    def union(self, target: Body, *tools: Body, name: str | None = None) -> Feature:
-        return self._boolean("union", target, tools, name)
+    def union(self, target: Body, *tools: Body, name: str | None = None, keep_target: bool = False, keep_tools: bool = False) -> Feature:
+        """Fuses ``tools`` into ``target``; ``keep_target`` keeps the target and makes the result a new body ``body:<feature id>``."""
+        return self._boolean("union", target, tools, name, keep_target, keep_tools)
 
-    def subtract(self, target: Body, *tools: Body, name: str | None = None) -> Feature:
-        return self._boolean("subtract", target, tools, name)
+    def subtract(self, target: Body, *tools: Body, name: str | None = None, keep_target: bool = False, keep_tools: bool = False) -> Feature:
+        return self._boolean("subtract", target, tools, name, keep_target, keep_tools)
 
-    def intersect(self, target: Body, *tools: Body, name: str | None = None) -> Feature:
-        return self._boolean("intersect", target, tools, name)
+    def intersect(self, target: Body, *tools: Body, name: str | None = None, keep_target: bool = False, keep_tools: bool = False) -> Feature:
+        return self._boolean("intersect", target, tools, name, keep_target, keep_tools)
 
     def move(self, body: Body, dx: float = 0.0, dy: float = 0.0, dz: float = 0.0, *, name: str | None = None) -> Feature:
         return self._feature(self.client.create_feature("move", {"bodyId": body.id, "dx": dx, "dy": dy, "dz": dz}, name=name))

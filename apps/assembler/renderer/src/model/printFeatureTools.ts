@@ -19,6 +19,7 @@ import {
   type SketchFeature,
   type Vec3,
 } from './document.js';
+import { datumRef, planeRefFrame } from './construction.js';
 import type { PlaneRef, ProfileRef } from './features.js';
 import {
   HOLE_PRESET_LABEL,
@@ -429,9 +430,10 @@ export type PrintToolPick =
       point?: Vec3;
       ray?: { origin: Vec3; direction: Vec3 };
     }
-  | { kind: 'edge'; bodyId: string; edgeKey: string }
+  | { kind: 'edge'; bodyId: string; edgeKey: string; ray?: { origin: Vec3; direction: Vec3 } }
   | { kind: 'sketchProfile'; featureId: string; regionKey?: string }
-  | { kind: 'sketchLine'; featureId: string; entityId: string };
+  | { kind: 'sketchLine'; featureId: string; entityId: string }
+  | { kind: 'datum'; featureId: string };
 
 /** Placement within this distance (mm) of a click is removed instead of adding a new one. */
 const REMOVE_RADIUS_MM = 1.5;
@@ -505,6 +507,11 @@ export function acceptPrintPick(
       }
       return draft;
     case 'draft': {
+      if (pick.kind === 'datum') {
+        // A construction plane becomes the neutral plane.
+        const ref = datumRef(evaluation, pick.featureId);
+        return ref && 'frame' in ref ? { ...draft, neutral: ref } : draft;
+      }
       if (!faceRef) return draft;
       if (draft.faces[0] && faceRef.bodyId !== draft.faces[0].bodyId) return draft;
       const pull = neutralNormal(evaluation, draft.neutral);
@@ -578,6 +585,7 @@ function holeOuterDiameter(draft: HoleDraft): number {
 
 function neutralNormal(evaluation: EvaluationResult, plane: PlaneRef): Vec3 | null {
   if (plane.kind === 'plane') return frameForPlane(plane.plane, plane.offset).normal;
+  if (plane.kind === 'construction') return planeRefFrame(plane, evaluation)?.normal ?? null;
   const body = bodyOf(evaluation, plane.face.bodyId);
   return (body ? faceOf(body, plane.face.key)?.normal : null) ?? plane.face.signature.normal;
 }

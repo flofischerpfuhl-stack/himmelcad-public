@@ -191,6 +191,7 @@ function currentViewState(): ProjectViewState {
       visible: doc.viewState.gridVisible,
       snap: doc.viewState.snapToGrid,
       step: doc.viewState.gridStep,
+      auto: doc.viewState.gridAuto,
     },
     panels: {
       items: doc.panels.items,

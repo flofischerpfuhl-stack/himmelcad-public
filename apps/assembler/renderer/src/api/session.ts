@@ -29,7 +29,7 @@ import { stlAsciiForMeshes, stlBytes } from '../kernel/stlExport.js';
 import { buildThreeMf } from '../kernel/threeMf.js';
 import type { Body, EvaluationResult } from '../kernel/types.js';
 import type { Feature, SketchFeature } from '../model/document.js';
-import type { TransformFeature } from '../model/features.js';
+import { parseMirroredSketchId, type TransformFeature } from '../model/features.js';
 import { referenceMeshIdOf } from '../model/referenceMesh.js';
 import {
   analyzePrintability,
@@ -332,6 +332,8 @@ export class AgentSession {
         return this.listEdges(p);
       case 'sketches.list':
         return this.listSketches(p);
+      case 'datums.list':
+        return this.listDatums(p);
       case 'selection.get':
         return this.store.getState().selection;
       case 'selection.set':
@@ -623,7 +625,7 @@ export class AgentSession {
     const consumed = consumedSketchIds(features);
     return features
       .filter((f): f is SketchFeature => f.kind === 'sketch')
-      .map((sketch) => {
+      .map((sketch): Json => {
         const evaluated = evaluation.sketches.find((s) => s.featureId === sketch.id);
         return {
           featureId: sketch.id,
@@ -637,8 +639,50 @@ export class AgentSession {
           dimensions: sketch.dimensions,
           regions: describeRegions(sketch, evaluated),
         };
+      })
+      .concat(
+        // Mirrored sketches and faces (Mirror steps): profiles only, referenced by their id.
+        evaluation.sketches
+          .filter((s) => parseMirroredSketchId(s.featureId) !== null)
+          .map((s) => {
+            const mirror = features.find(
+              (f) => f.id === parseMirroredSketchId(s.featureId)!.mirrorId,
+            );
+            return {
+              featureId: s.featureId,
+              name: `${mirror?.name ?? 'Mirror'} sketch ${parseMirroredSketchId(s.featureId)!.index + 1}`,
+              derivedFrom: mirror?.id ?? null,
+              frame: s.frame,
+              consumed: consumed.has(s.featureId),
+              regions: s.profiles.map((profile) => ({
+                key: profile.key,
+                area: profile.area,
+                center: profile.center,
+              })),
+            };
+          }),
+      );
+  }
+
+  private async listDatums(p: Json): Promise<Json[]> {
+    const features = this.readFeatures(p);
+    const evaluation = await this.readEvaluation(p);
+    return features
+      .filter((f) => f.kind === 'constructionPlane' || f.kind === 'constructionAxis')
+      .map((f) => {
+        const datum = evaluation.datums?.find((d) => d.featureId === f.id);
+        return {
+          featureId: f.id,
+          name: f.name,
+          kind: f.kind === 'constructionPlane' ? 'plane' : 'axis',
+          frame: datum?.frame ?? null,
+          center: datum?.center ?? null,
+          size: datum?.size ?? null,
+          ...(evaluation.errors[f.id] ? { error: evaluation.errors[f.id] } : {}),
+        };
       });
   }
+
   private setSelection(p: Json): Json {
     const items = p.items as SelectionItem[];
     const state = this.store.getState();

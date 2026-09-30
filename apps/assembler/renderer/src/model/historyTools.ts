@@ -99,6 +99,72 @@ export function moveFeature(features: readonly Feature[], from: number, to: numb
 }
 
 /**
+ * What a History card's "Zoom to" frames (Shapr3D card setting "Zoom To",
+ * interaction research §3): a sketch step its sketch, a step that creates
+ * bodies those bodies, otherwise the bodies the step works on (fillets,
+ * shells, moves …) — or, failing that, the bodies of the steps it depends on.
+ */
+export function featureZoomTargets(
+  feature: Feature,
+  features: readonly Feature[],
+  evaluation: EvaluationResult,
+): SelectionItem[] {
+  if (feature.kind === 'sketch') return [{ kind: 'sketchProfile', featureId: feature.id }];
+  const body = (id: string): SelectionItem => ({ kind: 'body', bodyId: id });
+  const created = evaluation.bodies.filter((b) => b.createdBy === feature.id).map((b) => b.id);
+  if (created.length > 0) return created.map(body);
+  const refs = referenceStrings(feature);
+  const used = evaluation.bodies
+    .filter((b) => refs.some((text) => text === b.id || text.includes(`${b.id}:`)))
+    .map((b) => b.id);
+  if (used.length > 0) return used.map(body);
+  const deps = directDependencies(feature, features);
+  const fromDeps = evaluation.bodies.filter((b) => deps.has(b.createdBy)).map((b) => b.id);
+  if (fromDeps.length > 0) return fromDeps.map(body);
+  const sketchDep = features.find((f) => deps.has(f.id) && f.kind === 'sketch');
+  return sketchDep ? [{ kind: 'sketchProfile', featureId: sketchDep.id }] : [];
+}
+
+/**
+ * The feature list with a copy of step `featureId` (id `newId`, name
+ * `newName`) inserted right after it — History card "Duplicate". The copy
+ * keeps every reference of the original, so a duplicated sketch is a new,
+ * independent sketch and a duplicated extrude builds the same profile again.
+ */
+export function duplicateStep(
+  features: readonly Feature[],
+  featureId: string,
+  newId: string,
+  newName: string,
+): Feature[] {
+  const index = features.findIndex((f) => f.id === featureId);
+  if (index < 0) return [...features];
+  const copy = { ...structuredClone(features[index]!), id: newId, name: newName } as Feature;
+  const next = [...features];
+  next.splice(index + 1, 0, copy);
+  return next;
+}
+
+/** "Extrude 3" → "Extrude": the name prefix used to number a duplicated step. */
+export function stepNamePrefix(name: string): string {
+  const trimmed = name.replace(/\s+\d+$/, '').trim();
+  return trimmed.length > 0 ? trimmed : name;
+}
+
+/**
+ * What the History filter narrows to (Shapr3D, interaction research §3:
+ * "zur Auswahl oder zu isolierten Objekten relevante Schritte"): the
+ * selection, or — with nothing selected and Isolate on — the isolated bodies.
+ */
+export function historyFilterItems(
+  selection: readonly SelectionItem[],
+  isolatedBodyIds: readonly string[] | null,
+): SelectionItem[] {
+  if (selection.length > 0) return [...selection];
+  return (isolatedBodyIds ?? []).map((bodyId) => ({ kind: 'body', bodyId }));
+}
+
+/**
  * Steps relevant to the selection (History "filter to selection"): the
  * selected steps themselves, the steps that create or change the selected
  * bodies (faces/edges count for their body) or sketches, and everything
@@ -112,8 +178,9 @@ export function relevantFeatureIds(
   const bodyIds = new Set<string>();
   const seeds = new Set<string>();
   for (const item of selection) {
-    if (item.kind === 'feature' || item.kind === 'sketchProfile') seeds.add(item.featureId);
-    else if (item.kind !== 'mesh') bodyIds.add(item.bodyId); // reference meshes have no steps
+    if (item.kind === 'feature' || item.kind === 'sketchProfile' || item.kind === 'datum') {
+      seeds.add(item.featureId);
+    } else if (item.kind !== 'mesh') bodyIds.add(item.bodyId); // reference meshes have no steps
   }
   for (const bodyId of bodyIds) {
     const body = evaluation.bodies.find((b) => b.id === bodyId);

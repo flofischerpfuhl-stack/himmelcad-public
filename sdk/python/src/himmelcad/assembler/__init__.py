@@ -32,7 +32,7 @@ from .errors import (
     TransportError,
 )
 from .modeling import (
-    BBox, Body, Document, Edge, EdgeSet, Face, FaceSet, Feature, Parameter, PrintReport, Sketch, SketchLine, Transaction,
+    BBox, Body, Datum, Document, Edge, EdgeSet, Face, FaceSet, Feature, MirroredSketch, MirrorResult, Parameter, PrintReport, Sketch, SketchLine, Transaction,
 )
 from .interop import ReferenceMesh
 from .printing import METRIC_HOLE_SIZES, PRINT_FITS, hole_diameter
@@ -40,7 +40,7 @@ from .transport import LoopbackTransport, StdioTransport, Transport, find_headle
 
 __all__ = [
     "API_ID", "API_VERSION", "METHODS",
-    "AssemblerClient", "AssemblerError", "BBox", "Body", "BusyError", "ConfirmationRequiredError",
+    "AssemblerClient", "AssemblerError", "BBox", "Body", "BusyError", "Datum", "MirroredSketch", "MirrorResult", "ConfirmationRequiredError",
     "ConflictError", "Document", "Edge", "EdgeSet", "Face", "FaceSet", "Feature", "FeatureFailedError",
     "InvalidParamsError", "LoopbackTransport", "NotFoundError", "Parameter", "PermissionDeniedError", "PrintReport",
     "ReferenceNotFoundError", "Sketch", "SketchConflictError", "SketchLine", "StdioTransport", "Transaction", "TransactionStateError",

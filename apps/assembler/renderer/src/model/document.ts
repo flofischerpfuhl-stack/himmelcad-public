@@ -86,10 +86,17 @@ export interface FeatureBase {
   suppressed: boolean;
 }
 
-/** Where a sketch lies: a canonical plane with offset, or a planar body face. */
+/**
+ * Where a sketch lies: a canonical plane with offset, a planar body face,
+ * or a construction plane (`model/construction.ts`) by feature id; `frame`
+ * is its last evaluated frame (the reference's signature: shown before the
+ * kernel answers and as the ghost of a missing reference, never used to
+ * evaluate).
+ */
 export type SketchPlaneRef =
   | { kind: 'plane'; plane: Plane; offset: Millimeters }
-  | { kind: 'face'; face: FaceRef };
+  | { kind: 'face'; face: FaceRef }
+  | { kind: 'construction'; featureId: string; frame: SketchFrame };
 
 /**
  * A constrained 2D sketch (schema v2): entities in the sketch frame's
@@ -112,7 +119,27 @@ export type ExtrudeProfileRef =
   | { kind: 'sketch'; featureId: string; regions?: string[] }
   | { kind: 'face'; face: FaceRef };
 
-export type ExtrudeOperation = 'new' | 'join' | 'cut';
+/** New body, or join into / cut from / intersect with the target body (Shapr3D badge). */
+export type ExtrudeOperation = 'new' | 'join' | 'cut' | 'intersect';
+
+/**
+ * What a "To Object" extrude runs up to: a face (a planar face is extended
+ * as its infinite plane; any other face stops at the first contact with its
+ * body), or a body (the first contact with it).
+ */
+export type ExtrudeObjectRef = { kind: 'face'; face: FaceRef } | { kind: 'body'; bodyId: string };
+
+/**
+ * How far an extrude goes (Shapr3D "Distance / To Object / Through All").
+ * `distance` (default) uses `distance` (and `distance2` / `symmetric`);
+ * `throughAll` goes through every body in the direction of `distance`'s
+ * sign (both ways when symmetric); `toObject` runs up to `target` in the
+ * direction of `distance`'s sign.
+ */
+export type ExtrudeExtent =
+  | { kind: 'distance' }
+  | { kind: 'throughAll' }
+  | { kind: 'toObject'; target: ExtrudeObjectRef };
 
 /**
  * Extrudes a sketch profile along its sketch normal (or a planar face along
@@ -123,6 +150,15 @@ export interface ExtrudeFeature extends FeatureBase {
   kind: 'extrude';
   profile: ExtrudeProfileRef;
   distance: Millimeters;
+  /** Extent (absent = `{ kind: 'distance' }`). */
+  extent?: ExtrudeExtent | undefined;
+  /**
+   * Two sides with separate distances: how far the extrude also goes to
+   * the other side of the profile plane (≥ 0, mm). Ignored when `symmetric`.
+   */
+  distance2?: Millimeters | undefined;
+  /** The extrude starts this far from the profile along its normal (Shapr3D "Start: Offset"), mm. */
+  startOffset?: Millimeters | undefined;
   /**
    * Source formula for `distance` (document parameters, `model/parameters.ts`),
    * when set. `distance` always holds the last successfully resolved value
@@ -198,6 +234,12 @@ export interface BooleanFeature extends FeatureBase {
   toolBodyIds: string[];
   /** Keep the tool bodies (e.g. a cutter used again, or a lid subtracted from its box). */
   keepTools?: boolean;
+  /**
+   * Keep the target body as it was: the result becomes a new body
+   * (`bodyIdFor(id)`) — Shapr3D's separate "Keep Target" (Keep Originals: All
+   * = both flags, Modified = target, Removed = tools, None = neither).
+   */
+  keepTarget?: boolean;
 }
 
 /** Translates a body by a fixed delta, in millimetres. */

@@ -201,7 +201,7 @@ small in-repo validator (no new dependency).
 | Group        | Methods                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Meta         | `api.hello` (version, capabilities, feature kinds), `api.describe`                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| Queries      | `document.get`, `features.list`, `feature.get`, `bodies.list`, `body.get`, `faces.list`, `edges.list`, `sketches.list`, `selection.get`                                                                                                                                                                                                                                                                                                                                                  |
+| Queries      | `document.get`, `features.list`, `feature.get`, `bodies.list`, `body.get`, `faces.list`, `edges.list`, `sketches.list` (incl. mirrored sketches `<mirrorId>:sketch:<n>`), `datums.list` (construction planes/axes), `selection.get`                                                                                                                                                                                                                                                      |
 | Features     | `feature.create {kind, params}`, `feature.edit`, `feature.delete`, `feature.suppress`, `feature.rename`                                                                                                                                                                                                                                                                                                                                                                                  |
 | Sketches     | `sketch.addProfile` (dimensioned rectangle/circle), `sketch.addPolyline`, `sketch.addArc`, `sketch.addConstraint`, `sketch.addDimension`, `sketch.setDimension`, `sketch.deleteItems`; advanced (2026-09-30, same builders as the sketch tools): `sketch.addSpline`, `sketch.addEllipse`, `sketch.addSlot`, `sketch.addPolygon`, `sketch.addText`, `sketch.mirror`, `sketch.pattern`, `sketch.roundCorner`, `sketch.project` (associative), `sketch.setReference` (reference dimensions) |
 | Transactions | `transaction.begin`, `transaction.preview`, `transaction.commit`, `transaction.cancel`                                                                                                                                                                                                                                                                                                                                                                                                   |
@@ -258,6 +258,20 @@ select}` expands a CadQuery-style selector server-side: `+Z`/`-Y` (facing /
   `and`. Queries return readable names ("Extrude 1 end · plane +Z at 0, 0, 6 ·
   2400 mm²", "Circle Ø6 at 20, 0, 6") next to normals, centroids, areas,
   midpoints, lengths, radii and adjacency (`edgeKeys`/`faceKeys`).
+- **Construction planes and axes (parity round 2).** `constructionPlane`
+  (`definition.kind` `offset` / `angle` / `threePoints` / `midplane` /
+  `tangent`) and `constructionAxis` (`edge` / `twoPoints` / `cylinder` /
+  `planes`) are History steps; `{kind: "construction", featureId}` references
+  one as a sketch `plane`, mirror/split `plane`, or revolve/pattern/rotate/
+  mirror `axis` (the server fills the frame/line, like `{bodyId, key}`
+  signatures). Extrude takes `extent` (`{kind: "throughAll"}`,
+  `{kind: "toObject", target}` with a face, construction plane or body),
+  `distance2` (second side), `startOffset` and `operation: "intersect"`;
+  booleans take `keepTarget`; mirror takes `sketchIds`, `faces` and `axis`.
+  Python: `doc.plane_offset/plane_angle/plane_through/midplane/plane_tangent`,
+  `doc.axis_along/axis_through/axis_of/axis_intersection`, `doc.datums()`,
+  `doc.extrude(…, through_all=, to=, distance2=, start_offset=)`,
+  `doc.mirror(sketches=, faces=, axis=)`.
 - **Validate before commit.** A write is evaluated on the kernel's preview
   channel first; if a feature it creates or edits fails, nothing is committed
   (`featureFailed` with the kernel message and a hint). Downstream breakage of

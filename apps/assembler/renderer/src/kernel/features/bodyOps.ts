@@ -13,14 +13,22 @@ import {
   frameForFace,
   framePoint,
   MIN_FEATURE_SIZE_MM,
+  type SketchFeature,
+  type SketchFrame,
   type Vec3,
 } from '../../model/document.js';
+import { addProjection, projectSource } from '../../sketch/projection.js';
+import { EMPTY_SKETCH } from '../../sketch/types.js';
+import { evaluateSketchGeometry } from '../sketchGeometry.js';
+import { sampleEdge } from '../sketchProjection.js';
 import {
   extraBodyId,
+  mirroredSketchId,
   MAX_PATTERN_COUNT,
   type AlignFeature,
   type MirrorFeature,
   type PatternFeature,
+  type RotateAxisFeature,
   type SplitFeature,
   type TransformFeature,
 } from '../../model/features.js';
@@ -116,15 +124,128 @@ function bodiesOf(
 // ---- Mirror ------------------------------------------------------------------------
 
 export function applyMirror(feature: MirrorFeature, ctx: ReplayContextLike, kit: FeatureKit): void {
-  const plane = resolvePlane(kit, ctx, feature.plane);
-  const ops: RigidOp[] = [{ kind: 'mirror', point: plane.point, normal: plane.normal }];
-  bodiesOf(kit, ctx, feature.bodyIds).forEach((body, i) => {
-    if (feature.keepOriginal) {
-      addCopy(kit, ctx, feature.id, body, ops, extraBodyId(feature.id, i), `${body.name} (mirror)`);
-    } else {
-      moveBody(kit, ctx, feature.id, body, ops);
-    }
+  let ops: RigidOp[];
+  if (feature.axis) {
+    // About a line: a half turn about it (in a sketch plane, the 2D mirror across that line).
+    const axis = resolveAxis(kit, ctx, feature.axis);
+    ops = [{ kind: 'rotate', point: axis.point, axis: axis.dir, angle: Math.PI }];
+  } else {
+    const plane = resolvePlane(kit, ctx, feature.plane);
+    ops = [{ kind: 'mirror', point: plane.point, normal: plane.normal }];
+  }
+  const sketchIds = feature.sketchIds ?? [];
+  const faces = feature.faces ?? [];
+  if (feature.bodyIds.length === 0 && sketchIds.length === 0 && faces.length === 0) {
+    kit.fail('Select bodies, sketches or planar faces to mirror');
+  }
+  if (feature.bodyIds.length > 0) {
+    bodiesOf(kit, ctx, feature.bodyIds).forEach((body, i) => {
+      if (feature.keepOriginal) {
+        addCopy(
+          kit,
+          ctx,
+          feature.id,
+          body,
+          ops,
+          extraBodyId(feature.id, i),
+          `${body.name} (mirror)`,
+        );
+      } else {
+        moveBody(kit, ctx, feature.id, body, ops);
+      }
+    });
+  }
+  mirrorSketches(kit, ctx, feature, ops);
+}
+
+/**
+ * Mirrored sketches (`sketchIds`, then planar `faces` as profiles): the
+ * source's sketch data in the mirrored frame, registered like a sketch so
+ * later steps extrude/revolve its profiles by {@link mirroredSketchId}.
+ */
+function mirrorSketches(
+  kit: FeatureKit,
+  ctx: ReplayContextLike,
+  feature: MirrorFeature,
+  ops: readonly RigidOp[],
+): void {
+  const affine = opsAffine(ops);
+  // The normal is mirrored too (not u × v): extruding the mirrored sketch gives the mirror
+  // image of extruding the original.
+  const mapFrame = (frame: SketchFrame): SketchFrame => ({
+    origin: applyAffine(affine, frame.origin),
+    u: mulDir(affine.m, frame.u),
+    v: mulDir(affine.m, frame.v),
+    normal: mulDir(affine.m, frame.normal),
   });
+  const register = (index: number, source: SketchFeature, frame: SketchFrame): void => {
+    const id = mirroredSketchId(feature.id, index);
+    const mirrored: SketchFeature = {
+      ...source,
+      id,
+      name: `${source.name} (mirror)`,
+      plane: { kind: 'construction', featureId: feature.id, frame },
+    };
+    delete (mirrored as { projections?: unknown }).projections;
+    let result: ReturnType<typeof evaluateSketchGeometry>;
+    try {
+      result = evaluateSketchGeometry(mirrored, frame);
+    } catch (error) {
+      if (kit.isFailure(error)) throw error;
+      kit.fail(`Mirror of "${source.name}" failed: ${kit.describeError(error)}`);
+    }
+    for (const message of result.warnings) ctx.warn(message);
+    ctx.sketches.set(id, result.evaluated);
+    ctx.sketchFeatures.set(id, mirrored);
+    ctx.sketchRegions.set(id, result.regions);
+  };
+  const sketchIds = feature.sketchIds ?? [];
+  if (new Set(sketchIds).size !== sketchIds.length) kit.fail('A sketch is listed twice');
+  sketchIds.forEach((sketchId, i) => {
+    const source = ctx.sketchFeatures.get(sketchId);
+    const evaluated = ctx.sketches.get(sketchId);
+    if (!source || !evaluated) kit.fail(`Missing reference: sketch "${sketchId}"`);
+    register(i, source, mapFrame(evaluated.frame));
+  });
+  (feature.faces ?? []).forEach((ref, j) => {
+    const body = bodyOrFail(kit, ctx, ref.bodyId);
+    const { geom, topology, index } = kit.resolveFace(body, ref, ctx.warn);
+    if (geom.surface !== 'plane' || !geom.normal) {
+      kit.fail('Only planar faces can be mirrored (as a profile); mirror the body instead');
+    }
+    const frame = frameForFace(geom.normal, geom.centroid);
+    const samples = (topology.faceEdges[index] ?? []).map((e) =>
+      sampleEdge(kit.oc, topology.edges[e]!, topology.edgeGeoms[e]!.curve),
+    );
+    const added = addProjection(
+      EMPTY_SKETCH,
+      { kind: 'face', ref },
+      projectSource(samples, frame),
+      false,
+    );
+    if (!added) kit.fail('The face outline could not be mirrored');
+    const source: SketchFeature = {
+      id: `${feature.id}:face:${j}`,
+      name: `Face ${j + 1}`,
+      suppressed: false,
+      kind: 'sketch',
+      plane: { kind: 'face', face: ref },
+      ...added.sketch,
+    };
+    register(sketchIds.length + j, source, mapFrame(frame));
+  });
+}
+
+function mulDir(m: readonly number[], v: Vec3): Vec3 {
+  return [
+    m[0]! * v[0] + m[1]! * v[1] + m[2]! * v[2],
+    m[3]! * v[0] + m[4]! * v[1] + m[5]! * v[2],
+    m[6]! * v[0] + m[7]! * v[1] + m[8]! * v[2],
+  ];
+}
+
+function applyAffine(a: { m: readonly number[]; t: Vec3 }, p: Vec3): Vec3 {
+  return add(mulDir(a.m, p), a.t);
 }
 
 // ---- Pattern -----------------------------------------------------------------------
@@ -265,6 +386,38 @@ export function applyTransform(
   } else if (ops.length > 0) {
     moveBody(kit, ctx, feature.id, body, ops);
   }
+}
+
+// ---- Rotate Around Axis ----------------------------------------------------------------
+
+export function applyRotateAxis(
+  feature: RotateAxisFeature,
+  ctx: ReplayContextLike,
+  kit: FeatureKit,
+): void {
+  if (!Number.isFinite(feature.angle) || Math.abs(feature.angle) > 360) {
+    kit.fail('Rotation angle must be between -360° and 360°');
+  }
+  const bodies = bodiesOf(kit, ctx, feature.bodyIds);
+  const axis = resolveAxis(kit, ctx, feature.axis);
+  const ops: RigidOp[] =
+    feature.angle === 0
+      ? []
+      : [
+          {
+            kind: 'rotate',
+            point: axis.point,
+            axis: axis.dir,
+            angle: (feature.angle * Math.PI) / 180,
+          },
+        ];
+  bodies.forEach((body, i) => {
+    if (feature.copy) {
+      addCopy(kit, ctx, feature.id, body, ops, extraBodyId(feature.id, i), `${body.name} (copy)`);
+    } else if (ops.length > 0) {
+      moveBody(kit, ctx, feature.id, body, ops);
+    }
+  });
 }
 
 // ---- Align ----------------------------------------------------------------------------

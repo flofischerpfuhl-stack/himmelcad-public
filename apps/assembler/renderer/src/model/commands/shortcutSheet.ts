@@ -9,6 +9,7 @@ const GROUP_TITLE: Record<CommandGroup, string> = {
   add: 'Add',
   transform: 'Transform',
   tools: 'Tools',
+  construct: 'Construct',
   modes: 'Modes',
   edit: 'Edit & selection',
   view: 'View',

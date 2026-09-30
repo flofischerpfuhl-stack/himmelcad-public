@@ -315,6 +315,33 @@ command availability (profile-in-body ray casts against every triangle
 per outline sample, per render) — fixed in `model/modeling.ts` /
 `model/featureTools.ts`, not in the sketch code.
 
+## Parity round 2 (2026-09-30)
+
+- **Construction planes.** A sketch can sit on a construction plane step
+  (`plane: {kind: "construction", featureId, frame}`; the frame is the last
+  resolved one, the evaluator re-resolves it on every replay). Select the
+  plane (viewport or Items) and New Sketch / L / R / C.
+- **Continue the previous sketch (SK-02).** A sketch tool whose plane (XY
+  with nothing selected, the selected face or construction plane) is the
+  plane of the last History step, and that step is a sketch, re-opens it
+  instead of starting a new one (`continuableSketchId`).
+- **Arc (SK-04).** Default "Ends, then bulge": both end points, then the
+  height follows the pointer across the chord (value chip = height); "3
+  points" (start, point on the arc, end) stays as a mode.
+- **Rectangle (SK-07).** "3 points": base line (start, end or typed width),
+  then the height — a rotated rectangle with perpendicular/parallel
+  constraints.
+- **3D snapping (SK-19).** Body points (vertices, edge midpoints, circle
+  centres) and — in an orthographic view — far edges, seen along the sketch
+  normal (`sketch/bodySnaps.ts`), each a Snap popover toggle, with hints
+  ("Vertex", "Edge midpoint", "Circle centre", "Far edge"). Suggestions
+  only: no link to the body (Project `P` makes associative geometry).
+- **First/Last selected (CON-04).** Snap popover › "New constraints keep":
+  the first or last selected element's points are pinned while a new
+  constraint is solved (transient fixed constraints, never stored).
+- **Move a region.** Move/Rotate on a sketch profile moves its points in the
+  sketch plane (one tile, no normal arrow; `sketch/moveRegion.ts`).
+
 ## Tests
 
 `test/sketch/curves.test.ts` (spline math, exact curve areas and

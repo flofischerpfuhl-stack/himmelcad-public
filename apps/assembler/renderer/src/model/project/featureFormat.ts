@@ -20,6 +20,29 @@ const isNumber = (v: unknown): v is number => typeof v === 'number' && Number.is
 const isString = (v: unknown): v is string => typeof v === 'string';
 const isVec3 = (v: unknown): boolean => Array.isArray(v) && v.length === 3 && v.every(isNumber);
 
+const isFrame = (v: unknown): boolean =>
+  isRecord(v) && isVec3(v.origin) && isVec3(v.u) && isVec3(v.v) && isVec3(v.normal);
+
+/**
+ * A plane reference (sketch plane, mirror/split plane, draft neutral
+ * plane): world plane with offset, planar face, or construction plane.
+ */
+export function validatePlaneRef(v: unknown, p: string, h: FormatHelpers): void {
+  if (!isRecord(v)) h.fail(p, 'expected an object');
+  if (v.kind === 'plane') {
+    if (!['XY', 'XZ', 'YZ'].includes(v.plane as string))
+      h.fail(`${p}.plane`, 'expected XY, XZ or YZ');
+    if (!isNumber(v.offset)) h.fail(`${p}.offset`, 'expected a number');
+  } else if (v.kind === 'face') {
+    h.faceRef(v.face, `${p}.face`);
+  } else if (v.kind === 'construction') {
+    if (!isString(v.featureId)) h.fail(`${p}.featureId`, 'expected a string');
+    if (!isFrame(v.frame)) h.fail(`${p}.frame`, 'expected {origin, u, v, normal}');
+  } else {
+    h.fail(`${p}.kind`, 'expected "plane", "face" or "construction"');
+  }
+}
+
 /** `true` if `kind` is a modelling feature kind this module validates. */
 export function isModelingFeatureKind(kind: unknown): boolean {
   return (MODELING_FEATURE_KINDS as readonly unknown[]).includes(kind);
@@ -40,8 +63,8 @@ export function validateModelingFeature(r: Rec, path: string, h: FormatHelpers):
       h.fail(`${path}.${field}`, 'expected a string');
   };
   const operation = () => {
-    if (!['new', 'join', 'cut'].includes(r.operation as string)) {
-      h.fail(`${path}.operation`, 'expected "new", "join" or "cut"');
+    if (!['new', 'join', 'cut', 'intersect'].includes(r.operation as string)) {
+      h.fail(`${path}.operation`, 'expected "new", "join", "cut" or "intersect"');
     }
     optionalStr('targetBodyId');
     optionalStr('resultBodyName');
@@ -69,20 +92,28 @@ export function validateModelingFeature(r: Rec, path: string, h: FormatHelpers):
     } else if (v.kind === 'sketchLine') {
       if (!isString(v.featureId)) h.fail(`${p}.featureId`, 'expected a string');
       if (!isString(v.entityId)) h.fail(`${p}.entityId`, 'expected a string');
+    } else if (v.kind === 'construction') {
+      if (!isString(v.featureId)) h.fail(`${p}.featureId`, 'expected a string');
+      const line = v.line;
+      if (!isRecord(line) || !isVec3(line.point) || !isVec3(line.dir)) {
+        h.fail(`${p}.line`, 'expected {point, dir}');
+      }
     } else {
-      h.fail(`${p}.kind`, 'expected "world", "edge" or "sketchLine"');
+      h.fail(`${p}.kind`, 'expected "world", "edge", "sketchLine" or "construction"');
     }
   };
-  const plane = (v: unknown, p: string) => {
+  const plane = (v: unknown, p: string) => validatePlaneRef(v, p, h);
+  const point = (v: unknown, p: string) => {
     if (!isRecord(v)) h.fail(p, 'expected an object');
-    if (v.kind === 'plane') {
-      if (!['XY', 'XZ', 'YZ'].includes(v.plane as string))
-        h.fail(`${p}.plane`, 'expected XY, XZ or YZ');
-      if (!isNumber(v.offset)) h.fail(`${p}.offset`, 'expected a number');
-    } else if (v.kind === 'face') {
-      h.faceRef(v.face, `${p}.face`);
+    if (v.kind === 'point') {
+      if (!isVec3(v.point)) h.fail(`${p}.point`, 'expected a Vec3');
+    } else if (v.kind === 'edgeEnd') {
+      h.edgeRef(v.edge, `${p}.edge`);
+      if (!isVec3(v.near)) h.fail(`${p}.near`, 'expected a Vec3');
+    } else if (v.kind === 'edgeMid' || v.kind === 'circleCenter') {
+      h.edgeRef(v.edge, `${p}.edge`);
     } else {
-      h.fail(`${p}.kind`, 'expected "plane" or "face"');
+      h.fail(`${p}.kind`, 'expected "point", "edgeEnd", "edgeMid" or "circleCenter"');
     }
   };
   const stringList = (field: string) => {
@@ -134,11 +165,75 @@ export function validateModelingFeature(r: Rec, path: string, h: FormatHelpers):
       bool('ruled');
       operation();
       break;
-    case 'mirror':
-      stringList('bodyIds');
+    case 'mirror': {
+      if (!Array.isArray(r.bodyIds) || !r.bodyIds.every(isString)) {
+        h.fail(`${path}.bodyIds`, 'expected an array of strings');
+      }
       plane(r.plane, `${path}.plane`);
       bool('keepOriginal');
+      if (r.sketchIds !== undefined) {
+        if (!Array.isArray(r.sketchIds) || !r.sketchIds.every(isString)) {
+          h.fail(`${path}.sketchIds`, 'expected an array of strings');
+        }
+      }
+      if (r.faces !== undefined) {
+        if (!Array.isArray(r.faces)) h.fail(`${path}.faces`, 'expected an array');
+        r.faces.forEach((f, i) => h.faceRef(f, `${path}.faces[${i}]`));
+      }
+      if (r.axis !== undefined) axis(r.axis, `${path}.axis`);
+      const targets =
+        r.bodyIds.length +
+        (Array.isArray(r.sketchIds) ? r.sketchIds.length : 0) +
+        (Array.isArray(r.faces) ? r.faces.length : 0);
+      if (targets === 0) h.fail(`${path}.bodyIds`, 'expected at least one body, sketch or face');
       break;
+    }
+    case 'constructionPlane': {
+      const d = r.definition;
+      const p = `${path}.definition`;
+      if (!isRecord(d)) h.fail(p, 'expected an object');
+      if (d.kind === 'offset') {
+        plane(d.base, `${p}.base`);
+        if (!isNumber(d.distance)) h.fail(`${p}.distance`, 'expected a number');
+      } else if (d.kind === 'angle') {
+        plane(d.base, `${p}.base`);
+        axis(d.axis, `${p}.axis`);
+        if (!isNumber(d.angle)) h.fail(`${p}.angle`, 'expected a number');
+      } else if (d.kind === 'threePoints') {
+        if (!Array.isArray(d.points) || d.points.length !== 3) {
+          h.fail(`${p}.points`, 'expected three points');
+        }
+        d.points.forEach((q, i) => point(q, `${p}.points[${i}]`));
+      } else if (d.kind === 'midplane') {
+        plane(d.a, `${p}.a`);
+        plane(d.b, `${p}.b`);
+      } else if (d.kind === 'tangent') {
+        h.faceRef(d.face, `${p}.face`);
+        if (!isNumber(d.angle)) h.fail(`${p}.angle`, 'expected a number');
+      } else {
+        h.fail(`${p}.kind`, 'expected "offset", "angle", "threePoints", "midplane" or "tangent"');
+      }
+      if (r.flip !== undefined) bool('flip');
+      break;
+    }
+    case 'constructionAxis': {
+      const d = r.definition;
+      const p = `${path}.definition`;
+      if (!isRecord(d)) h.fail(p, 'expected an object');
+      if (d.kind === 'edge') h.edgeRef(d.edge, `${p}.edge`);
+      else if (d.kind === 'twoPoints') {
+        point(d.a, `${p}.a`);
+        point(d.b, `${p}.b`);
+      } else if (d.kind === 'cylinder') h.faceRef(d.face, `${p}.face`);
+      else if (d.kind === 'planes') {
+        plane(d.a, `${p}.a`);
+        plane(d.b, `${p}.b`);
+      } else {
+        h.fail(`${p}.kind`, 'expected "edge", "twoPoints", "cylinder" or "planes"');
+      }
+      if (r.flip !== undefined) bool('flip');
+      break;
+    }
     case 'pattern': {
       stringList('bodyIds');
       const p = r.pattern;
@@ -163,6 +258,12 @@ export function validateModelingFeature(r: Rec, path: string, h: FormatHelpers):
       str('bodyId');
       for (const field of ['dx', 'dy', 'dz', 'rx', 'ry', 'rz']) num(field);
       if (!isVec3(r.pivot)) h.fail(`${path}.pivot`, 'expected a Vec3');
+      bool('copy');
+      break;
+    case 'rotateAxis':
+      stringList('bodyIds');
+      axis(r.axis, `${path}.axis`);
+      num('angle');
       bool('copy');
       break;
     case 'align':

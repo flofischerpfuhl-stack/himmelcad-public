@@ -58,3 +58,112 @@
 .control > span {
   width: auto;
 }
+
+/* Keyboard â€º Shortcuts (ShortcutSettings.tsx) */
+.shortcuts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--hc-space-2);
+  margin-top: 4px;
+}
+
+.shortcutsHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--hc-space-2);
+}
+
+.shortcutFilter {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-sm);
+  background: var(--hc-bg-input);
+  color: var(--hc-fg-default);
+  font-family: var(--hc-font-ui);
+  font-size: 12px;
+}
+
+.shortcutFilter:focus-visible {
+  outline: 2px solid var(--hc-focus-ring);
+  outline-offset: 1px;
+}
+
+.shortcutList {
+  display: flex;
+  flex-direction: column;
+  max-height: 260px;
+  overflow-y: auto;
+  border: 1px solid var(--hc-border-subtle);
+  border-radius: var(--hc-radius-md);
+}
+
+.shortcutRow {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  padding: 2px 8px;
+  border-bottom: 1px solid var(--hc-border-subtle);
+}
+
+.shortcutRow:last-child {
+  border-bottom: none;
+}
+
+.shortcutLabel {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12px;
+  color: var(--hc-fg-default);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.keyCap {
+  min-width: 64px;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-sm);
+  background: var(--hc-bg-input);
+  color: var(--hc-fg-default);
+  font-family: var(--hc-font-mono);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.keyCap:hover {
+  background: var(--hc-hover-bg);
+}
+
+.keyCap:focus-visible {
+  outline: 2px solid var(--hc-focus-ring);
+  outline-offset: 1px;
+}
+
+.keyCapChanged {
+  border-color: var(--hc-border-accent);
+  color: var(--hc-accent-base);
+}
+
+.keyCapCapturing {
+  border-color: var(--hc-accent-base);
+  background: var(--hc-active-bg);
+}
+
+.shortcutActions {
+  display: flex;
+  gap: 2px;
+  min-width: 96px;
+  justify-content: flex-end;
+}
+
+.shortcutProblem {
+  grid-column: 1 / -1;
+  font-size: 11px;
+  color: var(--hc-error);
+}

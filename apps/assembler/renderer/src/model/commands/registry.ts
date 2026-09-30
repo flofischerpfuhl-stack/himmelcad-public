@@ -15,9 +15,20 @@ import { PRINT_COMMANDS } from '../../print/printCommands.js';
 import { DISPLAY_COMMANDS } from './displayCommands.js';
 import { useProjectStore } from '../project/projectStore.js';
 import { BLEND_RULE_COMMANDS } from './blendCommands.js';
+import { CONSTRUCT_COMMANDS } from './constructCommands.js';
 import { FEATURE_COMMANDS } from './featureCommands.js';
-import { isPlanarFace, makeFaceRef, type AssemblerState, type SelectionItem } from '../store.js';
+import { createDraft } from '../featureTools.js';
+import { canStartPickSession, nextStep, PICK_PLANS, sessionSelection } from '../pickSession.js';
+import {
+  isPlanarFace,
+  makeFaceRef,
+  setPickFinisher,
+  useAssemblerStore,
+  type AssemblerState,
+  type SelectionItem,
+} from '../store.js';
 import { SKETCH_COMMANDS } from './sketchCommands.js';
+import { useSketchStore } from '../../sketch/session.js';
 import { useWorkspaceStore } from '../workspace.js';
 import { WORKSPACE_COMMANDS } from './workspaceCommands.js';
 
@@ -29,6 +40,7 @@ export type CommandGroup =
   | 'add'
   | 'transform'
   | 'tools'
+  | 'construct'
   | 'modes'
   | 'edit'
   | 'view'
@@ -136,7 +148,7 @@ function booleanAvailability(ctx: CommandContext): CommandAvailability {
  * by {@link resolveAdaptive} and the disabled tail of
  * {@link searchCommands} — keep additions grouped with their siblings.
  */
-export const COMMANDS: readonly Command[] = [
+const RAW_COMMANDS: readonly Command[] = [
   ...SKETCH_COMMANDS,
   {
     id: 'tools.extrude',
@@ -230,6 +242,7 @@ export const COMMANDS: readonly Command[] = [
   },
   ...BLEND_RULE_COMMANDS,
   ...FEATURE_COMMANDS,
+  ...CONSTRUCT_COMMANDS,
   {
     id: 'tools.union',
     label: 'Union',
@@ -265,18 +278,55 @@ export const COMMANDS: readonly Command[] = [
     label: 'Move/Rotate',
     group: 'transform',
     shortcut: 'M',
-    keywords: ['move', 'rotate', 'translate', 'transform', 'gizmo', 'mv'],
+    keywords: [
+      'move',
+      'rotate',
+      'translate',
+      'transform',
+      'gizmo',
+      'mv',
+      'move face',
+      'move profile',
+    ],
     availability: (ctx) => {
-      const bodies = selected(ctx, 'body');
-      if (ctx.selection.length !== 1 || bodies.length !== 1) {
-        return { enabled: false, reason: 'Select exactly one body to move or rotate.' };
+      // Shapr3D Move/Rotate takes sketch regions, edges, faces and bodies (modelling research §4).
+      if (ctx.selection.length !== 1) {
+        return {
+          enabled: false,
+          reason: 'Select one body, face or sketch profile to move or rotate.',
+        };
       }
-      return { enabled: true, recommended: true, priority: 90 };
+      const item = ctx.selection[0]!;
+      if (item.kind === 'body') return { enabled: true, recommended: true, priority: 90 };
+      if (item.kind === 'sketchProfile') return { enabled: true, priority: 60 };
+      if (item.kind === 'face') {
+        const notReady = kernelNotReady(ctx);
+        if (notReady) return notReady;
+        // A face moves along its normal (Offset Face); Offset Face stays the recommended entry.
+        return { enabled: true, priority: 70 };
+      }
+      if (item.kind === 'edge') {
+        return {
+          enabled: false,
+          reason:
+            'Edges cannot be moved on their own with this kernel build (it lacks face replacement); move a face next to the edge, or the body.',
+        };
+      }
+      return {
+        enabled: false,
+        reason: 'Select one body, face or sketch profile to move or rotate.',
+      };
     },
     run: (ctx) => {
-      const bodies = selected(ctx, 'body');
-      if (ctx.selection.length === 1 && bodies.length === 1) {
-        ctx.beginMove(bodies[0]!.bodyId);
+      if (ctx.selection.length !== 1) return;
+      const item = ctx.selection[0]!;
+      if (item.kind === 'body') ctx.beginMove(item.bodyId);
+      else if (item.kind === 'sketchProfile') ctx.beginMoveSketch(item.featureId, item.regionKey);
+      else if (item.kind === 'face') {
+        const start = createDraft('offsetFace', ctx);
+        if (start.ok && start.draft.kind === 'offsetFace') {
+          ctx.beginFeatureTool({ ...start.draft, distance: 0, viaMove: true });
+        }
       }
     },
   },
@@ -296,7 +346,7 @@ export const COMMANDS: readonly Command[] = [
         return;
       }
       for (const item of ctx.selection) {
-        if (item.kind === 'feature' || item.kind === 'sketchProfile') {
+        if (item.kind === 'feature' || item.kind === 'sketchProfile' || item.kind === 'datum') {
           ctx.deleteFeature(item.featureId);
         } else if (item.kind === 'body') {
           const body = ctx.evaluation.bodies.find((b) => b.id === item.bodyId);
@@ -608,6 +658,75 @@ export const COMMANDS: readonly Command[] = [
   },
 ];
 
+// ---- tool before selection (UI-16) --------------------------------------------------------
+
+/**
+ * A command with a pick plan (`pickSession.ts`) is also available when its
+ * selection is missing (empty, or only part of what it needs): running it
+ * then opens a pick session that asks for the references step by step.
+ * When the selection already fits, the command behaves exactly as before.
+ */
+function withPickSession(command: Command): Command {
+  if (!PICK_PLANS[command.id]) return command;
+  return {
+    ...command,
+    availability: (ctx) => {
+      const own = command.availability(ctx);
+      // Not while a tool runs or a sketch is open (its keys belong to the sketch).
+      if (own.enabled || ctx.activeTool || useSketchStore.getState().session) return own;
+      if (command.id !== 'transform.moveRotate') {
+        const notReady = kernelNotReady(ctx);
+        if (notReady) return notReady;
+      }
+      if (!canStartPickSession(command.id, ctx.selection, { evaluation: ctx.evaluation })) {
+        return own;
+      }
+      // Not recommended: it asks for its references (the adaptive bar lists actions for the selection).
+      return { enabled: true, priority: 20 };
+    },
+    run: (ctx) => {
+      if (command.availability(ctx).enabled) command.run(ctx);
+      else ctx.beginPickSession(command.id);
+    },
+  };
+}
+
+/**
+ * Finishes the running pick session (the store's Done/Enter): the next step,
+ * or — every reference picked — the command itself, started from exactly
+ * those references as its selection.
+ */
+function finishPickSession(): void {
+  const store = useAssemblerStore.getState();
+  const tool = store.activeTool;
+  if (tool?.kind !== 'pick') return;
+  const { kind: _kind, phase: _phase, ...session } = tool;
+  const { session: next, done } = nextStep(session);
+  if (!done) {
+    store.updatePickSession(() => next);
+    return;
+  }
+  const command = RAW_COMMANDS.find((c) => c.id === session.commandId);
+  store.cancel();
+  store.setSelection(sessionSelection(session));
+  const ctx = useAssemblerStore.getState();
+  if (!command) return;
+  const availability = command.availability(ctx);
+  if (!availability.enabled) {
+    useWorkspaceStore.getState().notify(availability.reason ?? 'The tool cannot start.', 'warning');
+    return;
+  }
+  command.run(ctx);
+}
+
+/**
+ * The full command set: tools with a pick plan start before their selection too
+ * ({@link withPickSession}).
+ */
+export const COMMANDS: readonly Command[] = RAW_COMMANDS.map(withPickSession);
+
+setPickFinisher(finishPickSession);
+
 function toResultAvailability(availability: CommandAvailability): CommandAvailability {
   if (availability.reason === undefined) {
     const { reason: _reason, ...rest } = availability;
@@ -617,18 +736,44 @@ function toResultAvailability(availability: CommandAvailability): CommandAvailab
 }
 
 /**
+ * Whether the selection changes what `command` offers: it is disabled, or
+ * differently recommended, without a selection. Commands that behave the
+ * same with and without a selection (New, Open, view presets, Measure …)
+ * are not actions _for the selection_ and stay out of the adaptive bar and
+ * its "More" list (Shapr3D: "More" lists further valid actions for the
+ * selection — interaction research §2).
+ */
+function selectionScoped(
+  command: Command,
+  availability: CommandAvailability,
+  ctx: CommandContext,
+): boolean {
+  if (ctx.selection.length === 0) return true;
+  const without = command.availability({ ...ctx, selection: [] });
+  if (!without.enabled) return true;
+  return (
+    (without.recommended ?? false) !== (availability.recommended ?? false) ||
+    (without.priority ?? 0) !== (availability.priority ?? 0)
+  );
+}
+
+/**
  * Ordered list of enabled commands for the current selection, recommended
- * command first (face/sketch profile -> Extrude, body -> Move/Rotate),
- * then by descending `priority`, then by declaration order in
- * {@link COMMANDS}. Availability only ever reads `ctx.selection` and
- * other document/view state — never `ctx.hover` — so this ordering is
+ * command first (face -> Offset Face, sketch profile -> Extrude, body ->
+ * Move/Rotate, …), then by descending `priority`, then by declaration order
+ * in {@link COMMANDS}. Only selection-scoped commands are listed (see
+ * {@link selectionScoped}). Availability only ever reads `ctx.selection`
+ * and other document/view state — never `ctx.hover` — so this ordering is
  * stable across hover changes, as required by the interaction research
  * (§2): the adaptive toolbar must not reflow on mouse-over.
  */
 export function resolveAdaptive(ctx: CommandContext): Command[] {
   return COMMANDS.filter((command) => command.adaptive !== false)
     .map((command) => ({ command, availability: command.availability(ctx) }))
-    .filter((entry) => entry.availability.enabled)
+    .filter(
+      (entry) =>
+        entry.availability.enabled && selectionScoped(entry.command, entry.availability, ctx),
+    )
     .sort((a, b) => {
       const aRecommended = a.availability.recommended ? 1 : 0;
       const bRecommended = b.availability.recommended ? 1 : 0;
@@ -648,8 +793,57 @@ export interface CommandSearchResult {
   score: number;
 }
 
-function subsequenceScore(query: string, text: string): number | null {
-  const haystack = text.toLowerCase();
+/** Match quality tiers of {@link matchScore}; a higher tier always ranks first. */
+export const MATCH_TIER = {
+  /** The whole text, or the command's shortcut ("e" -> Extrude). */
+  exact: 5,
+  /** The text starts with the query ("ext" -> Extrude). */
+  prefix: 4,
+  /** A later word starts with the query ("rot" -> Move/Rotate). */
+  wordPrefix: 3,
+  /** Consecutive prefixes of words in order ("p3" -> Pattern 3D, "nsxy" -> New Sketch on XY). */
+  abbreviation: 2,
+  /** Letters in order anywhere ("mv" -> Move). */
+  subsequence: 1,
+} as const;
+
+function words(text: string): string[] {
+  return text
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((w) => w.length > 0);
+}
+
+/**
+ * Whether `query` splits into non-empty prefixes of `ws[i..]` taken in order
+ * (words may be skipped). Returns the number of skipped words (lower is
+ * better) or `null`.
+ */
+function abbreviationSkips(query: string, ws: readonly string[]): number | null {
+  const memo = new Map<string, number | null>();
+  const go = (q: number, w: number): number | null => {
+    if (q === query.length) return 0;
+    if (w >= ws.length) return null;
+    const key = `${q}:${w}`;
+    if (memo.has(key)) return memo.get(key)!;
+    let best: number | null = null;
+    const word = ws[w]!;
+    // Use a prefix of this word …
+    for (let len = Math.min(word.length, query.length - q); len >= 1; len -= 1) {
+      if (word.slice(0, len) !== query.slice(q, q + len)) continue;
+      const rest = go(q + len, w + 1);
+      if (rest !== null && (best === null || rest < best)) best = rest;
+    }
+    // … or skip it.
+    const skipped = go(q, w + 1);
+    if (skipped !== null && (best === null || skipped + 1 < best)) best = skipped + 1;
+    memo.set(key, best);
+    return best;
+  };
+  return go(0, 0);
+}
+
+function subsequenceScore(query: string, haystack: string): number | null {
   let cursor = 0;
   let firstMatchIndex = -1;
   let lastMatchIndex = -1;
@@ -662,19 +856,47 @@ function subsequenceScore(query: string, text: string): number | null {
   }
   const span = lastMatchIndex - firstMatchIndex + 1;
   const density = query.length / Math.max(span, query.length);
-  const prefixBonus = haystack.startsWith(query) ? 50 : 0;
-  return 100 * density + prefixBonus - firstMatchIndex;
+  return 100 * density - firstMatchIndex;
+}
+
+/**
+ * Score of `query` (lower-case, trimmed) against one text: `tier * 1000 +
+ * within-tier score`, or `null` for no match. Tiers per {@link MATCH_TIER}.
+ * Shapr3D's command search accepts shortened fuzzy input such as "p3" or
+ * "snu" (interaction research §6); word-initial abbreviations cover these,
+ * plain subsequences are the weakest fallback.
+ */
+export function matchScore(query: string, text: string): number | null {
+  const haystack = text.toLowerCase();
+  if (!query || !haystack) return null;
+  if (haystack === query) return MATCH_TIER.exact * 1000;
+  if (haystack.startsWith(query)) return MATCH_TIER.prefix * 1000 + 100 - haystack.length;
+  const ws = words(haystack);
+  const wordIndex = ws.findIndex((w, i) => i > 0 && w.startsWith(query));
+  if (wordIndex > 0) return MATCH_TIER.wordPrefix * 1000 + 100 - wordIndex * 10 - haystack.length;
+  const compact = query.replace(/[^a-z0-9]+/g, '');
+  const skips = compact ? abbreviationSkips(compact, ws) : null;
+  if (skips !== null) return MATCH_TIER.abbreviation * 1000 + 100 - skips * 10 - ws.length;
+  const sub = subsequenceScore(query, haystack);
+  return sub === null ? null : MATCH_TIER.subsequence * 1000 + sub;
 }
 
 function fuzzyScore(query: string, command: Command): number | null {
-  const fields = [command.label, ...(command.keywords ?? []), command.shortcut ?? ''];
   let best: number | null = null;
-  for (const field of fields) {
-    if (!field) continue;
-    let score = subsequenceScore(query, field);
-    // The command's own name beats an equally good keyword of another command ("hole" -> Hole, not Circle).
-    if (score !== null && field === command.label) score += 0.5;
+  const consider = (score: number | null) => {
     if (score !== null && (best === null || score > best)) best = score;
+  };
+  // The command's own name beats an equally good keyword ("hole" -> Hole, not Circle).
+  consider(
+    matchScore(query, command.label) === null ? null : matchScore(query, command.label)! + 1,
+  );
+  for (const keyword of command.keywords ?? []) {
+    const score = matchScore(query, keyword);
+    // A keyword never reaches the exact tier of a label.
+    consider(score === null ? null : Math.min(score, MATCH_TIER.prefix * 1000 + 99) - 50);
+  }
+  if (command.shortcut && command.shortcut.toLowerCase() === query) {
+    consider(MATCH_TIER.exact * 1000 - 10);
   }
   return best;
 }
@@ -694,11 +916,17 @@ function toSearchResult(
 }
 
 /**
- * Fuzzy subsequence search over label/keywords/shortcut ("ext" -> Extrude,
- * "mv" -> Move/Rotate). Empty query returns `ctx.recentCommandIds` first
- * (in recency order), then the remaining commands in declaration order.
- * Disabled commands are included, always ranked after enabled commands
- * for a non-empty query, each with its `reason`.
+ * Fuzzy search over label/keywords/shortcut ("ext" -> Extrude, "mv" ->
+ * Move/Rotate, "p3" -> Pattern 3D). Empty query returns
+ * `ctx.recentCommandIds` first (in recency order), then the remaining
+ * commands in declaration order.
+ *
+ * Ranking: match tier first ({@link MATCH_TIER}: a typed name always beats a
+ * scattered-letter match), then enabled before disabled, then score. With a
+ * selection the list is filtered to the actions valid for it, as in
+ * Shapr3D (interaction research §6); a disabled command stays listed —
+ * with its reason — only when its name matches strongly (prefix or word),
+ * so typing a tool's name still explains what it needs.
  */
 export function searchCommands(query: string, ctx: CommandContext): CommandSearchResult[] {
   const trimmed = query.trim().toLowerCase();
@@ -715,12 +943,23 @@ export function searchCommands(query: string, ctx: CommandContext): CommandSearc
     );
   }
 
+  const hasSelection = ctx.selection.length > 0;
   const scored = COMMANDS.map((command) => ({
     command,
     score: fuzzyScore(trimmed, command),
-  })).filter((entry): entry is { command: Command; score: number } => entry.score !== null);
+  }))
+    .filter((entry): entry is { command: Command; score: number } => entry.score !== null)
+    .filter(
+      (entry) =>
+        !hasSelection ||
+        availabilityByCommandId.get(entry.command.id)!.enabled ||
+        entry.score >= MATCH_TIER.wordPrefix * 1000 - 50,
+    );
 
+  const tierOf = (score: number) => Math.floor((score + 50) / 1000);
   scored.sort((a, b) => {
+    const tier = tierOf(b.score) - tierOf(a.score);
+    if (tier !== 0) return tier;
     const aEnabled = availabilityByCommandId.get(a.command.id)!.enabled;
     const bEnabled = availabilityByCommandId.get(b.command.id)!.enabled;
     if (aEnabled !== bEnabled) return aEnabled ? -1 : 1;

@@ -5,6 +5,11 @@
  */
 import { Select } from '@himmelcad/ui';
 
+import {
+  AXIS_DEF_LABEL,
+  PLANE_DEF_LABEL,
+  type ConstructionFeature,
+} from '../model/construction.js';
 import type { ExtrudeOperation, Plane } from '../model/document.js';
 import type { AxisRef, ModelingFeature } from '../model/features.js';
 import type { AssemblerState, FeaturePatch } from '../model/store.js';
@@ -16,17 +21,67 @@ const OPERATION_OPTIONS = [
   { value: 'new', label: 'New body' },
   { value: 'join', label: 'Join' },
   { value: 'cut', label: 'Cut' },
+  { value: 'intersect', label: 'Intersect' },
 ];
 
 function axisText(axis: AxisRef): string {
   if (axis.kind === 'world') return `${axis.axis} axis`;
   if (axis.kind === 'edge')
     return axis.edge.signature.curve === 'circle' ? 'circular edge axis' : 'edge';
+  if (axis.kind === 'construction') return 'construction axis';
   return 'sketch line';
 }
 
 function plural(n: number, one: string, many = `${one}s`): string {
   return `${n} ${n === 1 ? one : many}`;
+}
+
+/** History card of a construction plane/axis: its definition and numeric values, Flip. */
+function ConstructionParams({
+  feature,
+  edit,
+}: {
+  feature: ConstructionFeature;
+  edit: (patch: Record<string, unknown>) => void;
+}): JSX.Element {
+  const def = feature.definition;
+  const label =
+    feature.kind === 'constructionPlane'
+      ? PLANE_DEF_LABEL[feature.definition.kind]
+      : AXIS_DEF_LABEL[feature.definition.kind];
+  return (
+    <div className={styles.params}>
+      <span className={styles.paramNote}>{label}</span>
+      {def.kind === 'offset' ? (
+        <ExpressionField
+          label="Offset"
+          value={def.distance}
+          unit="mm"
+          onCommit={(v) => edit({ definition: { ...def, distance: v } })}
+        />
+      ) : null}
+      {def.kind === 'angle' || def.kind === 'tangent' ? (
+        <ExpressionField
+          label="Angle"
+          value={def.angle}
+          unit="°"
+          onCommit={(v) => edit({ definition: { ...def, angle: v } })}
+        />
+      ) : null}
+      <div>
+        <span className={styles.paramLabel}>Direction</span>
+        <Select
+          aria-label={`${feature.name} direction`}
+          value={feature.flip ? 'flipped' : 'normal'}
+          options={[
+            { value: 'normal', label: 'Normal' },
+            { value: 'flipped', label: 'Flipped' },
+          ]}
+          onChange={(event) => edit({ flip: event.currentTarget.value === 'flipped' })}
+        />
+      </div>
+    </div>
+  );
 }
 
 export function ModelingFeatureParams({
@@ -50,7 +105,10 @@ export function ModelingFeatureParams({
     </div>
   );
   const planeOffset = (
-    plane: { kind: 'plane'; plane: Plane; offset: number } | { kind: 'face' },
+    plane:
+      | { kind: 'plane'; plane: Plane; offset: number }
+      | { kind: 'face' }
+      | { kind: 'construction'; featureId: string },
   ) =>
     plane.kind === 'plane' ? (
       <ExpressionField
@@ -59,6 +117,10 @@ export function ModelingFeatureParams({
         unit="mm"
         onCommit={(v) => edit({ plane: { ...plane, offset: v } })}
       />
+    ) : plane.kind === 'construction' ? (
+      <span className={styles.paramNote}>
+        Plane: {state.features.find((f) => f.id === plane.featureId)?.name ?? 'construction plane'}
+      </span>
     ) : (
       <span className={styles.paramNote}>Plane: a planar face</span>
     );
@@ -137,7 +199,11 @@ export function ModelingFeatureParams({
     case 'mirror':
       return (
         <div className={styles.params}>
-          {planeOffset(feature.plane)}
+          {feature.axis ? (
+            <span className={styles.paramNote}>About the {axisText(feature.axis)}</span>
+          ) : (
+            planeOffset(feature.plane)
+          )}
           <div>
             <span className={styles.paramLabel}>Original</span>
             <Select
@@ -151,10 +217,21 @@ export function ModelingFeatureParams({
             />
           </div>
           <span className={styles.paramNote}>
-            {plural(feature.bodyIds.length, 'body', 'bodies')}
+            {[
+              feature.bodyIds.length > 0 ? plural(feature.bodyIds.length, 'body', 'bodies') : '',
+              feature.sketchIds?.length
+                ? plural(feature.sketchIds.length, 'sketch', 'sketches')
+                : '',
+              feature.faces?.length ? plural(feature.faces.length, 'face') : '',
+            ]
+              .filter(Boolean)
+              .join(', ')}
           </span>
         </div>
       );
+    case 'constructionPlane':
+    case 'constructionAxis':
+      return <ConstructionParams feature={feature} edit={edit} />;
     case 'pattern': {
       const p = feature.pattern;
       return (
@@ -231,6 +308,32 @@ export function ModelingFeatureParams({
               onChange={(event) => edit({ copy: event.currentTarget.value === 'copy' })}
             />
           </div>
+        </div>
+      );
+    case 'rotateAxis':
+      return (
+        <div className={styles.params}>
+          <ExpressionField
+            label="Angle"
+            value={feature.angle}
+            unit="°"
+            onCommit={(v) => edit({ angle: v })}
+          />
+          <div>
+            <span className={styles.paramLabel}>Result</span>
+            <Select
+              aria-label={`${feature.name} copy`}
+              value={feature.copy ? 'copy' : 'move'}
+              options={[
+                { value: 'move', label: 'Rotate' },
+                { value: 'copy', label: 'Copy' },
+              ]}
+              onChange={(event) => edit({ copy: event.currentTarget.value === 'copy' })}
+            />
+          </div>
+          <span className={styles.paramNote}>
+            {plural(feature.bodyIds.length, 'body', 'bodies')} about the {axisText(feature.axis)}
+          </span>
         </div>
       );
     case 'align':

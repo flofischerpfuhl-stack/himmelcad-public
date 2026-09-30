@@ -19,7 +19,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { registerEscapeRung } from '@himmelcad/ui';
 
+import { effectiveGridStep } from '../../model/gridResolution.js';
+import { usePreferences } from '../../model/preferences.js';
 import { useAssemblerStore } from '../../model/store.js';
+import { useViewportUi } from '../../model/viewportUi.js';
 import { boxModeFor, normalizeRect } from '../../viewport/boxSelect.js';
 import { SelectionBox } from '../../viewport/SelectionBox.js';
 import {
@@ -29,6 +32,7 @@ import {
   sketchBoxSelect,
   type SketchBoxFilter,
 } from './sketchBoxSelect.js';
+import { bodySnapTargets } from '../bodySnaps.js';
 import { constraintInfo } from '../constraintRules.js';
 import { entityCurves, sampleCurve } from '../geometry.js';
 import {
@@ -91,6 +95,10 @@ const HINT_TEXT: Record<InferenceHint, string> = {
   perpendicular: 'Perpendicular',
   parallel: 'Parallel',
   grid: '',
+  vertex: 'Vertex',
+  edgeMidpoint: 'Edge midpoint',
+  circleCenter: 'Circle center',
+  farEdge: 'Edge (behind)',
 };
 
 /** Constraint glyphs drawn even when their geometry is not selected. */
@@ -200,6 +208,9 @@ export function SketchOverlay({
   const session = useSketchStore((s) => s.session);
   const parameters = useAssemblerStore((s) => s.parameters);
   const view = useAssemblerStore((s) => s.viewState);
+  const snapToggles = usePreferences((p) => p.snaps);
+  const snapHints = usePreferences((p) => p.snapHints);
+  const liveGridStep = useViewportUi((s) => s.liveGridStep);
   const evaluatedSketch = useAssemblerStore((s) =>
     session ? s.evaluation.sketches.find((sk) => sk.featureId === session.featureId) : undefined,
   );
@@ -277,8 +288,17 @@ export function SketchOverlay({
 
   const tool = session?.tool ?? null;
   const drawing = tool !== null && tool.kind !== 'select';
+  // 3D snaps: the body geometry seen along the sketch normal (far edges in orthographic view only).
+  const bodies = useAssemblerStore((s) => s.evaluation.bodies);
+  const orthographic = usePreferences((p) => p.projection === 'orthographic');
+  const frame = session?.frame ?? null;
+  const bodyTargets = useMemo(
+    () => (frame && drawing ? bodySnapTargets(bodies, frame, { orthographic }) : null),
+    [bodies, frame, orthographic, drawing],
+  );
   const scale = mmPerPxAt(api, cursor ?? [0, 0]);
-  const grid = view.snapToGrid ? view.gridStep : null;
+  const gridStepNow = effectiveGridStep(view, liveGridStep);
+  const grid = view.snapToGrid ? gridStepNow : null;
   const inference: Inference | null =
     session && display && cursor && drawing
       ? infer(display, cursor, {
@@ -287,6 +307,8 @@ export function SketchOverlay({
             ? { from: segmentStart(display, session.tool)! }
             : {}),
           gridStep: grid,
+          snaps: snapToggles,
+          body: bodyTargets,
         })
       : null;
   const hit = display && cursor ? hitTest(display, cursor, scale) : null;
@@ -428,7 +450,13 @@ export function SketchOverlay({
     const px = mmPerPxAt(api, uv);
     if (s.tool.kind !== 'select') {
       const from = segmentStart(current, s.tool);
-      const snap = infer(current, uv, { mmPerPx: px, ...(from ? { from } : {}), gridStep: grid });
+      const snap = infer(current, uv, {
+        mmPerPx: px,
+        ...(from ? { from } : {}),
+        gridStep: grid,
+        snaps: snapToggles,
+        body: bodyTargets,
+      });
       void store.dispatch({ type: 'click', snap, hit: hitTest(current, uv, px), raw: uv });
       return;
     }
@@ -725,17 +753,18 @@ export function SketchOverlay({
     api,
     session.frame.normal,
     session.frame.origin,
-    view.gridStep,
+    gridStepNow,
     view.gridVisible,
   );
 
   const snapScreen = inference ? api.toScreen(inference.pos) : null;
-  const hintText = inference
-    ? inference.hints
-        .map((h) => HINT_TEXT[h])
-        .filter(Boolean)
-        .join(' · ')
-    : '';
+  const hintText =
+    inference && snapHints
+      ? inference.hints
+          .map((h) => HINT_TEXT[h])
+          .filter(Boolean)
+          .join(' · ')
+      : '';
 
   const selectDecoration = (id: string, additive: boolean) =>
     useSketchStore.getState().select([id], { additive });

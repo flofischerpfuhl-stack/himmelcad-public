@@ -11,12 +11,39 @@ import { create } from 'zustand';
 import type { CameraPose } from '../viewport/camera.js';
 import { usePreferences } from './preferences.js';
 import type { Vec3 } from '../viewport/math.js';
+import type { SelectionItem } from './store.js';
 
 export const MAX_SAVED_VIEWS = 8;
+
+type Triple = [number, number, number];
+
+/**
+ * The Section View state a saved view carries (Shapr3D 26.30/26.80: saved
+ * views store camera and section — plane position, 2D section/Section
+ * Only; research `notes/coverage-audit.md`).
+ */
+export interface SavedSection {
+  enabled: boolean;
+  axis: 'X' | 'Y' | 'Z';
+  offset: number;
+  flipped: boolean;
+  plane: { normal: Triple; origin: Triple; label: string } | null;
+  sectionOnly: boolean;
+}
 
 export interface SavedView {
   name: string;
   pose: CameraPose;
+  /** Section state when the view was saved; absent in views saved by older builds (camera only). */
+  section?: SavedSection;
+}
+
+/** Reads/applies the store's section state (registered by `store.ts`; keeps this module store-free). */
+let sectionAccess: { read: () => SavedSection; apply: (section: SavedSection) => void } | null =
+  null;
+
+export function setSectionAccess(access: typeof sectionAccess): void {
+  sectionAccess = access;
 }
 
 /** One-shot camera instruction for the viewport (applied once per `nonce`). */
@@ -25,6 +52,8 @@ export type CameraCommand =
   | { kind: 'fitAll' }
   /** Frames the selection (or everything when nothing is selected). */
   | { kind: 'fitSelection' }
+  /** Frames these items without selecting them (History card "Zoom to"). */
+  | { kind: 'fitItems'; items: SelectionItem[] }
   | { kind: 'direction'; direction: Vec3 }
   | { kind: 'roll'; degrees: number }
   | { kind: 'pose'; pose: CameraPose }
@@ -90,6 +119,20 @@ export interface WorkspaceState {
   clearNotice: () => void;
 }
 
+/**
+ * "Nearest ortho" (Shapr3D Views menu, interaction research §5): the world
+ * axis direction closest to `direction` (target → eye), as a unit vector.
+ */
+export function nearestOrthoDirection(direction: readonly [number, number, number]): Triple {
+  let axis = 0;
+  for (let i = 1; i < 3; i += 1) {
+    if (Math.abs(direction[i]!) > Math.abs(direction[axis]!)) axis = i;
+  }
+  const out: Triple = [0, 0, 0];
+  out[axis] = direction[axis]! < 0 ? -1 : 1;
+  return out;
+}
+
 export function nextViewName(views: readonly SavedView[]): string {
   let n = views.length + 1;
   while (views.some((v) => v.name === `View ${n}`)) n += 1;
@@ -107,12 +150,14 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     const pose = currentCameraPose();
     if (!pose) return false;
     const trimmed = name?.trim();
+    const section = sectionAccess?.read();
     set({
       savedViews: [
         ...views,
         {
           name: trimmed ? trimmed : nextViewName(views),
           pose: { ...pose, target: [...pose.target] as [number, number, number] },
+          ...(section ? { section: structuredClone(section) } : {}),
         },
       ],
     });
@@ -120,7 +165,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
   restoreView: (index) => {
     const view = get().savedViews[index];
-    if (view) get().sendCamera({ kind: 'pose', pose: view.pose });
+    if (!view) return;
+    if (view.section) sectionAccess?.apply(structuredClone(view.section));
+    get().sendCamera({ kind: 'pose', pose: view.pose });
   },
   deleteView: (index) => set((s) => ({ savedViews: s.savedViews.filter((_, i) => i !== index) })),
   renameView: (index, name) => {
@@ -159,6 +206,31 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   clearNotice: () => set({ notice: null }),
 }));
 
+/** A saved view's section state from a project file, or `null` when absent/malformed. */
+export function parseSavedSection(raw: unknown): SavedSection | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const s = raw as Record<string, unknown>;
+  const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+  const vec = (v: unknown): v is Triple =>
+    Array.isArray(v) && v.length === 3 && (v as unknown[]).every(finite);
+  if (typeof s.enabled !== 'boolean' || !['X', 'Y', 'Z'].includes(s.axis as string)) return null;
+  if (!finite(s.offset) || typeof s.flipped !== 'boolean') return null;
+  let plane: SavedSection['plane'] = null;
+  if (s.plane !== null && s.plane !== undefined) {
+    const p = s.plane as Record<string, unknown>;
+    if (!vec(p.normal) || !vec(p.origin) || typeof p.label !== 'string') return null;
+    plane = { normal: [...p.normal] as Triple, origin: [...p.origin] as Triple, label: p.label };
+  }
+  return {
+    enabled: s.enabled,
+    axis: s.axis as SavedSection['axis'],
+    offset: s.offset,
+    flipped: s.flipped,
+    plane,
+    sectionOnly: s.sectionOnly === true,
+  };
+}
+
 /** Validates saved views read from a project file; drops malformed entries. */
 export function parseSavedViews(raw: unknown): SavedView[] {
   if (!Array.isArray(raw)) return [];
@@ -181,6 +253,7 @@ export function parseSavedViews(raw: unknown): SavedView[] {
     ) {
       continue;
     }
+    const section = parseSavedSection(e.section);
     out.push({
       name: e.name,
       pose: {
@@ -191,6 +264,7 @@ export function parseSavedViews(raw: unknown): SavedView[] {
         ...(finite(pose.roll) ? { roll: pose.roll } : {}),
         ...(finite(pose.fov) ? { fov: pose.fov } : {}),
       },
+      ...(section ? { section } : {}),
     });
     if (out.length >= MAX_SAVED_VIEWS) break;
   }

@@ -2,9 +2,12 @@
  * History panel (right): feature cards in document order. Expanding a
  * card shows its editable parameters (`ExpressionField`s, committing via
  * `editFeatureParams` — one undo step per edit, the signature parametric
- * demo). Card menu: Rename, Suppress/Unsuppress, Roll back to here, Move
- * up/down, Delete. Suppressed cards are dimmed; cards with an
- * `evaluation.errors` entry show a warning style and the message.
+ * demo). Card menu (Shapr3D card settings, interaction research §3): Rename,
+ * Suppress/Unsuppress, Breakpoint after this step / Remove breakpoint (the
+ * rollback marker), Zoom to, Duplicate, Move up/down, Delete. A focused
+ * card: Del suppresses, Shift+Del deletes, Enter expands, F2 renames. The
+ * header expands/collapses all cards. Suppressed cards are dimmed; cards
+ * with an `evaluation.errors` entry show a warning style and the message.
  *
  * The header filter shows only the steps relevant to the selection. The
  * rollback marker (drag it, or "Roll back to here") excludes the steps
@@ -16,6 +19,8 @@ import {
   AlertTriangle,
   ChevronDown,
   ChevronRight,
+  ChevronsDownUp,
+  ChevronsUpDown,
   GripHorizontal,
   ListFilter,
   MoreHorizontal,
@@ -40,7 +45,17 @@ import { ParamExpressionField } from './ParamExpressionField.js';
 import { ModelingFeatureParams } from './FeatureParams.js';
 import { BlendParams, BooleanParams, ShellParams } from './PrintFeatureParams.js';
 import { isModelingFeature } from '../model/features.js';
-import { checkMove, moveFeature, relevantFeatureIds } from '../model/historyTools.js';
+import {
+  checkMove,
+  duplicateStep,
+  featureZoomTargets,
+  historyFilterItems,
+  moveFeature,
+  relevantFeatureIds,
+  stepNamePrefix,
+} from '../model/historyTools.js';
+import { nextFeatureName } from '../model/store.js';
+import { startFix } from '../model/fixReference.js';
 import { resolveParameterValues } from '../model/parameters.js';
 import { useWorkspaceStore } from '../model/workspace.js';
 import type { AssemblerState, FeaturePatch } from '../model/store.js';
@@ -73,6 +88,27 @@ function tryMoveStep(state: AssemblerState, from: number, to: number): void {
   if (!moved) useWorkspaceStore.getState().notify('Finish the running tool first.', 'warning');
 }
 
+/** History card "Duplicate": a copy right after the step, as one undo step. */
+function duplicateHistoryStep(state: AssemblerState, feature: Feature): void {
+  const id = state.allocateFeatureId(feature.kind);
+  const name = nextFeatureName(stepNamePrefix(feature.name), state.features);
+  const done = state.commitDocumentChange(duplicateStep(state.features, feature.id, id, name), {
+    keepRollback: true,
+    selection: [{ kind: 'feature', featureId: id }],
+  });
+  if (!done) useWorkspaceStore.getState().notify('Finish the running tool first.', 'warning');
+}
+
+/** History card "Zoom to": frames the step's geometry without changing the selection. */
+function zoomToStep(state: AssemblerState, feature: Feature): void {
+  const items = featureZoomTargets(feature, state.features, state.evaluation);
+  if (items.length === 0) {
+    useWorkspaceStore.getState().notify(`"${feature.name}" has no geometry to zoom to.`);
+    return;
+  }
+  useWorkspaceStore.getState().sendCamera({ kind: 'fitItems', items });
+}
+
 export function HistoryPanel({ state, onContextMenu }: HistoryPanelProps): JSX.Element {
   const [expandedIds, setExpandedIds] = useState<ReadonlySet<string>>(new Set());
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
@@ -94,14 +130,17 @@ export function HistoryPanel({ state, onContextMenu }: HistoryPanelProps): JSX.E
   const markerIndex = state.rollbackBefore
     ? features.findIndex((f) => f.id === state.rollbackBefore)
     : -1;
-  const relevant = useMemo(
-    () =>
-      filterToSelection && state.selection.length > 0
-        ? relevantFeatureIds(features, state.evaluation, state.selection)
-        : null,
-    [filterToSelection, features, state.evaluation, state.selection],
-  );
+  // Shapr3D: the History filters to the selection's steps, or — nothing selected, Isolate on —
+  // to the isolated objects' steps.
+  const filterItems = historyFilterItems(state.selection, state.isolatedBodyIds);
+  const relevant = useMemo(() => {
+    const items = historyFilterItems(state.selection, state.isolatedBodyIds);
+    return filterToSelection && items.length > 0
+      ? relevantFeatureIds(features, state.evaluation, items)
+      : null;
+  }, [filterToSelection, features, state.evaluation, state.selection, state.isolatedBodyIds]);
   const shown = features.filter((f) => !relevant || relevant.has(f.id));
+  const allExpanded = shown.length > 0 && shown.every((f) => expandedIds.has(f.id));
 
   /** Gap index (before feature `index`, or after it for the lower half). */
   const gapFromEvent = (event: React.DragEvent, index: number): number => {
@@ -154,19 +193,34 @@ export function HistoryPanel({ state, onContextMenu }: HistoryPanelProps): JSX.E
           {features.length === 1 ? 'step' : 'steps'}
         </span>
         <span className={panelStyles.headerSpacer} />
+        <Tooltip content={allExpanded ? 'Collapse all steps' : 'Expand all steps'}>
+          <button
+            type="button"
+            className={panelStyles.headerButton}
+            aria-label={allExpanded ? 'Collapse all steps' : 'Expand all steps'}
+            disabled={features.length === 0}
+            onClick={() =>
+              setExpandedIds(allExpanded ? new Set() : new Set(shown.map((f) => f.id)))
+            }
+          >
+            {allExpanded ? <ChevronsDownUp size={14} /> : <ChevronsUpDown size={14} />}
+          </button>
+        </Tooltip>
         <Tooltip
           content={
-            state.selection.length === 0
-              ? 'Show only steps of the selection (select something first)'
+            filterItems.length === 0
+              ? 'Show only steps of the selection or of the isolated objects (select or isolate something first)'
               : filterToSelection
                 ? 'Show all steps'
-                : 'Show only steps of the selection'
+                : state.selection.length > 0
+                  ? 'Show only steps of the selection'
+                  : 'Show only steps of the isolated objects'
           }
         >
           <button
             type="button"
             className={`${panelStyles.headerButton} ${filterToSelection ? styles.headerButtonActive : ''}`}
-            aria-label="Filter to selection"
+            aria-label="Filter to selection or isolated objects"
             aria-pressed={filterToSelection}
             onClick={() => setFilterToSelection((v) => !v)}
           >
@@ -182,7 +236,11 @@ export function HistoryPanel({ state, onContextMenu }: HistoryPanelProps): JSX.E
       >
         {features.length === 0 ? <div className={panelStyles.empty}>No history yet</div> : null}
         {relevant && shown.length === 0 ? (
-          <div className={panelStyles.empty}>No steps for the selection</div>
+          <div className={panelStyles.empty}>
+            {state.selection.length > 0
+              ? 'No steps for the selection'
+              : 'No steps for the isolated objects'}
+          </div>
         ) : null}
         {features.map((feature, index) => {
           if (relevant && !relevant.has(feature.id)) {
@@ -201,6 +259,7 @@ export function HistoryPanel({ state, onContextMenu }: HistoryPanelProps): JSX.E
                   index={index}
                   state={state}
                   rolledBack={markerIndex >= 0 && index >= markerIndex}
+                  breakpointAfter={markerIndex === index + 1}
                   expanded={expandedIds.has(feature.id)}
                   onToggleExpanded={() => toggleExpanded(feature.id)}
                   menuOpen={menuOpenId === feature.id}
@@ -291,6 +350,8 @@ interface HistoryCardProps {
   index: number;
   /** Below the rollback marker: not evaluated, greyed. */
   rolledBack: boolean;
+  /** The rollback marker (Shapr3D "breakpoint") sits right after this step. */
+  breakpointAfter: boolean;
   state: AssemblerState;
   expanded: boolean;
   onToggleExpanded: () => void;
@@ -305,6 +366,7 @@ function HistoryCard({
   feature,
   index,
   rolledBack,
+  breakpointAfter,
   state,
   expanded,
   onToggleExpanded,
@@ -343,6 +405,24 @@ function HistoryCard({
     >
       <div
         className={styles.cardHeader}
+        tabIndex={renaming ? -1 : 0}
+        aria-label={`${feature.name}${feature.suppressed ? ' (suppressed)' : ''}`}
+        onKeyDown={(event) => {
+          if (renaming || event.target !== event.currentTarget) return;
+          // Shapr3D History: Delete/Backspace suppresses the step, Shift+Delete deletes it.
+          if (event.key === 'Delete' || event.key === 'Backspace') {
+            event.preventDefault();
+            if (event.shiftKey) state.deleteFeature(feature.id);
+            else state.setSuppressed(feature.id, !feature.suppressed);
+          } else if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            state.select({ kind: 'feature', featureId: feature.id });
+            onToggleExpanded();
+          } else if (event.key === 'F2') {
+            event.preventDefault();
+            onRenamingChange(true);
+          }
+        }}
         draggable={!renaming}
         onDragStart={(event) => {
           event.dataTransfer.setData(DRAG_STEP, feature.id);
@@ -419,13 +499,33 @@ function HistoryCard({
                 Rename
               </MenuItem>
               <MenuItem onSelect={() => state.setSuppressed(feature.id, !feature.suppressed)}>
-                {feature.suppressed ? 'Unsuppress' : 'Suppress'}
+                <span className={styles.menuRow}>
+                  {feature.suppressed ? 'Unsuppress' : 'Suppress'}
+                  <span className={styles.menuShortcut}>Del</span>
+                </span>
               </MenuItem>
               <MenuItem
-                disabled={state.activeTool !== null}
-                onSelect={() => state.setRollback(state.features[index + 1]?.id ?? null)}
+                disabled={
+                  state.activeTool !== null ||
+                  (!breakpointAfter && index === state.features.length - 1)
+                }
+                {...(!breakpointAfter && index === state.features.length - 1
+                  ? { title: 'This is the last step; nothing comes after it.' }
+                  : {})}
+                onSelect={() =>
+                  state.setRollback(
+                    breakpointAfter ? null : (state.features[index + 1]?.id ?? null),
+                  )
+                }
               >
-                {rolledBack ? 'Roll forward to here' : 'Roll back to here'}
+                {breakpointAfter ? 'Remove breakpoint' : 'Breakpoint after this step'}
+              </MenuItem>
+              <MenuItem onSelect={() => zoomToStep(state, feature)}>Zoom to</MenuItem>
+              <MenuItem
+                disabled={state.activeTool !== null}
+                onSelect={() => duplicateHistoryStep(state, feature)}
+              >
+                Duplicate
               </MenuItem>
               <MenuSeparator />
               <MenuItem
@@ -441,7 +541,12 @@ function HistoryCard({
                 Move down
               </MenuItem>
               <MenuSeparator />
-              <MenuItem onSelect={() => state.deleteFeature(feature.id)}>Delete</MenuItem>
+              <MenuItem onSelect={() => state.deleteFeature(feature.id)}>
+                <span className={styles.menuRow}>
+                  Delete
+                  <span className={styles.menuShortcut}>Shift+Del</span>
+                </span>
+              </MenuItem>
             </Menu>
           ) : null}
         </div>
@@ -449,7 +554,23 @@ function HistoryCard({
       {error ? (
         <div className={styles.errorMessage}>
           <AlertTriangle size={12} />
-          {error}
+          <span className={styles.errorText}>{error}</span>
+          {/^Missing reference/.test(error) || /no longer resolve/.test(error) ? (
+            <button
+              type="button"
+              className={styles.fixButton}
+              disabled={state.activeTool !== null}
+              aria-label={`Fix ${feature.name}: pick a replacement reference`}
+              title="Show where the missing reference was and pick a replacement"
+              onClick={(event) => {
+                event.stopPropagation();
+                const reason = startFix(feature.id);
+                if (reason) useWorkspaceStore.getState().notify(reason, 'warning');
+              }}
+            >
+              Fix…
+            </button>
+          ) : null}
         </div>
       ) : null}
       {!error && warning ? (
@@ -461,6 +582,14 @@ function HistoryCard({
       {expanded ? <FeatureParams feature={feature} state={state} /> : null}
     </div>
   );
+}
+
+function extrudeSides(feature: {
+  symmetric: boolean;
+  distance2?: number | undefined;
+}): 'one' | 'symmetric' | 'two' {
+  if (feature.symmetric) return 'symmetric';
+  return feature.distance2 !== undefined && feature.distance2 > 0 ? 'two' : 'one';
 }
 
 function FeatureParams({
@@ -499,34 +628,90 @@ function FeatureParams({
           onCommitExpression={(expr) => edit({ distanceExpression: expr })}
         />
         <div>
-          <span className={styles.paramLabel}>Direction</span>
+          <span className={styles.paramLabel}>Sides</span>
           <Select
-            aria-label="Extrude direction"
-            value={feature.symmetric ? 'both' : 'one'}
+            aria-label="Extrude sides"
+            value={extrudeSides(feature)}
             options={[
               { value: 'one', label: 'One side' },
-              { value: 'both', label: 'Both sides' },
+              { value: 'symmetric', label: 'Symmetric' },
+              { value: 'two', label: 'Two sides' },
             ]}
-            onChange={(event) => edit({ symmetric: event.currentTarget.value === 'both' })}
+            onChange={(event) => {
+              const sides = event.currentTarget.value;
+              edit({
+                symmetric: sides === 'symmetric',
+                distance2:
+                  sides === 'two' ? (feature.distance2 ?? Math.abs(feature.distance)) : undefined,
+              });
+            }}
           />
         </div>
-        {feature.profile.kind === 'sketch' ? (
-          <div className={styles.paramsFull}>
-            <span className={styles.paramLabel}>Operation</span>
-            <Select
-              aria-label="Extrude operation"
-              value={feature.operation}
-              options={[
-                { value: 'new', label: 'New body' },
-                { value: 'join', label: 'Join' },
-                { value: 'cut', label: 'Cut' },
-              ]}
-              onChange={(event) =>
-                edit({ operation: event.currentTarget.value as ExtrudeOperation })
-              }
-            />
-          </div>
+        {extrudeSides(feature) === 'two' ? (
+          <ExpressionField
+            label="Distance 2"
+            value={feature.distance2 ?? 0}
+            unit="mm"
+            onCommit={(v) => edit({ distance2: Math.max(0, v) })}
+          />
         ) : null}
+        <div>
+          <span className={styles.paramLabel}>Extent</span>
+          <Select
+            aria-label="Extrude extent"
+            value={feature.extent?.kind ?? 'distance'}
+            options={[
+              { value: 'distance', label: 'Distance' },
+              { value: 'throughAll', label: 'Through All' },
+              ...(feature.extent?.kind === 'toObject'
+                ? [{ value: 'toObject', label: 'To Object' }]
+                : []),
+            ]}
+            onChange={(event) => {
+              const kind = event.currentTarget.value;
+              if (kind === 'toObject') return;
+              edit({ extent: kind === 'distance' ? undefined : { kind: 'throughAll' } });
+            }}
+          />
+        </div>
+        <ExpressionField
+          label="Start offset"
+          value={feature.startOffset ?? 0}
+          unit="mm"
+          onCommit={(v) => edit({ startOffset: v === 0 ? undefined : v })}
+        />
+        {feature.extent?.kind === 'toObject' ? (
+          <span className={styles.paramNote}>
+            To{' '}
+            {feature.extent.target.kind === 'body'
+              ? 'a body'
+              : feature.extent.target.face.signature.surface === 'plane'
+                ? 'a planar face (its plane)'
+                : 'a face'}
+          </span>
+        ) : null}
+        <div className={styles.paramsFull}>
+          <span className={styles.paramLabel}>Operation</span>
+          <Select
+            aria-label="Extrude operation"
+            value={feature.operation}
+            options={
+              feature.profile.kind === 'sketch'
+                ? [
+                    { value: 'new', label: 'New body' },
+                    { value: 'join', label: 'Join' },
+                    { value: 'cut', label: 'Cut' },
+                    { value: 'intersect', label: 'Intersect' },
+                  ]
+                : [
+                    // Push/pull: joins outwards, cuts inwards; Intersect is the one explicit choice.
+                    { value: feature.distance < 0 ? 'cut' : 'join', label: 'Automatic' },
+                    { value: 'intersect', label: 'Intersect' },
+                  ]
+            }
+            onChange={(event) => edit({ operation: event.currentTarget.value as ExtrudeOperation })}
+          />
+        </div>
       </div>
     );
   }

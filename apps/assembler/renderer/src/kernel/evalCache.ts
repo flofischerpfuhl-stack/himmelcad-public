@@ -21,7 +21,7 @@ import type { SketchFeature } from '../model/document.js';
 import type { SketchRegion } from '../sketch/regions.js';
 import type { KeyedFace } from './naming.js';
 import type { Shape3D } from './occt.js';
-import type { EvaluatedSketch, FeatureErrorRefs } from './types.js';
+import type { EvaluatedDatum, EvaluatedSketch, FeatureErrorRefs } from './types.js';
 
 // ---- hashing ---------------------------------------------------------------------
 
@@ -101,6 +101,8 @@ export interface Checkpoint {
   readonly sketches: ReadonlyMap<string, EvaluatedSketch>;
   readonly sketchFeatures: ReadonlyMap<string, SketchFeature>;
   readonly sketchRegions: ReadonlyMap<string, SketchRegion[]>;
+  /** Construction planes/axes evaluated so far. */
+  readonly datums?: ReadonlyMap<string, EvaluatedDatum>;
   readonly createdCount: number;
   readonly errors: Readonly<Record<string, string>>;
   readonly warnings: Readonly<Record<string, string>>;

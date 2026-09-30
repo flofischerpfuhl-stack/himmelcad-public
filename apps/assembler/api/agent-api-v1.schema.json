@@ -764,6 +764,174 @@
           },
           "required": ["kind", "face"],
           "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "construction"
+            },
+            "featureId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "frame": {
+              "$ref": "#/$defs/Frame"
+            }
+          },
+          "required": ["kind", "featureId"],
+          "additionalProperties": false,
+          "description": "A construction plane (feature kind `constructionPlane`) by feature id; `frame` (its last evaluated frame) is filled by the server."
+        }
+      ]
+    },
+    "Frame": {
+      "type": "object",
+      "properties": {
+        "origin": {
+          "$ref": "#/$defs/Vec3"
+        },
+        "u": {
+          "$ref": "#/$defs/Vec3"
+        },
+        "v": {
+          "$ref": "#/$defs/Vec3"
+        },
+        "normal": {
+          "$ref": "#/$defs/Vec3"
+        }
+      },
+      "required": ["origin", "u", "v", "normal"],
+      "additionalProperties": false,
+      "description": "Orthonormal frame: sketch (u, v) maps to origin + u·U + v·V; `normal` is the extrude direction."
+    },
+    "PointRef": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "point"
+            },
+            "point": {
+              "$ref": "#/$defs/Vec3"
+            }
+          },
+          "required": ["kind", "point"],
+          "additionalProperties": false,
+          "description": "A world point."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "edgeEnd"
+            },
+            "edge": {
+              "$ref": "#/$defs/EdgeInput"
+            },
+            "near": {
+              "$ref": "#/$defs/Vec3"
+            }
+          },
+          "required": ["kind", "edge", "near"],
+          "additionalProperties": false,
+          "description": "The end of the edge nearest to `near`."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "edgeMid"
+            },
+            "edge": {
+              "$ref": "#/$defs/EdgeInput"
+            }
+          },
+          "required": ["kind", "edge"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "circleCenter"
+            },
+            "edge": {
+              "$ref": "#/$defs/EdgeInput"
+            }
+          },
+          "required": ["kind", "edge"],
+          "additionalProperties": false,
+          "description": "The centre of a circular edge."
+        }
+      ]
+    },
+    "ExtrudeExtent": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "distance"
+            }
+          },
+          "required": ["kind"],
+          "additionalProperties": false,
+          "description": "`distance` (default)."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "throughAll"
+            }
+          },
+          "required": ["kind"],
+          "additionalProperties": false,
+          "description": "Through every body in the direction of the sign of `distance` (both ways when symmetric)."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "toObject"
+            },
+            "target": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "const": "face"
+                    },
+                    "face": {
+                      "$ref": "#/$defs/FaceInput"
+                    }
+                  },
+                  "required": ["kind", "face"],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "const": "body"
+                    },
+                    "bodyId": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": ["kind", "bodyId"],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          "required": ["kind", "target"],
+          "additionalProperties": false,
+          "description": "Up to a face (a planar face as its infinite plane; any other face: the first contact with its body) or a body (first contact), in the direction of the sign of `distance`."
         }
       ]
     },
@@ -859,6 +1027,34 @@
           "required": ["kind", "featureId", "entityId"],
           "additionalProperties": false,
           "description": "A sketch line by entity id (construction lines included), e.g. a revolve centre line."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "construction"
+            },
+            "featureId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "line": {
+              "type": "object",
+              "properties": {
+                "point": {
+                  "$ref": "#/$defs/Vec3"
+                },
+                "dir": {
+                  "$ref": "#/$defs/Vec3"
+                }
+              },
+              "required": ["point", "dir"],
+              "additionalProperties": false
+            }
+          },
+          "required": ["kind", "featureId"],
+          "additionalProperties": false,
+          "description": "A construction axis (feature kind `constructionAxis`) by feature id; `line` is filled by the server."
         }
       ]
     },
@@ -1277,7 +1473,7 @@
     },
     "extrude": {
       "label": "Extrude",
-      "summary": "Extrudes sketch profiles (or pushes/pulls a planar face) along the sketch normal; negative distance goes the other way.",
+      "summary": "Extrudes sketch profiles (or pushes/pulls a planar face) along the sketch normal; negative distance goes the other way. Extent Distance / Through All / To Object, one side / symmetric / two sides (`distance2`), start offset; New/Join/Cut/Intersect.",
       "params": {
         "type": "object",
         "properties": {
@@ -1297,8 +1493,9 @@
             "default": false
           },
           "operation": {
-            "enum": ["new", "join", "cut"],
-            "default": "new"
+            "enum": ["new", "join", "cut", "intersect"],
+            "default": "new",
+            "description": "A face profile (push/pull) joins outwards and cuts inwards; only `intersect` overrides that."
           },
           "targetBodyId": {
             "type": "string",
@@ -1307,6 +1504,18 @@
           "resultBodyName": {
             "type": "string",
             "minLength": 1
+          },
+          "extent": {
+            "$ref": "#/$defs/ExtrudeExtent"
+          },
+          "distance2": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Two sides: how far the extrude also goes to the other side of the profile (ignored when symmetric)."
+          },
+          "startOffset": {
+            "type": "number",
+            "description": "The extrude starts this far from the profile along its normal (mm)."
           }
         },
         "required": ["profile"],
@@ -1486,6 +1695,11 @@
             "type": "boolean",
             "default": false,
             "description": "Keep the tool bodies."
+          },
+          "keepTarget": {
+            "type": "boolean",
+            "default": false,
+            "description": "Keep the target body as it was; the result becomes a new body `body:<featureId>` (Shapr3D \"Keep Target\")."
           }
         },
         "required": ["operation", "targetBodyId", "toolBodyIds"],
@@ -1605,9 +1819,9 @@
             "description": "Degrees; 360 is a full revolution, negative turns the other way."
           },
           "operation": {
-            "enum": ["new", "join", "cut"],
+            "enum": ["new", "join", "cut", "intersect"],
             "default": "new",
-            "description": "New body, or join/cut into `targetBodyId` (default: the most recently changed body)."
+            "description": "New body, or join into / cut from / intersect with `targetBodyId` (default: the most recently changed body)."
           },
           "targetBodyId": {
             "type": "string",
@@ -1635,9 +1849,9 @@
             "$ref": "#/$defs/PathRef"
           },
           "operation": {
-            "enum": ["new", "join", "cut"],
+            "enum": ["new", "join", "cut", "intersect"],
             "default": "new",
-            "description": "New body, or join/cut into `targetBodyId` (default: the most recently changed body)."
+            "description": "New body, or join into / cut from / intersect with `targetBodyId` (default: the most recently changed body)."
           },
           "targetBodyId": {
             "type": "string",
@@ -1670,9 +1884,9 @@
             "default": false
           },
           "operation": {
-            "enum": ["new", "join", "cut"],
+            "enum": ["new", "join", "cut", "intersect"],
             "default": "new",
-            "description": "New body, or join/cut into `targetBodyId` (default: the most recently changed body)."
+            "description": "New body, or join into / cut from / intersect with `targetBodyId` (default: the most recently changed body)."
           },
           "targetBodyId": {
             "type": "string",
@@ -1689,7 +1903,7 @@
     },
     "mirror": {
       "label": "Mirror",
-      "summary": "Mirrors bodies across a plane; with keepOriginal (default) the mirror images are new bodies.",
+      "summary": "Mirrors bodies, sketches and planar faces across a plane (world plane, planar face, construction plane) or, with `axis`, about a line (a half turn); with keepOriginal (default) the mirror images of bodies are new bodies. Mirrored sketches/faces become sketches \"<featureId>:sketch:<i>\" (sketchIds first, then faces) whose profiles extrude/revolve reference.",
       "params": {
         "type": "object",
         "properties": {
@@ -1698,8 +1912,7 @@
             "items": {
               "type": "string",
               "minLength": 1
-            },
-            "minItems": 1
+            }
           },
           "plane": {
             "$ref": "#/$defs/SketchPlane"
@@ -1707,9 +1920,209 @@
           "keepOriginal": {
             "type": "boolean",
             "default": true
+          },
+          "sketchIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "faces": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/FaceInput"
+            }
+          },
+          "axis": {
+            "$ref": "#/$defs/AxisRef"
           }
         },
-        "required": ["bodyIds", "plane"],
+        "required": [],
+        "additionalProperties": false,
+        "description": "At least one of bodyIds / sketchIds / faces must be non-empty. `plane` defaults to the YZ plane (and is ignored with `axis`)."
+      }
+    },
+    "constructionPlane": {
+      "label": "Plane",
+      "summary": "Construction plane (no body): offset from a plane/face, at an angle about an axis, through three points, midplane between two parallel planes/faces, or tangent to a cylindrical face. Usable as a sketch plane, mirror/split plane and section plane by `{kind: \"construction\", featureId}`.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "definition": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "const": "offset"
+                  },
+                  "base": {
+                    "$ref": "#/$defs/SketchPlane"
+                  },
+                  "distance": {
+                    "type": "number"
+                  }
+                },
+                "required": ["kind", "base", "distance"],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "const": "angle"
+                  },
+                  "base": {
+                    "$ref": "#/$defs/SketchPlane"
+                  },
+                  "axis": {
+                    "$ref": "#/$defs/AxisRef"
+                  },
+                  "angle": {
+                    "type": "number"
+                  }
+                },
+                "required": ["kind", "base", "axis", "angle"],
+                "additionalProperties": false,
+                "description": "Through `axis` (parallel to `base`), turned `angle` degrees from `base`."
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "const": "threePoints"
+                  },
+                  "points": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/PointRef"
+                    },
+                    "minItems": 3,
+                    "maxItems": 3
+                  }
+                },
+                "required": ["kind", "points"],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "const": "midplane"
+                  },
+                  "a": {
+                    "$ref": "#/$defs/SketchPlane"
+                  },
+                  "b": {
+                    "$ref": "#/$defs/SketchPlane"
+                  }
+                },
+                "required": ["kind", "a", "b"],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "const": "tangent"
+                  },
+                  "face": {
+                    "$ref": "#/$defs/FaceInput"
+                  },
+                  "angle": {
+                    "type": "number"
+                  }
+                },
+                "required": ["kind", "face", "angle"],
+                "additionalProperties": false,
+                "description": "`angle` degrees around the cylinder axis, from the axis frame u."
+              }
+            ]
+          },
+          "flip": {
+            "type": "boolean",
+            "default": false
+          }
+        },
+        "required": ["definition"],
+        "additionalProperties": false
+      }
+    },
+    "constructionAxis": {
+      "label": "Axis",
+      "summary": "Construction axis (no body): along a straight edge (a circular edge: its axis), through two points, the axis of a cylindrical face, or the intersection of two planes. Usable as revolve/pattern/rotate axis and mirror line by `{kind: \"construction\", featureId}`.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "definition": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "const": "edge"
+                  },
+                  "edge": {
+                    "$ref": "#/$defs/EdgeInput"
+                  }
+                },
+                "required": ["kind", "edge"],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "const": "twoPoints"
+                  },
+                  "a": {
+                    "$ref": "#/$defs/PointRef"
+                  },
+                  "b": {
+                    "$ref": "#/$defs/PointRef"
+                  }
+                },
+                "required": ["kind", "a", "b"],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "const": "cylinder"
+                  },
+                  "face": {
+                    "$ref": "#/$defs/FaceInput"
+                  }
+                },
+                "required": ["kind", "face"],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "const": "planes"
+                  },
+                  "a": {
+                    "$ref": "#/$defs/SketchPlane"
+                  },
+                  "b": {
+                    "$ref": "#/$defs/SketchPlane"
+                  }
+                },
+                "required": ["kind", "a", "b"],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "flip": {
+            "type": "boolean",
+            "default": false
+          }
+        },
+        "required": ["definition"],
         "additionalProperties": false
       }
     },
@@ -1792,6 +2205,35 @@
         "required": ["bodyId"],
         "additionalProperties": false,
         "description": "Missing components default to 0, the pivot to the world origin."
+      }
+    },
+    "rotateAxis": {
+      "label": "Rotate",
+      "summary": "Rotates bodies by `angle` degrees about an axis (a straight or circular edge, a sketch line or a world axis) — \"Rotate Around Axis\"; `copy` keeps the originals and adds rotated copies.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "bodyIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
+          },
+          "axis": {
+            "$ref": "#/$defs/AxisRef"
+          },
+          "angle": {
+            "type": "number"
+          },
+          "copy": {
+            "type": "boolean",
+            "default": false
+          }
+        },
+        "required": ["bodyIds", "axis", "angle"],
+        "additionalProperties": false
       }
     },
     "align": {
@@ -2264,6 +2706,24 @@
         "additionalProperties": false
       },
       "result": "[{featureId, name, plane, frame: {origin,u,v,normal}, entities, constraints, dimensions, regions: [{key, area, sample, center, holes, entityIds}], consumed}]"
+    },
+    "datums.list": {
+      "kind": "query",
+      "capability": "document.read",
+      "summary": "Construction planes and axes (constructionPlane/constructionAxis steps) as evaluated: plane frame / axis point + direction, and the drawn centre and size.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "enum": ["auto", "committed", "staged"],
+            "default": "auto",
+            "description": "`auto`: the open transaction's staged state if any, else the committed document."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "result": "[{featureId, name, kind: \"plane\"|\"axis\", frame: {origin,u,v,normal}, center, size, error}] (axis: origin = a point on it, normal = its direction)"
     },
     "selection.get": {
       "kind": "query",

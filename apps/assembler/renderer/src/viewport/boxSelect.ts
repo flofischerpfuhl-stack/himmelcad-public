@@ -156,10 +156,14 @@ export function targetKey(t: PickTarget | SelectionItem): string {
       return `feature|${t.featureId}`;
     case 'sketchLine':
       return `sketchLine|${t.featureId}|${t.entityId}`;
+    case 'datum':
+      return `datum|${t.featureId}`;
     case 'extrudeHandle':
       return 'handle|extrude';
     case 'moveHandle':
       return `handle|move|${t.axis}`;
+    case 'moveTile':
+      return `handle|tile|${t.plane}`;
     case 'toolHandle':
       return `handle|${t.handle}`;
   }
