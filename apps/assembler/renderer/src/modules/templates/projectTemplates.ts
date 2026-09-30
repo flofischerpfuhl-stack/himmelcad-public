@@ -1,6 +1,6 @@
 /**
  * Project templates of the Home screen: small, print-ready parts built by
- * the **agent API** (`api/session.ts`, `hcasm.agent-api@1`) — the same
+ * the **agent API** (`interface/agent-api/session.ts`, `hcasm.agent-api@1`) — the same
  * commands an agent or the Python layer sends — so a template is a real,
  * editable History (sketches with named dimensions, features, parameters),
  * never a mesh or a canned file. The same builders run headless in the
@@ -8,23 +8,11 @@
  * hand calculations.
  *
  * Every builder only uses `call(method, params)`; it assumes an empty
- * document and leaves the parts it made. Millimetres, Z up.
+ * document and leaves the parts it made. Millimetres, Z up. The module
+ * registers them (`module.ts`); the shell reads the registry
+ * (`foundation/commands/projectTemplates.ts`).
  */
-
-/** One agent-API call (`AgentSession.handle`). */
-export type ApiCall = (method: string, params?: Record<string, unknown>) => Promise<unknown>;
-
-export type ProjectTemplateId = 'blank' | 'enclosure' | 'bracket' | 'cableClip';
-
-export interface ProjectTemplate {
-  id: ProjectTemplateId;
-  /** Card title and the new project's name. */
-  name: string;
-  /** One line on the card. */
-  description: string;
-  /** Builds the part into the (empty) current document. */
-  build: (call: ApiCall) => Promise<void>;
-}
+import type { ApiCall, ProjectTemplate } from '../../foundation/commands/projectTemplates.js';
 
 type Json = Record<string, unknown>;
 
@@ -291,9 +279,3 @@ export const PROJECT_TEMPLATES: readonly ProjectTemplate[] = [
     build: buildCableClip,
   },
 ];
-
-export function projectTemplate(id: ProjectTemplateId): ProjectTemplate {
-  const template = PROJECT_TEMPLATES.find((t) => t.id === id);
-  if (!template) throw new Error(`Unknown template "${id}"`);
-  return template;
-}

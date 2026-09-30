@@ -177,7 +177,7 @@
       "id": "templates",
       "layer": "domain",
       "summary": "Project templates of the Home screen.",
-      "paths": ["renderer/src/modules/templates/", "renderer/src/templates/"]
+      "paths": ["renderer/src/modules/templates/"]
     },
     {
       "id": "print",

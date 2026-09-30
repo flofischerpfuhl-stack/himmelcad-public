@@ -19,6 +19,7 @@
 import type { KernelAdapter } from '../geometry-kernel/adapter.js';
 import { registerApiContribution, type ApiContribution } from './api/registry.js';
 import { registerDraftTool, type DraftTool, type RegisteredDraft } from './draftTools.js';
+import { registerProjectTemplates, type ProjectTemplate } from './projectTemplates.js';
 import { registerCommands, type Command } from './registry.js';
 import { installStoreSlice, type StoreSliceCreator } from './store.js';
 
@@ -44,6 +45,8 @@ export interface AssemblerModule {
   api?: ApiContribution;
   /** Interactive tools of the module's feature kinds (`draftTools.ts`), used by the generic feature tool. */
   draftTools?: readonly DraftTool<RegisteredDraft>[];
+  /** Home-screen project templates (`projectTemplates.ts`), in order. */
+  projectTemplates?: readonly ProjectTemplate[];
   /** State and actions merged into the one application store (`store.ts` `installStoreSlice`). */
   storeSlice?: StoreSliceCreator;
   /**
@@ -76,6 +79,7 @@ export function installModules(modules: readonly AssemblerModule[]): void {
       registerCommands(block.order, block.commands, module.id);
     if (module.api) registerApiContribution(module.id, module.api);
     for (const tool of module.draftTools ?? []) registerDraftTool(tool);
+    if (module.projectTemplates) registerProjectTemplates(module.id, module.projectTemplates);
     if (module.storeSlice) installStoreSlice(module.id, module.storeSlice);
     module.onInstall?.();
   }
