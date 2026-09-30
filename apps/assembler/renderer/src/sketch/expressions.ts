@@ -183,10 +183,16 @@ export type DimensionValues =
 
 /**
  * Evaluates every dimension's expression in dependency order. Plain
- * dimensions keep their stored value. Fails on a syntax error, an unknown
- * name, a reference cycle or a non-positive result.
+ * dimensions keep their stored value. A name not found among the sketch's
+ * own dimensions is looked up in `paramValues` (the document's parameters,
+ * `model/parameters.ts`), so a sketch dimension expression may read both
+ * (`"wall * 2"`, `"d1 + wall"`). Fails on a syntax error, an unknown name, a
+ * reference cycle or a non-positive result.
  */
-export function resolveDimensionValues(dimensions: readonly SketchDimension[]): DimensionValues {
+export function resolveDimensionValues(
+  dimensions: readonly SketchDimension[],
+  paramValues?: ReadonlyMap<string, number>,
+): DimensionValues {
   const byName = new Map(dimensions.map((d) => [d.name, d]));
   const values = new Map<string, number>();
   const state = new Map<string, 'visiting' | 'done'>();
@@ -211,11 +217,11 @@ export function resolveDimensionValues(dimensions: readonly SketchDimension[]): 
       }
       value = parsed.evaluate((name) => {
         const other = byName.get(name);
-        if (!other) {
-          failure ??= { dimensionId: d.id, message: `${d.name}: unknown name "${name}"` };
-          return null;
-        }
-        return visit(other);
+        if (other) return visit(other);
+        const paramValue = paramValues?.get(name);
+        if (paramValue !== undefined) return paramValue;
+        failure ??= { dimensionId: d.id, message: `${d.name}: unknown name "${name}"` };
+        return null;
       });
       if (value === null) {
         failure ??= { dimensionId: d.id, message: `${d.name}: cannot evaluate "${d.expression}"` };

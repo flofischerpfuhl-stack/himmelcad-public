@@ -74,7 +74,7 @@ void test('migration guard: an empty v1 body migrates to the current schema and 
   ) as Record<string, unknown>;
   const project = migrateAndValidate(1, body);
   assert.equal(project.schemaVersion, CURRENT_SCHEMA_VERSION);
-  assert.equal(CURRENT_SCHEMA_VERSION, 2);
+  assert.equal(CURRENT_SCHEMA_VERSION, 3);
   assert.deepEqual(project.features, []);
 });
 
@@ -182,7 +182,7 @@ function v1File(features: unknown[]): string {
 
 void test('v1 -> v2 migration: the stored v1 demo bracket becomes exactly the v2 demo document', () => {
   const project = loadProjectFile(v1File(demoV1Features()));
-  assert.equal(project.schemaVersion, 2);
+  assert.equal(project.schemaVersion, CURRENT_SCHEMA_VERSION);
   assert.deepEqual(project.features, createDemoDocument());
 });
 
@@ -509,4 +509,129 @@ void test('round trip of an importStep feature preserves embedded data', () => {
   });
   const project = loadProjectFile(text);
   assert.deepEqual(project.features, features);
+});
+
+// ---- schema v3: document parameters ----------------------------------------------
+
+void test('round trip preserves parameters (value, unit, expression)', () => {
+  const parameters = [
+    { id: 'p1', name: 'wall', unit: 'mm' as const, value: 2 },
+    { id: 'p2', name: 'hole_d', unit: 'mm' as const, value: 4, expression: 'wall * 2' },
+  ];
+  const text = saveProjectFile({
+    projectName: 'P',
+    features: [],
+    appVersion: '0.1.0-test',
+    createdAt: '2020-01-01T00:00:00.000Z',
+    parameters,
+  });
+  const project = loadProjectFile(text);
+  assert.deepEqual(project.parameters, parameters);
+});
+
+void test('a file with no parameters loads with an empty array', () => {
+  const text = saveProjectFile({
+    projectName: 'P',
+    features: [],
+    appVersion: '0.1.0-test',
+    createdAt: '2020-01-01T00:00:00.000Z',
+  });
+  const project = loadProjectFile(text);
+  assert.deepEqual(project.parameters, []);
+});
+
+void test('v2 -> v3 migration: a schema-2 file with no parameters field gets an empty array', () => {
+  const raw = {
+    format: PROJECT_FORMAT_ID,
+    schemaVersion: 2,
+    appVersion: '0.1.0-test',
+    units: 'mm',
+    projectName: 'P',
+    features: [],
+    createdAt: '2020-01-01T00:00:00.000Z',
+    modifiedAt: '2020-01-01T00:00:00.000Z',
+  };
+  const project = loadProjectFile(JSON.stringify(raw));
+  assert.equal(project.schemaVersion, CURRENT_SCHEMA_VERSION);
+  assert.deepEqual(project.parameters, []);
+});
+
+void test('rejects a parameter with an invalid identifier name', () => {
+  const raw = {
+    format: PROJECT_FORMAT_ID,
+    schemaVersion: 3,
+    appVersion: '0.1.0-test',
+    units: 'mm',
+    projectName: 'P',
+    features: [],
+    parameters: [{ id: 'p1', name: '2bad', unit: 'mm', value: 1 }],
+    createdAt: '2020-01-01T00:00:00.000Z',
+    modifiedAt: '2020-01-01T00:00:00.000Z',
+  };
+  assert.throws(() => loadProjectFile(JSON.stringify(raw)), /parameters\[0\]\.name/);
+});
+
+void test('rejects duplicate parameter ids and duplicate parameter names', () => {
+  const base = {
+    format: PROJECT_FORMAT_ID,
+    schemaVersion: 3,
+    appVersion: '0.1.0-test',
+    units: 'mm',
+    projectName: 'P',
+    features: [],
+    createdAt: '2020-01-01T00:00:00.000Z',
+    modifiedAt: '2020-01-01T00:00:00.000Z',
+  };
+  assert.throws(
+    () =>
+      loadProjectFile(
+        JSON.stringify({
+          ...base,
+          parameters: [
+            { id: 'p1', name: 'a', unit: 'mm', value: 1 },
+            { id: 'p1', name: 'b', unit: 'mm', value: 2 },
+          ],
+        }),
+      ),
+    /duplicate parameter id/,
+  );
+  assert.throws(
+    () =>
+      loadProjectFile(
+        JSON.stringify({
+          ...base,
+          parameters: [
+            { id: 'p1', name: 'a', unit: 'mm', value: 1 },
+            { id: 'p2', name: 'a', unit: 'mm', value: 2 },
+          ],
+        }),
+      ),
+    /duplicate parameter name/,
+  );
+});
+
+void test('round trip preserves an extrude distanceExpression alongside its resolved distance', () => {
+  const features = [
+    {
+      id: 'feature-extrude-1',
+      name: 'Extrude 1',
+      suppressed: false,
+      kind: 'extrude' as const,
+      profile: { kind: 'sketch' as const, featureId: 'nope' },
+      distance: 4,
+      distanceExpression: 'wall * 2',
+      symmetric: false,
+      operation: 'new' as const,
+    },
+  ];
+  const text = saveProjectFile({
+    projectName: 'P',
+    features,
+    appVersion: '0.1.0-test',
+    createdAt: '2020-01-01T00:00:00.000Z',
+  });
+  const project = loadProjectFile(text);
+  const extrude = project.features[0]!;
+  assert.equal(extrude.kind === 'extrude' && extrude.distanceExpression, 'wall * 2');
+  assert.equal(extrude.kind === 'extrude' && extrude.distance, 4);
 });

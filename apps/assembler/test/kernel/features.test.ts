@@ -35,7 +35,11 @@ import { addPolyline, sketchFromLegacyProfiles } from '../../renderer/src/sketch
 import { EMPTY_SKETCH } from '../../renderer/src/sketch/types.js';
 import { detectRegions } from '../../renderer/src/sketch/regions.js';
 import type { LegacySketchProfile } from '../sketch/fixtures.js';
-import { PROJECT_FORMAT_ID, loadProjectFile } from '../../renderer/src/model/project/format.js';
+import {
+  CURRENT_SCHEMA_VERSION,
+  PROJECT_FORMAT_ID,
+  loadProjectFile,
+} from '../../renderer/src/model/project/format.js';
 import { loadNodeKernel } from './nodeKernel.js';
 
 const base = (id: string) => ({ id, name: id, suppressed: false });
@@ -974,7 +978,7 @@ void test('a schema-1 file with revolve/sweep/loft/pattern migrates (profiles, a
       modifiedAt: '2026-09-29T00:00:00.000Z',
     }),
   );
-  assert.equal(project.schemaVersion, 2);
+  assert.equal(project.schemaVersion, CURRENT_SCHEMA_VERSION);
   const byId = new Map(project.features.map((f) => [f.id, f]));
   const r1 = byId.get('r1') as RevolveFeature;
   assert.deepEqual(r1.profile, { kind: 'sketch', featureId: 's1', regions: ['l1+l2+l3+l4'] });

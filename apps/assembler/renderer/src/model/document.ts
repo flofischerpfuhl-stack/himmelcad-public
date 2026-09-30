@@ -122,6 +122,14 @@ export interface ExtrudeFeature extends FeatureBase {
   kind: 'extrude';
   profile: ExtrudeProfileRef;
   distance: Millimeters;
+  /**
+   * Source formula for `distance` (document parameters, `model/parameters.ts`),
+   * when set. `distance` always holds the last successfully resolved value
+   * (kept in sync by `model/store.ts` whenever a parameter changes), so the
+   * kernel and every reader that only knows about `distance` keep working
+   * unchanged.
+   */
+  distanceExpression?: string | undefined;
   /** Extrude `distance` to both sides of the sketch plane. */
   symmetric: boolean;
   operation: ExtrudeOperation;
@@ -135,12 +143,16 @@ export interface FilletFeature extends FeatureBase {
   kind: 'fillet';
   edges: EdgeRef[];
   radius: Millimeters;
+  /** Source formula for `radius`, see {@link ExtrudeFeature.distanceExpression}. */
+  radiusExpression?: string | undefined;
 }
 
 export interface ChamferFeature extends FeatureBase {
   kind: 'chamfer';
   edges: EdgeRef[];
   distance: Millimeters;
+  /** Source formula for `distance`, see {@link ExtrudeFeature.distanceExpression}. */
+  distanceExpression?: string | undefined;
 }
 
 /** Hollows a body, opening the given faces, keeping walls of `thickness`. */
@@ -149,6 +161,8 @@ export interface ShellFeature extends FeatureBase {
   bodyId: string;
   faces: FaceRef[];
   thickness: Millimeters;
+  /** Source formula for `thickness`, see {@link ExtrudeFeature.distanceExpression}. */
+  thicknessExpression?: string | undefined;
 }
 
 /** Body boolean; tool bodies are consumed. */

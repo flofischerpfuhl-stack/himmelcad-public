@@ -405,7 +405,10 @@ export function createPlanegcsSolver(
       ...extra,
     });
 
-    const values = resolveDimensionValues(input.dimensions);
+    const values = resolveDimensionValues(
+      input.dimensions,
+      request.paramValues ? new Map(request.paramValues) : undefined,
+    );
     if (!values.ok) return fail('invalid', values.message, { conflicting: [values.dimensionId] });
 
     let prims: Primitive[];
