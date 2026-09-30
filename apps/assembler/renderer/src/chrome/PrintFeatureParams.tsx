@@ -451,7 +451,12 @@ export function BlendParams({
         </>
       )}
       <span className={styles.paramsFull}>
-        <span className={styles.paramNote}>{plural(total, 'edge selection')}</span>
+        <span className={styles.paramNote}>
+          {feature.edges.length > 0
+            ? plural(feature.edges.length, 'picked edge')
+            : 'No picked edges'}
+          {rules.length > 0 ? `, ${plural(rules.length, 'rule')}` : ''}
+        </span>
       </span>
       {feature.edges.map((edge, i) => (
         <RefRow
