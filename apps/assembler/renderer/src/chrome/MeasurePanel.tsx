@@ -9,7 +9,13 @@
  * Exact values come from the kernel's B-rep; mesh estimates say "approx.".
  */
 import { Copy, Crosshair, Eye, EyeOff, GripHorizontal, Pin, Trash2, X } from 'lucide-react';
-import { useCallback, useEffect, useRef, type PointerEvent as ReactPointerEvent } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+} from 'react';
 
 import { Spinner, Tooltip, registerEscapeRung } from '@himmelcad/ui';
 
@@ -21,9 +27,10 @@ import {
   useLiveMeasurements,
 } from '../model/measureLive.js';
 import { useMeasureStore } from '../model/measureStore.js';
-import type { LengthUnit } from '../model/preferences.js';
+import { usePreferences, type LengthUnit } from '../model/preferences.js';
 import type { AssemblerState } from '../model/store.js';
 import { useWorkspaceStore } from '../model/workspace.js';
+import { measurePanelPlacement } from './measurePlacement.js';
 import styles from './MeasurePanel.module.css';
 
 async function copyText(text: string): Promise<void> {
@@ -98,7 +105,21 @@ export function MeasurePanel({ state }: { state: AssemblerState }): JSX.Element 
     useMeasureStore.getState().setPanelPosition({ x, y });
   }, []);
   const onGripUp = useCallback(() => {
+    if (!drag.current) return;
     drag.current = null;
+    // Remembered across sessions (a layout preference, not part of the project).
+    usePreferences
+      .getState()
+      .setPreference('measurePanelPosition', useMeasureStore.getState().panelPosition);
+  }, []);
+  const [windowSize, setWindowSize] = useState(() => ({
+    width: window.innerWidth,
+    height: window.innerHeight,
+  }));
+  useEffect(() => {
+    const onResize = () => setWindowSize({ width: window.innerWidth, height: window.innerHeight });
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
   }, []);
   // Escape leaves the Points tool (before it would clear the selection).
   useEffect(() => {
@@ -113,23 +134,36 @@ export function MeasurePanel({ state }: { state: AssemblerState }): JSX.Element 
   const measure = useMeasureStore.getState();
   const current = live.current;
   const canPin = current !== null && current.measurement.values.length > 0;
+  const placement = measurePanelPlacement({
+    rightColumnOpen: state.panels.history || state.panels.parameters,
+    position,
+    window: windowSize,
+  });
 
   return (
     <section
       ref={rootRef}
       className={styles.root}
       aria-label="Measure"
-      style={
-        position ? { left: position.x, top: position.y, right: 'auto', bottom: 'auto' } : undefined
-      }
+      style={{
+        left: placement.left ?? 'auto',
+        top: placement.top ?? 'auto',
+        right: placement.right ?? 'auto',
+        bottom: placement.bottom ?? 'auto',
+        maxHeight: placement.maxHeight,
+      }}
     >
       <div
         className={styles.header}
         onPointerDown={onGripDown}
         onPointerMove={onGripMove}
         onPointerUp={onGripUp}
-        onDoubleClick={() => measure.setPanelPosition(null)}
-        title="Drag to move; double-click to dock"
+        onPointerCancel={onGripUp}
+        onDoubleClick={() => {
+          measure.setPanelPosition(null);
+          usePreferences.getState().setPreference('measurePanelPosition', null);
+        }}
+        title="Drag to move; double-click to return it to its automatic place"
       >
         <GripHorizontal size={14} className={styles.grip} aria-hidden />
         <span className={styles.title}>Measure</span>

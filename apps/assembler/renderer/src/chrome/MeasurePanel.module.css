@@ -1,11 +1,9 @@
 .root {
+  /* Position and max-height come from `measurePlacement.ts` (automatic or remembered). */
   position: absolute;
-  right: 176px;
-  bottom: 12px;
   display: flex;
   flex-direction: column;
   width: 288px;
-  max-height: calc(100% - 128px);
   background: var(--hc-bg-island);
   border: 1px solid var(--hc-border-default);
   border-radius: var(--hc-radius-lg);

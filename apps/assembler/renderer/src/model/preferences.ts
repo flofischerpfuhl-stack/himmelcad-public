@@ -36,6 +36,10 @@ export interface Preferences {
   renderQuality: RenderQuality;
   /** Last "Export image…" settings. */
   imageExport: ImageExportPreference;
+  /** Where the user last dragged the Measure panel (CSS px from the window's top left); `null` = automatic placement. */
+  measurePanelPosition: { x: number; y: number } | null;
+  /** Show the Home screen (recent projects, templates) when the app starts without a file. */
+  showHomeOnStartup: boolean;
 }
 
 export type RenderQuality = 'high' | 'standard';
@@ -91,7 +95,16 @@ export const DEFAULT_PREFERENCES: Preferences = {
   animateCamera: true,
   renderQuality: 'high',
   imageExport: DEFAULT_IMAGE_EXPORT,
+  measurePanelPosition: null,
+  showHomeOnStartup: true,
 };
+
+function parsePanelPosition(raw: unknown): { x: number; y: number } | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const { x, y } = raw as Record<string, unknown>;
+  const ok = (v: unknown) => typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 20000;
+  return ok(x) && ok(y) ? { x: x as number, y: y as number } : null;
+}
 
 const STORAGE_KEY = 'himmelcad.assembler.preferences.v1';
 
@@ -135,6 +148,8 @@ export function parsePreferences(text: string | null): Preferences {
     animateCamera: pick('animateCamera', bool),
     renderQuality: pick('renderQuality', oneOf(['high', 'standard'])),
     imageExport: parseImageExport(r.imageExport),
+    measurePanelPosition: parsePanelPosition(r.measurePanelPosition),
+    showHomeOnStartup: pick('showHomeOnStartup', bool),
   };
 }
 

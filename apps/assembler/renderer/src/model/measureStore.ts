@@ -11,6 +11,7 @@ import { create } from 'zustand';
 import type { KernelAdapter } from '../kernel/adapter.js';
 import type { DistanceTarget, EvaluationResult } from '../kernel/types.js';
 import type { Feature } from './document.js';
+import { usePreferences } from './preferences.js';
 import { refKey, type DistanceResult, type MeasureRef, type Vec3 } from './measure.js';
 
 export interface PinnedMeasurement {
@@ -71,7 +72,8 @@ export const useMeasureStore = create<MeasureState>((set, get) => ({
   pins: [],
   points: [],
   pointMode: false,
-  panelPosition: null,
+  // The last dragged position is a layout preference (remembered across sessions).
+  panelPosition: usePreferences.getState().measurePanelPosition,
   distances: {},
 
   pin: (refs) => {
