@@ -165,6 +165,44 @@ class EdgeSet(_Selection[Edge]):
         return EdgeSet(e for e in self if face.key in e.face_keys)
 
 
+class Parameter:
+    """A document parameter ("variable"): a named value usable from sketch dimension
+    expressions and extrude/fillet/chamfer/shell size fields (``"wall * 2"``)."""
+
+    def __init__(self, doc: Document, data: Mapping[str, Any]) -> None:
+        self.doc = doc
+        self.id = str(data["id"])
+        self.name = str(data["name"])
+        self.unit = str(data["unit"])
+        self.value = float(data["value"])
+        self.expression = data.get("expression")
+
+    def __repr__(self) -> str:
+        suffix = f" = {self.expression}" if self.expression else ""
+        return f"Parameter({self.name!r}{suffix} -> {self.value}{self.unit})"
+
+    def _refresh(self, data: Mapping[str, Any]) -> Parameter:
+        self.name = str(data["name"])
+        self.unit = str(data["unit"])
+        self.value = float(data["value"])
+        self.expression = data.get("expression")
+        return self
+
+    def set(self, value: float | None = None, *, expression: str | None = None, unit: str | None = None) -> Parameter:
+        """Changes the value/expression/unit; every dependent dimension and feature field re-resolves."""
+        result = self.doc.client.edit_parameter(self.id, value=value, expression=expression, unit=unit)
+        return self._refresh(result["parameter"])
+
+    def rename(self, name: str) -> Parameter:
+        """Renames the parameter; every expression referencing it by name is rewritten."""
+        result = self.doc.client.edit_parameter(self.id, name=name)
+        return self._refresh(result["parameter"])
+
+    def delete(self) -> None:
+        """Removes the parameter; raises :class:`ConflictError` (with ``.details["usages"]``) if still used."""
+        self.doc.client.delete_parameter(self.id)
+
+
 class Feature:
     """A history card. ``edit`` changes its parameters; downstream features re-evaluate."""
 
@@ -456,6 +494,33 @@ class Document:
         reads = {"api.hello", "api.describe", "document.get", "features.list", "feature.get", "bodies.list", "body.get", "faces.list", "edges.list", "sketches.list", "selection.get"}
         return [call.method for call in self.log if call.method not in reads]
 
+    # ---- parameters ---------------------------------------------------------------------
+    def param(self, name: str, value: float | None = None, *, unit: str | None = None, expression: str | None = None) -> Parameter:
+        """Gets, creates or edits a document parameter ("variable") by name.
+
+        ``doc.param("wall", 2)`` creates ``wall`` (default unit ``"mm"``) or, if it
+        already exists, sets its value to 2 — one canonical command either way
+        (``parameter.create`` / ``parameter.edit``). ``doc.param("wall")`` (no
+        value/expression/unit) just returns the existing parameter and raises
+        :class:`NotFoundError` if there is none yet. ``doc.param("hole_d",
+        expression="wall * 2")`` computes the value from other parameters.
+        """
+        existing = next((p for p in self.client.parameters() if p["name"] == name), None)
+        if value is None and expression is None and unit is None:
+            if existing is None:
+                raise NotFoundError(raw_code="notFound", message=f'No parameter "{name}"', method="parameters.list")
+            return Parameter(self, existing)
+        if existing is None:
+            result = self.client.create_parameter(name, unit=unit or "mm", value=value, expression=expression)
+        else:
+            result = self.client.edit_parameter(existing["id"], unit=unit, value=value, expression=expression)
+        return Parameter(self, result["parameter"])
+
+    @property
+    def parameters(self) -> list[Parameter]:
+        """Every document parameter, in creation order."""
+        return [Parameter(self, p) for p in self.client.parameters()]
+
     # ---- sketches and features -------------------------------------------------------------
     def sketch(self, plane: str | Face = "XY", offset: float = 0.0) -> Sketch:
         """A sketch on ``"XY"``/``"XZ"``/``"YZ"`` (at ``offset`` mm) or on a planar :class:`Face`."""
@@ -466,12 +531,13 @@ class Document:
     def _feature(self, result: Mapping[str, Any]) -> Feature:
         return Feature(self, str(result["featureId"]), str(result["kind"]), str(result["name"]))
 
-    def extrude(self, profile: Sketch | Face, distance: float, *, op: str = "new", target: Body | None = None, symmetric: bool = False, regions: Sequence[str] | None = None, name: str | None = None, body_name: str | None = None) -> Body:
+    def extrude(self, profile: Sketch | Face, distance: float | None = None, *, expression: str | None = None, op: str = "new", target: Body | None = None, symmetric: bool = False, regions: Sequence[str] | None = None, name: str | None = None, body_name: str | None = None) -> Body:
         """Extrudes a sketch (all regions, or the region keys in ``regions``) or pushes/pulls a planar face.
 
-        ``op``: ``"new"`` body, ``"join"`` or ``"cut"`` (into ``target``; default: the
-        body the sketch lies on, else the last changed body). Returns the new
-        or modified body.
+        ``distance`` or ``expression`` (a formula over ``doc.param(...)`` names, e.g.
+        ``"wall * 2"``). ``op``: ``"new"`` body, ``"join"`` or ``"cut"`` (into
+        ``target``; default: the body the sketch lies on, else the last changed
+        body). Returns the new or modified body.
         """
         if isinstance(profile, Face):
             ref: dict[str, Any] = {"kind": "face", "face": profile.ref}
@@ -481,7 +547,11 @@ class Document:
             if regions is not None:
                 ref["regions"] = list(regions)
             target_id = target.id if target else profile.on_body
-        params: dict[str, Any] = {"profile": ref, "distance": distance, "symmetric": symmetric}
+        params: dict[str, Any] = {"profile": ref, "symmetric": symmetric}
+        if expression is not None:
+            params["distanceExpression"] = expression
+        else:
+            params["distance"] = distance
         if isinstance(profile, Sketch):
             params["operation"] = op
             if op != "new" and target_id:
@@ -547,16 +617,34 @@ class Document:
             raise ValueError("no edges given (did a selector match nothing?)")
         return [e.ref for e in items]
 
-    def fillet(self, edges: Edge | Iterable[Edge], radius: float, *, name: str | None = None) -> Feature:
-        return self._feature(self.client.create_feature("fillet", {"edges": self._edge_refs(edges), "radius": radius}, name=name))
+    def fillet(self, edges: Edge | Iterable[Edge], radius: float | None = None, *, expression: str | None = None, name: str | None = None) -> Feature:
+        """``radius`` or ``expression`` (a formula over ``doc.param(...)`` names, e.g. ``"wall / 2"``)."""
+        params: dict[str, Any] = {"edges": self._edge_refs(edges)}
+        if expression is not None:
+            params["radiusExpression"] = expression
+        else:
+            params["radius"] = radius
+        return self._feature(self.client.create_feature("fillet", params, name=name))
 
-    def chamfer(self, edges: Edge | Iterable[Edge], distance: float, *, name: str | None = None) -> Feature:
-        return self._feature(self.client.create_feature("chamfer", {"edges": self._edge_refs(edges), "distance": distance}, name=name))
+    def chamfer(self, edges: Edge | Iterable[Edge], distance: float | None = None, *, expression: str | None = None, name: str | None = None) -> Feature:
+        """``distance`` or ``expression`` (a formula over ``doc.param(...)`` names)."""
+        params: dict[str, Any] = {"edges": self._edge_refs(edges)}
+        if expression is not None:
+            params["distanceExpression"] = expression
+        else:
+            params["distance"] = distance
+        return self._feature(self.client.create_feature("chamfer", params, name=name))
 
-    def shell(self, open_faces: Face | Iterable[Face], thickness: float, *, name: str | None = None) -> Feature:
-        """Hollows the faces' body inwards, removing ``open_faces``."""
+    def shell(self, open_faces: Face | Iterable[Face], thickness: float | None = None, *, expression: str | None = None, name: str | None = None) -> Feature:
+        """Hollows the faces' body inwards, removing ``open_faces``. ``thickness`` or
+        ``expression`` (a formula over ``doc.param(...)`` names)."""
         faces = [open_faces] if isinstance(open_faces, Face) else list(open_faces)
-        return self._feature(self.client.create_feature("shell", {"bodyId": faces[0].body_id, "faces": [f.ref for f in faces], "thickness": thickness}, name=name))
+        params: dict[str, Any] = {"bodyId": faces[0].body_id, "faces": [f.ref for f in faces]}
+        if expression is not None:
+            params["thicknessExpression"] = expression
+        else:
+            params["thickness"] = thickness
+        return self._feature(self.client.create_feature("shell", params, name=name))
 
     def _boolean(self, operation: str, target: Body, tools: Sequence[Body], name: str | None) -> Feature:
         return self._feature(self.client.create_feature("boolean", {"operation": operation, "targetBodyId": target.id, "toolBodyIds": [t.id for t in tools]}, name=name))

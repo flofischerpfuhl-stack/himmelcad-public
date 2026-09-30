@@ -44,6 +44,8 @@ class FakeTransport:
     def __init__(self) -> None:
         self.requests: list[tuple[str, Mapping[str, Any]]] = []
         self.next_id = 1
+        self.parameters: dict[str, dict[str, Any]] = {}
+        self.next_param_id = 1
 
     def request(self, method: str, params: Mapping[str, Any]) -> Any:
         self.requests.append((method, dict(params)))
@@ -55,6 +57,28 @@ class FakeTransport:
             return {"featureId": feature_id, "kind": params["kind"], "name": f"{params['kind']} {self.next_id}", "bodies": [{"id": "body:feature-extrude-2"}]}
         if method == "transaction.begin":
             return {"transactionId": "tx-1"}
+        if method == "parameters.list":
+            return list(self.parameters.values())
+        if method == "parameter.create":
+            param_id = f"param-{self.next_param_id}"
+            self.next_param_id += 1
+            record = {"id": param_id, "name": params["name"], "unit": params.get("unit") or "mm", "value": params.get("value") or 0.0}
+            if params.get("expression") is not None:
+                record["expression"] = params["expression"]
+            self.parameters[param_id] = record
+            return {"parameter": record}
+        if method == "parameter.edit":
+            record = dict(self.parameters[params["parameterId"]])
+            for key, dest in (("name", "name"), ("unit", "unit"), ("value", "value")):
+                if params.get(key) is not None:
+                    record[dest] = params[key]
+            if params.get("expression") is not None:
+                record["expression"] = params["expression"]
+            self.parameters[params["parameterId"]] = record
+            return {"parameter": record}
+        if method == "parameter.delete":
+            del self.parameters[params["parameterId"]]
+            return {"parameterId": params["parameterId"]}
         if method == "edges.list":
             return [
                 {"bodyId": params["bodyId"], "key": "a|b", "name": "Line +Z", "curve": "line", "midpoint": [0, 0, 3], "length": 6, "direction": [0, 0, 1], "radius": None, "faceKeys": ["a", "b"]},
@@ -157,6 +181,34 @@ class ModelingLayerTests(unittest.TestCase):
         self.assertEqual(edges.filter(lambda e: e.length > 6).one().key, "k3")
         with self.assertRaises(ValueError):
             self.doc.fillet(edges.filter(curve="ellipse"), 1)
+
+    def test_param_creates_then_edits_by_name_and_feeds_a_feature_expression(self) -> None:
+        from himmelcad.assembler import NotFoundError
+
+        with self.assertRaises(NotFoundError):
+            self.doc.param("wall")
+        wall = self.doc.param("wall", 2)
+        self.assertEqual(wall.value, 2)
+        self.assertEqual(wall.unit, "mm")
+        self.assertEqual(self.transport.methods[-1], "parameter.create")
+        # Calling doc.param("wall", 3) again edits the same parameter (create then edit).
+        wall = self.doc.param("wall", 3)
+        self.assertEqual(self.transport.methods[-1], "parameter.edit")
+        self.assertEqual(wall.value, 3)
+        self.assertEqual(len(self.doc.parameters), 1)
+
+        s = self.doc.sketch("XY")
+        s.rect(80, 50)
+        body = self.doc.extrude(s, expression="wall * 2")
+        extrude_params = self.transport.requests[-1][1]["params"]
+        self.assertEqual(extrude_params["distanceExpression"], "wall * 2")
+        self.assertNotIn("distance", extrude_params)
+        self.assertIsNotNone(body)
+
+        wall.rename("thickness")
+        self.assertEqual(self.doc.param("thickness").value, 3)
+        wall.delete()
+        self.assertEqual(self.doc.parameters, [])
 
     def test_exports_are_written_by_the_client(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -275,6 +327,45 @@ class HeadlessIntegrationTests(unittest.TestCase):
             body = doc.extrude(s, 5)
             s.edit_profile(1, radius=6)
             self.assertEqual(body.bbox.max[0], 56.0)
+
+    def test_document_parameters_drive_a_sketch_dimension_and_an_extrude(self) -> None:
+        with Document(AssemblerClient(StdioTransport())) as doc:
+            wall = doc.param("wall", 2)
+            s = doc.sketch("XY")
+            s.rect(80, 50)
+            plate = doc.extrude(s, expression="wall * 3")
+            self.assertEqual(plate.bbox.size[2], 6.0)
+            # A sketch dimension expression also reads a document parameter (falls
+            # back to it once the sketch's own dimension names don't match),
+            # resolved whenever that sketch is written.
+            width_dim = s.dimensions[0]["width"]
+            s.set_dimension(width_dim, expression="wall * 40")
+            self.assertEqual(plate.bbox.size[0], 80.0)
+
+            # Changing the parameter's value immediately re-resolves every feature
+            # `*Expression` field (extrude/fillet/chamfer/shell) that reads it, in
+            # the same undo step as the parameter edit.
+            wall.set(3)
+            self.assertEqual(plate.bbox.size[2], 9.0)
+            # A sketch dimension expression re-resolves the next time that sketch
+            # is written (not retroactively on a bare parameter edit — the sketch
+            # solver only re-runs when the sketch itself changes).
+            self.assertEqual(plate.bbox.size[0], 80.0)
+            s.set_dimension(width_dim, expression="wall * 40")
+            self.assertEqual(plate.bbox.size[0], 120.0)
+
+            # Renaming rewrites the extrude's stored expression and the sketch
+            # dimension's expression alike.
+            wall.rename("thickness")
+            self.assertEqual(doc.feature(plate.feature.id).params["distanceExpression"], "thickness * 3")
+            renamed_sketch = next(sk for sk in doc.client.sketches() if sk["featureId"] == s.id)
+            renamed_dim = next(d for d in renamed_sketch["dimensions"] if d["name"] == width_dim)
+            self.assertEqual(renamed_dim["expression"], "thickness * 40")
+
+            # A parameter still read by a dimension/feature expression cannot be deleted.
+            with self.assertRaises(ConflictError) as caught:
+                wall.delete()
+            self.assertTrue(caught.exception.details.get("usages"))
 
 
 if __name__ == "__main__":
