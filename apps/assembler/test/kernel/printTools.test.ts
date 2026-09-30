@@ -600,6 +600,10 @@ void test('fillet/chamfer variants: variable radius, two distances, distance-ang
   // Linear radius law: removed (1 - pi/4) * integral r^2 = (1 - pi/4) L (r1^2 + r1 r2 + r2^2) / 3 (approximately).
   near(vr.volume, 2000 - ((1 - Math.PI / 4) * 20 * (1 + 3 + 9)) / 3, 1.2, 'variable fillet');
   assert.equal(vr.valid, true);
+  // An end radius that does not fit: OCCT returns a broken solid, reported as an error.
+  const broken = await evaluate([...block, { ...variable, radius: 15, radius2: 3 }]);
+  assert.match(broken.errors.f ?? '', /an end radius does not fit/);
+  assert.deepEqual(broken.errorRefs?.f?.edgeKeys, [edge.key]);
 
   const chamfer = (extra: Partial<ChamferFeature>): ChamferFeature => ({
     ...base('c'),

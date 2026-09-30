@@ -141,6 +141,16 @@ void test('agent API: fillet by rule, variable radius, chamfer modes, shell and 
     'selector resolved to a stable face ref',
   );
   await fails(call('feature.create', { kind: 'fillet', params: { radius: 1 } }), 'invalidParams');
+  // Too large for the part: the failure names the edge it fails on.
+  const tooBig = await fails(
+    call('feature.create', {
+      kind: 'fillet',
+      params: { edges: [{ bodyId, select: '>Z and |X and <Y' }], radius: 12 },
+    }),
+    'featureFailed',
+  );
+  const failures = tooBig.details?.failures as { refs?: { edgeKeys?: string[] } }[];
+  assert.equal(failures[0]?.refs?.edgeKeys?.length, 1, 'the failing edge key is reported');
   await call('feature.delete', { featureId: byRule.featureId });
 
   const chamfer = await call<{ featureId: string }>('feature.create', {

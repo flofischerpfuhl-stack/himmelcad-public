@@ -76,6 +76,7 @@ import {
   faceOrigins,
   facesOf,
   heapBytes,
+  isValidShape,
   meshShapeEdges,
   shapeHash,
   shellWithHistory,
@@ -852,6 +853,15 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
         bodyId: body.id,
         edgeKeys: failing.length > 0 ? keys : unique.map((i) => edgeKeys[i]!),
       });
+    }
+    // OCCT builds some variable fillets / asymmetric chamfers that do not fit (a self-intersecting
+    // result instead of an error): check those results.
+    if ((options.size2 !== undefined || options.chamfer) && !isValidShape(oc, built.shape)) {
+      built.history.delete();
+      throw new FeatureError(
+        `${label} failed: ${feature.kind === 'fillet' ? 'an end radius' : 'a distance'} does not fit the faces next to the edge; try smaller values`,
+        { bodyId: body.id, edgeKeys: unique.map((i) => edgeKeys[i]!) },
+      );
     }
     const role = feature.kind === 'fillet' ? 'round' : 'chamfer';
     try {
