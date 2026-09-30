@@ -61,6 +61,8 @@ export function featureKindLabel(kind: Feature['kind']): string {
       return 'Appearance';
     case 'importStep':
       return 'Import';
+    case 'meshSolid':
+      return 'Mesh to Solid';
     default:
       return MODELING_FEATURE_LABEL[kind];
   }

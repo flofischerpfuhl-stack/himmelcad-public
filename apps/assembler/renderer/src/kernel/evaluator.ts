@@ -32,6 +32,7 @@ import {
   type Feature,
   type FilletFeature,
   type ImportStepFeature,
+  type MeshSolidFeature,
   type MoveFeature,
   type SetAppearanceFeature,
   type ShellFeature,
@@ -41,6 +42,11 @@ import {
   type Vec3,
 } from '../model/document.js';
 import { edgeRuleBodyId, edgeRuleLabel } from '../model/blendOptions.js';
+import { extraBodyId } from '../model/features.js';
+import { decodeMeshSolidPayload } from '../interop/meshSolid.js';
+import { buildMeshSolid } from './meshSolid.js';
+import { readStepAssembly, type StepImportResult } from './stepImport.js';
+import { exportStepDocument, type StepExportOptions } from './stepExport.js';
 import { projectedEntities, refreshProjections, type EdgeSample } from '../sketch/projection.js';
 import type { SketchRegion } from '../sketch/regions.js';
 import type { SketchProjection } from '../sketch/types.js';
@@ -157,6 +163,8 @@ interface BodyState {
   shape: Shape3D;
   /** Keyed descriptors aligned with the shape's faces (explorer order). */
   faces: KeyedFace[];
+  /** Assembly folder path of an imported part (`Body.itemPath`). */
+  itemPath?: readonly string[];
 }
 
 /** Tessellation settings per quality: chordal deflection relative to the body diagonal. */
@@ -215,7 +223,11 @@ export interface KernelEvaluator {
    * body id) as one STEP file, one object per body, named and coloured.
    * Uses the exact B-rep, not the tessellated mesh.
    */
-  exportStep(features: readonly Feature[], bodyIds?: readonly string[]): Promise<Uint8Array>;
+  exportStep(
+    features: readonly Feature[],
+    bodyIds?: readonly string[],
+    options?: StepExportOptions,
+  ): Promise<Uint8Array>;
   /**
    * Replays `features` and tessellates the resulting bodies (or a subset)
    * at the given deflection for export (STL/3MF resolution presets). Meshes
@@ -1165,8 +1177,71 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
     body.color = feature.color;
   }
 
+  /**
+   * Imports a STEP file (Shapr3D-style "Import", one History step). With
+   * `structure: 'assembly'` every placed part becomes its own body, named
+   * and coloured from the file, carrying its assembly folder path; the
+   * first part keeps the feature's plain body id and face keys.
+   */
+  function applyImportStepAssembly(feature: ImportStepFeature, ctx: ReplayContext): void {
+    let result: StepImportResult;
+    try {
+      result = readStepAssembly(oc, base64ToBytes(feature.data), feature.fileName);
+    } catch (error) {
+      if (isFatalKernelError(error)) throw error;
+      throw new FeatureError(`STEP import failed: ${describeError(error)}`);
+    }
+    for (const warning of result.warnings) ctx.warn(warning);
+    result.parts.forEach((part, i) => {
+      const id = i === 0 ? bodyIdFor(feature.id) : extraBodyId(feature.id, i);
+      const prefix = i === 0 ? feature.id : `${feature.id}:${i}`;
+      const geoms = describeShape(part.shape);
+      const created = ctx.createdCount;
+      ctx.bodies.set(id, {
+        id,
+        name: part.name,
+        color: part.color ?? COLOR_PALETTE[created % COLOR_PALETTE.length]!,
+        createdBy: feature.id,
+        shape: part.shape,
+        faces: geoms.map((g, k) => ({ ...g, key: `${prefix}:face:${k}`, aliases: [] })),
+        ...(part.path.length > 0 ? { itemPath: part.path } : {}),
+      });
+      ctx.createdCount += 1;
+      ctx.order.push(id);
+    });
+  }
+
+  /** Converts an embedded closed triangle mesh into a solid body (`kernel/meshSolid.ts`). */
+  function applyMeshSolid(feature: MeshSolidFeature, ctx: ReplayContext): void {
+    let shape: Shape3D;
+    try {
+      const payload = decodeMeshSolidPayload(base64ToBytes(feature.data));
+      shape = buildMeshSolid(oc, payload).shape;
+    } catch (error) {
+      if (isFatalKernelError(error)) throw error;
+      throw new FeatureError(`Mesh to solid failed: ${describeError(error)}`);
+    }
+    const geoms = describeShape(shape);
+    const id = bodyIdFor(feature.id);
+    const created = ctx.createdCount;
+    ctx.bodies.set(id, {
+      id,
+      name: feature.fileName || `Solid ${created + 1}`,
+      color: COLOR_PALETTE[created % COLOR_PALETTE.length]!,
+      createdBy: feature.id,
+      shape,
+      faces: geoms.map((g, i) => ({ ...g, key: `${feature.id}:face:${i}`, aliases: [] })),
+    });
+    ctx.createdCount += 1;
+    ctx.order.push(id);
+  }
+
   /** Imports a STEP file as a new body (Shapr3D-style "Import"), naming its faces by index. */
   async function applyImportStep(feature: ImportStepFeature, ctx: ReplayContext): Promise<void> {
+    if (feature.structure === 'assembly') {
+      applyImportStepAssembly(feature, ctx);
+      return;
+    }
     let shape: Shape3D;
     try {
       const bytes = base64ToBytes(feature.data);
@@ -1335,6 +1410,7 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
         },
         faces,
         edges,
+        ...(state.itemPath ? { itemPath: [...state.itemPath] } : {}),
       },
     };
   }
@@ -1362,12 +1438,14 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
       (cached.quality === q || cached.quality === 'final')
     ) {
       cached.lastUsed = ++meshClock;
+      const { itemPath: _cachedPath, ...rest } = cached.body;
       const body: Body = {
-        ...cached.body,
+        ...rest,
         id: state.id,
         name: state.name,
         color: state.color,
         createdBy: state.createdBy,
+        ...(state.itemPath ? { itemPath: [...state.itemPath] } : {}),
       };
       return { body, triangles: body.mesh.indices.length / 3, reused: true };
     }
@@ -1540,6 +1618,8 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
         return applyAppearance(feature, ctx);
       case 'importStep':
         return applyImportStep(feature, ctx);
+      case 'meshSolid':
+        return applyMeshSolid(feature, ctx);
       default:
         applyModelingFeature(feature, ctx, kit);
     }
@@ -1723,7 +1803,7 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
       });
     },
 
-    exportStep(features, bodyIds) {
+    exportStep(features, bodyIds, exportOptions) {
       return serialized(async () => {
         const replay = await replayFeatures(features, { cacheTail: true });
         try {
@@ -1731,22 +1811,20 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
           const firstError = Object.entries(errors)[0];
           if (firstError) throw new Error(`Cannot export: ${firstError[1]}`);
           const wanted = bodyIds ? new Set(bodyIds) : null;
-          const shapes = creationOrder
+          const bodies = creationOrder
             .map((id) => ctx.bodies.get(id))
             .filter(
               (state): state is BodyState =>
                 state !== undefined && (!wanted || wanted.has(state.id)),
             )
-            .map((state) => ({ shape: state.shape, color: state.color, name: state.name }));
-          if (shapes.length === 0) throw new Error('Nothing to export');
-          openArena();
-          try {
-            const blob = R.exportSTEP(shapes, { unit: 'mm', modelUnit: 'mm' });
-            const buffer = await blob.arrayBuffer();
-            return new Uint8Array(buffer);
-          } finally {
-            closeArena();
-          }
+            .map((state) => ({
+              id: state.id,
+              shape: state.shape,
+              color: state.color,
+              name: state.name,
+            }));
+          if (bodies.length === 0) throw new Error('Nothing to export');
+          return inArena(() => exportStepDocument(oc, bodies, exportOptions));
         } finally {
           releaseTransient(replay);
         }

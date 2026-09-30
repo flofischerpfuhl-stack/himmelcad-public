@@ -236,6 +236,31 @@ export interface ImportStepFeature extends FeatureBase {
   data: string;
   /** Original file name, for display and as the default body name. */
   fileName: string;
+  /**
+   * `assembly` (every import since the interop work, `kernel/stepImport.ts`):
+   * one body per placed part, named and coloured from the file, with its
+   * assembly folder path (`Body.itemPath`). Absent (older projects): the
+   * whole file is one body, as it was imported then — kept so existing
+   * references to that body stay valid.
+   */
+  structure?: 'assembly';
+}
+
+/**
+ * Converts a closed triangle mesh (an imported reference mesh) into a B-rep
+ * solid (`kernel/meshSolid.ts`): coplanar neighbouring triangles become one
+ * planar face, every other triangle its own planar face. The welded mesh is
+ * embedded (`interop/meshSolid.ts` payload, base64) so the step replays
+ * without the reference mesh.
+ */
+export interface MeshSolidFeature extends FeatureBase {
+  kind: 'meshSolid';
+  /** Base64 of the welded mesh payload (`encodeMeshSolidPayload`). */
+  data: string;
+  /** Name of the source (reference mesh name), the body's default name. */
+  fileName: string;
+  /** Triangle count of the payload (display, limits). */
+  triangles: number;
 }
 
 export type Feature =
@@ -248,6 +273,7 @@ export type Feature =
   | MoveFeature
   | SetAppearanceFeature
   | ImportStepFeature
+  | MeshSolidFeature
   | ModelingFeature;
 
 /** Minimum size, in millimetres, of sketch dimensions and extrude distances. */

@@ -132,6 +132,8 @@ export function featureKindIcon(kind: Feature['kind']): LucideIcon {
       return Eye;
     case 'importStep':
       return FileInput;
+    case 'meshSolid':
+      return Box;
     default:
       return MODELING_FEATURE_ICON[kind];
   }

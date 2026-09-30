@@ -1,0 +1,35 @@
+# HimmelCAD interop test fixture: an object with two groups.
+# "base": a 20 x 10 x 2 box written with quads (fan-triangulated on import).
+# "pin": a triangular prism with per-vertex colours (0.2, 0.4, 0.6) and
+# negative (relative) face indices. Units: none (OBJ has no unit).
+mtllib bracket.mtl
+o Bracket
+g base
+usemtl steel
+v 0 0 0
+v 20 0 0
+v 20 10 0
+v 0 10 0
+v 0 0 2
+v 20 0 2
+v 20 10 2
+v 0 10 2
+vn 0 0 1
+f 1 4 3 2
+f 5 6 7 8
+f 1 2 6 5
+f 2 3 7 6
+f 3 4 8 7
+f 4 1 5 8
+g pin
+v 5 5 2 0.2 0.4 0.6
+v 7 5 2 0.2 0.4 0.6
+v 5 7 2 0.2 0.4 0.6
+v 5 5 8 0.2 0.4 0.6
+v 7 5 8 0.2 0.4 0.6
+v 5 7 8 0.2 0.4 0.6
+f -6 -4 -5
+f -3 -2 -1
+f -6 -5 -2 -3
+f -5 -4 -1 -2
+f -4 -6 -3 -1

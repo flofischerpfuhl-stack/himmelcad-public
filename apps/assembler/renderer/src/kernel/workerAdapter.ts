@@ -34,6 +34,7 @@ import type {
   EvaluationResult,
 } from './types.js';
 import type { ExportMeshBody, MeshExportOptions } from './meshExport.js';
+import type { StepExportOptions } from './stepExport.js';
 
 interface Pending {
   jobId: number;
@@ -282,6 +283,7 @@ export class WorkerKernelAdapter extends QueuedKernelAdapter {
   override exportStep(
     features: readonly Feature[],
     bodyIds?: readonly string[],
+    options?: StepExportOptions,
   ): Promise<Uint8Array> {
     return new Promise((resolve, reject) => {
       const worker = this.worker;
@@ -296,6 +298,7 @@ export class WorkerKernelAdapter extends QueuedKernelAdapter {
         jobId,
         features: [...features],
         ...(bodyIds ? { bodyIds: [...bodyIds] } : {}),
+        ...(options ? { options } : {}),
       };
       worker.postMessage(message);
     });

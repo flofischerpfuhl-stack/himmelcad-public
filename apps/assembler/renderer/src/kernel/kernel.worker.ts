@@ -133,7 +133,9 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
     void ready.then(
       async (evaluator) => {
         try {
-          const bytes = (await evaluator.exportStep(message.features, message.bodyIds)).slice();
+          const bytes = (
+            await evaluator.exportStep(message.features, message.bodyIds, message.options)
+          ).slice();
           post({ type: 'exportResult', jobId: message.jobId, bytes: bytes.buffer }, [bytes.buffer]);
         } catch (error) {
           post({

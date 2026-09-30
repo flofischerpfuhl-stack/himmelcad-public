@@ -94,6 +94,13 @@ export interface Body {
   mesh: BodyMesh;
   faces: FaceInfo[];
   edges: EdgeInfo[];
+  /**
+   * Assembly folders the body was imported under (STEP product structure,
+   * top-level product first), e.g. `["Robot", "Arm"]`. Absent for bodies
+   * not imported from an assembly. The Items panel files the body there once
+   * (`interop/importFolders.ts`); afterwards the user's folders win.
+   */
+  itemPath?: string[];
 }
 
 /**
