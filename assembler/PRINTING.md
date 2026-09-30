@@ -24,7 +24,9 @@ not undoable. Thresholds, material and printer are user preferences in
 orientation are ordinary `transform` History steps ("Place on Plate n",
 "Orient for Print n": rotate about world X, Y, Z through the body's box
 centre, then translate) — one undo step, editable afterwards, replayed by the
-kernel like Move/Rotate.
+kernel like Move/Rotate. In the app, a placement that moves nothing (the "as
+modelled" candidate, a face that already lies on the plate) adds no step and
+says so; the agent commands are unchanged.
 
 ## Analysis (build direction +Z)
 

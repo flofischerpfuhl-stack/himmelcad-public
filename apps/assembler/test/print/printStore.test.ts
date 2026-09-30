@@ -93,6 +93,24 @@ void test('Place on Plate and Auto orient are one undo step each', async () => {
   usePrintStore.getState().setEnabled(false);
 });
 
+void test('an orientation or placement that moves nothing adds no History step', async () => {
+  await load(boxFeatures('n', 30, 20, 5));
+  const body = store.getState().evaluation.bodies[0]!;
+  const count = store.getState().features.length;
+  // A flat plate on the plate: "as modelled" ranks first.
+  usePrintStore.getState().startAutoOrient(body.id);
+  await until(() => usePrintStore.getState().orient?.status === 'done', 'orientation ranking');
+  usePrintStore.getState().applyOrientation(0);
+  await store.getState().whenSettled();
+  assert.equal(store.getState().features.length, count, 'no identity transform step');
+  assert.equal(usePrintStore.getState().orient, null, 'the candidate list closes');
+  // Its bottom face already lies on the plate.
+  const bottom = body.faces.find((f) => f.normal && f.normal[2] < -0.99)!;
+  assert.equal(usePrintStore.getState().placeOnPlate(body.id, bottom.key), null);
+  await store.getState().whenSettled();
+  assert.equal(store.getState().features.length, count);
+});
+
 void test('place-on-plate pick: the next face click places the body; empty selection cancels', async () => {
   await load(boxFeatures('p', 30, 20, 10));
   const body = store.getState().evaluation.bodies[0]!;

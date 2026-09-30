@@ -33,6 +33,14 @@ function modelBody(evaluation: EvaluationResult, bodyId: string): Body {
   return body;
 }
 
+/** `true` when the placement moves nothing (the body already lies that way on the plate). */
+export function isIdentityPlacement(placement: PlacementTransform): boolean {
+  const eps = 1e-9;
+  return [placement.dx, placement.dy, placement.dz, placement.rx, placement.ry, placement.rz].every(
+    (v) => Math.abs(v) < eps,
+  );
+}
+
 /** A transform feature for `placement` of `bodyId`. */
 export function placementFeature(
   bodyId: string,

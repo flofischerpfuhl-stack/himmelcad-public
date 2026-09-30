@@ -18,6 +18,7 @@ import { useWorkspaceStore } from '../model/workspace.js';
 import { bodyToPrintInput, type PrintFinding, type PrintReport } from './analysis.js';
 import type { OrientationCandidate } from './orientation.js';
 import {
+  isIdentityPlacement,
   orientationInput,
   orientFeatureName,
   placeOnPlateFeature,
@@ -307,8 +308,13 @@ export const usePrintStore = create<PrintState>((set, get) => {
           faceKey,
           doc.allocateFeatureId('transform'),
         );
-        doc.addFeature(feature, [{ kind: 'body', bodyId }]);
         set({ placePicking: null });
+        // Already lying on that face: no History step that moves nothing.
+        if (isIdentityPlacement(feature)) {
+          useWorkspaceStore.getState().notify('The body already lies on that face.');
+          return null;
+        }
+        doc.addFeature(feature, [{ kind: 'body', bodyId }]);
         return null;
       } catch (error) {
         return error instanceof PlacementError || error instanceof Error
@@ -373,6 +379,12 @@ export const usePrintStore = create<PrintState>((set, get) => {
       const doc = useAssemblerStore.getState();
       if (doc.activeTool) {
         useWorkspaceStore.getState().notify('Finish or cancel the active tool first.', 'warning');
+        return;
+      }
+      if (isIdentityPlacement(candidate.transform)) {
+        // "As modelled" won: nothing to move, so no History step.
+        useWorkspaceStore.getState().notify('The body is already in this orientation.');
+        set({ orient: null });
         return;
       }
       const feature = placementFeature(
