@@ -1,15 +1,13 @@
 /**
  * Loads the real OCCT WebAssembly kernel in Node for tests (once per test
- * file — every `node --test` file runs in its own process).
+ * file — every `node --test` file runs in its own process). The module is
+ * chosen by `HIMMELCAD_OCCT` (`headless/occtModule.ts`).
  */
-import { createRequire } from 'node:module';
-
-import init from 'replicad-opencascadejs';
-
+import { loadOcct, type OpenCascadeModule } from '../../headless/occtModule.js';
 import { createEvaluator, type KernelEvaluator } from '../../renderer/src/kernel/evaluator.js';
 import { InProcessKernelAdapter } from '../../renderer/src/kernel/adapter.js';
 
-type OpenCascade = Awaited<ReturnType<typeof init>>;
+type OpenCascade = OpenCascadeModule;
 
 let loading: Promise<{ evaluator: KernelEvaluator; loadMs: number; oc: OpenCascade }> | null = null;
 
@@ -19,10 +17,8 @@ export function loadNodeKernel(): Promise<{
   oc: OpenCascade;
 }> {
   loading ??= (async () => {
-    const require = createRequire(import.meta.url);
-    const wasmPath = require.resolve('replicad-opencascadejs/wasm');
     const start = performance.now();
-    const oc = await init({ locateFile: () => wasmPath });
+    const oc = await loadOcct();
     const loadMs = performance.now() - start;
     return { evaluator: createEvaluator(oc), loadMs, oc };
   })();

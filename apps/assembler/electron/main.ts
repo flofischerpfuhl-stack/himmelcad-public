@@ -110,6 +110,8 @@ const WORKER_CSP =
 const WORKER_CSP_FILE_PREFIXES = [
   'kernel.worker-',
   'replicad_single-',
+  // The HimmelCAD OCCT build's glue chunk (`HIMMELCAD_OCCT=himmelcad`, vendor/occt-wasm).
+  'himmelcad_occt-',
   'solver.worker-',
   'planegcs-',
 ];

@@ -40,6 +40,7 @@ import {
   PROJECT_FORMAT_ID,
   loadProjectFile,
 } from '../../renderer/src/model/project/format.js';
+import { selectedOcctModule } from '../../headless/occtModule.js';
 import { loadNodeKernel } from './nodeKernel.js';
 
 const base = (id: string) => ({ id, name: id, suppressed: false });
@@ -871,8 +872,13 @@ void test('delete face: fill a hole, remove a fillet and a chamfer; unsupported 
   }
 
   const topDel = await evaluate([...doc, { ...del, faces: [faceRef(plate, topOf(10))] }]);
-  assert.match(topDel.errors.d1 ?? '', /^Delete Face can remove holes/);
-  assert.match(topDel.errors.d1 ?? '', /BRepAlgoAPI_Defeaturing/);
+  if (selectedOcctModule() === 'himmelcad') {
+    // The HimmelCAD OCCT build tries general defeaturing first (occtExtras.test.ts).
+    assert.match(topDel.errors.d1 ?? '', /^Delete Face could not remove this face/);
+  } else {
+    assert.match(topDel.errors.d1 ?? '', /^Delete Face can remove holes/);
+    assert.match(topDel.errors.d1 ?? '', /BRepAlgoAPI_Defeaturing/);
+  }
 });
 
 // ---- Schema v1 files with modelling features -------------------------------------------------

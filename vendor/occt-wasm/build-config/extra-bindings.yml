@@ -1,0 +1,21 @@
+# HimmelCAD additions on top of replicad's opencascade.js build configuration
+# (sgenoud/replicad e4b05f67, packages/replicad-opencascadejs/build-config/
+# custom_build_single.yml). `render-config.py` appends these bindings and C++
+# files to that file and renames the build; everything else (emcc flags,
+# replicad's own wrappers, the opencascade.js toolchain) stays identical.
+name: himmelcad_occt.js
+bindings:
+  # Delete Face / remove features (OCCT's defeaturing on top of the Boolean
+  # component; history via BRepBuilderAPI_MakeShape).
+  - symbol: BRepAlgoAPI_Defeaturing
+  # IGES exchange.
+  - symbol: IGESControl_Controller
+  - symbol: IGESControl_Reader
+  - symbol: IGESControl_Writer
+  # STEP assemblies with names/colours (the writer side is already bound).
+  - symbol: STEPCAFControl_Reader
+  # BRepOffset_MakeOffset (per-face offsets) through a facade, see
+  # wrappers/himmelcad-offset.cpp.
+  - symbol: HimmelcadOffset
+additionalCppFiles:
+  - wrappers/himmelcad-offset.cpp

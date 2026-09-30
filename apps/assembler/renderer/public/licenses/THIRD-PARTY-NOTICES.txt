@@ -53,6 +53,27 @@ the extent needed to debug such modifications. The corresponding source
 code is available from the URLs above; Himmel:CAD makes no modifications to
 it.
 
+Builds made with the HimmelCAD OCCT module (build option
+HIMMELCAD_OCCT=himmelcad) ship instead
+
+  assets/himmelcad_occt-<hash>.wasm    (HimmelCAD build "@himmelcad/occt-wasm"
+                                        8.0.1-hc.1: the same OCCT 8.0.1,
+                                        opencascade.js toolchain and
+                                        replicad bindings, plus the OCCT
+                                        classes BRepAlgoAPI_Defeaturing,
+                                        IGESControl_Reader/Writer/Controller,
+                                        STEPCAFControl_Reader and a C++
+                                        facade over BRepOffset_MakeOffset;
+                                        LGPL-2.1-only)
+  assets/himmelcad_occt-<hash>.js      (its Emscripten loader)
+
+This is a modified build of the library. Its complete build recipe,
+the added C++ source and the pinned revisions of every input are in the
+Himmel:CAD source repository under vendor/occt-wasm (README.md, build.sh),
+published under the LGPL-2.1 with each release that ships it. The same
+replacement rights apply: rebuild with vendor/occt-wasm/build.sh (or your
+own modification of it) and replace the two files, keeping their names.
+
 
 FreeCAD planeGCS (sketch constraint solver)
 -------------------------------------------
