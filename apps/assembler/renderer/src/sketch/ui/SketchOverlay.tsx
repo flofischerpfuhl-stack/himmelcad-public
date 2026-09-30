@@ -21,7 +21,6 @@ import { registerEscapeRung } from '@himmelcad/ui';
 
 import { useAssemblerStore } from '../../model/store.js';
 import { boxModeFor, normalizeRect } from '../../viewport/boxSelect.js';
-import { DimensionLabel } from '../../viewport/DimensionLabel.js';
 import { SelectionBox } from '../../viewport/SelectionBox.js';
 import {
   SKETCH_BOX_FILTERS,
@@ -63,6 +62,7 @@ import {
 } from '../types.js';
 import { chipSize, layoutBadges, layoutChips, nextChipText, type Rect } from './declutter.js';
 import { SketchDimensionChip } from './SketchDimensionChip.js';
+import { ToolValueChip } from './ToolValueChip.js';
 import styles from './SketchOverlay.module.css';
 
 /** Screen mapping of the sketch plane, provided by the viewport. */
@@ -204,16 +204,30 @@ export function SketchOverlay({
   const rootRef = useRef<HTMLDivElement>(null);
   const [cursor, setCursor] = useState<Vec2 | null>(null);
   const [hoverId, setHoverId] = useState<string | null>(null);
-  const [chipEditing, setChipEditing] = useState(false);
-  const [chipRequest, setChipRequest] = useState<{
-    nonce: number;
-    text: string;
-    field: ValueField;
-  } | null>(null);
-  /** Digits typed while a value chip opens (before its field has focus) — kept, not lost. */
-  const pendingChip = useRef<{ field: ValueField; text: string } | null>(null);
+  /**
+   * The tool value being typed. The overlay owns the text, so digits typed
+   * before the chip's field has focus and digits typed into it land in the
+   * same place (the known "lost keystrokes" limit).
+   */
+  const [chipTyping, setChipTypingState] = useState<{ field: ValueField; text: string } | null>(
+    null,
+  );
+  const chipTypingRef = useRef<{ field: ValueField; text: string } | null>(null);
+  const setChipTyping = useCallback((next: { field: ValueField; text: string } | null) => {
+    chipTypingRef.current = next;
+    setChipTypingState(next);
+  }, []);
+  const chipEditing = chipTyping !== null;
+  const commitChipValue = useCallback((field: ValueField, text: string) => {
+    const value = Number(text.replace(',', '.').replace(/\s*(mm|°|deg)\s*$/i, ''));
+    const snap = lastInference.current;
+    if (text.trim() === '' || !Number.isFinite(value) || !snap) return;
+    void useSketchStore.getState().dispatch({ type: 'value', field, value, snap });
+  }, []);
   /** Digits typed while a new dimension's field opens. */
   const [dimTypeahead, setDimTypeahead] = useState<string | null>(null);
+  const dimTypeaheadRef = useRef<string | null>(null);
+  dimTypeaheadRef.current = dimTypeahead;
   const [labelDrag, setLabelDrag] = useState<{
     id: string;
     offset: number;
@@ -301,6 +315,20 @@ export function SketchOverlay({
       if (event.key === 'Enter') {
         event.preventDefault();
         event.stopImmediatePropagation();
+        // Typed so fast that the chip's field has no focus yet: apply what was typed.
+        const typed = dimTypeaheadRef.current;
+        if (s.editDimensionId && typed) {
+          setDimTypeahead(null);
+          void store.setDimension(s.editDimensionId, typed);
+          store.closeDimensionEditor();
+          return;
+        }
+        const pending = chipTypingRef.current;
+        if (pending) {
+          setChipTyping(null);
+          commitChipValue(pending.field, pending.text);
+          return;
+        }
         if (s.tool.kind === 'text') void store.commitText();
         else if (toolInProgress(s.tool)) void store.dispatch({ type: 'finish' });
         else void store.finish();
@@ -311,17 +339,16 @@ export function SketchOverlay({
         if (s.editDimensionId) {
           event.preventDefault();
           event.stopImmediatePropagation();
-          setDimTypeahead((previous) => (previous ?? '') + event.key);
+          dimTypeaheadRef.current = (dimTypeaheadRef.current ?? '') + event.key;
+          setDimTypeahead(dimTypeaheadRef.current);
           return;
         }
         const chips = chipFieldsRef.current;
         if (chips.length === 0 || event.key === ',' || event.key === '-') return;
         event.preventDefault();
         event.stopImmediatePropagation();
-        // Keys typed before the chip's field has focus extend the text it opens with.
-        const next = nextChipText(pendingChip.current, event.key, chips[0]!);
-        pendingChip.current = next;
-        setChipRequest((previous) => ({ nonce: (previous?.nonce ?? 0) + 1, ...next }));
+        // Keys typed before the chip's field has focus extend the same text.
+        setChipTyping(nextChipText(chipTypingRef.current, event.key, chips[0]!));
       }
     };
     window.addEventListener('keydown', onKeyDown, true);
@@ -331,6 +358,8 @@ export function SketchOverlay({
     };
   }, [active]);
 
+  const lastInference = useRef<Inference | null>(null);
+  lastInference.current = inference;
   const chipFieldsRef = useRef<ValueField[]>([]);
   chipFieldsRef.current =
     tool && toolInProgress(tool) && preview ? preview.chips.map((c) => c.field) : [];
@@ -338,10 +367,8 @@ export function SketchOverlay({
   // Leaving the tool clears transient input state.
   const toolKind = tool?.kind;
   useEffect(() => {
-    setChipRequest(null);
-    setChipEditing(false);
-    pendingChip.current = null;
-  }, [toolKind]);
+    setChipTyping(null);
+  }, [toolKind, setChipTyping]);
 
   // A new dimension opens its value chip once its label is mounted.
   const [editNonce, setEditNonce] = useState(0);
@@ -885,6 +912,12 @@ export function SketchOverlay({
           const d = pathOf(c, api);
           return d ? <path key={`p${i}`} d={d} className={styles.preview} /> : null;
         })}
+        {preview?.points.map((p, i) => {
+          const s = api.toScreen(p);
+          return s ? (
+            <circle key={`pp${i}`} cx={s[0]} cy={s[1]} r={3} className={styles.previewPoint} />
+          ) : null;
+        })}
         {textPreview.map((c, i) => {
           const d = pathOf(c, api, true);
           return d ? <path key={`t${i}`} d={d} className={styles.preview} /> : null;
@@ -934,11 +967,9 @@ export function SketchOverlay({
             const angle = chip.field === 'angle';
             const count = chip.field === 'count';
             return (
-              <DimensionLabel
+              <ToolValueChip
                 key={chip.field}
                 label={FIELD_LABEL[chip.field]}
-                value={chip.value}
-                unit={angle ? '°' : count ? '' : 'mm'}
                 display={
                   chip.field === 'diameter'
                     ? `Ø ${Math.round(chip.value * 100) / 100}`
@@ -950,20 +981,9 @@ export function SketchOverlay({
                 }
                 x={at[0] + 16}
                 y={at[1] - 16 + index * 26}
-                editRequest={chipRequest && chipRequest.field === chip.field ? chipRequest : null}
-                onBeginEdit={() => setChipEditing(true)}
-                onCancelEdit={() => {
-                  setChipEditing(false);
-                  pendingChip.current = null;
-                }}
-                onCommit={(value) => {
-                  pendingChip.current = null;
-                  const s = useSketchStore.getState().session;
-                  if (!s || !inference) return;
-                  void useSketchStore
-                    .getState()
-                    .dispatch({ type: 'value', field: chip.field, value, snap: inference });
-                }}
+                text={chipTyping?.field === chip.field ? chipTyping.text : null}
+                onText={(text) => setChipTyping(text === null ? null : { field: chip.field, text })}
+                onCommit={(value) => commitChipValue(chip.field, String(value))}
               />
             );
           })

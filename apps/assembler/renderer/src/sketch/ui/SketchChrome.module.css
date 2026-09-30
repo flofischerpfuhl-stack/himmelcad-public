@@ -67,6 +67,11 @@
   pointer-events: auto;
 }
 
+.problem button {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
 .notice {
   font-family: var(--hc-font-ui);
   font-size: 12px;
