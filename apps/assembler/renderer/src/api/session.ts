@@ -1489,7 +1489,12 @@ export class AgentSession {
     }
     this.guardDiscard('Opening a project');
     if (this.host.project) await this.host.project.open(text);
-    else this.store.getState().loadDocument(project.features, { projectName: project.projectName });
+    else {
+      this.store.getState().loadDocument(project.features, {
+        projectName: project.projectName,
+        parameters: project.parameters,
+      });
+    }
     await this.store.getState().whenSettled();
     const evaluation = this.store.getState().evaluation;
     return {
@@ -1508,6 +1513,7 @@ export class AgentSession {
       : saveProjectFile({
           projectName: typeof p.name === 'string' ? p.name : state.projectName,
           features: state.features,
+          parameters: state.parameters,
           appVersion: APP_VERSION,
           createdAt: new Date().toISOString(),
         });

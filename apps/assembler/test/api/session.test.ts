@@ -674,3 +674,22 @@ void test('measure.*: kernel-exact distance, angle, area and volume, same number
     'invalidParams',
   );
 });
+
+void test('headless project.save / project.open keep the document parameters', async () => {
+  await reset();
+  await call('parameter.create', { name: 'wall', unit: 'mm', value: 2.5 });
+  const saved = await call<{ text: string }>('project.save');
+  assert.deepEqual(
+    (JSON.parse(saved.text) as { parameters: { name: string; value: number }[] }).parameters.map(
+      (p) => [p.name, p.value],
+    ),
+    [['wall', 2.5]],
+  );
+  await reset();
+  assert.equal(store.getState().parameters.length, 0);
+  await call('project.open', { text: saved.text });
+  assert.deepEqual(
+    store.getState().parameters.map((p) => [p.name, p.value]),
+    [['wall', 2.5]],
+  );
+});
