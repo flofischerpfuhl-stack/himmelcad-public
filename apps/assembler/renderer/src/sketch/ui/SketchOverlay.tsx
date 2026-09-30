@@ -32,6 +32,7 @@ import {
   sketchBoxSelect,
   type SketchBoxFilter,
 } from './sketchBoxSelect.js';
+import { bodySnapTargets } from '../bodySnaps.js';
 import { constraintInfo } from '../constraintRules.js';
 import { entityCurves, sampleCurve } from '../geometry.js';
 import {
@@ -94,6 +95,10 @@ const HINT_TEXT: Record<InferenceHint, string> = {
   perpendicular: 'Perpendicular',
   parallel: 'Parallel',
   grid: '',
+  vertex: 'Vertex',
+  edgeMidpoint: 'Edge midpoint',
+  circleCenter: 'Circle center',
+  farEdge: 'Edge (behind)',
 };
 
 /** Constraint glyphs drawn even when their geometry is not selected. */
@@ -283,6 +288,14 @@ export function SketchOverlay({
 
   const tool = session?.tool ?? null;
   const drawing = tool !== null && tool.kind !== 'select';
+  // 3D snaps: the body geometry seen along the sketch normal (far edges in orthographic view only).
+  const bodies = useAssemblerStore((s) => s.evaluation.bodies);
+  const orthographic = usePreferences((p) => p.projection === 'orthographic');
+  const frame = session?.frame ?? null;
+  const bodyTargets = useMemo(
+    () => (frame && drawing ? bodySnapTargets(bodies, frame, { orthographic }) : null),
+    [bodies, frame, orthographic, drawing],
+  );
   const scale = mmPerPxAt(api, cursor ?? [0, 0]);
   const gridStepNow = effectiveGridStep(view, liveGridStep);
   const grid = view.snapToGrid ? gridStepNow : null;
@@ -295,6 +308,7 @@ export function SketchOverlay({
             : {}),
           gridStep: grid,
           snaps: snapToggles,
+          body: bodyTargets,
         })
       : null;
   const hit = display && cursor ? hitTest(display, cursor, scale) : null;
@@ -441,6 +455,7 @@ export function SketchOverlay({
         ...(from ? { from } : {}),
         gridStep: grid,
         snaps: snapToggles,
+        body: bodyTargets,
       });
       void store.dispatch({ type: 'click', snap, hit: hitTest(current, uv, px), raw: uv });
       return;

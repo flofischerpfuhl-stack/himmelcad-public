@@ -46,6 +46,10 @@ export function meshRowKey(meshId: string): string {
 export function folderRowKey(folderId: string): string {
   return `folder:${folderId}`;
 }
+/** A construction plane or axis (`model/construction.ts`; its name is the History step's). */
+export function datumRowKey(featureId: string): string {
+  return `datum:${featureId}`;
+}
 
 export function displayBodyName(body: Pick<Body, 'id' | 'name'>, meta: ItemsMeta): string {
   return meta.names[body.id] ?? body.name;
@@ -63,7 +67,7 @@ export function withDisplayNames<T extends Pick<Body, 'id' | 'name'>>(
 
 export interface LeafRow {
   key: string;
-  kind: 'body' | 'sketch' | 'mesh';
+  kind: 'body' | 'sketch' | 'mesh' | 'plane' | 'axis';
 }
 
 export type ItemNode =

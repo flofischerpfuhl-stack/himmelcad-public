@@ -49,11 +49,13 @@ import {
   checkMove,
   duplicateStep,
   featureZoomTargets,
+  historyFilterItems,
   moveFeature,
   relevantFeatureIds,
   stepNamePrefix,
 } from '../model/historyTools.js';
 import { nextFeatureName } from '../model/store.js';
+import { startFix } from '../model/fixReference.js';
 import { resolveParameterValues } from '../model/parameters.js';
 import { useWorkspaceStore } from '../model/workspace.js';
 import type { AssemblerState, FeaturePatch } from '../model/store.js';
@@ -128,13 +130,15 @@ export function HistoryPanel({ state, onContextMenu }: HistoryPanelProps): JSX.E
   const markerIndex = state.rollbackBefore
     ? features.findIndex((f) => f.id === state.rollbackBefore)
     : -1;
-  const relevant = useMemo(
-    () =>
-      filterToSelection && state.selection.length > 0
-        ? relevantFeatureIds(features, state.evaluation, state.selection)
-        : null,
-    [filterToSelection, features, state.evaluation, state.selection],
-  );
+  // Shapr3D: the History filters to the selection's steps, or — nothing selected, Isolate on —
+  // to the isolated objects' steps.
+  const filterItems = historyFilterItems(state.selection, state.isolatedBodyIds);
+  const relevant = useMemo(() => {
+    const items = historyFilterItems(state.selection, state.isolatedBodyIds);
+    return filterToSelection && items.length > 0
+      ? relevantFeatureIds(features, state.evaluation, items)
+      : null;
+  }, [filterToSelection, features, state.evaluation, state.selection, state.isolatedBodyIds]);
   const shown = features.filter((f) => !relevant || relevant.has(f.id));
   const allExpanded = shown.length > 0 && shown.every((f) => expandedIds.has(f.id));
 
@@ -204,17 +208,19 @@ export function HistoryPanel({ state, onContextMenu }: HistoryPanelProps): JSX.E
         </Tooltip>
         <Tooltip
           content={
-            state.selection.length === 0
-              ? 'Show only steps of the selection (select something first)'
+            filterItems.length === 0
+              ? 'Show only steps of the selection or of the isolated objects (select or isolate something first)'
               : filterToSelection
                 ? 'Show all steps'
-                : 'Show only steps of the selection'
+                : state.selection.length > 0
+                  ? 'Show only steps of the selection'
+                  : 'Show only steps of the isolated objects'
           }
         >
           <button
             type="button"
             className={`${panelStyles.headerButton} ${filterToSelection ? styles.headerButtonActive : ''}`}
-            aria-label="Filter to selection"
+            aria-label="Filter to selection or isolated objects"
             aria-pressed={filterToSelection}
             onClick={() => setFilterToSelection((v) => !v)}
           >
@@ -230,7 +236,11 @@ export function HistoryPanel({ state, onContextMenu }: HistoryPanelProps): JSX.E
       >
         {features.length === 0 ? <div className={panelStyles.empty}>No history yet</div> : null}
         {relevant && shown.length === 0 ? (
-          <div className={panelStyles.empty}>No steps for the selection</div>
+          <div className={panelStyles.empty}>
+            {state.selection.length > 0
+              ? 'No steps for the selection'
+              : 'No steps for the isolated objects'}
+          </div>
         ) : null}
         {features.map((feature, index) => {
           if (relevant && !relevant.has(feature.id)) {
@@ -544,7 +554,23 @@ function HistoryCard({
       {error ? (
         <div className={styles.errorMessage}>
           <AlertTriangle size={12} />
-          {error}
+          <span className={styles.errorText}>{error}</span>
+          {/^Missing reference/.test(error) || /no longer resolve/.test(error) ? (
+            <button
+              type="button"
+              className={styles.fixButton}
+              disabled={state.activeTool !== null}
+              aria-label={`Fix ${feature.name}: pick a replacement reference`}
+              title="Show where the missing reference was and pick a replacement"
+              onClick={(event) => {
+                event.stopPropagation();
+                const reason = startFix(feature.id);
+                if (reason) useWorkspaceStore.getState().notify(reason, 'warning');
+              }}
+            >
+              Fix…
+            </button>
+          ) : null}
         </div>
       ) : null}
       {!error && warning ? (
@@ -556,6 +582,14 @@ function HistoryCard({
       {expanded ? <FeatureParams feature={feature} state={state} /> : null}
     </div>
   );
+}
+
+function extrudeSides(feature: {
+  symmetric: boolean;
+  distance2?: number | undefined;
+}): 'one' | 'symmetric' | 'two' {
+  if (feature.symmetric) return 'symmetric';
+  return feature.distance2 !== undefined && feature.distance2 > 0 ? 'two' : 'one';
 }
 
 function FeatureParams({
@@ -594,34 +628,90 @@ function FeatureParams({
           onCommitExpression={(expr) => edit({ distanceExpression: expr })}
         />
         <div>
-          <span className={styles.paramLabel}>Direction</span>
+          <span className={styles.paramLabel}>Sides</span>
           <Select
-            aria-label="Extrude direction"
-            value={feature.symmetric ? 'both' : 'one'}
+            aria-label="Extrude sides"
+            value={extrudeSides(feature)}
             options={[
               { value: 'one', label: 'One side' },
-              { value: 'both', label: 'Both sides' },
+              { value: 'symmetric', label: 'Symmetric' },
+              { value: 'two', label: 'Two sides' },
             ]}
-            onChange={(event) => edit({ symmetric: event.currentTarget.value === 'both' })}
+            onChange={(event) => {
+              const sides = event.currentTarget.value;
+              edit({
+                symmetric: sides === 'symmetric',
+                distance2:
+                  sides === 'two' ? (feature.distance2 ?? Math.abs(feature.distance)) : undefined,
+              });
+            }}
           />
         </div>
-        {feature.profile.kind === 'sketch' ? (
-          <div className={styles.paramsFull}>
-            <span className={styles.paramLabel}>Operation</span>
-            <Select
-              aria-label="Extrude operation"
-              value={feature.operation}
-              options={[
-                { value: 'new', label: 'New body' },
-                { value: 'join', label: 'Join' },
-                { value: 'cut', label: 'Cut' },
-              ]}
-              onChange={(event) =>
-                edit({ operation: event.currentTarget.value as ExtrudeOperation })
-              }
-            />
-          </div>
+        {extrudeSides(feature) === 'two' ? (
+          <ExpressionField
+            label="Distance 2"
+            value={feature.distance2 ?? 0}
+            unit="mm"
+            onCommit={(v) => edit({ distance2: Math.max(0, v) })}
+          />
         ) : null}
+        <div>
+          <span className={styles.paramLabel}>Extent</span>
+          <Select
+            aria-label="Extrude extent"
+            value={feature.extent?.kind ?? 'distance'}
+            options={[
+              { value: 'distance', label: 'Distance' },
+              { value: 'throughAll', label: 'Through All' },
+              ...(feature.extent?.kind === 'toObject'
+                ? [{ value: 'toObject', label: 'To Object' }]
+                : []),
+            ]}
+            onChange={(event) => {
+              const kind = event.currentTarget.value;
+              if (kind === 'toObject') return;
+              edit({ extent: kind === 'distance' ? undefined : { kind: 'throughAll' } });
+            }}
+          />
+        </div>
+        <ExpressionField
+          label="Start offset"
+          value={feature.startOffset ?? 0}
+          unit="mm"
+          onCommit={(v) => edit({ startOffset: v === 0 ? undefined : v })}
+        />
+        {feature.extent?.kind === 'toObject' ? (
+          <span className={styles.paramNote}>
+            To{' '}
+            {feature.extent.target.kind === 'body'
+              ? 'a body'
+              : feature.extent.target.face.signature.surface === 'plane'
+                ? 'a planar face (its plane)'
+                : 'a face'}
+          </span>
+        ) : null}
+        <div className={styles.paramsFull}>
+          <span className={styles.paramLabel}>Operation</span>
+          <Select
+            aria-label="Extrude operation"
+            value={feature.operation}
+            options={
+              feature.profile.kind === 'sketch'
+                ? [
+                    { value: 'new', label: 'New body' },
+                    { value: 'join', label: 'Join' },
+                    { value: 'cut', label: 'Cut' },
+                    { value: 'intersect', label: 'Intersect' },
+                  ]
+                : [
+                    // Push/pull: joins outwards, cuts inwards; Intersect is the one explicit choice.
+                    { value: feature.distance < 0 ? 'cut' : 'join', label: 'Automatic' },
+                    { value: 'intersect', label: 'Intersect' },
+                  ]
+            }
+            onChange={(event) => edit({ operation: event.currentTarget.value as ExtrudeOperation })}
+          />
+        </div>
       </div>
     );
   }

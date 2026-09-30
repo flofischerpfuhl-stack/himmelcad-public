@@ -6,7 +6,7 @@
  */
 import type { Feature } from '../document.js';
 import { PRINT_FEATURE_KINDS, type PrintFeature } from '../printFeatures.js';
-import type { FormatHelpers } from './featureFormat.js';
+import { validatePlaneRef, type FormatHelpers } from './featureFormat.js';
 
 type Rec = Record<string, unknown>;
 
@@ -72,16 +72,7 @@ function profile(v: unknown, p: string, h: FormatHelpers): void {
 }
 
 function plane(v: unknown, p: string, h: FormatHelpers): void {
-  if (!isRecord(v)) h.fail(p, 'expected an object');
-  if (v.kind === 'plane') {
-    if (!['XY', 'XZ', 'YZ'].includes(v.plane as string))
-      h.fail(`${p}.plane`, 'expected XY, XZ or YZ');
-    if (!isNumber(v.offset)) h.fail(`${p}.offset`, 'expected a number');
-  } else if (v.kind === 'face') {
-    h.faceRef(v.face, `${p}.face`);
-  } else {
-    h.fail(`${p}.kind`, 'expected "plane" or "face"');
-  }
+  validatePlaneRef(v, p, h);
 }
 
 export function validatePrintFeature(r: Rec, path: string, h: FormatHelpers): Feature {
@@ -224,6 +215,7 @@ export function validateBlendOptions(r: Rec, path: string, h: FormatHelpers): bo
     }
     case 'boolean':
       c.optionalBool('keepTools');
+      c.optionalBool('keepTarget');
       return false;
     default:
       return false;

@@ -26,7 +26,11 @@ import {
 } from '../document.js';
 import { migrateSketchesV1ToV2 } from '../../sketch/migration.js';
 import { validateSketchData } from '../../sketch/validation.js';
-import { isModelingFeatureKind, validateModelingFeature } from './featureFormat.js';
+import {
+  isModelingFeatureKind,
+  validateModelingFeature,
+  validatePlaneRef,
+} from './featureFormat.js';
 import { validateBlendOptions } from './printFeatureFormat.js';
 import { isValidParameterName, type Parameter, type ParameterUnit } from '../parameters.js';
 
@@ -313,6 +317,30 @@ function validateBase(r: Record<string, unknown>, path: string): void {
   if (!isBoolean(r.suppressed)) fail(`${path}.suppressed`, 'expected a boolean');
 }
 
+/** Extent, second side and start offset of an extrude (all optional, additive). */
+function validateExtrudeExtent(r: Record<string, unknown>, path: string): void {
+  const extent = r.extent;
+  if (extent !== undefined) {
+    if (!isRecord(extent)) fail(`${path}.extent`, 'expected an object');
+    if (extent.kind === 'toObject') {
+      const target = extent.target;
+      if (!isRecord(target)) fail(`${path}.extent.target`, 'expected an object');
+      if (target.kind === 'face') validateFaceRef(target.face, `${path}.extent.target.face`);
+      else if (target.kind === 'body') {
+        if (!isString(target.bodyId)) fail(`${path}.extent.target.bodyId`, 'expected a string');
+      } else fail(`${path}.extent.target.kind`, 'expected "face" or "body"');
+    } else if (extent.kind !== 'distance' && extent.kind !== 'throughAll') {
+      fail(`${path}.extent.kind`, 'expected "distance", "throughAll" or "toObject"');
+    }
+  }
+  if (r.distance2 !== undefined && !(isNumber(r.distance2) && r.distance2 >= 0)) {
+    fail(`${path}.distance2`, 'expected a number ≥ 0');
+  }
+  if (r.startOffset !== undefined && !isNumber(r.startOffset)) {
+    fail(`${path}.startOffset`, 'expected a number');
+  }
+}
+
 const FORMAT_HELPERS = {
   fail,
   faceRef: validateFaceRef,
@@ -327,18 +355,7 @@ function validateFeature(v: unknown, index: number): Feature {
   validateBase(r, path);
   switch (r.kind) {
     case 'sketch': {
-      const plane = r.plane;
-      if (!isRecord(plane)) fail(`${path}.plane`, 'expected an object');
-      if (plane.kind === 'plane') {
-        if (!['XY', 'XZ', 'YZ'].includes(plane.plane as string)) {
-          fail(`${path}.plane.plane`, 'expected XY, XZ or YZ');
-        }
-        if (!isNumber(plane.offset)) fail(`${path}.plane.offset`, 'expected a number');
-      } else if (plane.kind === 'face') {
-        validateFaceRef(plane.face, `${path}.plane.face`);
-      } else {
-        fail(`${path}.plane.kind`, 'expected "plane" or "face"');
-      }
+      validatePlaneRef(r.plane, `${path}.plane`, FORMAT_HELPERS);
       const sketchError = validateSketchData(r);
       if (sketchError) fail(`${path}.${sketchError.path}`, sketchError.message);
       return r as unknown as SketchFeature;
@@ -362,12 +379,13 @@ function validateFeature(v: unknown, index: number): Feature {
       if (!isNumber(r.distance)) fail(`${path}.distance`, 'expected a number');
       validateOptionalExpression(r, 'distanceExpression', path);
       if (!isBoolean(r.symmetric)) fail(`${path}.symmetric`, 'expected a boolean');
-      if (!['new', 'join', 'cut'].includes(r.operation as string)) {
-        fail(`${path}.operation`, 'expected "new", "join" or "cut"');
+      if (!['new', 'join', 'cut', 'intersect'].includes(r.operation as string)) {
+        fail(`${path}.operation`, 'expected "new", "join", "cut" or "intersect"');
       }
       if (r.targetBodyId !== undefined && !isString(r.targetBodyId)) {
         fail(`${path}.targetBodyId`, 'expected a string');
       }
+      validateExtrudeExtent(r, path);
       return r as unknown as ExtrudeFeature;
     }
     case 'fillet':

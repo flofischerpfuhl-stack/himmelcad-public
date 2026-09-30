@@ -19,7 +19,7 @@ import {
   nearestOrthoDirection,
   useWorkspaceStore,
 } from '../workspace.js';
-import { bodyRowKey, meshRowKey, sketchRowKey, useItemsStore } from '../items.js';
+import { bodyRowKey, datumRowKey, meshRowKey, sketchRowKey, useItemsStore } from '../items.js';
 import type { Command, CommandAvailability } from './registry.js';
 
 const enabled: CommandAvailability = { enabled: true };
@@ -41,6 +41,8 @@ export function itemsRowKeyFor(item: SelectionItem): string | null {
       return sketchRowKey(item.featureId);
     case 'mesh':
       return meshRowKey(item.meshId);
+    case 'datum':
+      return datumRowKey(item.featureId);
     case 'feature':
       return null;
   }

@@ -84,12 +84,22 @@ export function toolPrompt(tool: SketchTool): string {
         ? 'Click the next point or type a length. Double-click or Enter ends the line.'
         : 'Click the start point.';
     case 'arc':
+      if (tool.mode === 'threePoint') {
+        if (!tool.start) return 'Click the start point.';
+        return tool.through ? 'Click the end point.' : 'Click a point on the arc.';
+      }
       if (!tool.start) return 'Click the start point (a line end continues tangentially).';
       if (tool.tangent || !tool.end) return 'Click the end point.';
-      return 'Click a point on the arc.';
+      return 'Move to bend the arc, click or type its height.';
     case 'circle':
       return tool.center ? 'Click to set the size or type a diameter.' : 'Click the centre.';
     case 'rectangle':
+      if (tool.mode === 'threePoint') {
+        if (!tool.first) return 'Click the start of the base line.';
+        return tool.second
+          ? 'Click to set the height or type it.'
+          : 'Click the end of the base line or type its width.';
+      }
       if (tool.first) return 'Click the opposite corner or type width and height.';
       return tool.mode === 'center' ? 'Click the centre.' : 'Click the first corner.';
     case 'polygon':
@@ -210,6 +220,18 @@ function ToolOptions({ tool }: { tool: SketchTool }): JSX.Element | null {
           options={[
             ['corner', '2 corners'],
             ['center', 'Centre'],
+            ['threePoint', '3 points'],
+          ]}
+        />
+      );
+    case 'arc':
+      return (
+        <Modes
+          label="Arc mode"
+          current={tool.mode}
+          options={[
+            ['endsBulge', 'Ends, then bulge'],
+            ['threePoint', '3 points'],
           ]}
         />
       );

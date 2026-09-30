@@ -25,6 +25,12 @@ const SNAP_ROWS: readonly { key: keyof SketchSnapToggles; label: string; hint: s
   { key: 'midpoints', label: 'Midpoints', hint: 'Middle of lines' },
   { key: 'guidelines', label: 'Guidelines', hint: 'Horizontal, vertical, aligned with points' },
   { key: 'curves', label: 'On curves', hint: 'Points on lines, arcs, circles' },
+  { key: 'bodyPoints', label: '3D body points', hint: 'Vertices, edge midpoints, hole centres' },
+  {
+    key: 'farEdges',
+    label: 'Far edges',
+    hint: 'Edges away from the sketch plane (orthographic view)',
+  },
 ];
 
 /** Locked-step choices: the series around everyday print sizes. */
@@ -142,6 +148,25 @@ export function SnapControls({ state }: { state: AssemblerState }): JSX.Element 
               checked={prefs.snaps.autoConstrain}
               onChange={(e) => setSnap('autoConstrain', e.currentTarget.checked)}
             />
+            <div className={menuStyles.modeRow}>
+              <span className={menuStyles.hint} id="hc-constraint-keep">
+                New constraints keep
+              </span>
+              <Select
+                aria-labelledby="hc-constraint-keep"
+                value={prefs.constraintKeep}
+                options={[
+                  { value: 'first', label: 'First selected' },
+                  { value: 'last', label: 'Last selected' },
+                ]}
+                onChange={(e) =>
+                  prefs.setPreference(
+                    'constraintKeep',
+                    e.currentTarget.value === 'last' ? 'last' : 'first',
+                  )
+                }
+              />
+            </div>
             <Checkbox
               label="Show snap hints"
               checked={prefs.snapHints}

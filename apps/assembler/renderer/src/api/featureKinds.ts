@@ -12,6 +12,7 @@ import {
   ProjectFormatError,
   migrateAndValidate,
 } from '../model/project/format.js';
+import { datumRef } from '../model/construction.js';
 import { expressionFieldsOf, resolveFieldExpression } from '../model/parameters.js';
 import { ApiError } from './errors.js';
 import { addShape, type ShapeResult, type SketchShape } from './sketchApi.js';
@@ -111,7 +112,43 @@ function normalise(
       face: resolveFaceInput(value.face, evaluation, features, `${path}.face`, { single: true })[0],
     };
   };
+  const oneEdge = (value: unknown, path: string): unknown => {
+    const edges = resolveEdgeInput(value, evaluation, path);
+    if (edges.length !== 1) {
+      throw new ApiError(
+        'referenceNotFound',
+        `${path}: expected exactly one edge, got ${edges.length}`,
+        {
+          hint: 'Narrow the selector or pass an explicit {bodyId, key} from edges.list.',
+        },
+      );
+    }
+    return edges[0];
+  };
+  const oneFace = (value: unknown, path: string): unknown =>
+    resolveFaceInput(value, evaluation, features, path, { single: true })[0];
+  /** A construction plane/axis reference with its signature (frame / line) from the evaluation. */
+  const constructionRef = (value: Json, path: string): unknown => {
+    if (typeof value.featureId !== 'string') return value;
+    const filled = datumRef(evaluation, value.featureId);
+    if (!filled) {
+      if (value.frame !== undefined || value.line !== undefined) return value;
+      throw new ApiError(
+        'referenceNotFound',
+        `${path}: "${value.featureId}" is not an evaluated construction plane or axis`,
+        {
+          hint: 'features.list shows constructionPlane/constructionAxis steps; datums.list their geometry.',
+        },
+      );
+    }
+    return filled;
+  };
+  const pointRef = (value: unknown, path: string): unknown => {
+    if (!isRecord(value) || value.kind === 'point' || value.edge === undefined) return value;
+    return { ...value, edge: oneEdge(value.edge, `${path}.edge`) };
+  };
   const axisRef = (value: unknown, path: string): unknown => {
+    if (isRecord(value) && value.kind === 'construction') return constructionRef(value, path);
     if (!isRecord(value) || value.kind !== 'edge') return value;
     const edges = resolveEdgeInput(value.edge, evaluation, `${path}.edge`);
     if (edges.length !== 1) {
@@ -128,6 +165,7 @@ function normalise(
   const planeRef = (value: unknown, path: string): unknown => {
     if (!isRecord(value)) return value;
     if (value.kind === 'plane') return { offset: 0, ...value };
+    if (value.kind === 'construction') return constructionRef(value, path);
     if (value.kind !== 'face') return value;
     return {
       kind: 'face',
@@ -138,6 +176,7 @@ function normalise(
     case 'sketch': {
       const plane = out.plane as Json | undefined;
       if (plane?.kind === 'plane') out.plane = { offset: 0, ...plane };
+      if (plane?.kind === 'construction') out.plane = constructionRef(plane, 'params.plane');
       if (plane?.kind === 'face') {
         out.plane = {
           kind: 'face',
@@ -148,9 +187,42 @@ function normalise(
       }
       return out;
     }
-    case 'extrude':
+    case 'extrude': {
       if (out.profile !== undefined) out.profile = profileRef(out.profile, 'params.profile');
+      const extent = out.extent as Json | undefined;
+      const target = extent?.target as Json | undefined;
+      if (extent?.kind === 'toObject' && target?.kind === 'face') {
+        out.extent = {
+          ...extent,
+          target: { kind: 'face', face: oneFace(target.face, 'params.extent.target.face') },
+        };
+      }
       return out;
+    }
+    case 'constructionPlane':
+    case 'constructionAxis': {
+      const def = out.definition as Json | undefined;
+      if (!def) return out;
+      const next: Json = { ...def };
+      const p = 'params.definition';
+      if (def.base !== undefined) next.base = planeRef(def.base, `${p}.base`);
+      if (def.axis !== undefined) next.axis = axisRef(def.axis, `${p}.axis`);
+      if (def.face !== undefined) next.face = oneFace(def.face, `${p}.face`);
+      if (def.edge !== undefined) next.edge = oneEdge(def.edge, `${p}.edge`);
+      if (Array.isArray(def.points)) {
+        next.points = def.points.map((q, i) => pointRef(q, `${p}.points[${i}]`));
+      }
+      for (const key of ['a', 'b'] as const) {
+        const value = def[key];
+        if (!isRecord(value)) continue;
+        next[key] =
+          def.kind === 'twoPoints'
+            ? pointRef(value, `${p}.${key}`)
+            : planeRef(value, `${p}.${key}`);
+      }
+      out.definition = next;
+      return out;
+    }
     case 'revolve':
       if (out.profile !== undefined) out.profile = profileRef(out.profile, 'params.profile');
       if (out.axis !== undefined) out.axis = axisRef(out.axis, 'params.axis');
@@ -178,6 +250,12 @@ function normalise(
     case 'mirror':
     case 'split':
       if (out.plane !== undefined) out.plane = planeRef(out.plane, 'params.plane');
+      if (kind === 'mirror') {
+        if (out.axis !== undefined) out.axis = axisRef(out.axis, 'params.axis');
+        if (Array.isArray(out.faces)) {
+          out.faces = out.faces.map((face, i) => oneFace(face, `params.faces[${i}]`));
+        }
+      }
       return out;
     case 'pattern': {
       const pattern = out.pattern as Json | undefined;
@@ -350,7 +428,7 @@ function defaults(kind: string, params: Json): Json {
     case 'loft':
       return { ruled: false, operation: 'new' };
     case 'mirror':
-      return { keepOriginal: true };
+      return { keepOriginal: true, bodyIds: [], plane: { kind: 'plane', plane: 'YZ', offset: 0 } };
     case 'transform':
       return { dx: 0, dy: 0, dz: 0, rx: 0, ry: 0, rz: 0, pivot: [0, 0, 0], copy: false };
     case 'rotateAxis':

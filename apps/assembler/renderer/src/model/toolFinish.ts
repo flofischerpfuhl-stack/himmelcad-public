@@ -22,5 +22,8 @@ export function emptyClickFinishes(tool: ToolSession | null): boolean {
     case 'extrude':
     case 'move':
       return false;
+    // A pick session waits for references: Next (Enter) moves on, an empty click is a missed pick.
+    case 'pick':
+      return false;
   }
 }

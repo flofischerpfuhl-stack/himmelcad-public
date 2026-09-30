@@ -10,6 +10,7 @@
  */
 import type { Command, CommandContext, ShortcutScope } from './registry.js';
 import { COMMANDS } from './registry.js';
+import { useFixStore } from '../fixReference.js';
 
 /**
  * A framework-agnostic view of a keyboard event. The chrome agent builds
@@ -119,6 +120,11 @@ export function handleEscape(ctx: CommandContext): void {
   }
   if (ctx.activeTool) {
     ctx.cancel();
+    return;
+  }
+  // History "Fix…" is a mode of its own: Esc leaves it before touching the selection.
+  if (useFixStore.getState().session) {
+    useFixStore.getState().end();
     return;
   }
   if (ctx.selection.length > 0) ctx.clearSelection();

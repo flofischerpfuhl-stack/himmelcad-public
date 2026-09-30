@@ -11,6 +11,7 @@
  * "Reveal in Items" (viewport context menu) scrolls to and flashes a row.
  */
 import {
+  Axis3d,
   Box,
   Boxes,
   ChevronDown,
@@ -22,6 +23,7 @@ import {
   FolderPlus,
   MoreHorizontal,
   PenSquare,
+  SquareDashed,
   Target,
   ZoomIn,
 } from 'lucide-react';
@@ -44,6 +46,7 @@ import {
   displayBodyName,
   folderRowKey,
   leafKeys,
+  datumRowKey,
   meshRowKey,
   sketchRowKey,
   useItemsStore,
@@ -59,7 +62,7 @@ import { anchoredMenuStyle } from './anchoredMenu.js';
 import panelStyles from './Panel.module.css';
 import styles from './ItemsPanel.module.css';
 
-type TypeFilter = 'all' | 'bodies' | 'sketches' | 'meshes';
+type TypeFilter = 'all' | 'bodies' | 'sketches' | 'meshes' | 'construction';
 
 /** Whether a row passes the Items type filter ("Bodies" lists solids and reference meshes). */
 function passesFilter(filter: TypeFilter, kind: RowInfo['kind']): boolean {
@@ -72,6 +75,8 @@ function passesFilter(filter: TypeFilter, kind: RowInfo['kind']): boolean {
       return kind === 'sketch';
     case 'meshes':
       return kind === 'mesh';
+    case 'construction':
+      return kind === 'plane' || kind === 'axis';
   }
 }
 
@@ -80,13 +85,14 @@ const FILTER_LABEL: Record<TypeFilter, string> = {
   bodies: 'Bodies',
   sketches: 'Sketches',
   meshes: 'Meshes',
+  construction: 'Planes & axes',
 };
 
 const DRAG_MIME = 'application/x-hcasm-items';
 
 interface RowInfo {
   key: string;
-  kind: 'body' | 'sketch' | 'mesh';
+  kind: 'body' | 'sketch' | 'mesh' | 'plane' | 'axis';
   item: SelectionItem;
   name: string;
   color?: string;
@@ -102,6 +108,7 @@ function selectionEquals(a: SelectionItem, b: SelectionItem): boolean {
   if (a.kind === 'body' && b.kind === 'body') return a.bodyId === b.bodyId;
   if (a.kind === 'sketchProfile' && b.kind === 'sketchProfile') return a.featureId === b.featureId;
   if (a.kind === 'mesh' && b.kind === 'mesh') return a.meshId === b.meshId;
+  if (a.kind === 'datum' && b.kind === 'datum') return a.featureId === b.featureId;
   return false;
 }
 
@@ -148,6 +155,16 @@ export function ItemsPanel({ state, onContextMenu }: ItemsPanelProps): JSX.Eleme
         name: feature?.name ?? sketch.featureId,
       });
     }
+    // Construction planes and axes (Shapr3D Items lists planes and axes with their own icons).
+    for (const datum of state.evaluation.datums ?? []) {
+      const feature = state.features.find((f) => f.id === datum.featureId);
+      map.set(datumRowKey(datum.featureId), {
+        key: datumRowKey(datum.featureId),
+        kind: datum.kind,
+        item: { kind: 'datum', featureId: datum.featureId },
+        name: feature?.name ?? datum.featureId,
+      });
+    }
     return map;
   }, [state.evaluation, state.features, state.referenceMeshes, meta]);
 
@@ -160,7 +177,10 @@ export function ItemsPanel({ state, onContextMenu }: ItemsPanelProps): JSX.Eleme
   const order = visibleLeafOrder(tree);
   const bodyCount = [...rows.values()].filter((r) => r.kind === 'body').length;
   const meshCount = [...rows.values()].filter((r) => r.kind === 'mesh').length;
-  const sketchCount = rows.size - bodyCount - meshCount;
+  const datumCount = [...rows.values()].filter(
+    (r) => r.kind === 'plane' || r.kind === 'axis',
+  ).length;
+  const sketchCount = rows.size - bodyCount - meshCount - datumCount;
 
   const isSelected = (item: SelectionItem): boolean =>
     state.selection.some((existing) => selectionEquals(existing, item));
@@ -248,6 +268,9 @@ export function ItemsPanel({ state, onContextMenu }: ItemsPanelProps): JSX.Eleme
       ) {
         anyVisible = true;
       }
+      if (row.item.kind === 'datum' && state.sketchVisibility[row.item.featureId] !== false) {
+        anyVisible = true;
+      }
       const meshId = row.item.kind === 'mesh' ? row.item.meshId : null;
       if (meshId && state.referenceMeshes.some((m) => m.id === meshId && !m.hidden)) {
         anyVisible = true;
@@ -263,6 +286,7 @@ export function ItemsPanel({ state, onContextMenu }: ItemsPanelProps): JSX.Eleme
       if (row?.item.kind === 'body') bodies.push(row.item.bodyId);
       if (row?.item.kind === 'sketchProfile') state.setSketchVisible(row.item.featureId, visible);
       if (row?.item.kind === 'mesh') state.setReferenceMeshHidden(row.item.meshId, !visible);
+      if (row?.item.kind === 'datum') state.setSketchVisible(row.item.featureId, visible);
     }
     if (visible) state.showBodies(bodies);
     else state.hideBodies(bodies);
@@ -456,9 +480,10 @@ export function ItemsPanel({ state, onContextMenu }: ItemsPanelProps): JSX.Eleme
         </div>
       </div>
       <div className={styles.filters} role="radiogroup" aria-label="Show item types">
-        {(['all', 'bodies', 'sketches', 'meshes'] as const)
-          // "Meshes" only once the project has a reference mesh (or it is the active filter).
+        {(['all', 'bodies', 'sketches', 'meshes', 'construction'] as const)
+          // "Meshes" / "Planes & axes" only once the project has one (or it is the active filter).
           .filter((f) => f !== 'meshes' || meshCount > 0 || filter === 'meshes')
+          .filter((f) => f !== 'construction' || datumCount > 0 || filter === 'construction')
           .map((f) => (
             <button
               key={f}
@@ -630,6 +655,8 @@ function LeafRowView(props: LeafRowProps): JSX.Element {
   } else if (row.item.kind === 'mesh') {
     const meshId = row.item.meshId;
     visible = !state.referenceMeshes.some((m) => m.id === meshId && m.hidden);
+  } else if (row.item.kind === 'datum') {
+    visible = state.sketchVisibility[row.item.featureId] !== false;
   } else {
     visible = true;
   }
@@ -644,6 +671,8 @@ function LeafRowView(props: LeafRowProps): JSX.Element {
       state.setSketchVisible(row.item.featureId, !visible);
     } else if (row.item.kind === 'mesh') {
       state.setReferenceMeshHidden(row.item.meshId, visible);
+    } else if (row.item.kind === 'datum') {
+      state.setSketchVisible(row.item.featureId, !visible);
     }
   };
   return (
@@ -698,6 +727,10 @@ function LeafRowView(props: LeafRowProps): JSX.Element {
             <PenSquare size={13} />
           ) : row.kind === 'mesh' ? (
             <Boxes size={13} />
+          ) : row.kind === 'plane' ? (
+            <SquareDashed size={13} />
+          ) : row.kind === 'axis' ? (
+            <Axis3d size={13} />
           ) : (
             <Box size={13} />
           )}

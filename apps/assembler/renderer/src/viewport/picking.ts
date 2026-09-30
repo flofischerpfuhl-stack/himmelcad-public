@@ -17,8 +17,12 @@ export type PickTarget =
   | { kind: 'sketchProfile'; featureId: string; regionKey?: string }
   /** A straight sketch line (construction included); pickable only while a tool takes an axis. */
   | { kind: 'sketchLine'; featureId: string; entityId: string }
+  /** A construction plane or axis (`model/construction.ts`). */
+  | { kind: 'datum'; featureId: string }
   | { kind: 'extrudeHandle' }
   | { kind: 'moveHandle'; axis: 0 | 1 | 2 }
+  /** A Move/Rotate plane tile: moves in the plane normal to gizmo axis `plane`. */
+  | { kind: 'moveTile'; plane: 0 | 1 | 2 }
   /** Drag handle of the fillet/chamfer, shell tool or the section plane. */
   | { kind: 'toolHandle'; handle: ToolHandleKind };
 
@@ -31,6 +35,8 @@ export type ToolHandleKind =
   | 'blend'
   | 'shell'
   | 'section'
+  | 'extrude2'
+  | 'extrudeStart'
   | `feature:${string}`
   | `ring:${0 | 1 | 2}`
   | 'pivot';

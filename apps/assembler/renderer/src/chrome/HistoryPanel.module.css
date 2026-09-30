@@ -269,3 +269,35 @@
   align-items: center;
   width: 100%;
 }
+
+.errorText {
+  flex: 1;
+  min-width: 0;
+}
+
+/* History "Fix…": pick a replacement for a missing reference. */
+.fixButton {
+  flex-shrink: 0;
+  padding: 1px 8px;
+  border: 1px solid var(--hc-warning-fg);
+  border-radius: var(--hc-radius-sm);
+  background: transparent;
+  color: var(--hc-warning-fg);
+  font-family: var(--hc-font-ui);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.fixButton:hover:not(:disabled) {
+  background: var(--hc-bg-chip);
+}
+
+.fixButton:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.fixButton:focus-visible {
+  outline: 2px solid var(--hc-accent-base);
+  outline-offset: 1px;
+}

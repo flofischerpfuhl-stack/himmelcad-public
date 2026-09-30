@@ -41,6 +41,19 @@ import {
   type ProfileRef,
   type WorldAxis,
 } from './features.js';
+import { constructionAxisLine, datumRef, planeRefPlane } from './construction.js';
+import {
+  acceptConstructionPick,
+  constructionDraftBadges,
+  constructionDraftGuides,
+  constructionDraftHandles,
+  constructionDraftMeta,
+  constructionDraftToFeature,
+  createConstructionDraft,
+  isConstructionDraftKind,
+  referencedDatumIds,
+  type ConstructionDraft,
+} from './constructionTools.js';
 import { findSketchContact, pointInsideBody } from './modeling.js';
 import { PRINT_CLEARANCES } from './printFeatures.js';
 import {
@@ -79,7 +92,20 @@ export type FeatureDraft =
       path: PathRef;
     } & ProfileOperation)
   | ({ kind: 'loft'; profiles: ProfileRef[]; ruled: boolean } & ProfileOperation)
-  | { kind: 'mirror'; bodyIds: string[]; plane: PlaneRef; keepOriginal: boolean }
+  | {
+      kind: 'mirror';
+      bodyIds: string[];
+      plane: PlaneRef;
+      keepOriginal: boolean;
+      /** Sketches mirrored as a whole (their profiles become a mirrored sketch). */
+      sketchIds?: string[];
+      /** Planar faces mirrored as profiles. */
+      faces?: FaceRef[];
+      /** Mirror about this line (a half turn) instead of `plane`. */
+      axis?: AxisRef;
+      /** What a clicked planar face does: set the mirror plane (default) or join the targets. */
+      facePicks?: 'plane' | 'target';
+    }
   | { kind: 'pattern'; bodyIds: string[]; pattern: PatternDefinition }
   | { kind: 'split'; bodyId: string; plane: PlaneRef }
   /** Rotate Around Axis: bodies, an axis (edge / sketch line / world), degrees, copy. */
@@ -93,12 +119,24 @@ export type FeatureDraft =
       center: boolean;
       offset: number;
     }
-  | { kind: 'offsetFace'; faces: FaceRef[]; distance: number }
+  /** `viaMove`: started from Move/Rotate on a face (Shapr3D moves faces with the gizmo). */
+  | { kind: 'offsetFace'; faces: FaceRef[]; distance: number; viaMove?: boolean }
   | { kind: 'deleteFace'; faces: FaceRef[] }
   // Hole, Emboss, Draft, Rib, Thicken (`printFeatureTools.ts`).
-  | PrintDraft;
+  | PrintDraft
+  // Construction planes and axes (`constructionTools.ts`).
+  | ConstructionDraft;
 
 export type FeatureDraftKind = FeatureDraft['kind'];
+
+function isConstructionDraft(draft: FeatureDraft): draft is ConstructionDraft {
+  return isConstructionDraftKind(draft.kind);
+}
+
+/** Construction planes/axes a draft references (highlighted while the tool runs). */
+export function draftDatumIds(draft: FeatureDraft): string[] {
+  return referencedDatumIds(draft);
+}
 
 function isPrintDraft(draft: FeatureDraft): draft is PrintDraft {
   return isPrintDraftKind(draft.kind);
@@ -378,6 +416,17 @@ function round(value: number): number {
 /** Starts `kind` from the selection, or explains what is missing (the command's disabled reason). */
 export function createDraft(kind: FeatureDraftKind, ctx: DraftContext): DraftStart {
   if (isPrintDraftKind(kind)) return createPrintDraft(kind, ctx);
+  if (kind === 'constructionPlane' || kind === 'constructionAxis') {
+    return {
+      ok: true,
+      draft: createConstructionDraft(
+        kind,
+        kind === 'constructionPlane' ? 'offset' : 'edge',
+        ctx.selection,
+        ctx.evaluation,
+      ),
+    };
+  }
   switch (kind) {
     case 'revolve': {
       const profiles = selectedProfiles(ctx);
@@ -453,16 +502,45 @@ export function createDraft(kind: FeatureDraftKind, ctx: DraftContext): DraftSta
       };
     }
     case 'mirror': {
+      // Shapr3D Mirror: sketches, faces and bodies across a plane, a planar face or an axis/line.
       const bodyIds = selected(ctx.selection, 'body').map((b) => b.bodyId);
-      if (bodyIds.length === 0) return { ok: false, reason: 'Select the bodies to mirror.' };
-      const face = selectedFaceRefs(ctx).find(isPlanar);
+      const sketchIds = [
+        ...new Set(selected(ctx.selection, 'sketchProfile').map((s) => s.featureId)),
+      ];
+      const datums = selected(ctx.selection, 'datum')
+        .map((d) => datumRef(ctx.evaluation, d.featureId))
+        .filter((r): r is NonNullable<typeof r> => r !== null);
+      const datumPlane = datums.find((r) => 'frame' in r) as PlaneRef | undefined;
+      const datumAxis = datums.find((r) => 'line' in r) as AxisRef | undefined;
+      const edges = selectedEdges(ctx).filter((e) => e.signature.curve === 'line');
+      const axis: AxisRef | undefined =
+        datumAxis ?? (edges[0] ? { kind: 'edge', edge: edges[0] } : undefined);
+      const planarFaces = selectedFaceRefs(ctx).filter(isPlanar);
+      // With a plane or axis chosen otherwise, selected faces are targets; else the face is the plane.
+      const faceTargets = datumPlane || axis ? planarFaces : [];
+      if (bodyIds.length === 0 && sketchIds.length === 0 && faceTargets.length === 0) {
+        return { ok: false, reason: 'Select the bodies, sketches or faces to mirror.' };
+      }
+      const face = datumPlane || axis ? undefined : planarFaces[0];
       let plane: PlaneRef;
-      if (face) plane = { kind: 'face', face };
+      if (datumPlane) plane = datumPlane;
+      else if (face) plane = { kind: 'face', face };
       else {
         const bounds = unionBounds(ctx.evaluation.bodies.filter((b) => bodyIds.includes(b.id)));
         plane = { kind: 'plane', plane: 'YZ', offset: bounds ? round(bounds.max[0]) : 0 };
       }
-      return { ok: true, draft: { kind: 'mirror', bodyIds, plane, keepOriginal: true } };
+      return {
+        ok: true,
+        draft: {
+          kind: 'mirror',
+          bodyIds,
+          plane,
+          keepOriginal: true,
+          ...(sketchIds.length > 0 ? { sketchIds } : {}),
+          ...(faceTargets.length > 0 ? { faces: faceTargets } : {}),
+          ...(axis ? { axis } : {}),
+        },
+      };
     }
     case 'pattern': {
       const bodyIds = selected(ctx.selection, 'body').map((b) => b.bodyId);
@@ -611,10 +689,13 @@ export type ToolPick =
       point?: Vec3;
       ray?: { origin: Vec3; direction: Vec3 };
     }
-  | { kind: 'edge'; bodyId: string; edgeKey: string }
+  /** `ray`: the pointer ray, when the viewport knows it (which end of the edge was clicked). */
+  | { kind: 'edge'; bodyId: string; edgeKey: string; ray?: { origin: Vec3; direction: Vec3 } }
   | { kind: 'sketchProfile'; featureId: string; regionKey?: string }
   /** A straight sketch line (construction lines included): an axis or direction. */
-  | { kind: 'sketchLine'; featureId: string; entityId: string };
+  | { kind: 'sketchLine'; featureId: string; entityId: string }
+  /** A construction plane or axis. */
+  | { kind: 'datum'; featureId: string };
 
 function toggle<T>(
   list: readonly T[],
@@ -642,6 +723,8 @@ export function acceptPick(
   evaluation: EvaluationResult,
   features: readonly Feature[] = [],
 ): FeatureDraft {
+  if (isConstructionDraft(draft)) return acceptConstructionPick(draft, pick, evaluation);
+  if (pick.kind === 'datum') return acceptDatumPick(draft, pick.featureId, evaluation);
   if (isPrintDraft(draft)) return acceptPrintPick(draft, pick, evaluation, features);
   const faceRef = pick.kind === 'face' ? faceRefOf(evaluation, pick.bodyId, pick.faceKey) : null;
   const edgeRef = pick.kind === 'edge' ? edgeRefOf(evaluation, pick.bodyId, pick.edgeKey) : null;
@@ -696,13 +779,41 @@ export function acceptPick(
       const profiles = toggle(draft.profiles, ref, sameProfile, false);
       return profiles.length === 0 ? draft : retarget({ ...draft, profiles }, evaluation);
     }
-    case 'mirror':
-      if (faceRef && isPlanar(faceRef) && !draft.bodyIds.includes(faceRef.bodyId)) {
-        return { ...draft, plane: { kind: 'face', face: faceRef } };
+    case 'mirror': {
+      const targets = (next: typeof draft) =>
+        next.bodyIds.length + (next.sketchIds?.length ?? 0) + (next.faces?.length ?? 0);
+      if (pick.kind === 'sketchProfile') {
+        const sketchIds = toggle(draft.sketchIds ?? [], pick.featureId, (a, b) => a === b, false);
+        const next = { ...draft, sketchIds };
+        return targets(next) > 0 ? next : draft;
       }
-      if (pickedBody)
-        return { ...draft, bodyIds: toggle(draft.bodyIds, pickedBody, (a, b) => a === b) };
+      if (lineAxis) return { ...draft, axis: lineAxis };
+      if (edgeRef && edgeRef.signature.curve === 'line') {
+        return { ...draft, axis: { kind: 'edge', edge: edgeRef } };
+      }
+      if (faceRef && isPlanar(faceRef) && draft.facePicks === 'target') {
+        const faces = toggle(
+          draft.faces ?? [],
+          faceRef,
+          (a, b) => a.bodyId === b.bodyId && a.key === b.key,
+          false,
+        );
+        const next = { ...draft, faces };
+        return targets(next) > 0 ? next : draft;
+      }
+      if (faceRef && isPlanar(faceRef) && !draft.bodyIds.includes(faceRef.bodyId)) {
+        const { axis: _axis, ...rest } = draft;
+        return { ...rest, plane: { kind: 'face', face: faceRef } };
+      }
+      if (pickedBody) {
+        const next = {
+          ...draft,
+          bodyIds: toggle(draft.bodyIds, pickedBody, (a, b) => a === b, false),
+        };
+        return targets(next) > 0 ? next : draft;
+      }
       return draft;
+    }
     case 'pattern':
       if (lineAxis) {
         return draft.pattern.kind === 'linear'
@@ -749,6 +860,47 @@ export function acceptPick(
   }
 }
 
+/**
+ * A construction plane or axis clicked while a tool runs: a plane becomes
+ * the mirror/split plane, an axis the revolve/pattern/rotate axis or the
+ * mirror line (Shapr3D: construction geometry serves as those references).
+ */
+function acceptDatumPick(
+  draft: FeatureDraft,
+  featureId: string,
+  evaluation: EvaluationResult,
+): FeatureDraft {
+  if (isPrintDraft(draft)) {
+    return acceptPrintPick(draft, { kind: 'datum', featureId }, evaluation, []);
+  }
+  const ref = datumRef(evaluation, featureId);
+  if (!ref) return draft;
+  const plane = 'frame' in ref ? ref : null;
+  const axis = 'line' in ref ? ref : null;
+  switch (draft.kind) {
+    case 'mirror': {
+      if (plane) {
+        const { axis: _axis, ...rest } = draft;
+        return { ...rest, plane };
+      }
+      return axis ? { ...draft, axis } : draft;
+    }
+    case 'split':
+      return plane ? { ...draft, plane } : draft;
+    case 'revolve':
+      return axis ? { ...draft, axis } : draft;
+    case 'rotateAxis':
+      return axis ? { ...draft, axis } : draft;
+    case 'pattern':
+      if (!axis) return draft;
+      return draft.pattern.kind === 'linear'
+        ? { ...draft, pattern: { ...draft.pattern, direction: axis } }
+        : { ...draft, pattern: { ...draft.pattern, axis } };
+    default:
+      return draft;
+  }
+}
+
 /** Re-runs the automatic operation after the profiles changed (unless locked). */
 function retarget<T extends FeatureDraft & ProfileOperation>(
   draft: T,
@@ -791,6 +943,7 @@ export function draftToFeature(
   draft: FeatureDraft,
   base: { id: string; name: string },
 ): Feature | null {
+  if (isConstructionDraft(draft)) return constructionDraftToFeature(draft, base);
   if (isPrintDraft(draft)) return printDraftToFeature(draft, base);
   const common = { id: base.id, name: base.name, suppressed: false };
   const op = (d: ProfileOperation) => ({
@@ -822,13 +975,22 @@ export function draftToFeature(
         ...op(draft),
       };
     case 'mirror':
-      if (draft.bodyIds.length === 0) return null;
+      if (
+        draft.bodyIds.length === 0 &&
+        (draft.sketchIds?.length ?? 0) === 0 &&
+        (draft.faces?.length ?? 0) === 0
+      ) {
+        return null;
+      }
       return {
         ...common,
         kind: 'mirror',
         bodyIds: draft.bodyIds,
         plane: draft.plane,
         keepOriginal: draft.keepOriginal,
+        ...(draft.sketchIds?.length ? { sketchIds: draft.sketchIds } : {}),
+        ...(draft.faces?.length ? { faces: draft.faces } : {}),
+        ...(draft.axis ? { axis: draft.axis } : {}),
       };
     case 'pattern':
       if (draft.bodyIds.length === 0) return null;
@@ -857,7 +1019,7 @@ export function draftToFeature(
         offset: draft.offset,
       };
     case 'offsetFace':
-      if (draft.faces.length === 0) return null;
+      if (draft.faces.length === 0 || draft.distance === 0) return null;
       return { ...common, kind: 'offsetFace', faces: draft.faces, distance: draft.distance };
     case 'deleteFace':
       if (draft.faces.length === 0) return null;
@@ -876,6 +1038,7 @@ export interface DraftMeta {
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
 export function draftMeta(draft: FeatureDraft): DraftMeta {
+  if (isConstructionDraft(draft)) return constructionDraftMeta(draft);
   if (isPrintDraft(draft)) return printDraftMeta(draft);
   switch (draft.kind) {
     case 'revolve':
@@ -903,12 +1066,24 @@ export function draftMeta(draft: FeatureDraft): DraftMeta {
         shortcut: '',
         prompt: `${plural(draft.profiles.length, 'profile')} in order. Click profiles to add or remove.`,
       };
-    case 'mirror':
+    case 'mirror': {
+      const what = [
+        draft.bodyIds.length > 0 ? plural(draft.bodyIds.length, 'body', 'bodies') : '',
+        draft.sketchIds?.length ? plural(draft.sketchIds.length, 'sketch', 'sketches') : '',
+        draft.faces?.length ? plural(draft.faces.length, 'face') : '',
+      ]
+        .filter(Boolean)
+        .join(', ');
       return {
         label: 'Mirror',
         shortcut: '',
-        prompt: `${plural(draft.bodyIds.length, 'body', 'bodies')}. Click a planar face or pick a plane; click bodies to add or remove.`,
+        prompt: `${what}. ${
+          draft.axis
+            ? 'About the axis (a half turn about it); click a planar face or plane to mirror across it instead.'
+            : 'Click a planar face, a construction plane or an axis/edge, or pick a plane'
+        }; click bodies or sketches to add or remove.`,
       };
+    }
     case 'pattern':
       return {
         label: 'Pattern',
@@ -938,11 +1113,17 @@ export function draftMeta(draft: FeatureDraft): DraftMeta {
           'The first body moves onto the target face. Type a gap, or click faces to change them.',
       };
     case 'offsetFace':
-      return {
-        label: 'Offset Face',
-        shortcut: '',
-        prompt: `Drag the arrow or type a distance (negative removes material). ${plural(draft.faces.length, 'face')}.`,
-      };
+      return draft.viaMove
+        ? {
+            label: 'Move Face',
+            shortcut: 'M',
+            prompt: `Drag the arrow: a face moves along its normal (neighbours follow as with Offset Face). ${plural(draft.faces.length, 'face')}.`,
+          }
+        : {
+            label: 'Offset Face',
+            shortcut: '',
+            prompt: `Drag the arrow or type a distance (negative removes material). ${plural(draft.faces.length, 'face')}.`,
+          };
     case 'deleteFace':
       return {
         label: 'Delete Face',
@@ -980,6 +1161,7 @@ function planeBadge(plane: PlaneRef, ariaLabel: string): DraftBadge {
       { value: 'XZ', label: 'XZ' },
       { value: 'XY', label: 'XY' },
       ...(plane.kind === 'face' ? [{ value: 'face', label: 'Face' }] : []),
+      ...(plane.kind === 'construction' ? [{ value: 'face', label: 'Construction plane' }] : []),
     ],
     apply: (draft, value, evaluation) => {
       if (value === 'face' || (draft.kind !== 'mirror' && draft.kind !== 'split')) return draft;
@@ -997,6 +1179,13 @@ function planeBadge(plane: PlaneRef, ariaLabel: string): DraftBadge {
 }
 
 export function draftBadges(draft: FeatureDraft): DraftBadge[] {
+  if (isConstructionDraft(draft)) {
+    return constructionDraftBadges(draft).map((badge) => ({
+      ...badge,
+      apply: (d, value, evaluation) =>
+        isConstructionDraft(d) ? badge.apply(d, value, evaluation) : d,
+    }));
+  }
   if (isPrintDraft(draft)) {
     return printDraftBadges(draft).map((badge) => ({
       ...badge,
@@ -1045,7 +1234,21 @@ export function draftBadges(draft: FeatureDraft): DraftBadge[] {
       ];
     case 'mirror':
       return [
-        planeBadge(draft.plane, 'Mirror plane'),
+        draft.axis
+          ? {
+              ariaLabel: 'Mirror reference',
+              value: 'axis',
+              options: [
+                { value: 'axis', label: 'About the axis' },
+                { value: 'plane', label: 'Use a plane' },
+              ],
+              apply: (d) => {
+                if (d.kind !== 'mirror') return d;
+                const { axis: _axis, ...rest } = d;
+                return rest;
+              },
+            }
+          : planeBadge(draft.plane, 'Mirror plane'),
         {
           ariaLabel: 'Keep original',
           value: draft.keepOriginal ? 'copy' : 'move',
@@ -1054,6 +1257,16 @@ export function draftBadges(draft: FeatureDraft): DraftBadge[] {
             { value: 'move', label: 'Mirror in place' },
           ],
           apply: (d, value) => (d.kind === 'mirror' ? { ...d, keepOriginal: value === 'copy' } : d),
+        },
+        {
+          ariaLabel: 'Clicked faces',
+          value: draft.facePicks ?? 'plane',
+          options: [
+            { value: 'plane', label: 'Face = plane' },
+            { value: 'target', label: 'Face = target' },
+          ],
+          apply: (d, value) =>
+            d.kind === 'mirror' ? { ...d, facePicks: value === 'target' ? 'target' : 'plane' } : d,
         },
       ];
     case 'pattern':
@@ -1266,6 +1479,7 @@ function axisLine(
     }
     return null;
   }
+  if (ref.kind === 'construction') return constructionAxisLine(ref, evaluation);
   const sketch = evaluation.sketches.find((s) => s.featureId === ref.featureId);
   const curve = sketch?.curves.find((c) => c.entityId === ref.entityId && c.kind === 'line');
   const a = curve?.points[0];
@@ -1291,6 +1505,7 @@ function planeOf(
     const frame = frameForPlane(plane.plane, plane.offset);
     return { point: frame.origin, normal: frame.normal };
   }
+  if (plane.kind === 'construction') return planeRefPlane(plane, evaluation);
   const body = bodyOf(evaluation, plane.face.bodyId);
   const face = body ? faceOf(body, plane.face.key) : undefined;
   const normal = face?.normal ?? plane.face.signature.normal;
@@ -1340,6 +1555,12 @@ export function draftHandles(
   evaluation: EvaluationResult,
   features: readonly Feature[] = [],
 ): DraftHandle[] {
+  if (isConstructionDraft(draft)) {
+    return constructionDraftHandles(draft, evaluation).map((h) => ({
+      ...h,
+      apply: (d: FeatureDraft, value: number) => (isConstructionDraft(d) ? h.apply(d, value) : d),
+    }));
+  }
   if (isPrintDraft(draft)) {
     return printDraftHandles(draft, evaluation, features).map((h) => ({
       ...h,
@@ -1572,6 +1793,7 @@ export function draftGuides(
   evaluation: EvaluationResult,
   features: readonly Feature[] = [],
 ): DraftGuides {
+  if (isConstructionDraft(draft)) return constructionDraftGuides(draft, evaluation);
   if (isPrintDraft(draft)) return printDraftGuides(draft, evaluation, features);
   const out: DraftGuides = { lines: [], planes: [] };
   const axisSegment = (ref: AxisRef | null, around: Vec3 | null, reach: number) => {
@@ -1591,6 +1813,9 @@ export function draftGuides(
     const centre = bodyCentre(evaluation, draft.bodyIds);
     axisSegment(draft.pattern.axis, centre, 40);
   } else if (draft.kind === 'rotateAxis') {
+    const centre = bodyCentre(evaluation, draft.bodyIds);
+    axisSegment(draft.axis, centre, 40);
+  } else if (draft.kind === 'mirror' && draft.axis) {
     const centre = bodyCentre(evaluation, draft.bodyIds);
     axisSegment(draft.axis, centre, 40);
   } else if (draft.kind === 'mirror' || draft.kind === 'split') {
@@ -1615,6 +1840,7 @@ export function draftGuides(
 
 /** Bodies the running tool modifies in place (shown with the preview accent). */
 export function draftModifiedBodyIds(draft: FeatureDraft): string[] {
+  if (isConstructionDraft(draft)) return [];
   if (isPrintDraft(draft)) return printDraftModifiedBodyIds(draft);
   switch (draft.kind) {
     case 'revolve':

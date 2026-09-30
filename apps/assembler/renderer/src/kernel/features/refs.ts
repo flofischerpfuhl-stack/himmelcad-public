@@ -146,6 +146,11 @@ export function resolveAxis(kit: FeatureKit, ctx: ReplayContextLike, ref: AxisRe
   if (ref.kind === 'world') {
     return { point: ref.origin ?? [0, 0, 0], dir: worldAxisVector(ref.axis) };
   }
+  if (ref.kind === 'construction') {
+    const datum = ctx.datums.get(ref.featureId);
+    if (datum?.kind !== 'axis') kit.fail(`Missing reference: construction axis "${ref.featureId}"`);
+    return { point: datum.frame.origin, dir: datum.frame.normal };
+  }
   if (ref.kind === 'edge') {
     const body = bodyOrFail(kit, ctx, ref.edge.bodyId);
     const { topology, indices } = kit.resolveEdges(body, [ref.edge], ctx.warn);
@@ -194,6 +199,12 @@ export function resolvePlane(kit: FeatureKit, ctx: ReplayContextLike, ref: Plane
   if (ref.kind === 'plane') {
     const frame = frameForPlane(ref.plane, ref.offset);
     return { point: frame.origin, normal: frame.normal };
+  }
+  if (ref.kind === 'construction') {
+    const datum = ctx.datums.get(ref.featureId);
+    if (datum?.kind !== 'plane')
+      kit.fail(`Missing reference: construction plane "${ref.featureId}"`);
+    return { point: datum.center, normal: datum.frame.normal };
   }
   const body = bodyOrFail(kit, ctx, ref.face.bodyId);
   const { geom } = kit.resolveFace(body, ref.face, ctx.warn);

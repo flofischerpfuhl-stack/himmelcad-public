@@ -46,6 +46,11 @@ export interface Preferences {
   /** Text hints ("Midpoint", "Horizontal" …) next to the cursor while drawing. */
   snapHints: boolean;
   /**
+   * Which selected sketch item stays put when a constraint is added (Shapr3D
+   * Constraint Settings "First/Last Selected"); existing constraints win.
+   */
+  constraintKeep: 'first' | 'last';
+  /**
    * Shortcut overrides, command id → shortcut in the registry's display form
    * (`'Shift+E'`, `'Ctrl+Alt+K'`); `''` removes a command's shortcut.
    */
@@ -111,6 +116,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   showHomeOnStartup: true,
   snaps: { ...DEFAULT_SKETCH_SNAPS },
   snapHints: true,
+  constraintKeep: 'first',
   shortcuts: {},
   selectionExtension: false,
 };
@@ -188,6 +194,7 @@ export function parsePreferences(text: string | null): Preferences {
     showHomeOnStartup: pick('showHomeOnStartup', bool),
     snaps: parseSnaps(r.snaps),
     snapHints: pick('snapHints', bool),
+    constraintKeep: r.constraintKeep === 'last' ? 'last' : 'first',
     shortcuts: parseShortcuts(r.shortcuts),
     selectionExtension: pick('selectionExtension', bool),
   };

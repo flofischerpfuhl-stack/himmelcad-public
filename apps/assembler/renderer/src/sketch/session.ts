@@ -39,7 +39,9 @@ import {
   projectSource,
   type EdgeSample,
 } from './projection.js';
+import { pointIdsOf } from './moveRegion.js';
 import { rememberRegions } from './regionMemory.js';
+import { usePreferences } from '../model/preferences.js';
 import { getSketchSolver } from './solverProvider.js';
 import type { SolveResult } from './solverTypes.js';
 import { DEFAULT_SKETCH_FONT, loadSketchFont, textOutline } from './text/fonts.js';
@@ -53,6 +55,7 @@ import {
 } from './tools.js';
 import {
   EMPTY_SKETCH,
+  ORIGIN_ID,
   idAllocator,
   sketchDataOf,
   type SketchConstraintKind,
@@ -137,6 +140,8 @@ export interface BeginSketchOptions {
   face?: { bodyId: string; faceKey: string };
   /** New sketch on a construction plane. */
   plane?: Plane;
+  /** New sketch on a construction plane step (`constructionPlane`) by feature id. */
+  datum?: string;
   /** Tool to start with (default: select for existing, line for new sketches). */
   tool?: SketchToolKind;
 }
@@ -202,6 +207,7 @@ export interface SketchState {
 
 function frameOf(plane: SketchPlaneRef): SketchFrame | null {
   if (plane.kind === 'plane') return frameForPlane(plane.plane, plane.offset);
+  if (plane.kind === 'construction') return plane.frame;
   const normal = plane.face.signature.normal;
   return normal ? frameForFace(normal, plane.face.signature.centroid) : null;
 }
@@ -290,7 +296,13 @@ function applyToolOption(tool: SketchTool, option: Partial<SketchToolOptions>): 
   const mode = option.mode;
   switch (tool.kind) {
     case 'rectangle':
-      return mode === 'corner' || mode === 'center' ? { ...tool, mode, first: null } : tool;
+      return mode === 'corner' || mode === 'center' || mode === 'threePoint'
+        ? { ...tool, mode, first: null, second: null }
+        : tool;
+    case 'arc':
+      return mode === 'endsBulge' || mode === 'threePoint'
+        ? { ...tool, mode, start: null, end: null, through: null, tangent: null }
+        : tool;
     case 'polygon': {
       let next = tool;
       if (option.sides !== undefined) {
@@ -389,11 +401,20 @@ export const useSketchStore = create<SketchState>((set, get) => {
         if (!session) return false;
         if (result.status === 'ok') {
           pendingOffer = null;
+          // Steering constraints (the item kept in place) leave the sketch after the solve.
+          const transient = new Set(edit.transient ?? []);
+          const solved =
+            transient.size > 0
+              ? {
+                  ...result.sketch,
+                  constraints: result.sketch.constraints.filter((c) => !transient.has(c.id)),
+                }
+              : result.sketch;
           set({
             session: {
               ...session,
               notice: null,
-              sketch: result.sketch,
+              sketch: solved,
               past: [...session.past, session.sketch],
               future: [],
               dof: result.dof,
@@ -403,14 +424,16 @@ export const useSketchStore = create<SketchState>((set, get) => {
                 edit.select ??
                 session.selection.filter(
                   (id) =>
-                    result.sketch.entities.some((e) => e.id === id) ||
-                    result.sketch.constraints.some((c) => c.id === id) ||
-                    result.sketch.dimensions.some((d) => d.id === id),
+                    solved.entities.some((e) => e.id === id) ||
+                    solved.constraints.some((c) => c.id === id) ||
+                    solved.dimensions.some((d) => d.id === id),
                 ),
-              planeLocked: session.planeLocked || result.sketch.entities.length > 0,
+              planeLocked: session.planeLocked || solved.entities.length > 0,
             },
           });
           syncHistory();
+          // The degrees of freedom above counted the steering constraints: analyse again.
+          if (transient.size > 0) await refreshAnalysis();
           return true;
         }
         if (result.status === 'overconstrained' && optional.length > 0) {
@@ -552,6 +575,12 @@ export const useSketchStore = create<SketchState>((set, get) => {
         featureId = main.allocateFeatureId('sketch');
         plane = { kind: 'face', face: ref };
         frame = frameOf(plane);
+      } else if (options.datum) {
+        const datum = main.evaluation.datums?.find((d) => d.featureId === options.datum);
+        if (datum?.kind !== 'plane') return false;
+        featureId = main.allocateFeatureId('sketch');
+        plane = { kind: 'construction', featureId: datum.featureId, frame: datum.frame };
+        frame = datum.frame;
       } else {
         featureId = main.allocateFeatureId('sketch');
         plane = { kind: 'plane', plane: options.plane ?? 'XY', offset: 0 };
@@ -948,13 +977,30 @@ export const useSketchStore = create<SketchState>((set, get) => {
       if (!session) return 'No sketch is being edited.';
       const plan = planConstraint(session.sketch, kind, session.selection);
       if (!plan.ok) return plan.reason;
+      // Shapr3D Constraint Settings "First/Last Selected": that item stays where it is while the
+      // solver satisfies the new constraint (existing constraints win: the pin is optional).
+      const keep = usePreferences.getState().constraintKeep;
+      const picked = session.selection.filter((id) =>
+        session.sketch.entities.some((e) => e.id === id),
+      );
+      const anchorId =
+        kind !== 'fixed' && picked.length >= 2
+          ? keep === 'last'
+            ? picked[picked.length - 1]
+            : picked[0]
+          : undefined;
       await applyEdit((sketch) => {
         const alloc = idAllocator(sketch);
         const added = plan.constraints.map((c) => ({ ...c, id: alloc('k') }));
+        const anchor = anchorId ? sketch.entities.find((e) => e.id === anchorId) : undefined;
+        const pins = (anchor ? pointIdsOf(anchor) : [])
+          .filter((id) => id !== ORIGIN_ID)
+          .map((id) => ({ id: alloc('k'), kind: 'fixed' as const, refs: [id] }));
         return {
-          sketch: { ...sketch, constraints: [...sketch.constraints, ...added] },
+          sketch: { ...sketch, constraints: [...sketch.constraints, ...added, ...pins] },
           // Locking already determined points is dropped instead of rejected.
-          optional: kind === 'fixed' ? added.map((c) => c.id) : [],
+          optional: [...(kind === 'fixed' ? added.map((c) => c.id) : []), ...pins.map((p) => p.id)],
+          transient: pins.map((p) => p.id),
         };
       });
       return null;

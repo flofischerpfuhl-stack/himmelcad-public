@@ -320,6 +320,55 @@ export const DEFS: Record<string, JsonSchema> = {
         'plane',
       ]),
       obj({ kind: { const: 'face' }, face: ref('FaceInput') }, ['kind', 'face']),
+      obj(
+        { kind: { const: 'construction' }, featureId: str, frame: ref('Frame') },
+        ['kind', 'featureId'],
+        'A construction plane (feature kind `constructionPlane`) by feature id; `frame` (its last evaluated frame) is filled by the server.',
+      ),
+    ],
+  },
+  Frame: obj(
+    { origin: ref('Vec3'), u: ref('Vec3'), v: ref('Vec3'), normal: ref('Vec3') },
+    ['origin', 'u', 'v', 'normal'],
+    'Orthonormal frame: sketch (u, v) maps to origin + u·U + v·V; `normal` is the extrude direction.',
+  ),
+  PointRef: {
+    oneOf: [
+      obj({ kind: { const: 'point' }, point: ref('Vec3') }, ['kind', 'point'], 'A world point.'),
+      obj(
+        { kind: { const: 'edgeEnd' }, edge: ref('EdgeInput'), near: ref('Vec3') },
+        ['kind', 'edge', 'near'],
+        'The end of the edge nearest to `near`.',
+      ),
+      obj({ kind: { const: 'edgeMid' }, edge: ref('EdgeInput') }, ['kind', 'edge']),
+      obj(
+        { kind: { const: 'circleCenter' }, edge: ref('EdgeInput') },
+        ['kind', 'edge'],
+        'The centre of a circular edge.',
+      ),
+    ],
+  },
+  ExtrudeExtent: {
+    oneOf: [
+      obj({ kind: { const: 'distance' } }, ['kind'], '`distance` (default).'),
+      obj(
+        { kind: { const: 'throughAll' } },
+        ['kind'],
+        'Through every body in the direction of the sign of `distance` (both ways when symmetric).',
+      ),
+      obj(
+        {
+          kind: { const: 'toObject' },
+          target: {
+            oneOf: [
+              obj({ kind: { const: 'face' }, face: ref('FaceInput') }, ['kind', 'face']),
+              obj({ kind: { const: 'body' }, bodyId: str }, ['kind', 'bodyId']),
+            ],
+          },
+        },
+        ['kind', 'target'],
+        'Up to a face (a planar face as its infinite plane; any other face: the first contact with its body) or a body (first contact), in the direction of the sign of `distance`.',
+      ),
     ],
   },
   ExtrudeProfile: {
@@ -356,6 +405,15 @@ export const DEFS: Record<string, JsonSchema> = {
         { kind: { const: 'sketchLine' }, featureId: str, entityId: str },
         ['kind', 'featureId', 'entityId'],
         'A sketch line by entity id (construction lines included), e.g. a revolve centre line.',
+      ),
+      obj(
+        {
+          kind: { const: 'construction' },
+          featureId: str,
+          line: obj({ point: ref('Vec3'), dir: ref('Vec3') }, ['point', 'dir']),
+        },
+        ['kind', 'featureId'],
+        'A construction axis (feature kind `constructionAxis`) by feature id; `line` is filled by the server.',
       ),
     ],
   },
@@ -421,10 +479,10 @@ export const DEFS: Record<string, JsonSchema> = {
 };
 
 const operation: JsonSchema = {
-  enum: ['new', 'join', 'cut'],
+  enum: ['new', 'join', 'cut', 'intersect'],
   default: 'new',
   description:
-    'New body, or join/cut into `targetBodyId` (default: the most recently changed body).',
+    'New body, or join into / cut from / intersect with `targetBodyId` (default: the most recently changed body).',
 };
 
 export interface FeatureKindSpec {
@@ -475,7 +533,7 @@ export const FEATURE_KIND_SCHEMAS: Record<string, FeatureKindSpec> = {
   extrude: {
     label: 'Extrude',
     summary:
-      'Extrudes sketch profiles (or pushes/pulls a planar face) along the sketch normal; negative distance goes the other way.',
+      'Extrudes sketch profiles (or pushes/pulls a planar face) along the sketch normal; negative distance goes the other way. Extent Distance / Through All / To Object, one side / symmetric / two sides (`distance2`), start offset; New/Join/Cut/Intersect.',
     params: obj(
       {
         profile: ref('ExtrudeProfile'),
@@ -486,9 +544,25 @@ export const FEATURE_KIND_SCHEMAS: Record<string, FeatureKindSpec> = {
             'Formula over document parameters (`parameters.list`), e.g. "wall * 2"; resolved into `distance`. Either this or `distance` is required.',
         },
         symmetric: { type: 'boolean', default: false },
-        operation: { enum: ['new', 'join', 'cut'], default: 'new' },
+        operation: {
+          enum: ['new', 'join', 'cut', 'intersect'],
+          default: 'new',
+          description:
+            'A face profile (push/pull) joins outwards and cuts inwards; only `intersect` overrides that.',
+        },
         targetBodyId: str,
         resultBodyName: str,
+        extent: ref('ExtrudeExtent'),
+        distance2: {
+          type: 'number',
+          minimum: 0,
+          description:
+            'Two sides: how far the extrude also goes to the other side of the profile (ignored when symmetric).',
+        },
+        startOffset: {
+          type: 'number',
+          description: 'The extrude starts this far from the profile along its normal (mm).',
+        },
       },
       ['profile'],
     ),
@@ -638,14 +712,92 @@ export const FEATURE_KIND_SCHEMAS: Record<string, FeatureKindSpec> = {
   mirror: {
     label: 'Mirror',
     summary:
-      'Mirrors bodies across a plane; with keepOriginal (default) the mirror images are new bodies.',
+      'Mirrors bodies, sketches and planar faces across a plane (world plane, planar face, construction plane) or, with `axis`, about a line (a half turn); with keepOriginal (default) the mirror images of bodies are new bodies. Mirrored sketches/faces become sketches "<featureId>:sketch:<i>" (sketchIds first, then faces) whose profiles extrude/revolve reference.',
     params: obj(
       {
-        bodyIds: { type: 'array', items: str, minItems: 1 },
+        bodyIds: { type: 'array', items: str },
         plane: ref('SketchPlane'),
         keepOriginal: { type: 'boolean', default: true },
+        sketchIds: { type: 'array', items: str },
+        faces: { type: 'array', items: ref('FaceInput') },
+        axis: ref('AxisRef'),
       },
-      ['bodyIds', 'plane'],
+      [],
+      'At least one of bodyIds / sketchIds / faces must be non-empty. `plane` defaults to the YZ plane (and is ignored with `axis`).',
+    ),
+  },
+  constructionPlane: {
+    label: 'Plane',
+    summary:
+      'Construction plane (no body): offset from a plane/face, at an angle about an axis, through three points, midplane between two parallel planes/faces, or tangent to a cylindrical face. Usable as a sketch plane, mirror/split plane and section plane by `{kind: "construction", featureId}`.',
+    params: obj(
+      {
+        definition: {
+          oneOf: [
+            obj({ kind: { const: 'offset' }, base: ref('SketchPlane'), distance: num }, [
+              'kind',
+              'base',
+              'distance',
+            ]),
+            obj(
+              {
+                kind: { const: 'angle' },
+                base: ref('SketchPlane'),
+                axis: ref('AxisRef'),
+                angle: num,
+              },
+              ['kind', 'base', 'axis', 'angle'],
+              'Through `axis` (parallel to `base`), turned `angle` degrees from `base`.',
+            ),
+            obj(
+              {
+                kind: { const: 'threePoints' },
+                points: { type: 'array', items: ref('PointRef'), minItems: 3, maxItems: 3 },
+              },
+              ['kind', 'points'],
+            ),
+            obj({ kind: { const: 'midplane' }, a: ref('SketchPlane'), b: ref('SketchPlane') }, [
+              'kind',
+              'a',
+              'b',
+            ]),
+            obj(
+              { kind: { const: 'tangent' }, face: ref('FaceInput'), angle: num },
+              ['kind', 'face', 'angle'],
+              '`angle` degrees around the cylinder axis, from the axis frame u.',
+            ),
+          ],
+        },
+        flip: { type: 'boolean', default: false },
+      },
+      ['definition'],
+    ),
+  },
+  constructionAxis: {
+    label: 'Axis',
+    summary:
+      'Construction axis (no body): along a straight edge (a circular edge: its axis), through two points, the axis of a cylindrical face, or the intersection of two planes. Usable as revolve/pattern/rotate axis and mirror line by `{kind: "construction", featureId}`.',
+    params: obj(
+      {
+        definition: {
+          oneOf: [
+            obj({ kind: { const: 'edge' }, edge: ref('EdgeInput') }, ['kind', 'edge']),
+            obj({ kind: { const: 'twoPoints' }, a: ref('PointRef'), b: ref('PointRef') }, [
+              'kind',
+              'a',
+              'b',
+            ]),
+            obj({ kind: { const: 'cylinder' }, face: ref('FaceInput') }, ['kind', 'face']),
+            obj({ kind: { const: 'planes' }, a: ref('SketchPlane'), b: ref('SketchPlane') }, [
+              'kind',
+              'a',
+              'b',
+            ]),
+          ],
+        },
+        flip: { type: 'boolean', default: false },
+      },
+      ['definition'],
     ),
   },
   pattern: {
@@ -831,6 +983,15 @@ export const METHODS: Record<string, MethodSpec> = {
     params: obj({ scope }),
     result:
       '[{featureId, name, plane, frame: {origin,u,v,normal}, entities, constraints, dimensions, regions: [{key, area, sample, center, holes, entityIds}], consumed}]',
+  },
+  'datums.list': {
+    kind: 'query',
+    capability: 'document.read',
+    summary:
+      'Construction planes and axes (constructionPlane/constructionAxis steps) as evaluated: plane frame / axis point + direction, and the drawn centre and size.',
+    params: obj({ scope }),
+    result:
+      '[{featureId, name, kind: "plane"|"axis", frame: {origin,u,v,normal}, center, size, error}] (axis: origin = a point on it, normal = its direction)',
   },
   'selection.get': {
     kind: 'query',

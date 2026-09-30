@@ -137,6 +137,20 @@ export interface EvaluatedSketch {
   }[];
 }
 
+/**
+ * A construction plane or axis after evaluation (`model/construction.ts`).
+ * Plane: `frame` is its sketch frame (u/v in the plane, `normal`); axis:
+ * `frame.origin` is a point on it and `frame.normal` its direction. `center`
+ * and `size` place the drawn square (half side) or segment (half length).
+ */
+export interface EvaluatedDatum {
+  featureId: string;
+  kind: 'plane' | 'axis';
+  frame: SketchFrame;
+  center: Vec3;
+  size: number;
+}
+
 export interface EvaluationStats {
   /** Modelling time (feature replay), ms. */
   modelMs: number;
@@ -188,6 +202,8 @@ export interface EvaluationResult {
   bodies: Body[];
   /** Evaluated sketches, in feature order. */
   sketches: EvaluatedSketch[];
+  /** Construction planes and axes, in feature order (absent from older kernels / when none). */
+  datums?: EvaluatedDatum[];
   /** Per-feature error message, keyed by feature id. Absent = no error. */
   errors: Record<string, string>;
   /** Per-feature geometry an error points at (absent for most errors). */

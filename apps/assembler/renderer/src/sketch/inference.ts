@@ -9,6 +9,7 @@
  * on-curve → grid.
  */
 import { closestOnCurve, dist, dot, normalize, sketchCurves, sub } from './geometry.js';
+import type { BodySnapTargets } from './bodySnaps.js';
 import type { SnapTarget } from './edits.js';
 import { entityMap, isCurve, ORIGIN_ID, type SketchData, type Vec2 } from './types.js';
 
@@ -22,7 +23,12 @@ export type InferenceHint =
   | 'vertical'
   | 'perpendicular'
   | 'parallel'
-  | 'grid';
+  | 'grid'
+  /** 3D snaps (body geometry seen along the sketch normal). */
+  | 'vertex'
+  | 'edgeMidpoint'
+  | 'circleCenter'
+  | 'farEdge';
 
 export interface Inference extends SnapTarget {
   /** What the cursor snapped to, for the small hint glyphs. */
@@ -47,6 +53,8 @@ export interface InferContext {
   exclude?: ReadonlySet<string>;
   /** Which snaps are on (Snap popover; absent = on). Grid snapping is `gridStep`. */
   snaps?: Partial<SketchSnapToggles>;
+  /** 3D snap targets: body points and far edges in sketch coordinates (`bodySnaps.ts`). */
+  body?: BodySnapTargets | null;
 }
 
 /**
@@ -67,6 +75,10 @@ export interface SketchSnapToggles {
    * constraints. Off keeps point connections (coincident, midpoint, on curve).
    */
   autoConstrain: boolean;
+  /** 3D body points: vertices, edge midpoints, circle/hole centres. */
+  bodyPoints: boolean;
+  /** Edges away from the sketch plane, in an orthographic view. */
+  farEdges: boolean;
 }
 
 export const DEFAULT_SKETCH_SNAPS: SketchSnapToggles = {
@@ -75,6 +87,8 @@ export const DEFAULT_SKETCH_SNAPS: SketchSnapToggles = {
   guidelines: true,
   curves: true,
   autoConstrain: true,
+  bodyPoints: true,
+  farEdges: true,
 };
 
 const POINT_PX = 10;
@@ -150,6 +164,19 @@ export function infer(sketch: SketchData, raw: Vec2, ctx: InferContext): Inferen
     const mid: Vec2 = [(curve.a[0] + curve.b[0]) / 2, (curve.a[1] + curve.b[1]) / 2];
     if (dist(mid, raw) <= MIDPOINT_PX * px) {
       return withSegment({ pos: mid, midpointOf: id, hints: ['midpoint'], guides: [] });
+    }
+  }
+
+  // 2b. Body points (3D snaps): vertices, edge midpoints, circle centres. A suggestion — no link.
+  if (snaps.bodyPoints && ctx.body) {
+    let best: { pos: Vec2; kind: InferenceHint; d: number } | null = null;
+    for (const p of ctx.body.points) {
+      const d = dist(p.pos, raw);
+      if (d <= POINT_PX * px && (!best || d < best.d)) best = { pos: p.pos, kind: p.kind, d };
+    }
+    if (best) {
+      const b = best as { pos: Vec2; kind: InferenceHint };
+      return withSegment({ pos: [b.pos[0], b.pos[1]], hints: [b.kind], guides: [] });
     }
   }
 
@@ -249,6 +276,24 @@ export function infer(sketch: SketchData, raw: Vec2, ctx: InferContext): Inferen
       result.pos = b.point;
       result.curveId = b.id;
       hints.push('on');
+      return withSegment(result);
+    }
+  }
+
+  // 5b. Far edges (edges out of the sketch plane, orthographic view): the nearest point on one.
+  if (snaps.farEdges && ctx.body && !lockX && !lockY) {
+    let best: { point: Vec2; d: number } | null = null;
+    for (const [a, b] of ctx.body.farEdges) {
+      const ab = sub(b, a);
+      const len2 = ab[0] * ab[0] + ab[1] * ab[1];
+      const t = len2 > 0 ? Math.max(0, Math.min(1, dot(sub(raw, a), ab) / len2)) : 0;
+      const point: Vec2 = [a[0] + ab[0] * t, a[1] + ab[1] * t];
+      const d = dist(point, raw);
+      if (d <= CURVE_PX * px && (!best || d < best.d)) best = { point, d };
+    }
+    if (best) {
+      result.pos = (best as { point: Vec2 }).point;
+      hints.push('farEdge');
       return withSegment(result);
     }
   }

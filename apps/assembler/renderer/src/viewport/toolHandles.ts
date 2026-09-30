@@ -5,9 +5,11 @@
  * chip overlay — all three always agree. Values are written back through
  * {@link applyToolHandleValue}.
  */
-import { transformOps, opsAffine } from '../kernel/features/rigid.js';
+import { opsAffine } from '../kernel/features/rigid.js';
+import { WORLD_AXES, gizmoOps, isWorldAxes } from '../model/moveGizmo.js';
 import type { Body } from '../kernel/types.js';
 import {
+  profileSamples,
   draftGuides,
   draftHandles,
   draftModifiedBodyIds,
@@ -123,16 +125,11 @@ export function movePivotShown(tool: MoveTool): Vec3 {
 
 function ringHandles(tool: MoveTool, colors: [Vec3, Vec3, Vec3] | null): ToolHandleSet {
   const center = movePivotShown(tool);
-  const axes: Vec3[] = [
-    [1, 0, 0],
-    [0, 1, 0],
-    [0, 0, 1],
-  ];
-  const refs: Vec3[] = [
-    [0, 1, 0],
-    [0, 0, 1],
-    [1, 0, 0],
-  ];
+  // A sketch profile only moves (no rings); the gizmo keeps its centre handle.
+  if (tool.sketch) return { axis: [], angles: [], chips: [], guides: null, pivot: center };
+  const axes: Vec3[] = tool.axes ? [...tool.axes] : [...WORLD_AXES];
+  // Each ring's zero direction: the next axis (X ring from Y, Y from Z, Z from X).
+  const refs: Vec3[] = [axes[1]!, axes[2]!, axes[0]!];
   const values = [tool.rotation.rx, tool.rotation.ry, tool.rotation.rz];
   const angles = ([0, 1, 2] as const).map((i) => ({
     handle: `ring:${i}` as const,
@@ -146,8 +143,9 @@ function ringHandles(tool: MoveTool, colors: [Vec3, Vec3, Vec3] | null): ToolHan
   }));
   const chips: ToolChip[] = angles.map((a, i) => ({
     handle: a.handle,
-    label: `Rotate ${'XYZ'[i]}`,
-    prefix: `${'XYZ'[i]}`,
+    label:
+      tool.axes && !isWorldAxes(tool.axes) ? `Rotate about axis ${i + 1}` : `Rotate ${'XYZ'[i]}`,
+    prefix: tool.axes && !isWorldAxes(tool.axes) ? `R${i + 1}` : `${'XYZ'[i]}`,
     unit: 'deg',
     value: a.value,
     // In the quadrant between the negative arrows, so ring chips never sit on an arrow chip.
@@ -168,7 +166,56 @@ export function toolHandleSet(
     return set;
   }
   if (tool?.kind === 'move') return ringHandles(tool, ringColors);
+  if (tool?.kind === 'extrude') return extrudeHandles(state);
   return EMPTY;
+}
+
+/**
+ * Extrude extras: the second side's arrow (two sides) and the start-offset
+ * chip, next to the main distance arrow the viewport draws itself.
+ */
+function extrudeHandles(state: AssemblerState): ToolHandleSet {
+  const tool = state.activeTool;
+  if (tool?.kind !== 'extrude') return EMPTY;
+  const samples = profileSamples(state.evaluation, tool.profile);
+  if (!samples) return EMPTY;
+  const n = samples.normal;
+  const s = tool.startOffset ?? 0;
+  const base: Vec3 = [
+    samples.center[0] + n[0] * s,
+    samples.center[1] + n[1] * s,
+    samples.center[2] + n[2] * s,
+  ];
+  const out: ToolHandleSet = { axis: [], angles: [], chips: [], guides: null, pivot: null };
+  if (tool.sides === 'two') {
+    const sign = tool.distance < 0 ? 1 : -1;
+    const dir: Vec3 = [n[0] * sign, n[1] * sign, n[2] * sign];
+    const length = Math.max(tool.distance2 ?? 0, 8);
+    out.axis.push({
+      handle: 'extrude2',
+      base,
+      dir,
+      length,
+      dragDir: dir,
+      value: tool.distance2 ?? 0,
+    });
+    out.chips.push({
+      handle: 'extrude2',
+      label: 'Second side distance',
+      unit: 'mm',
+      value: tool.distance2 ?? 0,
+      at: [base[0] + dir[0] * length, base[1] + dir[1] * length, base[2] + dir[2] * length],
+    });
+  }
+  out.chips.push({
+    handle: 'extrudeStart',
+    label: 'Start offset',
+    prefix: 'Start',
+    unit: 'mm',
+    value: s,
+    at: samples.center,
+  });
+  return out;
 }
 
 /** Bodies of the Move/Rotate preview: the body moved (or a moved copy added), the original as ghost. */
@@ -178,7 +225,7 @@ export function movePreviewBodies(
 ): { bodies: Body[]; newIds: string[]; ghosts: Body[] } {
   const body = bodies.find((b) => b.id === tool.bodyId);
   if (!body) return { bodies: [...bodies], newIds: [], ghosts: [] };
-  const affine = opsAffine(transformOps({ ...tool.delta, ...tool.rotation, pivot: tool.pivot }));
+  const affine = opsAffine(gizmoOps(tool));
   if (tool.copy) {
     const copy = transformBody(body, affine, `${body.id}::copy`);
     return { bodies: [...bodies, copy], newIds: [copy.id], ghosts: [] };
@@ -216,6 +263,13 @@ export function applyToolHandleValue(handle: ToolHandleKind, raw: number, snap: 
     const r = [tool.rotation.rx, tool.rotation.ry, tool.rotation.rz];
     r[i] = Math.round(raw * 1000) / 1000;
     s.setRotation(r[0]!, r[1]!, r[2]!);
+    return true;
+  }
+  if (handle === 'extrude2' || handle === 'extrudeStart') {
+    let value = snap ? Math.round(raw / DRAG_STEP_MM) * DRAG_STEP_MM : raw;
+    value = Math.round(value * 1000) / 1000;
+    if (handle === 'extrude2') s.setExtrudeOptions({ distance2: Math.max(0, value) });
+    else s.setExtrudeOptions({ startOffset: value === 0 ? undefined : value });
     return true;
   }
   if (!handle.startsWith('feature:')) return false;

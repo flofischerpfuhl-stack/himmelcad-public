@@ -153,11 +153,10 @@ void test('command search: "ext" ranks Extrude first when it is enabled', async 
 void test('command search: a typed name beats scattered letters, with or without a selection', async () => {
   await freshStoreWithDemoDoc();
   const state = useAssemblerStore.getState();
-  // Nothing selected: Extrude is disabled but its name matches — it still comes first, with its reason.
+  // Nothing selected: Extrude still starts (tool before selection) and asks for its profile.
   const ext = searchCommands('ext', state);
   assert.equal(ext[0]?.command.id, 'tools.extrude');
-  assert.equal(ext[0]?.enabled, false);
-  assert.ok(ext[0]?.reason);
+  assert.equal(ext[0]?.enabled, true);
   assert.equal(searchCommands('mea', state)[0]?.command.id, 'modes.measure');
   assert.equal(searchCommands('fil', state)[0]?.command.id, 'tools.filletChamfer');
   assert.equal(searchCommands('rot', state)[0]?.command.id, 'transform.rotateAxis');
@@ -181,11 +180,11 @@ void test('command search with a selection lists the valid actions; strong name 
   // Scattered-letter matches of disabled commands (e.g. Subtract needs two bodies) are dropped …
   const loose = searchCommands('sbt', state);
   assert.ok(loose.every((r) => r.enabled));
-  // … but typing the name of a disabled tool keeps it, explaining why.
-  const union = searchCommands('union', state);
-  assert.equal(union[0]?.command.id, 'tools.union');
-  assert.equal(union[0]?.enabled, false);
-  assert.match(union[0]?.reason ?? '', /two or more bodies/);
+  // … but typing the name of a disabled tool keeps it, explaining why (Extrude cannot take a body).
+  const extrude = searchCommands('extrude', state);
+  assert.equal(extrude[0]?.command.id, 'tools.extrude');
+  assert.equal(extrude[0]?.enabled, false);
+  assert.match(extrude[0]?.reason ?? '', /sketch profile or a body face/);
 });
 
 void test('matchScore tiers: exact > prefix > word prefix > abbreviation > subsequence', () => {
@@ -217,11 +216,16 @@ void test('kernel commands are disabled while the kernel loads, with the loading
   }
 });
 
-void test('booleans need two selected bodies once the kernel is ready', async () => {
+void test('booleans: one body starts the tool asking for the tools; an unfitting selection explains', async () => {
   await freshStoreWithDemoDoc();
   const union = COMMANDS.find((c) => c.id === 'tools.union')!;
   const body = useAssemblerStore.getState().evaluation.bodies[0]!;
+  // Tool before selection (UI-16): one body is the target, the pill asks for the tools.
   useAssemblerStore.getState().select({ kind: 'body', bodyId: body.id });
+  assert.equal(union.availability(useAssemblerStore.getState()).enabled, true);
+  // A sketch profile fits no step of a boolean: disabled, with the reason.
+  const sketch = useAssemblerStore.getState().features.find((f) => f.kind === 'sketch')!;
+  useAssemblerStore.getState().select({ kind: 'sketchProfile', featureId: sketch.id });
   const availability = union.availability(useAssemblerStore.getState());
   assert.equal(availability.enabled, false);
   assert.match(availability.reason ?? '', /two or more bodies/);

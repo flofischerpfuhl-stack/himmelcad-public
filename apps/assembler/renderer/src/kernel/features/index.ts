@@ -12,6 +12,7 @@ import {
   applySplit,
   applyTransform,
 } from './bodyOps.js';
+import { applyConstructionAxis, applyConstructionPlane } from './construction.js';
 import { applyDeleteFace, applyOffsetFace } from './faceOps.js';
 import { applyDraft } from './draft.js';
 import { applyEmboss } from './emboss.js';
@@ -61,5 +62,9 @@ export function applyModelingFeature(
       return applyRib(feature, ctx, kit);
     case 'thicken':
       return applyThicken(feature, ctx, kit);
+    case 'constructionPlane':
+      return applyConstructionPlane(feature, ctx, kit);
+    case 'constructionAxis':
+      return applyConstructionAxis(feature, ctx, kit);
   }
 }

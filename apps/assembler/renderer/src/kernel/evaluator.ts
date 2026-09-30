@@ -24,6 +24,7 @@ import {
   bodyIdFor,
   frameForFace,
   frameForPlane,
+  framePoint,
   type BooleanFeature,
   type ChamferFeature,
   type EdgeRef,
@@ -96,6 +97,7 @@ import type {
   DistanceMeasurement,
   DistanceTarget,
   EdgeInfo,
+  EvaluatedDatum,
   EvaluatedSketch,
   EvaluationProgress,
   EvaluationResult,
@@ -108,6 +110,12 @@ import {
   failingBlendEdges,
   ruleEdgeIndices,
 } from './features/blendRules.js';
+import {
+  extrudeSign,
+  resolveExtrudeSpan,
+  trimExtrudeTool,
+  type ExtrudeSpan,
+} from './features/extrudeExtent.js';
 import { offsetBodyFaces } from './features/faceOps.js';
 import { applyModelingFeature, type FeatureKit } from './features/index.js';
 import { rebindRegion } from './regionRebind.js';
@@ -553,9 +561,19 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
     feature: SketchFeature,
     bodies: Map<string, BodyState>,
     warn: (message: string) => void,
+    datums: ReadonlyMap<string, EvaluatedDatum>,
   ): SketchFrame {
     if (feature.plane.kind === 'plane')
       return frameForPlane(feature.plane.plane, feature.plane.offset);
+    if (feature.plane.kind === 'construction') {
+      const datum = datums.get(feature.plane.featureId);
+      if (datum?.kind !== 'plane') {
+        throw new FeatureError(
+          `Missing reference: construction plane "${feature.plane.featureId}"`,
+        );
+      }
+      return datum.frame;
+    }
     const ref = feature.plane.face;
     const body = bodies.get(ref.bodyId);
     if (!body) throw new FeatureError(`Missing reference: body "${ref.bodyId}"`);
@@ -595,8 +613,9 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
     feature: SketchFeature,
     bodies: Map<string, BodyState>,
     warn: (message: string) => void,
+    datums: ReadonlyMap<string, EvaluatedDatum>,
   ): { evaluated: EvaluatedSketch; regions: SketchRegion[] } {
-    const frame = sketchFrame(feature, bodies, warn);
+    const frame = sketchFrame(feature, bodies, warn, datums);
     // Associative projections: re-derived from their (resolved) sources; frozen when missing.
     const projected = refreshProjections(feature, frame, (projection) =>
       projectionSamples(projection, bodies, warn),
@@ -630,22 +649,20 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
     frame: SketchFrame,
     region: SketchRegion,
     profileIndex: number,
+    span: ExtrudeSpan,
   ): { shape: Shape3D; faces: KeyedFace[] } {
     if (region.area < MIN_FEATURE_SIZE_MM * MIN_FEATURE_SIZE_MM) {
       throw new FeatureError(`Sketch profile is too small (${region.area.toFixed(4)} mm²)`);
     }
     const face = regionFace(frame, region);
     const n = frame.normal;
-    let base = face;
-    let length = feature.distance;
-    if (feature.symmetric) {
-      base = face.translate(scale(n, -Math.abs(feature.distance)));
-      length = 2 * Math.abs(feature.distance);
-    }
-    const vector = new R.Vector(scale(n, length));
+    const base = span.from === 0 ? face : face.translate(scale(n, span.from));
+    const vector = new R.Vector(scale(n, span.to - span.from));
     const shape = R.basicFaceExtrusion(base, vector);
     vector.delete();
-    const travel = scale(n, Math.sign(length) || 1);
+    // Caps are named along the main side: `start` nearer the profile, `end` farther.
+    // (A symmetric extrude always named them along +normal.)
+    const travel = scale(n, feature.symmetric ? 1 : extrudeSign(feature));
     const geoms = describeShape(shape);
     const caps = geoms
       .map((g, i) => ({ g, i }))
@@ -734,10 +751,12 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
   }
 
   function applyExtrude(feature: ExtrudeFeature, ctx: ReplayContext): void {
-    if (Math.abs(feature.distance) < MIN_FEATURE_SIZE_MM) {
-      throw new FeatureError(
-        `Extrude distance must be at least ${MIN_FEATURE_SIZE_MM} mm in magnitude`,
-      );
+    if ((feature.extent?.kind ?? 'distance') === 'distance') {
+      if (Math.abs(feature.distance) < MIN_FEATURE_SIZE_MM) {
+        throw new FeatureError(
+          `Extrude distance must be at least ${MIN_FEATURE_SIZE_MM} mm in magnitude`,
+        );
+      }
     }
     if (feature.profile.kind === 'face') {
       applyFaceExtrude(feature, feature.profile.face, ctx);
@@ -753,9 +772,24 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
       throw new FeatureError(`"${sketchFeature.name}" has no closed profile`);
     }
     const chosen = profileRegions(sketchFeature, regions, feature.profile.regions, ctx.warn);
+    const frame = sketch.frame;
+    const outline = chosen.flatMap(
+      (region) =>
+        sketch.profiles.find((p) => p.key === region.key)?.outline ?? [
+          framePoint(frame, region.sample[0], region.sample[1]),
+        ],
+    );
+    const { span, trim } = resolveExtrudeSpan(
+      kit,
+      ctx,
+      feature,
+      frame.origin,
+      frame.normal,
+      outline,
+    );
     let tool: { shape: Shape3D; faces: KeyedFace[] } | null = null;
     for (const [index, region] of chosen.entries()) {
-      const prism = extrudeProfile(feature, sketch.frame, region, index);
+      const prism = extrudeProfile(feature, frame, region, index, span);
       if (!tool) {
         tool = prism;
       } else {
@@ -769,12 +803,31 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
       }
     }
     if (!tool) throw new FeatureError('Nothing to extrude');
+    if (trim) {
+      // A point on the cap opposite the object (always kept): tells the kept pieces apart.
+      const first = chosen[0]!;
+      const start = framePoint(frame, first.sample[0], first.sample[1]);
+      const back = extrudeSign(feature) > 0 ? span.from : span.to;
+      tool = trimExtrudeTool(
+        kit,
+        ctx,
+        feature.id,
+        tool,
+        trim,
+        add(start, scale(frame.normal, back)),
+      );
+    }
 
     const target = feature.operation === 'new' ? null : pickTarget(feature, ctx.bodies, ctx.order);
     if (feature.operation === 'cut') {
       if (!target) throw new FeatureError('Nothing to cut: the document has no body');
       combine(target, tool, 'cut', feature.id, ctx.featureOrder);
       ctx.touch(target.id);
+      return;
+    }
+    if (feature.operation === 'intersect') {
+      if (!target) throw new FeatureError('Nothing to intersect: the document has no body');
+      intersectInto(target, tool, feature.id, ctx);
       return;
     }
     if (feature.operation === 'join' && target) {
@@ -805,8 +858,14 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
       throw new FeatureError('Only planar faces can be extruded');
     }
     const n = geom.normal;
-    const vector = new R.Vector(scale(n, feature.distance));
-    const prismShape = R.basicFaceExtrusion(face.clone(), vector);
+    const outline = (topology.faceEdges[index] ?? []).map((e) => topology.edgeGeoms[e]!.midpoint);
+    const { span, trim } = resolveExtrudeSpan(kit, ctx, feature, geom.centroid, n, [
+      geom.centroid,
+      ...outline,
+    ]);
+    const start = span.from === 0 ? face.clone() : face.clone().translate(scale(n, span.from));
+    const vector = new R.Vector(scale(n, span.to - span.from));
+    const prismShape = R.basicFaceExtrusion(start, vector);
     vector.delete();
     const faceEdgeKeys = edgeKeysOf(body);
     const sourceEdges = (topology.faceEdges[index] ?? [])
@@ -833,12 +892,40 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
       });
       return `${feature.id}:side:0:${best}`;
     });
-    const tool = {
+    let tool: { shape: Shape3D; faces: KeyedFace[] } = {
       shape: prismShape,
       faces: geoms.map((g, i) => ({ ...g, key: keys[i]!, aliases: [] })),
     };
+    if (trim) {
+      const back = extrudeSign(feature) > 0 ? span.from : span.to;
+      tool = trimExtrudeTool(kit, ctx, feature.id, tool, trim, add(geom.centroid, scale(n, back)));
+    }
+    // Push/pull joins outwards and cuts inwards; Intersect is the one explicit choice.
+    if (feature.operation === 'intersect') {
+      intersectInto(body, tool, feature.id, ctx);
+      return;
+    }
     combine(body, tool, feature.distance > 0 ? 'join' : 'cut', feature.id, ctx.featureOrder);
     ctx.touch(body.id);
+  }
+
+  /** Intersect `tool` into `target` (in place); an empty common volume is an error, not an empty body. */
+  function intersectInto(
+    target: BodyState,
+    tool: { shape: Shape3D; faces: KeyedFace[] },
+    featureId: string,
+    ctx: ReplayContext,
+  ): void {
+    const before = { shape: target.shape, faces: target.faces };
+    combine(target, tool, 'intersect', featureId, ctx.featureOrder);
+    if (!(R.measureVolume(target.shape) > 1e-9)) {
+      target.shape = before.shape;
+      target.faces = before.faces;
+      throw new FeatureError(
+        `Intersect: the extrusion does not overlap "${target.name}"; nothing would remain`,
+      );
+    }
+    ctx.touch(target.id);
   }
 
   function applyBlend(feature: FilletFeature | ChamferFeature, ctx: ReplayContext): void {
@@ -1134,8 +1221,26 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
         : feature.operation === 'subtract'
           ? 'cut'
           : 'intersect';
+    // Keep Target: the result goes into a new body, the target stays as it was.
+    const result: BodyState = feature.keepTarget
+      ? {
+          id: bodyIdFor(feature.id),
+          name: `${target.name} (${feature.operation})`,
+          color: target.color,
+          createdBy: feature.id,
+          shape: target.shape,
+          faces: target.faces,
+        }
+      : target;
     for (const tool of tools) {
-      combine(target, tool, operation, feature.id, ctx.featureOrder);
+      combine(result, tool, operation, feature.id, ctx.featureOrder);
+    }
+    if (!(R.measureVolume(result.shape) > 1e-9)) {
+      throw new FeatureError(
+        feature.operation === 'intersect'
+          ? 'Intersect: the bodies do not overlap; nothing would remain'
+          : `${feature.operation === 'subtract' ? 'Subtract' : 'Union'}: nothing would remain`,
+      );
     }
     if (!feature.keepTools) {
       for (const tool of tools) {
@@ -1143,7 +1248,13 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
         ctx.order.splice(ctx.order.indexOf(tool.id), 1);
       }
     }
-    ctx.touch(target.id);
+    if (feature.keepTarget) {
+      ctx.bodies.set(result.id, result);
+      ctx.createdCount += 1;
+      ctx.order.push(result.id);
+    } else {
+      ctx.touch(target.id);
+    }
   }
 
   function applyMove(feature: MoveFeature, ctx: ReplayContext): void {
@@ -1413,6 +1524,8 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
     sketchFeatures: Map<string, SketchFeature>;
     /** Detected regions (closed profiles) per sketch feature id. */
     sketchRegions: Map<string, SketchRegion[]>;
+    /** Construction planes/axes per feature id. */
+    datums: Map<string, EvaluatedDatum>;
     featureOrder: ReadonlyMap<string, number>;
     createdCount: number;
     warn: (message: string) => void;
@@ -1445,6 +1558,7 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
       sketches: new Map(checkpoint?.sketches ?? []),
       sketchFeatures: new Map(checkpoint?.sketchFeatures ?? []),
       sketchRegions: new Map(checkpoint?.sketchRegions ?? []),
+      datums: new Map(checkpoint?.datums ?? []),
       featureOrder,
       createdCount: checkpoint?.createdCount ?? 0,
       warn: (message) => {
@@ -1509,6 +1623,7 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
       sketches: new Map(replay.ctx.sketches),
       sketchFeatures: new Map(replay.ctx.sketchFeatures),
       sketchRegions: new Map(replay.ctx.sketchRegions),
+      ...(replay.ctx.datums.size > 0 ? { datums: new Map(replay.ctx.datums) } : {}),
       createdCount: replay.ctx.createdCount,
       errors: { ...replay.errors },
       warnings: { ...replay.warnings },
@@ -1519,7 +1634,7 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
   async function applyFeature(feature: Feature, ctx: ReplayContext): Promise<void> {
     switch (feature.kind) {
       case 'sketch': {
-        const { evaluated, regions } = evaluateSketch(feature, ctx.bodies, ctx.warn);
+        const { evaluated, regions } = evaluateSketch(feature, ctx.bodies, ctx.warn, ctx.datums);
         ctx.sketches.set(feature.id, evaluated);
         ctx.sketchFeatures.set(feature.id, feature);
         ctx.sketchRegions.set(feature.id, regions);
@@ -1704,6 +1819,7 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
         return {
           bodies,
           sketches: [...ctx.sketches.values()],
+          ...(ctx.datums.size > 0 ? { datums: [...ctx.datums.values()] } : {}),
           errors,
           warnings,
           ...(Object.keys(errorRefs).length > 0 ? { errorRefs } : {}),
@@ -2024,6 +2140,10 @@ function dot(a: Vec3, b: Vec3): number {
 
 function sub(a: Vec3, b: Vec3): Vec3 {
   return [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+}
+
+function add(a: Vec3, b: Vec3): Vec3 {
+  return [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
 }
 
 function scale(a: Vec3, k: number): Vec3 {

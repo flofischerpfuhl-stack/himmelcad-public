@@ -23,7 +23,7 @@ export type RawShape = R.Face['wrapped'] | R.Edge['wrapped'] | Shape3D['wrapped'
 
 const HASH_MAX = 2147483647;
 
-type SubKind = 'face' | 'edge' | 'vertex';
+type SubKind = 'face' | 'edge' | 'vertex' | 'solid';
 
 function topAbs(oc: OpenCascade, kind: SubKind | 'shape'): never {
   const e = oc.TopAbs_ShapeEnum as unknown as Record<string, unknown>;
@@ -34,7 +34,9 @@ function topAbs(oc: OpenCascade, kind: SubKind | 'shape'): never {
         ? 'TopAbs_EDGE'
         : kind === 'vertex'
           ? 'TopAbs_VERTEX'
-          : 'TopAbs_SHAPE';
+          : kind === 'solid'
+            ? 'TopAbs_SOLID'
+            : 'TopAbs_SHAPE';
   return e[name] as never;
 }
 
@@ -259,6 +261,16 @@ export function facesOf(oc: OpenCascade, shape: { wrapped: RawShape }): R.Face[]
   const index = new SubShapeIndex(oc, shape.wrapped, 'face');
   try {
     return index.items.map((raw) => new R.Face(oc.TopoDS.Face(raw as never)));
+  } finally {
+    index.dispose();
+  }
+}
+
+/** Solids of `shape` (a solid or a compound) in explorer order, without leaking raw handles. */
+export function solidsOf(oc: OpenCascade, shape: { wrapped: RawShape }): R.Solid[] {
+  const index = new SubShapeIndex(oc, shape.wrapped, 'solid');
+  try {
+    return index.items.map((raw) => new R.Solid(oc.TopoDS.Solid(raw as never)));
   } finally {
     index.dispose();
   }

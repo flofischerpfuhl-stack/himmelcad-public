@@ -98,6 +98,13 @@ export interface MoveHandleState {
   origin: Vec3;
   delta: { dx: number; dy: number; dz: number };
   hoveredAxis: 0 | 1 | 2 | null;
+  /** Gizmo orientation (auto-orientation); default world X, Y, Z. */
+  axes?: readonly [Vec3, Vec3, Vec3];
+  /** Axes without an arrow (a sketch profile does not leave its plane). */
+  hiddenAxes?: readonly (0 | 1 | 2)[];
+  /** Plane tiles (move in a plane), by the index of the plane's normal axis. */
+  tiles?: readonly (0 | 1 | 2)[];
+  hoveredTile?: 0 | 1 | 2 | null;
 }
 
 /** In-progress sketch outline/fill (rectangle corners or a closed circle outline) + the snap indicator dot, drawn on top of everything. */
@@ -186,6 +193,23 @@ export interface SceneInput {
    * the committed model, drawn in the error colour.
    */
   errorHighlight?: { segments: readonly Float32Array[] } | null;
+  /**
+   * Construction planes and axes (`model/construction.ts`): a translucent
+   * square with an outline / a segment, picked by their outline. `ghost`
+   * datums are drawn dashed-faint and not picked (the last known place of a
+   * missing reference while History "Fix…" runs).
+   */
+  datums?: readonly SceneDatum[];
+}
+
+export interface SceneDatum {
+  featureId: string;
+  kind: 'plane' | 'axis';
+  frame: { origin: Vec3; u: Vec3; v: Vec3; normal: Vec3 };
+  center: Vec3;
+  size: number;
+  state: 'normal' | 'hovered' | 'selected' | 'error';
+  ghost?: boolean;
 }
 
 /** An angle handle: arc about `axis` through `center`, from `ref` by `value` degrees. */
@@ -826,6 +850,76 @@ export function buildScene(input: SceneInput): BuiltScene {
     });
   }
 
+  // ---- Construction planes and axes ---------------------------------------------
+  for (const datum of input.datums ?? []) {
+    const color =
+      datum.state === 'selected'
+        ? input.colors.selection
+        : datum.state === 'hovered'
+          ? input.colors.hover
+          : datum.state === 'error'
+            ? (input.colors.error ?? input.colors.axisX)
+            : input.colors.sketchOutline;
+    const emphasis = datum.state === 'selected' || datum.state === 'hovered';
+    const lineAlpha = datum.ghost ? 0.55 : emphasis ? 1 : 0.8;
+    const widthPx = datum.ghost ? 1.25 : emphasis ? 2.25 : 1.5;
+    let segments: Float32Array;
+    if (datum.kind === 'plane') {
+      const { u, v } = datum.frame;
+      const s = datum.size;
+      const corner = (a: number, b: number): Vec3 => [
+        datum.center[0] + (u[0] * a + v[0] * b) * s,
+        datum.center[1] + (u[1] * a + v[1] * b) * s,
+        datum.center[2] + (u[2] * a + v[2] * b) * s,
+      ];
+      const quad: [Vec3, Vec3, Vec3, Vec3] = [
+        corner(-1, -1),
+        corner(1, -1),
+        corner(1, 1),
+        corner(-1, 1),
+      ];
+      const fill = { positions: [] as number[], colors: [] as number[] };
+      const fillAlpha = datum.ghost ? 0.03 : emphasis ? 0.14 : 0.07;
+      pushFlatQuad(fill, quad, color, fillAlpha);
+      pushFlatQuad(fill, [quad[0], quad[3], quad[2], quad[1]], color, fillAlpha);
+      flat.push({
+        positions: new Float32Array(fill.positions),
+        colors: new Float32Array(fill.colors),
+        mode: 'triangles',
+        depthTest: true,
+        noClip: true,
+      });
+      segments = new Float32Array(quad.flatMap((p, i) => [...p, ...quad[(i + 1) % 4]!]));
+    } else {
+      const d = datum.frame.normal;
+      const s = datum.size;
+      segments = new Float32Array([
+        datum.center[0] - d[0] * s,
+        datum.center[1] - d[1] * s,
+        datum.center[2] - d[2] * s,
+        datum.center[0] + d[0] * s,
+        datum.center[1] + d[1] * s,
+        datum.center[2] + d[2] * s,
+      ]);
+    }
+    const ribbon = buildScreenRibbon(segments, eye, widthPx, worldPerPixel, 0);
+    flat.push({
+      positions: ribbon,
+      colors: lineColors(ribbon.length / 3, color, lineAlpha),
+      mode: 'triangles',
+      depthTest: !emphasis,
+      noClip: true,
+    });
+    if (!datum.ghost && !input.forExport) {
+      idBatches.push({
+        positions: buildPolylineRibbon(segments, eye, edgeHitWidth(input.pose.distance) * 1.5),
+        id: pickTable.add({ kind: 'datum', featureId: datum.featureId }),
+        mode: 'triangles',
+        onTop: false,
+      });
+    }
+  }
+
   // ---- Extrude tool arrow handle (drawn on top, no depth test) -------------
   if (input.extrudeHandle) {
     const { origin, normal, distance, hovered } = input.extrudeHandle;
@@ -851,11 +945,53 @@ export function buildScene(input: SceneInput): BuiltScene {
   if (input.moveHandle) {
     const { origin, delta, hoveredAxis } = input.moveHandle;
     const base: Vec3 = [origin[0] + delta.dx, origin[1] + delta.dy, origin[2] + delta.dz];
-    const axes: { axis: 0 | 1 | 2; dir: Vec3; color: readonly [number, number, number] }[] = [
-      { axis: 0, dir: [1, 0, 0], color: input.colors.axisX },
-      { axis: 1, dir: [0, 1, 0], color: input.colors.axisY },
-      { axis: 2, dir: [0, 0, 1], color: input.colors.axisZ },
+    const dirs = input.moveHandle.axes ?? [
+      [1, 0, 0],
+      [0, 1, 0],
+      [0, 0, 1],
     ];
+    const hidden = new Set(input.moveHandle.hiddenAxes ?? []);
+    const axisColors = [input.colors.axisX, input.colors.axisY, input.colors.axisZ] as const;
+    const axes: { axis: 0 | 1 | 2; dir: Vec3; color: readonly [number, number, number] }[] = (
+      [0, 1, 2] as const
+    )
+      .filter((axis) => !hidden.has(axis))
+      .map((axis) => ({ axis, dir: dirs[axis]! as Vec3, color: axisColors[axis] }));
+    // Plane tiles (Shapr3D gizmo: move in a plane): a small square between two arrows,
+    // coloured like the plane's normal axis.
+    for (const plane of input.moveHandle.tiles ?? []) {
+      const [i, j] = ([0, 1, 2] as const).filter((k) => k !== plane) as [0 | 1 | 2, 0 | 1 | 2];
+      const u = dirs[i]!;
+      const v = dirs[j]!;
+      const at = (a: number, b: number): Vec3 => [
+        base[0] + u[0] * a + v[0] * b,
+        base[1] + u[1] * a + v[1] * b,
+        base[2] + u[2] * a + v[2] * b,
+      ];
+      const scaleMm = worldPerPixel(Math.hypot(...sub3(eye, base))) * 26;
+      const lo = scaleMm * 0.45;
+      const hi = scaleMm;
+      const quad: [Vec3, Vec3, Vec3, Vec3] = [at(lo, lo), at(hi, lo), at(hi, hi), at(lo, hi)];
+      const hovered = input.moveHandle.hoveredTile === plane;
+      const color = hovered ? input.colors.hover : axisColors[plane];
+      const fill = { positions: [] as number[], colors: [] as number[] };
+      pushFlatQuad(fill, quad, color, hovered ? 0.7 : 0.45);
+      pushFlatQuad(fill, [quad[0], quad[3], quad[2], quad[1]], color, hovered ? 0.7 : 0.45);
+      const tris = new Float32Array(fill.positions);
+      flat.push({
+        positions: tris,
+        colors: new Float32Array(fill.colors),
+        mode: 'triangles',
+        depthTest: false,
+        noClip: true,
+      });
+      idBatches.push({
+        positions: tris,
+        id: pickTable.add({ kind: 'moveTile', plane }),
+        mode: 'triangles',
+        onTop: true,
+      });
+    }
     for (const a of axes) {
       const color = hoveredAxis === a.axis ? input.colors.hover : a.color;
       pushArrow(

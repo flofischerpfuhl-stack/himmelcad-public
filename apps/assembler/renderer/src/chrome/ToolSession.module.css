@@ -176,3 +176,60 @@
   color: var(--hc-fg-subtle);
   white-space: nowrap;
 }
+
+/* Tool before selection: one reference badge per step (Shapr3D reference badges). */
+.refBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 4px 2px 6px;
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-sm);
+  background: var(--hc-bg-chip);
+  font-family: var(--hc-font-ui);
+  font-size: 11px;
+}
+
+.refBadgeCurrent {
+  border-color: var(--hc-accent-base);
+  box-shadow: 0 0 0 1px var(--hc-accent-base);
+}
+
+.refBadgeMissing .refRole {
+  color: var(--hc-fg-strong);
+}
+
+.refRole {
+  color: var(--hc-fg-muted);
+  font-weight: 600;
+}
+
+.refEmpty {
+  color: var(--hc-fg-subtle);
+  font-style: italic;
+}
+
+.refChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 5px;
+  border: none;
+  border-radius: var(--hc-radius-sm);
+  background: var(--hc-accent-base);
+  color: var(--hc-fg-on-accent);
+  font-family: var(--hc-font-ui);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.refChip:focus-visible {
+  outline: 2px solid var(--hc-focus-ring, var(--hc-accent-base));
+  outline-offset: 1px;
+}
+
+.pickProblem {
+  color: var(--hc-error-fg);
+  font-family: var(--hc-font-ui);
+  font-size: 11px;
+}

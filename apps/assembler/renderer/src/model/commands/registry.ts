@@ -13,9 +13,20 @@ import { PRINT_COMMANDS } from '../../print/printCommands.js';
 import { DISPLAY_COMMANDS } from './displayCommands.js';
 import { useProjectStore } from '../project/projectStore.js';
 import { BLEND_RULE_COMMANDS } from './blendCommands.js';
+import { CONSTRUCT_COMMANDS } from './constructCommands.js';
 import { FEATURE_COMMANDS } from './featureCommands.js';
-import { isPlanarFace, makeFaceRef, type AssemblerState, type SelectionItem } from '../store.js';
+import { createDraft } from '../featureTools.js';
+import { canStartPickSession, nextStep, PICK_PLANS, sessionSelection } from '../pickSession.js';
+import {
+  isPlanarFace,
+  makeFaceRef,
+  setPickFinisher,
+  useAssemblerStore,
+  type AssemblerState,
+  type SelectionItem,
+} from '../store.js';
 import { SKETCH_COMMANDS } from './sketchCommands.js';
+import { useSketchStore } from '../../sketch/session.js';
 import { useWorkspaceStore } from '../workspace.js';
 import { WORKSPACE_COMMANDS } from './workspaceCommands.js';
 
@@ -27,6 +38,7 @@ export type CommandGroup =
   | 'add'
   | 'transform'
   | 'tools'
+  | 'construct'
   | 'modes'
   | 'edit'
   | 'view'
@@ -134,7 +146,7 @@ function booleanAvailability(ctx: CommandContext): CommandAvailability {
  * by {@link resolveAdaptive} and the disabled tail of
  * {@link searchCommands} — keep additions grouped with their siblings.
  */
-export const COMMANDS: readonly Command[] = [
+const RAW_COMMANDS: readonly Command[] = [
   ...SKETCH_COMMANDS,
   {
     id: 'tools.extrude',
@@ -228,6 +240,7 @@ export const COMMANDS: readonly Command[] = [
   },
   ...BLEND_RULE_COMMANDS,
   ...FEATURE_COMMANDS,
+  ...CONSTRUCT_COMMANDS,
   {
     id: 'tools.union',
     label: 'Union',
@@ -263,18 +276,55 @@ export const COMMANDS: readonly Command[] = [
     label: 'Move/Rotate',
     group: 'transform',
     shortcut: 'M',
-    keywords: ['move', 'rotate', 'translate', 'transform', 'gizmo', 'mv'],
+    keywords: [
+      'move',
+      'rotate',
+      'translate',
+      'transform',
+      'gizmo',
+      'mv',
+      'move face',
+      'move profile',
+    ],
     availability: (ctx) => {
-      const bodies = selected(ctx, 'body');
-      if (ctx.selection.length !== 1 || bodies.length !== 1) {
-        return { enabled: false, reason: 'Select exactly one body to move or rotate.' };
+      // Shapr3D Move/Rotate takes sketch regions, edges, faces and bodies (modelling research §4).
+      if (ctx.selection.length !== 1) {
+        return {
+          enabled: false,
+          reason: 'Select one body, face or sketch profile to move or rotate.',
+        };
       }
-      return { enabled: true, recommended: true, priority: 90 };
+      const item = ctx.selection[0]!;
+      if (item.kind === 'body') return { enabled: true, recommended: true, priority: 90 };
+      if (item.kind === 'sketchProfile') return { enabled: true, priority: 60 };
+      if (item.kind === 'face') {
+        const notReady = kernelNotReady(ctx);
+        if (notReady) return notReady;
+        // A face moves along its normal (Offset Face); Offset Face stays the recommended entry.
+        return { enabled: true, priority: 70 };
+      }
+      if (item.kind === 'edge') {
+        return {
+          enabled: false,
+          reason:
+            'Edges cannot be moved on their own with this kernel build (it lacks face replacement); move a face next to the edge, or the body.',
+        };
+      }
+      return {
+        enabled: false,
+        reason: 'Select one body, face or sketch profile to move or rotate.',
+      };
     },
     run: (ctx) => {
-      const bodies = selected(ctx, 'body');
-      if (ctx.selection.length === 1 && bodies.length === 1) {
-        ctx.beginMove(bodies[0]!.bodyId);
+      if (ctx.selection.length !== 1) return;
+      const item = ctx.selection[0]!;
+      if (item.kind === 'body') ctx.beginMove(item.bodyId);
+      else if (item.kind === 'sketchProfile') ctx.beginMoveSketch(item.featureId, item.regionKey);
+      else if (item.kind === 'face') {
+        const start = createDraft('offsetFace', ctx);
+        if (start.ok && start.draft.kind === 'offsetFace') {
+          ctx.beginFeatureTool({ ...start.draft, distance: 0, viaMove: true });
+        }
       }
     },
   },
@@ -602,6 +652,75 @@ export const COMMANDS: readonly Command[] = [
     },
   },
 ];
+
+// ---- tool before selection (UI-16) --------------------------------------------------------
+
+/**
+ * A command with a pick plan (`pickSession.ts`) is also available when its
+ * selection is missing (empty, or only part of what it needs): running it
+ * then opens a pick session that asks for the references step by step.
+ * When the selection already fits, the command behaves exactly as before.
+ */
+function withPickSession(command: Command): Command {
+  if (!PICK_PLANS[command.id]) return command;
+  return {
+    ...command,
+    availability: (ctx) => {
+      const own = command.availability(ctx);
+      // Not while a tool runs or a sketch is open (its keys belong to the sketch).
+      if (own.enabled || ctx.activeTool || useSketchStore.getState().session) return own;
+      if (command.id !== 'transform.moveRotate') {
+        const notReady = kernelNotReady(ctx);
+        if (notReady) return notReady;
+      }
+      if (!canStartPickSession(command.id, ctx.selection, { evaluation: ctx.evaluation })) {
+        return own;
+      }
+      // Not recommended: it asks for its references (the adaptive bar lists actions for the selection).
+      return { enabled: true, priority: 20 };
+    },
+    run: (ctx) => {
+      if (command.availability(ctx).enabled) command.run(ctx);
+      else ctx.beginPickSession(command.id);
+    },
+  };
+}
+
+/**
+ * Finishes the running pick session (the store's Done/Enter): the next step,
+ * or — every reference picked — the command itself, started from exactly
+ * those references as its selection.
+ */
+function finishPickSession(): void {
+  const store = useAssemblerStore.getState();
+  const tool = store.activeTool;
+  if (tool?.kind !== 'pick') return;
+  const { kind: _kind, phase: _phase, ...session } = tool;
+  const { session: next, done } = nextStep(session);
+  if (!done) {
+    store.updatePickSession(() => next);
+    return;
+  }
+  const command = RAW_COMMANDS.find((c) => c.id === session.commandId);
+  store.cancel();
+  store.setSelection(sessionSelection(session));
+  const ctx = useAssemblerStore.getState();
+  if (!command) return;
+  const availability = command.availability(ctx);
+  if (!availability.enabled) {
+    useWorkspaceStore.getState().notify(availability.reason ?? 'The tool cannot start.', 'warning');
+    return;
+  }
+  command.run(ctx);
+}
+
+/**
+ * The full command set: tools with a pick plan start before their selection too
+ * ({@link withPickSession}).
+ */
+export const COMMANDS: readonly Command[] = RAW_COMMANDS.map(withPickSession);
+
+setPickFinisher(finishPickSession);
 
 function toResultAvailability(availability: CommandAvailability): CommandAvailability {
   if (availability.reason === undefined) {

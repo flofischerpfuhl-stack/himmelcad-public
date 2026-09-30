@@ -152,6 +152,19 @@ export function stepNamePrefix(name: string): string {
 }
 
 /**
+ * What the History filter narrows to (Shapr3D, interaction research §3:
+ * "zur Auswahl oder zu isolierten Objekten relevante Schritte"): the
+ * selection, or — with nothing selected and Isolate on — the isolated bodies.
+ */
+export function historyFilterItems(
+  selection: readonly SelectionItem[],
+  isolatedBodyIds: readonly string[] | null,
+): SelectionItem[] {
+  if (selection.length > 0) return [...selection];
+  return (isolatedBodyIds ?? []).map((bodyId) => ({ kind: 'body', bodyId }));
+}
+
+/**
  * Steps relevant to the selection (History "filter to selection"): the
  * selected steps themselves, the steps that create or change the selected
  * bodies (faces/edges count for their body) or sketches, and everything
@@ -165,8 +178,9 @@ export function relevantFeatureIds(
   const bodyIds = new Set<string>();
   const seeds = new Set<string>();
   for (const item of selection) {
-    if (item.kind === 'feature' || item.kind === 'sketchProfile') seeds.add(item.featureId);
-    else if (item.kind !== 'mesh') bodyIds.add(item.bodyId); // reference meshes have no steps
+    if (item.kind === 'feature' || item.kind === 'sketchProfile' || item.kind === 'datum') {
+      seeds.add(item.featureId);
+    } else if (item.kind !== 'mesh') bodyIds.add(item.bodyId); // reference meshes have no steps
   }
   for (const bodyId of bodyIds) {
     const body = evaluation.bodies.find((b) => b.id === bodyId);
