@@ -97,14 +97,59 @@ requests) are sinks the shell installs (`commands/notices.ts`,
 **Hardware profile.** `@himmelcad/hardware-profile` (shared, foundation in
 Builder's map) offers the Electron renderer-fallback controller, Chromium
 launch switches, rendering status and the quirk registry — written for a
-WebGPU/WebGL2 viewer in an Electron host. Assembler does not use it yet: its
-Electron host sets no GPU switches and has no fallback path, and the package
-has nothing for what Assembler needs most (WebAssembly heap and worker
-budgets for OCCT, kernel timeouts per machine class). Gap for phase B/C:
-adopt `deriveChromiumLaunchSwitches` and `RendererFallbackController` in
-`electron/main.ts` and `deriveRenderingStatus` in the status strip; add
-compute budgets (wasm heap, worker count) to the shared package rather than
-to Assembler, per ADR 0032 §3.
+WebGPU/WebGL2 viewer in an Electron host. Assembler uses it since phase B
+for the **GPU tier** of the display module: `modules/display/gpuTier.ts`
+describes the viewport's WebGL2 adapter as `ViewerRenderingFacts` (a
+SwiftShader/llvmpipe/WARP renderer string = software, fallback adapter),
+`gpuProbe.ts` (desktop only, installed by `display/module.ui.ts`) derives
+the `RenderingStatus` with `deriveRenderingStatus` and, on a software
+rasterizer, starts the session at `standard` render quality unless the user
+chose a quality (`Preferences.renderQualityChosen`); the preset is never
+stored as a choice. The renderer imports the package only from desktop UI
+files (the headless and test programs compile relative imports only; tests
+import its types).
+
+Still open (phase C, desktop-host): `deriveChromiumLaunchSwitches` and
+`RendererFallbackController` in `electron/main.ts`, the Chromium feature
+status over IPC so hardware tiers are confirmed rather than `unknown`, and
+`deriveRenderingStatus` in the status strip.
+
+**Proposed addition to the shared package (not implemented; additive, no
+change for Builder or PhotoLab):** what Assembler needs most is a
+*compute* budget per machine class for OCCT in WebAssembly, which the
+package does not model yet (`computeBudgetScale` in the quirk registry is
+the only compute knob; the package and the Rust crate
+`himmelcad-hardware-profile` validate it, no consumer applies it). Proposal:
+
+```ts
+/** Facts the host knows about the machine (Electron main or renderer). */
+export interface ComputeFacts {
+  readonly os: HardwareOperatingSystem;
+  readonly logicalCores: number;          // navigator.hardwareConcurrency / os.cpus()
+  readonly deviceMemoryGiB: number | null; // os.totalmem() or navigator.deviceMemory
+  readonly wasm64: boolean;                // memory64 available
+  readonly quirks: readonly HardwareQuirkRule[]; // computeBudgetScale applies
+}
+
+export interface ComputeBudget {
+  readonly tier: 'low' | 'standard' | 'high';
+  /** Upper bound for one WebAssembly heap (OCCT kernel, solver), MiB. */
+  readonly wasmHeapMiB: number;
+  /** Background workers that may run at once (kernel, import, print, solver). */
+  readonly workerSlots: number;
+  /** Multiplier for per-job timeouts (kernel evaluation, tessellation). */
+  readonly timeoutScale: number;
+}
+
+/** Pure policy, unit-tested in the package: facts -> budget. */
+export function deriveComputeBudget(facts: ComputeFacts): ComputeBudget;
+```
+
+Assembler would read it in `foundation/jobs` (worker slots, job timeouts
+for `SingleJobWorker`) and in the kernel worker's module loader (heap
+ceiling, clear "model too large for this machine" errors instead of an
+out-of-memory abort); Builder can adopt it for its sidecars later. Until
+then Assembler's workers keep their fixed sizes.
 
 ## 3. Registration contracts
 

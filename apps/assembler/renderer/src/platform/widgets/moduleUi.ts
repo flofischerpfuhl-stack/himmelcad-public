@@ -67,6 +67,12 @@ export interface ModuleUi {
   modeButtons?: readonly ModeButtonRegistration[];
   historyCards?: readonly HistoryCardRegistration[];
   viewportOverlays?: readonly ViewportOverlayProvider[];
+  /**
+   * Desktop-only wiring that needs the browser (a GPU probe, DOM listeners),
+   * run once when the UI parts are installed; the headless CLI and the tests
+   * never load `module.ui.ts`.
+   */
+  install?: () => void;
 }
 
 export function defineModuleUi(ui: ModuleUi): ModuleUi {
@@ -93,6 +99,7 @@ export function installModuleUis(uis: readonly ModuleUi[]): void {
       }
     }
     for (const overlay of ui.viewportOverlays ?? []) registerViewportOverlay(overlay);
+    ui.install?.();
   }
   panels.sort((a, b) => a.order - b.order);
   modeButtons.sort((a, b) => a.order - b.order);
