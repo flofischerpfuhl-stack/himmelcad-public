@@ -29,6 +29,7 @@ import { buildThreeMf } from '../kernel/threeMf.js';
 import type { EvaluationResult } from '../kernel/types.js';
 import type { Feature, SketchFeature } from '../model/document.js';
 import { consumedSketchIds } from '../model/modeling.js';
+import { resolveParameterValues } from '../model/parameters.js';
 import { ProjectFormatError, loadProjectFile, saveProjectFile } from '../model/project/format.js';
 import type { AssemblerState, SelectionItem } from '../model/store.js';
 import {
@@ -154,6 +155,22 @@ function isRecord(value: unknown): value is Json {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+function describeParameter(p: {
+  id: string;
+  name: string;
+  unit: string;
+  value: number;
+  expression?: string;
+}): Json {
+  return {
+    id: p.id,
+    name: p.name,
+    unit: p.unit,
+    value: p.value,
+    ...(p.expression !== undefined ? { expression: p.expression } : {}),
+  };
+}
+
 function toBase64(bytes: Uint8Array): string {
   let binary = '';
   const chunk = 0x8000;
@@ -179,7 +196,9 @@ export class AgentSession {
     this.kernel = options.kernel;
     this.host = options.host;
     this.unsubscribe = this.store.subscribe((state, previous) => {
-      if (state.features !== previous.features) this.revision += 1;
+      if (state.features !== previous.features || state.parameters !== previous.parameters) {
+        this.revision += 1;
+      }
     });
   }
 
@@ -253,6 +272,14 @@ export class AgentSession {
         return this.store.getState().selection;
       case 'selection.set':
         return this.setSelection(p);
+      case 'parameters.list':
+        return this.store.getState().parameters.map(describeParameter);
+      case 'parameter.create':
+        return this.createParameter(p);
+      case 'parameter.edit':
+        return this.editParameter(p);
+      case 'parameter.delete':
+        return this.deleteParameter(p);
       case 'feature.create':
         return this.write('feature.create', (f, e) => this.createFeature(p, f, e));
       case 'feature.edit':
@@ -505,6 +532,78 @@ export class AgentSession {
     return { selection: this.store.getState().selection };
   }
 
+  // ---- parameters --------------------------------------------------------------------
+
+  private createParameter(p: Json): Json {
+    this.ensureWritable();
+    const unit = (typeof p.unit === 'string' ? p.unit : 'mm') as 'mm' | 'deg' | '';
+    const outcome = this.store.getState().upsertParameter({
+      name: String(p.name),
+      unit,
+      ...(typeof p.value === 'number' ? { value: p.value } : {}),
+      ...(typeof p.expression === 'string' ? { expression: p.expression } : {}),
+    });
+    if (!outcome.ok) throw new ApiError('invalidParams', outcome.message);
+    const parameter = this.findParameter(outcome.id);
+    return { parameter: describeParameter(parameter), revision: this.revision };
+  }
+
+  private editParameter(p: Json): Json {
+    this.ensureWritable();
+    const state = this.store.getState();
+    const existing = this.findParameter(String(p.parameterId));
+    if (typeof p.name === 'string' && p.name !== existing.name) {
+      const renamed = state.renameParameter(existing.id, p.name);
+      if (!renamed.ok) throw new ApiError('invalidParams', renamed.message);
+    }
+    if (p.unit !== undefined || p.value !== undefined || p.expression !== undefined) {
+      const current = this.findParameter(existing.id);
+      const nextExpression = p.expression !== undefined ? p.expression : current.expression;
+      const outcome = this.store.getState().upsertParameter({
+        id: current.id,
+        name: current.name,
+        unit: (typeof p.unit === 'string' ? p.unit : current.unit) as 'mm' | 'deg' | '',
+        value: typeof p.value === 'number' ? p.value : current.value,
+        ...(typeof nextExpression === 'string' ? { expression: nextExpression } : {}),
+      });
+      if (!outcome.ok) throw new ApiError('invalidParams', outcome.message);
+    }
+    return {
+      parameter: describeParameter(this.findParameter(existing.id)),
+      revision: this.revision,
+    };
+  }
+
+  private deleteParameter(p: Json): Json {
+    this.ensureWritable();
+    const existing = this.findParameter(String(p.parameterId));
+    const outcome = this.store.getState().deleteParameter(existing.id);
+    if (!outcome.ok) {
+      throw new ApiError('conflict', outcome.message, {
+        details: { usages: outcome.usages ?? [] },
+      });
+    }
+    return { parameterId: existing.id, revision: this.revision };
+  }
+
+  private findParameter(parameterId: string): {
+    id: string;
+    name: string;
+    unit: 'mm' | 'deg' | '';
+    value: number;
+    expression?: string;
+  } {
+    const parameter = this.store
+      .getState()
+      .parameters.find((p) => p.id === parameterId || p.name === parameterId);
+    if (!parameter) {
+      throw new ApiError('notFound', `No parameter "${parameterId}"`, {
+        hint: 'parameters.list returns every parameter with its id and name.',
+      });
+    }
+    return parameter;
+  }
+
   // ---- writes ----------------------------------------------------------------------
 
   private ensureWritable(): void {
@@ -604,6 +703,12 @@ export class AgentSession {
     return new Set(this.tx ? this.tx.staged.map((f) => f.id) : []);
   }
 
+  /** Current document parameter values, for a `*Expression` field. Empty when the parameters themselves fail to resolve (a pre-existing document problem, reported by `parameters.list`/`parameter.*`). */
+  private currentParamValues(): ReadonlyMap<string, number> {
+    const resolved = resolveParameterValues(this.store.getState().parameters);
+    return resolved.ok ? resolved.values : new Map();
+  }
+
   private async createFeature(
     p: Json,
     features: Feature[],
@@ -623,6 +728,7 @@ export class AgentSession {
       evaluation,
       features,
       onShapes: (s) => (created.shapes = s),
+      paramValues: this.currentParamValues(),
     });
     let sketchInfo: Json = {};
     if (feature.kind === 'sketch') {
@@ -659,6 +765,7 @@ export class AgentSession {
       evaluation,
       features,
       onShapes: (s) => (created.shapes = s),
+      paramValues: this.currentParamValues(),
     });
     let sketchInfo: Json = {};
     const geometryChanged = ['entities', 'constraints', 'dimensions', 'profiles'].some(

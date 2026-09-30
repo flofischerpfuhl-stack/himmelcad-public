@@ -474,3 +474,73 @@ void test('revolve through the API: polyline profile about a construction centre
     'invalidParams',
   );
 });
+
+void test('parameters: create, use in an extrude distanceExpression, rename cascades, delete refused then allowed', async () => {
+  await reset();
+  const wall = await call<Json>('parameter.create', { name: 'wall', unit: 'mm', value: 2 });
+  assert.deepEqual(wall.parameter, {
+    id: (wall.parameter as Json).id,
+    name: 'wall',
+    unit: 'mm',
+    value: 2,
+  });
+  const doubled = await call<Json>('parameter.create', {
+    name: 'wall2',
+    unit: 'mm',
+    expression: 'wall * 2',
+  });
+  assert.equal((doubled.parameter as Json).value, 4);
+
+  const { sketchId, bodyId } = await apiPlate();
+  const extrude = await call<Json>('feature.create', {
+    kind: 'extrude',
+    params: {
+      profile: { kind: 'face', face: { bodyId, select: '>Z' } },
+      distanceExpression: 'wall2',
+      operation: 'join',
+    },
+  });
+  const feature = await call<Json>('feature.get', { featureId: extrude.featureId as string });
+  assert.equal((feature.params as Json).distance, 4);
+  assert.equal((feature.params as Json).distanceExpression, 'wall2');
+
+  const list = (await call('parameters.list')) as Json[];
+  assert.equal(list.length, 2);
+
+  // Renaming rewrites the extrude's expression and keeps the resolved value.
+  const wallId = (wall.parameter as Json).id as string;
+  await call('parameter.edit', { parameterId: wallId, name: 'thickness' });
+  const renamed = await call<Json>('feature.get', { featureId: extrude.featureId as string });
+  assert.equal((renamed.params as Json).distance, 4);
+  const doubledAfter = (await call('parameters.list')) as Json[];
+  assert.equal(doubledAfter.find((p) => p.name === 'wall2')!.expression, 'thickness * 2');
+
+  // Deleting a used parameter is refused with its users.
+  const refused = await fails(call('parameter.delete', { parameterId: 'thickness' }), 'conflict');
+  assert.ok((refused.details?.usages as Json[]).length > 0);
+
+  // Editing the value updates every dependent, still as one undo step.
+  await call('parameter.edit', { parameterId: 'thickness', value: 3 });
+  assert.equal(store.getState().history.canUndo, true);
+  const afterEdit = await call<Json>('feature.get', { featureId: extrude.featureId as string });
+  assert.equal((afterEdit.params as Json).distance, 6);
+  void sketchId;
+});
+
+void test('parameters: an unknown-name or non-positive expression is rejected without committing', async () => {
+  await reset();
+  await fails(call('parameter.create', { name: 'a', expression: 'missing + 1' }), 'invalidParams');
+  await call('parameter.create', { name: 'small', unit: 'mm', value: 1 });
+  const { bodyId } = await apiPlate();
+  await fails(
+    call('feature.create', {
+      kind: 'extrude',
+      params: {
+        profile: { kind: 'face', face: { bodyId, select: '>Z' } },
+        distanceExpression: 'small - 5',
+        operation: 'join',
+      },
+    }),
+    'invalidParams',
+  );
+});

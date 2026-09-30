@@ -222,7 +222,18 @@ export const DEFS: Record<string, JsonSchema> = {
       offset: num,
     },
     ['id', 'name', 'kind', 'refs', 'value'],
-    'Driving dimension (mm, angle in degrees). refs: distance 1 line / 2 points / point + line / 2 parallel lines; horizontal/verticalDistance 1 line or 2 points; radius/diameter 1 circle/arc; angle 2 lines. `expression` (e.g. "d1 / 2 + 3") uses names of other dimensions of the sketch.',
+    'Driving dimension (mm, angle in degrees). refs: distance 1 line / 2 points / point + line / 2 parallel lines; horizontal/verticalDistance 1 line or 2 points; radius/diameter 1 circle/arc; angle 2 lines. `expression` (e.g. "d1 / 2 + 3") uses names of other dimensions of the sketch, or of a document parameter (`parameters.list`).',
+  ),
+  Parameter: obj(
+    {
+      id: str,
+      name: { type: 'string', pattern: '^[A-Za-z_][A-Za-z0-9_]*$' },
+      unit: { enum: ['mm', 'deg', ''] },
+      value: num,
+      expression: str,
+    },
+    ['id', 'name', 'unit', 'value'],
+    'Document parameter ("variable"): `value` is always the last resolved value; `expression` (e.g. "wall * 2") is the source formula when the value is computed from other parameters. Usable from sketch dimension expressions and the distance/radius/thickness fields of extrude/fillet/chamfer/shell (`<field>Expression`).',
   ),
   SketchPlane: {
     oneOf: [
@@ -378,28 +389,47 @@ export const FEATURE_KIND_SCHEMAS: Record<string, FeatureKindSpec> = {
       {
         profile: ref('ExtrudeProfile'),
         distance: num,
+        distanceExpression: {
+          ...str,
+          description:
+            'Formula over document parameters (`parameters.list`), e.g. "wall * 2"; resolved into `distance`. Either this or `distance` is required.',
+        },
         symmetric: { type: 'boolean', default: false },
         operation: { enum: ['new', 'join', 'cut'], default: 'new' },
         targetBodyId: str,
         resultBodyName: str,
       },
-      ['profile', 'distance'],
+      ['profile'],
     ),
   },
   fillet: {
     label: 'Fillet',
     summary: 'Rounds edges of one body with a constant radius (exact B-rep fillet).',
     params: obj(
-      { edges: { type: 'array', items: ref('EdgeInput'), minItems: 1 }, radius: positive },
-      ['edges', 'radius'],
+      {
+        edges: { type: 'array', items: ref('EdgeInput'), minItems: 1 },
+        radius: positive,
+        radiusExpression: {
+          ...str,
+          description: 'Formula over document parameters, resolved into `radius`.',
+        },
+      },
+      ['edges'],
     ),
   },
   chamfer: {
     label: 'Chamfer',
     summary: 'Bevels edges of one body with a constant distance.',
     params: obj(
-      { edges: { type: 'array', items: ref('EdgeInput'), minItems: 1 }, distance: positive },
-      ['edges', 'distance'],
+      {
+        edges: { type: 'array', items: ref('EdgeInput'), minItems: 1 },
+        distance: positive,
+        distanceExpression: {
+          ...str,
+          description: 'Formula over document parameters, resolved into `distance`.',
+        },
+      },
+      ['edges'],
     ),
   },
   shell: {
@@ -410,8 +440,12 @@ export const FEATURE_KIND_SCHEMAS: Record<string, FeatureKindSpec> = {
         bodyId: str,
         faces: { type: 'array', items: ref('FaceInput'), minItems: 1 },
         thickness: positive,
+        thicknessExpression: {
+          ...str,
+          description: 'Formula over document parameters, resolved into `thickness`.',
+        },
       },
-      ['faces', 'thickness'],
+      ['faces'],
     ),
   },
   boolean: {
@@ -685,6 +719,56 @@ export const METHODS: Record<string, MethodSpec> = {
     summary: 'Replaces the UI selection (view state, not undoable).',
     params: obj({ items: { type: 'array', items: ref('SelectionItem') } }, ['items']),
     result: '{selection}',
+  },
+  'parameters.list': {
+    kind: 'query',
+    capability: 'document.read',
+    summary: 'Document parameters ("variables"), in creation order.',
+    params: obj({}),
+    result: '[Parameter]',
+  },
+  'parameter.create': {
+    kind: 'command',
+    capability: 'document.write',
+    summary:
+      'Adds a document parameter. Exactly one of `value`/`expression` is normally given; `expression` is resolved immediately (cycle/unknown-name errors reject with nothing changed).',
+    params: obj(
+      {
+        name: { type: 'string', pattern: '^[A-Za-z_][A-Za-z0-9_]*$' },
+        unit: { enum: ['mm', 'deg', ''], default: 'mm' },
+        value: num,
+        expression: str,
+        expectedRevision: revision,
+      },
+      ['name'],
+    ),
+    result: '{parameter: Parameter, revision}',
+  },
+  'parameter.edit': {
+    kind: 'command',
+    capability: 'document.write',
+    summary:
+      "Changes a parameter's name, unit, value or expression. Renaming rewrites every sketch dimension and feature `*Expression` field that references it.",
+    params: obj(
+      {
+        parameterId: str,
+        name: str,
+        unit: { enum: ['mm', 'deg', ''] },
+        value: num,
+        expression: str,
+        expectedRevision: revision,
+      },
+      ['parameterId'],
+    ),
+    result: '{parameter: Parameter, revision}',
+  },
+  'parameter.delete': {
+    kind: 'command',
+    capability: 'document.write',
+    summary:
+      'Removes a parameter. Refused with `conflict` and the list of users when a sketch dimension or feature field still references it by name.',
+    params: obj({ parameterId: str, expectedRevision: revision }, ['parameterId']),
+    result: '{parameterId, revision}',
   },
   'feature.create': {
     kind: 'command',

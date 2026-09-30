@@ -12,6 +12,7 @@ import {
   ProjectFormatError,
   migrateAndValidate,
 } from '../model/project/format.js';
+import { FEATURE_EXPRESSION_FIELDS, resolveFeatureExpression } from '../model/parameters.js';
 import { ApiError } from './errors.js';
 import { addShape, type ShapeResult, type SketchShape } from './sketchApi.js';
 import { resolveEdgeInput, resolveFaceInput, fillSignatures } from './references.js';
@@ -230,6 +231,32 @@ function normalise(
   }
 }
 
+/**
+ * Resolves the kind's `*Expression` field (extrude/fillet/chamfer/shell)
+ * against the document's current parameter values, writing the plain
+ * numeric field the kernel and `.hcasm` validator read. Only touches params
+ * that actually set the expression field, so an edit that never mentions it
+ * leaves an already-resolved value untouched.
+ */
+function resolveExpressionField(
+  kind: string,
+  params: Json,
+  paramValues: ReadonlyMap<string, number>,
+): Json {
+  const field = FEATURE_EXPRESSION_FIELDS[kind];
+  if (!field) return params;
+  const exprField = `${field}Expression`;
+  const expression = params[exprField];
+  if (typeof expression !== 'string') return params;
+  const resolved = resolveFeatureExpression(expression, paramValues);
+  if (!resolved.ok) {
+    throw new ApiError('invalidParams', `params.${exprField}: ${resolved.message}`, {
+      hint: 'parameters.list returns every document parameter name and value.',
+    });
+  }
+  return { ...params, [field]: resolved.value };
+}
+
 function dedupeByKey(params: Json, field: string): void {
   const seen = new Set<string>();
   params[field] = (params[field] as { bodyId: string; key: string }[]).filter((ref) => {
@@ -304,6 +331,8 @@ export function buildNewFeature(input: {
   features: readonly Feature[];
   /** Receives what the sketch `profiles` shorthand created. */
   onShapes?: (shapes: ShapeResult[]) => void;
+  /** Document parameter values, for a `*Expression` field (`model/parameters.ts`). */
+  paramValues?: ReadonlyMap<string, number>;
 }): Feature {
   const raw = preprocess(input.kind, input.params);
   checkSchema(input.kind, raw);
@@ -311,7 +340,12 @@ export function buildNewFeature(input: {
     input.kind === 'sketch'
       ? expandSketchShapes(raw, { entities: [], constraints: [], dimensions: [] }, input.onShapes)
       : raw;
-  const resolved = normalise(input.kind, expanded, input.evaluation, input.features);
+  const withExpressions = resolveExpressionField(
+    input.kind,
+    expanded,
+    input.paramValues ?? new Map(),
+  );
+  const resolved = normalise(input.kind, withExpressions, input.evaluation, input.features);
   const feature = {
     id: input.id,
     name: input.name,
@@ -330,6 +364,8 @@ export function buildEditedFeature(input: {
   evaluation: EvaluationResult;
   features: readonly Feature[];
   onShapes?: (shapes: ShapeResult[]) => void;
+  /** Document parameter values, for a `*Expression` field (`model/parameters.ts`). */
+  paramValues?: ReadonlyMap<string, number>;
 }): Feature {
   const kind = input.existing.kind;
   const patch = preprocess(kind, input.params);
@@ -339,7 +375,8 @@ export function buildEditedFeature(input: {
     kind === 'sketch'
       ? expandSketchShapes(patch, { entities: [], constraints: [], dimensions: [] }, input.onShapes)
       : patch;
-  const resolved = normalise(kind, expanded, input.evaluation, input.features);
+  const withExpressions = resolveExpressionField(kind, expanded, input.paramValues ?? new Map());
+  const resolved = normalise(kind, withExpressions, input.evaluation, input.features);
   return validateStored({ ...input.existing, ...resolved } as Feature);
 }
 
