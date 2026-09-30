@@ -5,12 +5,8 @@
  * the dimension chips, so all three always agree on the same geometry.
  */
 import type { Body } from '../../foundation/geometry-kernel/types.js';
-import {
-  findEdge,
-  findFace,
-  type EdgeBlendTool,
-  type ShellTool,
-} from '../../foundation/commands/store.js';
+import { findEdge, findFace } from '../../foundation/commands/store.js';
+import type { EdgeBlendTool, ShellTool } from './tools.js';
 import type { AxisHandle } from '../../platform/viewport/section.js';
 import type { Vec3 } from '../../platform/viewport/math.js';
 

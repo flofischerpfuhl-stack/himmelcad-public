@@ -17,11 +17,8 @@ import {
   type DraftHandle,
   type HandleUnit,
 } from '../../foundation/commands/featureDrafts.js';
-import {
-  useAssemblerStore,
-  type AssemblerState,
-  type MoveTool,
-} from '../../foundation/commands/store.js';
+import { useAssemblerStore, type AssemblerState } from '../../foundation/commands/store.js';
+import type { MoveTool } from './tools.js';
 import { transformBody } from '../../platform/viewport/bodyTransform.js';
 import type { Vec3 } from '../../platform/viewport/math.js';
 import type { ToolHandleKind } from '../../platform/viewport/picking.js';

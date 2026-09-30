@@ -43,12 +43,8 @@ import {
 import { gizmoOps, gizmoTransformFields } from '../../renderer/src/modules/modeling/moveGizmo.js';
 import { usePreferences } from '../../renderer/src/platform/input/preferences.js';
 import { loadProjectFile, saveProjectFile } from '../../renderer/src/foundation/document/format.js';
-import {
-  makeFaceRef,
-  moveSketchResult,
-  useAssemblerStore,
-  type MoveTool,
-} from '../../renderer/src/foundation/commands/store.js';
+import { makeFaceRef, useAssemblerStore } from '../../renderer/src/foundation/commands/store.js';
+import { moveSketchResult, type MoveTool } from '../../renderer/src/modules/modeling/tools.js';
 import { bodySnapTargets } from '../../renderer/src/sketch/bodySnaps.js';
 import { addRectangle, addPolyline } from '../../renderer/src/foundation/sketch-solver/builders.js';
 import { infer } from '../../renderer/src/sketch/inference.js';

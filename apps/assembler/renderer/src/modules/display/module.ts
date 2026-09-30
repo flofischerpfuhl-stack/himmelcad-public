@@ -5,6 +5,8 @@
  */
 import { COMMAND_ORDER } from '../../foundation/commands/registry.js';
 import { defineAssemblerModule } from '../../foundation/commands/module.js';
+import { registerProjectViewReader } from '../../foundation/commands/store.js';
+import { viewDisplayFromProject } from '../../model/viewDisplay.js';
 import {
   DISPLAY_COMMANDS,
   SECTION_COMMANDS,
@@ -18,4 +20,6 @@ export const displayModule = defineAssemblerModule({
     { order: COMMAND_ORDER.section, commands: SECTION_COMMANDS },
     { order: COMMAND_ORDER.visibility, commands: VISIBILITY_COMMANDS },
   ],
+  // Display mode, edge toggles and the face section plane saved in the project file.
+  onInstall: () => registerProjectViewReader(viewDisplayFromProject),
 });

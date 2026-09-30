@@ -15,6 +15,7 @@ import {
   TRANSFORM_COMMANDS,
 } from './modelingCommands.js';
 import './kinds.js';
+import { modelingToolsSlice } from './tools.js';
 
 export const modelingModule = defineAssemblerModule({
   id: 'modeling',
@@ -27,4 +28,5 @@ export const modelingModule = defineAssemblerModule({
     { order: COMMAND_ORDER.transform, commands: TRANSFORM_COMMANDS },
   ],
   api: MODELING_API,
+  storeSlice: modelingToolsSlice,
 });
