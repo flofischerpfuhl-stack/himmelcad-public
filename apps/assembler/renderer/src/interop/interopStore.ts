@@ -20,12 +20,12 @@ import type { KernelAdapter } from '../kernel/adapter.js';
 import type { StepExportOptions, StepLengthUnit, StepSchema } from '../kernel/stepExport.js';
 import { suggestStlUnitHint } from '../kernel/stlImport.js';
 import type { Body } from '../kernel/types.js';
-import type { SketchFeature, SketchPlaneRef } from '../model/document.js';
+import type { Feature, SketchFeature, SketchPlaneRef } from '../model/document.js';
 import { meshRowKey, useItemsStore, withDisplayNames } from '../model/items.js';
 import * as io from '../model/project/persistence.js';
 import { useProjectStore } from '../model/project/projectStore.js';
 import type { ReferenceMesh } from '../model/referenceMesh.js';
-import { nextFeatureName, useAssemblerStore } from '../model/store.js';
+import { nextFeatureName, useAssemblerStore, type SelectionItem } from '../model/store.js';
 import { useWorkspaceStore } from '../model/workspace.js';
 import { writeDxf, type DxfDrawing, type DxfVersion } from './dxf.js';
 import { faceOutlineToDxfEntities, sketchToDxfEntities } from './dxfSketch.js';
@@ -190,6 +190,12 @@ export const useInteropStore = create<InteropState>((set, get) => {
     if (get().job?.id === id) set({ job: null });
   };
   const fail = (title: string, lines: string[]) => set({ report: { title, tone: 'error', lines } });
+  /** Adds one History step at the end (a rolled-back History is rolled forward first, like agent commands). */
+  const addStep = (feature: Feature, selection?: SelectionItem[]) => {
+    const state = useAssemblerStore.getState();
+    if (state.rollbackBefore !== null) state.setRollback(null);
+    useAssemblerStore.getState().addFeature(feature, selection);
+  };
 
   const importStep = async (name: string, bytes: Uint8Array) => {
     const store = useAssemblerStore.getState();
@@ -206,7 +212,7 @@ export const useInteropStore = create<InteropState>((set, get) => {
       fileName: name,
     });
     notifyAssemblyImported(id);
-    store.addFeature(feature);
+    addStep(feature);
     if (!(await settled(job))) return;
     endJob(job);
     const state = useAssemblerStore.getState();
@@ -357,13 +363,16 @@ export const useInteropStore = create<InteropState>((set, get) => {
     },
 
     importFiles: async (files) => {
+      // A new import replaces the previous result report (never two dialogs stacked).
+      set({ report: null });
       for (const file of files) {
         const format = importFormatOf(file.name);
         switch (format) {
           case 'hcasm': {
             const text = new TextDecoder().decode(file.bytes);
             useProjectStore.getState().requestOpenFile(() => Promise.resolve({ path: null, text }));
-            break;
+            // Opening a project replaces the document: files dropped with it are not imported into it.
+            return;
           }
           case 'step':
             await importStep(file.name, file.bytes);
@@ -434,7 +443,7 @@ export const useInteropStore = create<InteropState>((set, get) => {
         fail(`Could not import "${pending.fileName}"`, [errorText(error)]);
         return;
       }
-      store.addFeature(built.feature, [{ kind: 'sketchProfile', featureId: id }]);
+      addStep(built.feature, [{ kind: 'sketchProfile', featureId: id }]);
       useWorkspaceStore.getState().sendCamera({ kind: 'fitAll' });
       const skipped = Object.entries(pending.drawing.skipped).map(([t, n]) => `${n} × ${t}`);
       const lines = [
@@ -505,7 +514,7 @@ export const useInteropStore = create<InteropState>((set, get) => {
         fraction: null,
       });
       const id = store.allocateFeatureId('meshSolid');
-      store.addFeature(
+      addStep(
         meshSolidFeature({
           id,
           name: nextFeatureName('Mesh to Solid', store.features),

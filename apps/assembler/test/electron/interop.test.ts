@@ -93,6 +93,9 @@ void test('packaged app: STEP assembly, 3MF, DXF and Mesh to Solid by drag & dro
     await items.getByText('parts', { exact: true }).isVisible(),
     '3MF objects are filed in a folder',
   );
+  // The unit conversion (cm → mm) is reported; acknowledge it like a user.
+  await page.getByText('Converted from centimeter to millimetres', { exact: false }).waitFor();
+  await page.getByRole('button', { name: 'OK' }).click();
 
   // DXF → placement dialog → one sketch step.
   await dropFiles(page, ['plate.dxf']);

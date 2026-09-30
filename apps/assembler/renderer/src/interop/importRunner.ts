@@ -83,18 +83,21 @@ export class ImportRunner {
       if (!this.createWorker) {
         setTimeout(() => {
           if (this.running?.id !== id) return;
-          inline().then(
-            (value) => {
-              if (this.running?.id !== id) return;
-              this.running = null;
-              resolve(value);
-            },
-            (error: unknown) => {
-              if (this.running?.id !== id) return;
-              this.running = null;
-              reject(error instanceof Error ? error : new Error(String(error)));
-            },
-          );
+          // `.then(inline)`: a parser that throws synchronously rejects the job, not the timer.
+          Promise.resolve()
+            .then(inline)
+            .then(
+              (value) => {
+                if (this.running?.id !== id) return;
+                this.running = null;
+                resolve(value);
+              },
+              (error: unknown) => {
+                if (this.running?.id !== id) return;
+                this.running = null;
+                reject(error instanceof Error ? error : new Error(String(error)));
+              },
+            );
         }, 0);
         return;
       }
