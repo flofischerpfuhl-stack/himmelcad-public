@@ -66,6 +66,22 @@ affected faces (a wall has two sides).
   where samples land). Floors and roofs count as walls (a 0.6 mm floor is
   flagged although a slicer prints it as top/bottom layers). Tessellation
   chord error (≤ the display deflection) enters the result on curved walls.
+- **Sharp edges are not walls (heuristic, 2026-09-30).** At an acute edge
+  (wedge opening α < 90°) the inward ray of a point `d` from the edge hits
+  the face across it after `d · tan α`, which used to report "0 mm walls"
+  along every sharp edge. A sample is now ignored when its ray lands on a
+  different B-rep face that **shares an edge with the sample's own face**
+  (found from the welded mesh: segments whose two triangles belong to
+  different faces) and the sample lies within `max(2 × min wall, 0.5 mm)` of
+  that shared edge (`print/analysis.ts` `measureWallThickness`,
+  `WEDGE_BAND_FACTOR`). Opposite sides of a real wall (shell inside/outside,
+  plate top/bottom) share no edge and are still measured. Consequence:
+  wedges sharper than `atan(1/2)` ≈ 26.6° are still reported, with their
+  real thickness at the band's end (≥ `band · tan α`), never 0 mm; a real
+  wall thinner than the band that happens to meet its opposite face along an
+  edge (a knife-edge fin) is only found beyond the band. Test:
+  `test/print/analysis.test.ts` (30° wedge prism: no thin samples; 0.5 mm
+  plate: still flagged at 0.5 mm).
 - **Overhangs ignore bridging and self-support.** A horizontal ceiling
   spanning two walls (a bridge) is reported like any 90° overhang; overhangs
   above other parts of the same body are not distinguished from ones above

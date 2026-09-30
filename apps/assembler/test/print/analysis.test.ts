@@ -21,7 +21,9 @@ import {
   boxFeatures,
   chamferedBlock,
   evaluate,
+  extrude,
   pin,
+  polygonSketch,
   plateWithHoles,
   plateWithHolesOneRegion,
   shelledBox,
@@ -102,6 +104,38 @@ void test('wall thickness of a shelled box matches the shell thickness', async (
   );
   for (const f of thin.thinWall.faces)
     assert.ok(Math.abs(f.value - 1.5) < 0.02, `${f.faceKey}: ${f.value}`);
+});
+
+void test('sharp wedge edges are not reported as 0 mm walls; a real thin wall still is', async () => {
+  // A 30°/60° wedge prism (profile in XZ, 20 mm along Y): everywhere at least 1 mm
+  // away from its edges the wedge is thicker than 0.8 mm.
+  const h = 20 * Math.tan((30 * Math.PI) / 180);
+  const s = polygonSketch(
+    'wedge-s',
+    [
+      [0, 0],
+      [20, 0],
+      [0, h],
+    ],
+    'XZ',
+  );
+  const wedge = await evaluate([s.feature, extrude('wedge-e', 'wedge-s', [s.regionKey], 20)]);
+  const report = analyzeBody(bodyToPrintInput(wedge.bodies[0]!), settings({ minWallMm: 0.8 }));
+  assert.ok(report.thinWall.samples > 500, `enough samples (${report.thinWall.samples})`);
+  assert.equal(report.thinWall.thinSamples, 0, 'no thin wall along the 30° edge');
+  assert.ok(
+    report.thinWall.minThicknessMm! > 0.8,
+    `thinnest measured wall ${report.thinWall.minThicknessMm} mm is outside the edge band`,
+  );
+
+  // A 0.5 mm plate is still a thin wall (its top and bottom share no edge).
+  const plate = await evaluate(boxFeatures('thin', 20, 20, 0.5));
+  const thin = analyzeBody(bodyToPrintInput(plate.bodies[0]!), settings({ minWallMm: 0.8 }));
+  assert.ok(thin.thinWall.thinSamples > 0, 'the 0.5 mm plate is flagged');
+  assert.ok(
+    Math.abs(thin.thinWall.minThicknessMm! - 0.5) < 0.01,
+    `${thin.thinWall.minThicknessMm}`,
+  );
 });
 
 void test('small holes and pins are flagged by diameter', async () => {

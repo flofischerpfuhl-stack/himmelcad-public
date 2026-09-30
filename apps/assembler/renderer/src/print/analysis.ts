@@ -263,9 +263,82 @@ function r2Barycentric(i: number): [number, number] {
 interface ThicknessResult {
   samples: number;
   thin: number;
+  /** Samples ignored as sharp-edge (wedge) artefacts, see {@link measureWallThickness}. */
+  wedgeSamples: number;
   minThickness: number | null;
   thinTriangles: Set<number>;
   byFace: Map<number, { area: number; min: number }>;
+}
+
+/**
+ * Width of the band along a sharp B-rep edge in which a sample whose ray
+ * lands on the face across that edge is ignored, as a multiple of the
+ * minimum wall (at least {@link WEDGE_BAND_MIN_MM}).
+ */
+export const WEDGE_BAND_FACTOR = 2;
+export const WEDGE_BAND_MIN_MM = 0.5;
+
+/**
+ * The mesh segments where two different B-rep faces meet (the model's
+ * edges as tessellated), grouped by face pair `lo|hi`. Built on the welded
+ * mesh, whose adjacent faces share the node positions of their common edge.
+ */
+function faceBoundarySegments(
+  mesh: IndexedMesh,
+  triangleFaces: Uint32Array,
+): Map<string, number[]> {
+  const welded = weldMesh(mesh);
+  const firstFace = new Map<number, number>();
+  const vertexCount = welded.positions.length / 3;
+  const out = new Map<string, number[]>();
+  const p = welded.positions;
+  for (let k = 0; k < welded.sourceTriangles.length; k += 1) {
+    const face = triangleFaces[welded.sourceTriangles[k]!]!;
+    for (let e = 0; e < 3; e += 1) {
+      const a = welded.indices[k * 3 + e]!;
+      const b = welded.indices[k * 3 + ((e + 1) % 3)]!;
+      const lo = Math.min(a, b);
+      const hi = Math.max(a, b);
+      const key = lo * vertexCount + hi;
+      const other = firstFace.get(key);
+      if (other === undefined) {
+        firstFace.set(key, face);
+        continue;
+      }
+      if (other === face) continue;
+      const pair = other < face ? `${other}|${face}` : `${face}|${other}`;
+      let list = out.get(pair);
+      if (!list) out.set(pair, (list = []));
+      list.push(
+        p[lo * 3]!,
+        p[lo * 3 + 1]!,
+        p[lo * 3 + 2]!,
+        p[hi * 3]!,
+        p[hi * 3 + 1]!,
+        p[hi * 3 + 2]!,
+      );
+    }
+  }
+  return out;
+}
+
+/** Distance from `q` to the nearest of the flat segment list (6 numbers each). */
+function distanceToSegments(q: Vec3, segments: readonly number[]): number {
+  let best = Infinity;
+  for (let i = 0; i < segments.length; i += 6) {
+    const ax = segments[i]!;
+    const ay = segments[i + 1]!;
+    const az = segments[i + 2]!;
+    const dx = segments[i + 3]! - ax;
+    const dy = segments[i + 4]! - ay;
+    const dz = segments[i + 5]! - az;
+    const len2 = dx * dx + dy * dy + dz * dz;
+    let s = len2 > 0 ? ((q[0] - ax) * dx + (q[1] - ay) * dy + (q[2] - az) * dz) / len2 : 0;
+    s = Math.max(0, Math.min(1, s));
+    const d = Math.hypot(ax + s * dx - q[0], ay + s * dy - q[1], az + s * dz - q[2]);
+    if (d < best) best = d;
+  }
+  return best;
 }
 
 /**
@@ -273,6 +346,20 @@ interface ThicknessResult {
  * at least one), each casting a ray inwards along its triangle's negative
  * normal; the first hit distance is the local thickness. Samples whose ray
  * leaves the mesh without a hit (open mesh) are ignored.
+ *
+ * **Sharp edges are not walls.** Near an acute edge (a wedge of opening
+ * angle α < 90°) the inward ray of a point at distance `d` from the edge
+ * hits the face across the edge after `d · tan α` — "0 mm" right at the
+ * edge, although nothing there is a thin wall. With `triangleFaces` given,
+ * a sample is therefore ignored (counted in `wedgeSamples`) when its ray
+ * lands on a *different B-rep face that shares an edge with the sample's
+ * own face* and the sample lies within `max(WEDGE_BAND_FACTOR × minWall,
+ * WEDGE_BAND_MIN_MM)` of that shared edge. Opposite sides of a real wall
+ * (a shelled box's inside and outside, a plate's top and bottom) never share
+ * an edge, so real thin walls are still found. Outside the band a wedge
+ * measures at least `band · tan α`, so only wedges sharper than
+ * `atan(minWall / band)` (≈ 26.6° with the default factor) are still
+ * reported — with their real, non-zero thickness.
  */
 export function measureWallThickness(
   mesh: IndexedMesh,
@@ -297,6 +384,7 @@ export function measureWallThickness(
   const result: ThicknessResult = {
     samples: 0,
     thin: 0,
+    wedgeSamples: 0,
     minThickness: null,
     thinTriangles: new Set(),
     byFace: new Map(),
@@ -329,6 +417,9 @@ export function measureWallThickness(
     diagonal = Math.hypot(b[3]! - b[0]!, b[4]! - b[1]!, b[5]! - b[2]!);
   }
   const eps = Math.max(1e-5, diagonal * 1e-7);
+  const triangleFaces = options.triangleFaces;
+  const boundaries = triangleFaces ? faceBoundarySegments(mesh, triangleFaces) : null;
+  const wedgeBand = Math.max(WEDGE_BAND_FACTOR * minWallMm, WEDGE_BAND_MIN_MM);
   let sequence = 0;
   const report = Math.max(1, Math.floor(n / 50));
   for (let t = 0; t < n; t += 1) {
@@ -354,6 +445,17 @@ export function measureWallThickness(
       ];
       const hit = raycast(bvh, origin, [-nx, -ny, -nz], eps, Infinity, t);
       if (!hit) continue;
+      if (boundaries && triangleFaces) {
+        const own = triangleFaces[t]!;
+        const across = triangleFaces[hit.triangle]!;
+        if (own !== across) {
+          const shared = boundaries.get(own < across ? `${own}|${across}` : `${across}|${own}`);
+          if (shared && distanceToSegments(origin, shared) < wedgeBand) {
+            result.wedgeSamples += 1;
+            continue;
+          }
+        }
+      }
       const thickness = hit.t + eps;
       result.samples += 1;
       result.minThickness =
