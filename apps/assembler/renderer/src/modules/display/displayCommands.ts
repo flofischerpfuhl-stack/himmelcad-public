@@ -1,12 +1,14 @@
 /**
- * Display, section and measurement commands (display modes Alt+1…7, edge /
- * hidden-edge / grid / axes toggles, render quality, Export image…, section
- * from a face, section only, look at section, Measure points / pin), spliced
- * into `registry.ts`'s `COMMANDS` so the display menu, View menu, command
- * search, shortcuts and the shortcut sheet all read the same entries.
+ * Display and section commands (display modes Alt+1…7, edge / hidden-edge /
+ * grid / axes toggles, render quality, Export image…, section from a face,
+ * section only, look at section), Section View and visibility, registered
+ * through the display module (`module.ts`) so the display menu, View menu,
+ * command search, shortcuts and the shortcut sheet all read the same
+ * entries. Measure's Pin / Points commands follow in the measure module's
+ * block.
  */
 import { DISPLAY_MODE_ENTRIES, activeDisplayEntry } from '../../platform/viewport/displayModes.js';
-import { sectionNormal } from '../../viewport/toolAnchors.js';
+import { sectionPlaneNormal } from '../../platform/viewport/viewGeometry.js';
 import { displayBodyName, useItemsStore } from '../../foundation/commands/items.js';
 import { usePreferences } from '../../platform/input/preferences.js';
 import {
@@ -15,9 +17,9 @@ import {
   useAssemblerStore,
   type AssemblerState,
 } from '../../foundation/commands/store.js';
-import { sectionPlaneFromFace } from '../viewDisplay.js';
-import { useViewportUi } from '../viewportUi.js';
-import { useWorkspaceStore } from '../../interface/shell-ui/workspace.js';
+import { sectionPlaneFromFace } from './viewDisplay.js';
+import { sendCamera } from '../../platform/viewport/cameraChannel.js';
+import { useDisplayDialogs } from './dialogs.js';
 import {
   alwaysEnabled,
   selected,
@@ -56,13 +58,13 @@ export function sectionAtFace(ctx: AssemblerState, bodyId: string, faceKey: stri
 /** Camera normal to the section plane, looking at the cut faces. */
 export function lookAtSection(ctx: AssemblerState): void {
   const view = ctx.viewState;
-  const normal = sectionNormal({
+  const normal = sectionPlaneNormal({
     axis: view.sectionAxis,
     offset: view.sectionOffset,
     flipped: view.sectionFlipped,
     plane: view.sectionPlane,
   });
-  useWorkspaceStore.getState().sendCamera({ kind: 'lookAlong', direction: [...normal] });
+  sendCamera({ kind: 'lookAlong', direction: [...normal] });
 }
 
 const sectionOn = (ctx: AssemblerState): CommandAvailability =>
@@ -169,7 +171,7 @@ export const DISPLAY_COMMANDS: readonly Command[] = [
     keywords: ['screenshot', 'png', 'render', 'picture', 'snapshot', 'image'],
     adaptive: false,
     availability: () => enabled,
-    run: () => useViewportUi.getState().setExportImageOpen(true),
+    run: () => useDisplayDialogs.getState().setExportImageOpen(true),
   },
   {
     id: 'modes.sectionAtFace',

@@ -1,15 +1,12 @@
 /**
- * The display module (assembler/MODULES.md): appearance, display modes,
- * section and visibility commands, analysis legend, image export. Phase B
- * moves its files from `model/`, `chrome/` and `viewport/` here.
+ * The display module (assembler/MODULES.md): appearance and colour,
+ * display modes, section and visibility commands, the analysis legend,
+ * image export and the view display saved with a project. Registered here
+ * and in `module.ui.ts`.
  */
 import { COMMAND_ORDER } from '../../foundation/commands/registry.js';
 import { defineAssemblerModule } from '../../foundation/commands/module.js';
-import {
-  DISPLAY_COMMANDS,
-  SECTION_COMMANDS,
-  VISIBILITY_COMMANDS,
-} from '../../model/commands/displayCommands.js';
+import { DISPLAY_COMMANDS, SECTION_COMMANDS, VISIBILITY_COMMANDS } from './displayCommands.js';
 
 export const displayModule = defineAssemblerModule({
   id: 'display',

@@ -88,9 +88,9 @@ import {
 } from './math.js';
 import type { PickTarget, ToolHandleKind } from './picking.js';
 import { buildScene, type BuiltScene, type SceneDatum, type SceneInput } from './scene.js';
-import { encodePng } from '../../viewport/imageExport.js';
-import { setImageRenderer, useViewportUi } from '../../model/viewportUi.js';
-import { sectionAtFace } from '../../model/commands/displayCommands.js';
+import { encodePng } from './imageExport.js';
+import { setImageRenderer, useViewportUi } from './viewportUi.js';
+import { sectionAtFace } from '../../modules/display/displayCommands.js';
 import { readViewportColors, type ViewportColors } from './theme.js';
 import {
   blendHandle,
@@ -104,7 +104,11 @@ import {
 } from '../../viewport/toolAnchors.js';
 import { bodyMaterials } from './displayModes.js';
 import { MeasureOverlay } from '../../modules/measure/ui/MeasureOverlay.js';
-import { snapMeasurePoint, snapPoints, type Vec3 as MeasureVec3 } from '../../modules/measure/measure.js';
+import {
+  snapMeasurePoint,
+  snapPoints,
+  type Vec3 as MeasureVec3,
+} from '../../modules/measure/measure.js';
 import { useMeasureStore } from '../../modules/measure/measureStore.js';
 import { rayCastFaces } from './pickCandidates.js';
 import { ViewCube } from './ViewCube.js';

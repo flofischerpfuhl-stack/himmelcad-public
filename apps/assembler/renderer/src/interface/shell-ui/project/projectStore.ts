@@ -28,7 +28,7 @@ import {
   useMeasureStore,
 } from '../../../modules/measure/measureStore.js';
 import { useAssemblerStore } from '../../../foundation/commands/store.js';
-import { viewDisplayToProject } from '../../../model/viewDisplay.js';
+import { viewDisplayToProject } from '../../../modules/display/viewDisplay.js';
 import { parseSavedViews, useWorkspaceStore } from '../workspace.js';
 import {
   CURRENT_SCHEMA_VERSION,

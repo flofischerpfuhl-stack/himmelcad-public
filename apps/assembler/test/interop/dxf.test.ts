@@ -14,7 +14,10 @@ import {
   writeDxf,
   type DxfEntity,
 } from '../../renderer/src/modules/interop/dxf.js';
-import { dxfToSketchData, sketchToDxfEntities } from '../../renderer/src/modules/interop/dxfSketch.js';
+import {
+  dxfToSketchData,
+  sketchToDxfEntities,
+} from '../../renderer/src/modules/interop/dxfSketch.js';
 import { dxfSketchFeature, dxfUnits } from '../../renderer/src/modules/interop/importActions.js';
 import { detectRegions } from '../../renderer/src/foundation/sketch-solver/regions.js';
 import { addCircle, addRectangle } from '../../renderer/src/foundation/sketch-solver/builders.js';

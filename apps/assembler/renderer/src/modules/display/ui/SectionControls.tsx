@@ -12,14 +12,15 @@ import { useEffect } from 'react';
 
 import { Tooltip, registerEscapeRung } from '@himmelcad/ui';
 
-import { lookAtSection, sectionAtFace } from '../model/commands/displayCommands.js';
+import { lookAtSection, sectionAtFace } from '../displayCommands.js';
 import {
   isPlanarFace,
   type AssemblerState,
   type SectionAxis,
-} from '../foundation/commands/store.js';
-import { useViewportUi } from '../model/viewportUi.js';
-import { ExpressionField } from '../platform/widgets/ExpressionField.js';
+} from '../../../foundation/commands/store.js';
+import { useViewportUi } from '../../../platform/viewport/viewportUi.js';
+import { ExpressionField } from '../../../platform/widgets/ExpressionField.js';
+import type { PanelProps } from '../../../platform/widgets/moduleUi.js';
 import styles from './SectionControls.module.css';
 
 const AXES: readonly SectionAxis[] = ['X', 'Y', 'Z'];
@@ -142,4 +143,9 @@ export function SectionControls({ state }: { state: AssemblerState }): JSX.Eleme
       </Tooltip>
     </div>
   );
+}
+
+/** The Section View controls while Section View is on (the shell's overlay slot, `module.ui.ts`). */
+export function SectionPanel({ state }: PanelProps): JSX.Element | null {
+  return state.viewState.sectionEnabled ? <SectionControls state={state} /> : null;
 }

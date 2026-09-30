@@ -6,7 +6,7 @@
  * grid and axes. Best effort — no 3D view (tests, headless) or a render
  * failure simply saves without a thumbnail.
  */
-import { renderViewportImage } from '../../../model/viewportUi.js';
+import { renderViewportImage } from '../../../platform/viewport/viewportUi.js';
 
 export const THUMBNAIL_WIDTH = 320;
 export const THUMBNAIL_HEIGHT = 200;

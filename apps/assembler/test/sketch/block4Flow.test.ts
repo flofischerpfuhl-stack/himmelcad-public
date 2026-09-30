@@ -11,7 +11,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { withBodyColour } from '../../renderer/src/model/appearance.js';
+import { withBodyColour } from '../../renderer/src/modules/display/appearance.js';
 import {
   resolveShortcut,
   type KeyEvent,

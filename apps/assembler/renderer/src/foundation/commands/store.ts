@@ -40,7 +40,7 @@ import {
 } from '../geometry-kernel/naming.js';
 import type { ProjectViewState } from '../document/format.js';
 import type { ReferenceMesh, ReferenceMeshTransform } from './referenceMesh.js';
-import { viewDisplayFromProject } from '../../model/viewDisplay.js';
+import { viewDisplayFromProject } from '../../modules/display/viewDisplay.js';
 import { setSectionAccess } from '../../interface/shell-ui/workspace.js';
 import {
   EMPTY_EVALUATION,

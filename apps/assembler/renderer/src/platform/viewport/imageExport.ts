@@ -3,7 +3,7 @@
  * PNG encoding of the offscreen render (`gl.ts#renderImage`). The pixel
  * helpers are pure and unit tested; `encodePng` uses a 2D canvas.
  */
-import type { ImageExportPreference } from '../platform/input/preferences.js';
+import type { ImageExportPreference } from '../input/preferences.js';
 
 /** Output size in pixels for an export preset and the viewport's CSS size. */
 export function imageExportSize(

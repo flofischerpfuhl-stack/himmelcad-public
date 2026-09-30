@@ -22,7 +22,7 @@ import { registerEscapeRung } from '@himmelcad/ui';
 import { effectiveGridStep } from '../../platform/viewport/gridResolution.js';
 import { usePreferences } from '../../platform/input/preferences.js';
 import { useAssemblerStore } from '../../foundation/commands/store.js';
-import { useViewportUi } from '../../model/viewportUi.js';
+import { useViewportUi } from '../../platform/viewport/viewportUi.js';
 import { boxModeFor, normalizeRect } from '../../platform/viewport/boxSelect.js';
 import { SelectionBox } from '../../platform/viewport/SelectionBox.js';
 import {

@@ -14,17 +14,21 @@ import {
   applyBodyColour,
   applyBodyMaterial,
   normalizeHexColour,
-} from '../model/appearance.js';
-import { MATERIALS, bodyMaterials, type MaterialId } from '../platform/viewport/displayModes.js';
-import { useAssemblerStore } from '../foundation/commands/store.js';
-import { displayBodyName, useItemsStore } from '../foundation/commands/items.js';
-import { useWorkspaceStore } from '../interface/shell-ui/workspace.js';
+} from '../appearance.js';
+import {
+  MATERIALS,
+  bodyMaterials,
+  type MaterialId,
+} from '../../../platform/viewport/displayModes.js';
+import { useAssemblerStore } from '../../../foundation/commands/store.js';
+import { displayBodyName, useItemsStore } from '../../../foundation/commands/items.js';
+import { useDisplayDialogs } from '../dialogs.js';
 import styles from './ColourDialog.module.css';
 
 export { applyBodyColour, applyBodyMaterial };
 
 export function ColourDialog(): JSX.Element | null {
-  const bodyIds = useWorkspaceStore((s) => s.colourDialogBodyIds);
+  const bodyIds = useDisplayDialogs((s) => s.colourDialogBodyIds);
   const bodies = useAssemblerStore((s) => s.evaluation.bodies);
   const features = useAssemblerStore((s) => s.features);
   const rollbackBefore = useAssemblerStore((s) => s.rollbackBefore);
@@ -44,7 +48,7 @@ export function ColourDialog(): JSX.Element | null {
 
   const close = () => {
     setError(null);
-    useWorkspaceStore.getState().setColourDialog(null);
+    useDisplayDialogs.getState().setColourDialog(null);
   };
   if (!bodyIds) return null;
 

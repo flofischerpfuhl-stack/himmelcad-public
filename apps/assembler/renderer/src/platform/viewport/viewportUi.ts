@@ -1,7 +1,8 @@
 /**
- * Transient UI state of the display features: the "Export image…" dialog,
- * the "pick a face for the section plane" prompt, and the image renderer
- * the mounted viewport registers. Session-only; nothing here is saved.
+ * Transient view state around the mounted viewport: the "pick a face for the
+ * section plane" prompt, the grid resolution it draws, and the image renderer
+ * it registers (image export, project thumbnails). Session-only; nothing here
+ * is saved.
  */
 import { create } from 'zustand';
 
@@ -42,8 +43,6 @@ export function currentViewportSize(): { width: number; height: number; dpr: num
 }
 
 export interface ViewportUiState {
-  exportImageOpen: boolean;
-  setExportImageOpen: (open: boolean) => void;
   /** Section > Face: the next click on a planar face sets the section plane. */
   sectionFacePick: boolean;
   setSectionFacePick: (on: boolean) => void;
@@ -57,8 +56,6 @@ export interface ViewportUiState {
 }
 
 export const useViewportUi = create<ViewportUiState>((set, get) => ({
-  exportImageOpen: false,
-  setExportImageOpen: (open) => set({ exportImageOpen: open }),
   sectionFacePick: false,
   setSectionFacePick: (on) => set({ sectionFacePick: on }),
   liveGridStep: null,

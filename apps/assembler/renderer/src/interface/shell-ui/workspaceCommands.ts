@@ -19,6 +19,7 @@ import {
   nearestOrthoDirection,
   useWorkspaceStore,
 } from './workspace.js';
+import { useDisplayDialogs } from '../../modules/display/dialogs.js';
 import {
   bodyRowKey,
   datumRowKey,
@@ -132,7 +133,7 @@ export const WORKSPACE_COMMANDS: readonly Command[] = [
         ? enabled
         : { enabled: false, reason: 'Select a body (or its faces/edges).' };
     },
-    run: (ctx) => useWorkspaceStore.getState().setColourDialog(colourTargets(ctx)),
+    run: (ctx) => useDisplayDialogs.getState().setColourDialog(colourTargets(ctx)),
   },
   {
     id: 'edit.invertVisibility',

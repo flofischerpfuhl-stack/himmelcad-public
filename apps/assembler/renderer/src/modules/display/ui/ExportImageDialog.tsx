@@ -9,16 +9,17 @@ import { useEffect, useState } from 'react';
 
 import { Button, Checkbox, Dialog, NumberInput, Select } from '@himmelcad/ui';
 
-import * as io from '../foundation/document/persistence.js';
+import * as io from '../../../foundation/document/persistence.js';
 import {
   DEFAULT_IMAGE_EXPORT,
   usePreferences,
   type ImageExportPreference,
-} from '../platform/input/preferences.js';
-import { useAssemblerStore } from '../foundation/commands/store.js';
-import { currentViewportSize, renderViewportImage, useViewportUi } from '../model/viewportUi.js';
-import { useWorkspaceStore } from '../interface/shell-ui/workspace.js';
-import { imageExportSize, imageFileName } from '../viewport/imageExport.js';
+} from '../../../platform/input/preferences.js';
+import { useAssemblerStore } from '../../../foundation/commands/store.js';
+import { currentViewportSize, renderViewportImage } from '../../../platform/viewport/viewportUi.js';
+import { notify } from '../../../foundation/commands/notices.js';
+import { useDisplayDialogs } from '../dialogs.js';
+import { imageExportSize, imageFileName } from '../../../platform/viewport/imageExport.js';
 import styles from './ExportImageDialog.module.css';
 
 const SIZE_OPTIONS: { value: string; label: string }[] = [
@@ -48,7 +49,7 @@ function withSizeValue(pref: ImageExportPreference, value: string): ImageExportP
 }
 
 export function ExportImageDialog(): JSX.Element | null {
-  const open = useViewportUi((s) => s.exportImageOpen);
+  const open = useDisplayDialogs((s) => s.exportImageOpen);
   const stored = usePreferences((p) => p.imageExport);
   const [draft, setDraft] = useState<ImageExportPreference>(stored ?? DEFAULT_IMAGE_EXPORT);
   const [busy, setBusy] = useState(false);
@@ -65,7 +66,7 @@ export function ExportImageDialog(): JSX.Element | null {
   const viewport = currentViewportSize() ?? { width: 1280, height: 720, dpr: 1 };
   const size = imageExportSize(draft, viewport);
   const close = () => {
-    if (!busy) useViewportUi.getState().setExportImageOpen(false);
+    if (!busy) useDisplayDialogs.getState().setExportImageOpen(false);
   };
 
   const exportNow = async () => {
@@ -87,8 +88,8 @@ export function ExportImageDialog(): JSX.Element | null {
         'image/png',
       );
       if (saved) {
-        useWorkspaceStore.getState().notify(`Image exported (${image.width} × ${image.height} px)`);
-        useViewportUi.getState().setExportImageOpen(false);
+        notify(`Image exported (${image.width} × ${image.height} px)`);
+        useDisplayDialogs.getState().setExportImageOpen(false);
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));

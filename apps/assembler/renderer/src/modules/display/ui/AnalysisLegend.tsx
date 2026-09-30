@@ -4,10 +4,10 @@
  * stripes show. States the approximation: curvature is estimated from the
  * mesh (vertex normals), not from the kernel's exact surfaces.
  */
-import { visibleBounds } from '../model/modeling.js';
-import { formatLength, usePreferences } from '../platform/input/preferences.js';
-import type { AssemblerState } from '../foundation/commands/store.js';
-import { curvatureColor, curvatureRange } from '../platform/viewport/displayModes.js';
+import { visibleBodyBounds } from '../../../platform/viewport/viewGeometry.js';
+import { formatLength, usePreferences } from '../../../platform/input/preferences.js';
+import type { AssemblerState } from '../../../foundation/commands/store.js';
+import { curvatureColor, curvatureRange } from '../../../platform/viewport/displayModes.js';
 import styles from './AnalysisLegend.module.css';
 
 function css(rgb: [number, number, number]): string {
@@ -29,7 +29,11 @@ export function AnalysisLegend({ state }: { state: AssemblerState }): JSX.Elemen
       </div>
     );
   }
-  const bounds = visibleBounds(state.evaluation.bodies, state.hiddenBodyIds, state.isolatedBodyIds);
+  const bounds = visibleBodyBounds(
+    state.evaluation.bodies,
+    state.hiddenBodyIds,
+    state.isolatedBodyIds,
+  );
   const diagonal = bounds
     ? Math.hypot(
         bounds.max[0] - bounds.min[0],

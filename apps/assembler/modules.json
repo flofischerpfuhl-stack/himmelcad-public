@@ -145,19 +145,7 @@
       "id": "display",
       "layer": "domain",
       "summary": "Display features: appearance/colour, display-mode and section commands and menus, analysis legend, image export, persisted view display.",
-      "paths": [
-        "renderer/src/modules/display/",
-        "renderer/src/model/appearance.ts",
-        "renderer/src/model/viewDisplay.ts",
-        "renderer/src/model/viewportUi.ts",
-        "renderer/src/model/commands/displayCommands.ts",
-        "renderer/src/chrome/AnalysisLegend",
-        "renderer/src/chrome/ColourDialog",
-        "renderer/src/chrome/DisplayMenu",
-        "renderer/src/chrome/ExportImageDialog",
-        "renderer/src/chrome/SectionControls",
-        "renderer/src/viewport/imageExport.ts"
-      ]
+      "paths": ["renderer/src/modules/display/"]
     },
     {
       "id": "interop",

@@ -23,7 +23,7 @@ import { onCloseRequested, onOpenRequested } from '../../foundation/document/per
 import { MAX_SAVED_VIEWS, useWorkspaceStore } from './workspace.js';
 import { useProjectStore } from './project/projectStore.js';
 import { CommandGroupMenu } from './CommandGroupMenu.js';
-import { DisplayMenuItems } from '../../chrome/DisplayMenu.js';
+import { DisplayMenuItems } from '../../modules/display/ui/DisplayMenu.js';
 import { RecentFilesMenu } from './RecentFilesMenu.js';
 import type { AssemblerState } from '../../foundation/commands/store.js';
 import styles from './TopBar.module.css';

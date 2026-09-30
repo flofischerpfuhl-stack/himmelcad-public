@@ -82,9 +82,6 @@ export interface WorkspaceState {
   /** Starts inline renaming of an Items row (context menu "Rename"). */
   renameRequest: { key: string; nonce: number } | null;
   renameInItems: (key: string) => void;
-  /** Body colour dialog for these bodies (`null` = closed). */
-  colourDialogBodyIds: string[] | null;
-  setColourDialog: (bodyIds: string[] | null) => void;
 
   /** Keyboard shortcut overlay (hold Ctrl or press ?). */
   shortcutOverlay: boolean;
@@ -175,8 +172,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   renameRequest: null,
   renameInItems: (key) =>
     set((s) => ({ renameRequest: { key, nonce: (s.renameRequest?.nonce ?? 0) + 1 } })),
-  colourDialogBodyIds: null,
-  setColourDialog: (bodyIds) => set({ colourDialogBodyIds: bodyIds }),
 
   shortcutOverlay: false,
   setShortcutOverlay: (open) => set({ shortcutOverlay: open }),

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import type { Feature } from '../../renderer/src/foundation/document/document.js';
-import { withBodyColour, withBodyMaterial } from '../../renderer/src/model/appearance.js';
+import { withBodyColour, withBodyMaterial } from '../../renderer/src/modules/display/appearance.js';
 import {
   circleThrough,
   closestPointOnTriangle,
@@ -21,7 +21,7 @@ import {
   sectionPlaneFromFace,
   viewDisplayFromProject,
   viewDisplayToProject,
-} from '../../renderer/src/model/viewDisplay.js';
+} from '../../renderer/src/modules/display/viewDisplay.js';
 import { bodyMaterials } from '../../renderer/src/platform/viewport/displayModes.js';
 import { boxBody, cylinderBody } from '../viewport/meshFixtures.js';
 
