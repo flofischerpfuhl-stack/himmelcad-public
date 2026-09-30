@@ -664,9 +664,14 @@ heap ~8 MB each (was ~15 MB: one boolean instead of eleven) — OCCT's own
 per-boolean leakage on B-spline faces; the adapters' 1 GiB recycling
 still applies (~100 label previews per recycle).
 
-Found for the UI lane (not changed here): right after a click in the
-viewport, the first click on the Hole tool's size menu button does not
-open it (the harness clicks until it is expanded).
+Found for the UI lane: right after a click in the viewport, the first click
+on the Hole tool's size menu button did not open it. Cause: the click had
+opened the hole's value chip, and the menu's mousedown blurred it, which
+committed the unchanged value — the size became "custom", the tool pill
+re-laid out and the button moved ~240 px before the mouseup. Fixed in the
+integration (2026-09-30): a field opened by a click and left untouched
+commits nothing (`viewport/DimensionLabel.tsx`); the harness now clicks once
+and fails if the menu does not open.
 
 ## Open risks
 

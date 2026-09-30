@@ -165,7 +165,12 @@ export function datumRef(
   const datum = evaluation.datums?.find((d) => d.featureId === featureId);
   if (!datum) return null;
   return datum.kind === 'plane'
-    ? { kind: 'construction', featureId, frame: datum.frame }
+    ? {
+        kind: 'construction',
+        featureId,
+        frame: datum.frame,
+        shown: { center: datum.center, size: datum.size },
+      }
     : {
         kind: 'construction',
         featureId,

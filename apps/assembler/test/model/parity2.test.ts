@@ -13,7 +13,7 @@ import test from 'node:test';
 import { opsAffine, transformOps } from '../../renderer/src/kernel/features/rigid.js';
 import { continuableSketchId } from '../../renderer/src/model/commands/sketchCommands.js';
 import { findCommand } from '../../renderer/src/model/commands/registry.js';
-import type { ConstructionPlaneFeature } from '../../renderer/src/model/construction.js';
+import { datumRef, type ConstructionPlaneFeature } from '../../renderer/src/model/construction.js';
 import { createConstructionDraft } from '../../renderer/src/model/constructionTools.js';
 import {
   createDemoDocument,
@@ -31,7 +31,9 @@ import {
 import { historyFilterItems, relevantFeatureIds } from '../../renderer/src/model/historyTools.js';
 import { gizmoOps, gizmoTransformFields } from '../../renderer/src/model/moveGizmo.js';
 import { usePreferences } from '../../renderer/src/model/preferences.js';
+import { loadProjectFile, saveProjectFile } from '../../renderer/src/model/project/format.js';
 import {
+  makeFaceRef,
   moveSketchResult,
   useAssemblerStore,
   type MoveTool,
@@ -235,6 +237,55 @@ void test('Mirror takes sketches and a construction plane from the selection', a
 });
 
 // ---- HIS-07 Fix… / HIS-04 isolate filter ----------------------------------------------------
+
+void test('Fix…: the ghost of a deleted construction plane is drawn where the plane was shown', async () => {
+  await load(twoBoxes().slice(0, 2));
+  const box = store.getState().evaluation.bodies[0]!;
+  const top = box.faces.find((f) => f.normal?.[2] === 1)!;
+  const plane: ConstructionPlaneFeature = {
+    id: 'feature-constructionPlane-3',
+    name: 'Plane 1',
+    suppressed: false,
+    kind: 'constructionPlane',
+    definition: {
+      kind: 'offset',
+      base: { kind: 'face', face: makeFaceRef(store.getState().evaluation, box.id, top.key)! },
+      distance: 10,
+    },
+  };
+  await load([...twoBoxes().slice(0, 2), plane]);
+  const datum = store.getState().evaluation.datums!.find((d) => d.featureId === plane.id)!;
+  // Drawn over the top face's centre, 10 above it; the frame origin is (0, 0, 20).
+  assert.deepEqual(datum.center, [5, 5, 20]);
+  assert.deepEqual(datum.frame.origin, [0, 0, 20]);
+  const ref = datumRef(store.getState().evaluation, plane.id);
+  assert.ok(ref?.kind === 'construction' && 'frame' in ref);
+  assert.deepEqual(ref.shown, { center: [5, 5, 20], size: datum.size });
+  const sketch: SketchFeature = { ...rectSketch('feature-sketch-4', 2, 2, 3, 3), plane: ref };
+  await load([...twoBoxes().slice(0, 2), plane, sketch]);
+  store.getState().deleteFeature(plane.id);
+  await store.getState().whenSettled();
+  const [missing] = missingReferences(
+    store.getState().features.find((f) => f.id === sketch.id)!,
+    store.getState().evaluation,
+    store.getState().features,
+  );
+  assert.ok(missing?.ghost?.kind === 'plane');
+  assert.deepEqual(missing.ghost.center, [5, 5, 20], 'where it was shown, not the frame origin');
+  assert.equal(missing.ghost.size, datum.size);
+  assert.equal(
+    store.getState().evaluation.errors[sketch.id],
+    'Missing reference: construction plane of a deleted step',
+  );
+  // The saved reference keeps where it was shown.
+  const text = saveProjectFile({
+    projectName: 'x',
+    features: store.getState().features,
+    appVersion: 'test',
+    createdAt: '2026-09-30T00:00:00.000Z',
+  });
+  assert.deepEqual(loadProjectFile(text).features, store.getState().features);
+});
 
 void test('Fix…: a deleted construction plane is outlined; a picked face replaces it (one undo step)', async () => {
   const plane: ConstructionPlaneFeature = {

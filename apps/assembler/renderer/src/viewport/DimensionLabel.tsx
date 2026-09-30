@@ -56,6 +56,13 @@ export function DimensionLabel(props: DimensionLabelProps): JSX.Element {
   const inputRef = useRef<HTMLInputElement>(null);
   /** Set by a revert so the blur that follows does not commit. */
   const closingRef = useRef(false);
+  /**
+   * The text a click opened the field with (the shown value). Closing with it
+   * unchanged commits nothing: a click elsewhere (a tool's menu) only blurs the
+   * field and must not rewrite the value — that re-laid out the tool pill under
+   * the pointer and swallowed the click. `null` when opened by typing.
+   */
+  const openedTextRef = useRef<string | null>(null);
   const lastRequest = useRef<number | null>(props.editRequest?.nonce ?? null);
   const { onBeginEdit } = props;
   // Settings › Display units: length values show (and are typed) in inches; stored in mm.
@@ -68,6 +75,7 @@ export function DimensionLabel(props: DimensionLabelProps): JSX.Element {
     const request = props.editRequest;
     if (!request || request.nonce === lastRequest.current) return;
     lastRequest.current = request.nonce;
+    openedTextRef.current = null;
     setText(request.text);
     setSelectAll(false);
     setEditing(true);
@@ -83,25 +91,33 @@ export function DimensionLabel(props: DimensionLabelProps): JSX.Element {
   }, [editing, selectAll]);
 
   const beginEdit = () => {
-    setText(props.editText ?? formatValue(shown, unit));
+    const initial = props.editText ?? formatValue(shown, unit);
+    openedTextRef.current = initial;
+    setText(initial);
     setSelectAll(true);
     setEditing(true);
     props.onBeginEdit();
   };
 
-  const applyAndClose = () => {
+  const apply = () => {
     if (props.onCommitText) {
       if (text.trim() !== '') props.onCommitText(text);
-    } else {
-      // An explicit "mm" or "in"/'"' suffix wins; bare numbers are in the display unit.
-      const explicitMm = /mm\s*$/i.test(text);
-      const explicitIn = /(in|")\s*$/i.test(text);
-      const parsed = parseExpression(text.replace(/\s*(mm|in|"|°|deg)\s*$/i, ''));
-      if (parsed !== null && Number.isFinite(parsed)) {
-        const toMm = (inches && !explicitMm) || (explicitIn && unit !== '°');
-        props.onCommit(toMm ? parsed * MM_PER_INCH : parsed);
-      }
+      return;
     }
+    // An explicit "mm" or "in"/'"' suffix wins; bare numbers are in the display unit.
+    const explicitMm = /mm\s*$/i.test(text);
+    const explicitIn = /(in|")\s*$/i.test(text);
+    const parsed = parseExpression(text.replace(/\s*(mm|in|"|°|deg)\s*$/i, ''));
+    if (parsed !== null && Number.isFinite(parsed)) {
+      const toMm = (inches && !explicitMm) || (explicitIn && unit !== '°');
+      props.onCommit(toMm ? parsed * MM_PER_INCH : parsed);
+    }
+  };
+
+  const applyAndClose = () => {
+    // Opened by a click and left untouched: nothing to apply.
+    const untouched = openedTextRef.current !== null && text === openedTextRef.current;
+    if (!untouched) apply();
     setEditing(false);
     props.onCancelEdit();
   };

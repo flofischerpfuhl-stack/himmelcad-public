@@ -579,7 +579,12 @@ export const useSketchStore = create<SketchState>((set, get) => {
         const datum = main.evaluation.datums?.find((d) => d.featureId === options.datum);
         if (datum?.kind !== 'plane') return false;
         featureId = main.allocateFeatureId('sketch');
-        plane = { kind: 'construction', featureId: datum.featureId, frame: datum.frame };
+        plane = {
+          kind: 'construction',
+          featureId: datum.featureId,
+          frame: datum.frame,
+          shown: { center: datum.center, size: datum.size },
+        };
         frame = datum.frame;
       } else {
         featureId = main.allocateFeatureId('sketch');

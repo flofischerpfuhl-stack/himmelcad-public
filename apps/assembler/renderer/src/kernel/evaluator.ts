@@ -128,6 +128,7 @@ import {
 } from './features/extrudeExtent.js';
 import { offsetBodyFaces } from './features/faceOps.js';
 import { applyModelingFeature, type FeatureKit } from './features/index.js';
+import { nameMissingReferences } from './referenceNames.js';
 import { rebindRegion } from './regionRebind.js';
 import { FaceMeshCache } from './tessellate.js';
 import { tessellateCopy, type ExportMeshBody, type MeshExportOptions } from './meshExport.js';
@@ -1979,7 +1980,8 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
           bodies,
           sketches: [...ctx.sketches.values()],
           ...(ctx.datums.size > 0 ? { datums: [...ctx.datums.values()] } : {}),
-          errors,
+          // Internal ids in "Missing reference" messages become step names.
+          errors: nameMissingReferences(errors, features),
           warnings,
           ...(Object.keys(errorRefs).length > 0 ? { errorRefs } : {}),
           stats: {

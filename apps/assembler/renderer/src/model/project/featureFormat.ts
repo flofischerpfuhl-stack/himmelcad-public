@@ -38,6 +38,12 @@ export function validatePlaneRef(v: unknown, p: string, h: FormatHelpers): void 
   } else if (v.kind === 'construction') {
     if (!isString(v.featureId)) h.fail(`${p}.featureId`, 'expected a string');
     if (!isFrame(v.frame)) h.fail(`${p}.frame`, 'expected {origin, u, v, normal}');
+    if (v.shown !== undefined) {
+      const shown = v.shown;
+      if (!isRecord(shown) || !isVec3(shown.center) || !isNumber(shown.size)) {
+        h.fail(`${p}.shown`, 'expected {center, size}');
+      }
+    }
   } else {
     h.fail(`${p}.kind`, 'expected "plane", "face" or "construction"');
   }

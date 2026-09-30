@@ -375,11 +375,12 @@ async function scenarioHole(page: Page, p: Profiled): Promise<StepRow[]> {
   );
   rows.push(
     await measure(page, p, s, 'size M4 (preview)', async () => {
-      // Right after a viewport click the first click on the menu button does not open it
-      // (reported to the UI lane); click until it is expanded.
+      // One click opens the menu right after the viewport click (the value chip it may have
+      // opened no longer rewrites the size when it loses focus, so the pill stays put).
       const size = page.getByRole('button', { name: 'Hole size', exact: true }).first();
-      for (let i = 0; i < 3 && (await size.getAttribute('aria-expanded')) !== 'true'; i += 1) {
-        await size.click();
+      await size.click();
+      if ((await size.getAttribute('aria-expanded')) !== 'true') {
+        throw new Error('the Hole size menu did not open on the first click');
       }
       await page.getByRole('option', { name: 'M4', exact: true }).first().click();
     }),

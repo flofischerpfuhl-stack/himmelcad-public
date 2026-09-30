@@ -91,12 +91,18 @@ export interface FeatureBase {
  * or a construction plane (`model/construction.ts`) by feature id; `frame`
  * is its last evaluated frame (the reference's signature: shown before the
  * kernel answers and as the ghost of a missing reference, never used to
- * evaluate).
+ * evaluate); `shown` is where the plane was drawn then (its centre and half
+ * size — the frame's origin is only the world origin projected onto it).
  */
 export type SketchPlaneRef =
   | { kind: 'plane'; plane: Plane; offset: Millimeters }
   | { kind: 'face'; face: FaceRef }
-  | { kind: 'construction'; featureId: string; frame: SketchFrame };
+  | {
+      kind: 'construction';
+      featureId: string;
+      frame: SketchFrame;
+      shown?: { center: Vec3; size: Millimeters };
+    };
 
 /**
  * A constrained 2D sketch (schema v2): entities in the sketch frame's

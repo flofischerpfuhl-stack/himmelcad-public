@@ -323,9 +323,14 @@ export const DEFS: Record<string, JsonSchema> = {
       ]),
       obj({ kind: { const: 'face' }, face: ref('FaceInput') }, ['kind', 'face']),
       obj(
-        { kind: { const: 'construction' }, featureId: str, frame: ref('Frame') },
+        {
+          kind: { const: 'construction' },
+          featureId: str,
+          frame: ref('Frame'),
+          shown: obj({ center: ref('Vec3'), size: num }, ['center', 'size']),
+        },
         ['kind', 'featureId'],
-        'A construction plane (feature kind `constructionPlane`) by feature id; `frame` (its last evaluated frame) is filled by the server.',
+        'A construction plane (feature kind `constructionPlane`) by feature id; `frame` (its last evaluated frame) and `shown` (where it was drawn: centre and half size, the ghost of a missing reference) are filled by the server.',
       ),
     ],
   },

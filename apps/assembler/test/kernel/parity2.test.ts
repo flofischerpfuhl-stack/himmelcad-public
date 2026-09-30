@@ -397,8 +397,16 @@ void test('construction axes drive a circular pattern; a construction plane mirr
   bbox(mirrored, [26, -2, 0], [30, 2, 4]);
   // Deleting the plane: the mirror reports the missing reference, nothing else breaks.
   const broken = await evaluate(doc.filter((f) => f.id !== 'yz5'));
-  assert.match(broken.errors['m'] ?? '', /Missing reference: construction plane/);
+  assert.equal(
+    broken.errors['m'],
+    'Missing reference: construction plane of a deleted step',
+    'no internal id in the message',
+  );
   assert.equal(broken.errors['pat'], undefined);
+  // The plane moved below the mirror: the message names it as History shows it.
+  const moved = { ...doc.find((f) => f.id === 'yz5')!, name: 'Plane 2' };
+  const reordered = await evaluate([...doc.filter((f) => f.id !== 'yz5'), moved]);
+  assert.equal(reordered.errors['m'], 'Missing reference: construction plane "Plane 2"');
 });
 
 void test('Boolean Keep Target: the target stays and the result is a new body', async () => {

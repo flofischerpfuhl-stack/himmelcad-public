@@ -214,7 +214,7 @@ void test('pattern count change with a fillet on instance 2', async () => {
     ),
     fillet('f3', [{ ...edgeRefOf(second, 'b:end:0|b:side:0:l1') }], 2),
   ]);
-  assert.match(gone.errors.f3 ?? '', /Missing reference: body "body:pat:2"/);
+  assert.match(gone.errors.f3 ?? '', /Missing reference: body of "pat"/);
 });
 
 // ---- revolve angle change -----------------------------------------------------------------

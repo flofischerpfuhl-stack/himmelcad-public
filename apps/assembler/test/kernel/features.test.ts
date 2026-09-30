@@ -352,7 +352,7 @@ void test('revolve: join onto a body, cut a groove into a shaft; errors are read
   const missing = await evaluate([
     revolve('rm', { kind: 'sketch', featureId: 'nope' }, { kind: 'world', axis: 'Z' }),
   ]);
-  assert.equal(missing.errors.rm, 'Missing reference: sketch "nope"');
+  assert.equal(missing.errors.rm, 'Missing reference: sketch of a deleted step');
   const angle = await evaluate([
     crossing,
     revolve('ra', { kind: 'sketch', featureId: 'x' }, { kind: 'world', axis: 'Z' }, 0),
@@ -648,7 +648,7 @@ void test('pattern: linear and circular copies; count/spacing validation', async
   const bad = await evaluate([...doc, { ...linear, pattern: { ...linear.pattern, count: 1 } }]);
   assert.match(bad.errors.p1 ?? '', /count/);
   const missing = await evaluate([...doc, { ...linear, bodyIds: ['body:gone'] }]);
-  assert.equal(missing.errors.p1, 'Missing reference: body "body:gone"');
+  assert.equal(missing.errors.p1, 'Missing reference: body of a deleted step');
 });
 
 void test('split: two bodies by a plane; the plane must cut the body', async () => {

@@ -777,11 +777,24 @@
             },
             "frame": {
               "$ref": "#/$defs/Frame"
+            },
+            "shown": {
+              "type": "object",
+              "properties": {
+                "center": {
+                  "$ref": "#/$defs/Vec3"
+                },
+                "size": {
+                  "type": "number"
+                }
+              },
+              "required": ["center", "size"],
+              "additionalProperties": false
             }
           },
           "required": ["kind", "featureId"],
           "additionalProperties": false,
-          "description": "A construction plane (feature kind `constructionPlane`) by feature id; `frame` (its last evaluated frame) is filled by the server."
+          "description": "A construction plane (feature kind `constructionPlane`) by feature id; `frame` (its last evaluated frame) and `shown` (where it was drawn: centre and half size, the ghost of a missing reference) are filled by the server."
         }
       ]
     },

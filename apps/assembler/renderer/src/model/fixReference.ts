@@ -92,6 +92,21 @@ function edgeGhost(ref: EdgeRef): FixGhost {
     : { kind: 'point', point: midpoint };
 }
 
+const isVec3 = (v: unknown): v is Vec3 =>
+  Array.isArray(v) && v.length === 3 && v.every((c) => typeof c === 'number' && Number.isFinite(c));
+
+/**
+ * Where a missing construction plane was drawn: the centre and size stored
+ * with the reference (`shown`), else — for references saved before that —
+ * the frame origin (the world origin projected onto the plane).
+ */
+function planeGhost(frame: SketchFrame, shown: unknown): FixGhost {
+  if (isRecord(shown) && isVec3(shown.center) && typeof shown.size === 'number') {
+    return { kind: 'plane', frame, center: shown.center, size: shown.size };
+  }
+  return { kind: 'plane', frame, center: frame.origin, size: 20 };
+}
+
 /**
  * References of `feature` that do not resolve in `evaluation` (first
  * reference first). Body ids, sketch/profile ids, construction planes and
@@ -146,12 +161,11 @@ export function missingReferences(
       const datum = evaluation.datums?.find((d) => d.featureId === value.featureId);
       if (isRecord(value.frame)) {
         if (datum?.kind !== 'plane') {
-          const frame = value.frame as unknown as SketchFrame;
           out.push({
             path,
             kind: 'plane',
             label: 'construction plane',
-            ghost: { kind: 'plane', frame, center: frame.origin, size: 20 },
+            ghost: planeGhost(value.frame as unknown as SketchFrame, value.shown),
           });
         }
       } else if (isRecord(value.line)) {
