@@ -136,16 +136,26 @@ function buildPrimitives(sketch: SketchData, values: ReadonlyMap<string, number>
       } as Primitive);
     }
   }
+  // Arcs whose three points are all fixed (projected geometry) are solved as fixed circles:
+  // the arc rules would be redundant (four equations for three free arc parameters).
+  const solverMap = new Map(map);
+  const fixedRadii: { id: string; radius: number }[] = [];
   for (const id of projected.circles) {
     const e = map.get(id);
-    if (e?.kind === 'circle') {
-      prims.push({
-        id: `${HIDDEN}fix:${id}`,
-        type: 'circle_radius',
-        c_id: id,
-        radius: e.radius,
-      } as Primitive);
-    }
+    if (e?.kind === 'circle') fixedRadii.push({ id, radius: e.radius });
+  }
+  for (const e of sketch.entities) {
+    if (e.kind !== 'arc') continue;
+    if (![e.center, e.start, e.end].every((p) => projected.points.has(p))) continue;
+    const radius = radiusOf(map, e);
+    solverMap.set(e.id, {
+      id: e.id,
+      kind: 'circle',
+      center: e.center,
+      radius,
+      ...(e.construction ? { construction: true } : {}),
+    });
+    fixedRadii.push({ id: e.id, radius });
   }
   for (const e of sketch.entities) {
     if (e.kind === 'ellipse' || e.kind === 'ellipticArc') {
@@ -237,6 +247,13 @@ function buildPrimitives(sketch: SketchData, values: ReadonlyMap<string, number>
     } else if (e.kind === 'circle') {
       requirePoints(map, e.id, [e.center]);
       prims.push({ id: e.id, type: 'circle', c_id: e.center, radius: e.radius } as Primitive);
+    } else if (e.kind === 'arc' && solverMap.get(e.id)?.kind === 'circle') {
+      prims.push({
+        id: e.id,
+        type: 'circle',
+        c_id: e.center,
+        radius: radiusOf(map, e),
+      } as Primitive);
     } else if (e.kind === 'arc') {
       requirePoints(map, e.id, [e.center, e.start, e.end]);
       const c = pointPos(map, e.center)!;
@@ -258,9 +275,12 @@ function buildPrimitives(sketch: SketchData, values: ReadonlyMap<string, number>
       prims.push({ id: `${e.id}#rules`, type: 'arc_rules', a_id: e.id } as Primitive);
     }
   }
+  for (const { id, radius } of fixedRadii) {
+    prims.push({ id: `${HIDDEN}fix:${id}`, type: 'circle_radius', c_id: id, radius } as Primitive);
+  }
   for (const c of sketch.constraints) {
     let n = 0;
-    for (const body of constraintPrimitives(map, c)) {
+    for (const body of constraintPrimitives(solverMap, c, map)) {
       // Helper geometry carries its own (hidden) id; constraints are `<id>` / `<id>#<n>`.
       if (typeof body.id === 'string') {
         prims.push(body as unknown as Primitive);
@@ -273,7 +293,7 @@ function buildPrimitives(sketch: SketchData, values: ReadonlyMap<string, number>
   for (const d of sketch.dimensions) {
     if (d.driven) continue;
     const value = values.get(d.id) ?? d.value;
-    dimensionPrimitives(map, d, value).forEach((body, i) =>
+    dimensionPrimitives(solverMap, d, value).forEach((body, i) =>
       prims.push({ ...body, id: i === 0 ? d.id : `${d.id}#${i}` } as Primitive),
     );
   }
@@ -309,6 +329,7 @@ function tangentPrimitives(
   map: ReadonlyMap<string, SketchEntity>,
   c: SketchConstraint,
   bad: () => never,
+  original?: ReadonlyMap<string, SketchEntity>,
 ): PrimitiveBody[] {
   const [r0 = '', r1 = ''] = c.refs;
   const e0 = map.get(r0);
@@ -318,10 +339,20 @@ function tangentPrimitives(
   // Tangent at a shared end point (a line running into an arc, arc into arc): the curve
   // distance form is degenerate there (first-order dependent on the arc rules), so use the
   // direction form FreeCAD uses for endpoint tangency — well conditioned and never redundant.
-  const shared = endsOf(e0).find((p) => endsOf(e1).includes(p));
-  if (shared && (k0 === 'line' || k0 === 'arc') && (k1 === 'line' || k1 === 'arc') && k0 !== k1) {
-    const line = (k0 === 'line' ? e0 : e1) as Extract<SketchEntity, { kind: 'line' }>;
-    const arc = (k0 === 'arc' ? e0 : e1) as Extract<SketchEntity, { kind: 'arc' }>;
+  // Fixed (projected) arcs are mapped as circles; their end points still count here.
+  const o0 = original?.get(r0) ?? e0;
+  const o1 = original?.get(r1) ?? e1;
+  const shared = endsOf(o0).find((p) => endsOf(o1).includes(p));
+  const ok0 = o0?.kind;
+  const ok1 = o1?.kind;
+  if (
+    shared &&
+    (ok0 === 'line' || ok0 === 'arc') &&
+    (ok1 === 'line' || ok1 === 'arc') &&
+    ok0 !== ok1
+  ) {
+    const line = (ok0 === 'line' ? o0 : o1) as Extract<SketchEntity, { kind: 'line' }>;
+    const arc = (ok0 === 'arc' ? o0 : o1) as Extract<SketchEntity, { kind: 'arc' }>;
     const far = line.a === shared ? line.b : line.a;
     return [
       {
@@ -333,9 +364,9 @@ function tangentPrimitives(
       },
     ];
   }
-  if (shared && k0 === 'arc' && k1 === 'arc') {
-    const a0 = e0 as Extract<SketchEntity, { kind: 'arc' }>;
-    const a1 = e1 as Extract<SketchEntity, { kind: 'arc' }>;
+  if (shared && ok0 === 'arc' && ok1 === 'arc') {
+    const a0 = o0 as Extract<SketchEntity, { kind: 'arc' }>;
+    const a1 = o1 as Extract<SketchEntity, { kind: 'arc' }>;
     return [{ type: 'point_on_line_ppp', p_id: shared, lp1_id: a0.center, lp2_id: a1.center }];
   }
   if (k0 === 'line' && k1 === 'circle') return [{ type: 'tangent_lc', l_id: r0, c_id: r1 }];
@@ -382,6 +413,7 @@ function tangentPrimitives(
 function constraintPrimitives(
   map: ReadonlyMap<string, SketchEntity>,
   c: SketchConstraint,
+  original?: ReadonlyMap<string, SketchEntity>,
 ): (PrimitiveBody & { id?: string })[] {
   const [r0, r1, r2] = c.refs;
   const k0 = r0 !== undefined ? kindOf(map, r0) : null;
@@ -441,7 +473,7 @@ function constraintPrimitives(
       return [{ type: 'perpendicular_ll', l1_id: r0, l2_id: r1 }];
     case 'tangent':
       if (!r0 || !r1) return bad();
-      return tangentPrimitives(map, c, bad);
+      return tangentPrimitives(map, c, bad, original);
     case 'equal': {
       if (!r0 || !r1) return bad();
       if (k0 === 'line' && k1 === 'line') return [{ type: 'equal_length', l1_id: r0, l2_id: r1 }];
