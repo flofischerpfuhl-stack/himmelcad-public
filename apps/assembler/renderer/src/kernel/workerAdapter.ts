@@ -25,7 +25,14 @@ import {
   type RunContext,
 } from './adapter.js';
 import type { WireBody, WorkerRequest, WorkerResponse } from './workerProtocol.js';
-import type { Body, BodyMesh, EvaluationRequest, EvaluationResult } from './types.js';
+import type {
+  Body,
+  BodyMesh,
+  DistanceMeasurement,
+  DistanceTarget,
+  EvaluationRequest,
+  EvaluationResult,
+} from './types.js';
 
 interface Pending {
   jobId: number;
@@ -52,6 +59,10 @@ export class WorkerKernelAdapter extends QueuedKernelAdapter {
   private nextJobId = 1;
   private readonly exportPending = new Map<number, PendingExport>();
   private nextExportJobId = 1;
+  private readonly measurePending = new Map<
+    number,
+    { resolve: (result: DistanceMeasurement) => void; reject: (error: Error) => void }
+  >();
   /** Meshes of the last result the worker posted, by `meshId`. */
   private meshes = new Map<string, MeshRecord>();
   private crashes: number[] = [];
@@ -142,6 +153,14 @@ export class WorkerKernelAdapter extends QueuedKernelAdapter {
       this.crash(message.message);
       return;
     }
+    if (message.type === 'measureResult' || message.type === 'measureFailed') {
+      const pending = this.measurePending.get(message.jobId);
+      if (!pending) return;
+      this.measurePending.delete(message.jobId);
+      if (message.type === 'measureResult') pending.resolve(message.result);
+      else pending.reject(new Error(message.message));
+      return;
+    }
     if (message.type === 'exportResult' || message.type === 'exportFailed') {
       const pending = this.exportPending.get(message.jobId);
       if (!pending) return;
@@ -201,6 +220,7 @@ export class WorkerKernelAdapter extends QueuedKernelAdapter {
       pending.reject(new Error(`The CAD kernel stopped while exporting: ${detail}`));
     }
     this.exportPending.clear();
+    this.rejectMeasurements(`The CAD kernel stopped: ${detail}`);
     if (this.disposed) return;
     const now = Date.now();
     this.crashes = [...this.crashes.filter((t) => now - t < CRASH_WINDOW_MS), now];
@@ -271,6 +291,35 @@ export class WorkerKernelAdapter extends QueuedKernelAdapter {
     });
   }
 
+  override measureDistance(
+    features: readonly Feature[],
+    a: DistanceTarget,
+    b: DistanceTarget,
+  ): Promise<DistanceMeasurement> {
+    return new Promise((resolve, reject) => {
+      const worker = this.worker;
+      if (!worker) {
+        reject(new Error('CAD kernel worker is not running'));
+        return;
+      }
+      const jobId = this.nextExportJobId++;
+      this.measurePending.set(jobId, { resolve, reject });
+      const message: WorkerRequest = {
+        type: 'measureDistance',
+        jobId,
+        features: [...features],
+        a,
+        b,
+      };
+      worker.postMessage(message);
+    });
+  }
+
+  private rejectMeasurements(reason: string): void {
+    for (const pending of this.measurePending.values()) pending.reject(new Error(reason));
+    this.measurePending.clear();
+  }
+
   protected run(request: EvaluationRequest, context: RunContext): Promise<EvaluationResult> {
     return new Promise((resolve, reject) => {
       if (!this.worker) {
@@ -291,6 +340,7 @@ export class WorkerKernelAdapter extends QueuedKernelAdapter {
     this.worker = null;
     for (const pending of this.exportPending.values()) pending.reject(new Error('cancelled'));
     this.exportPending.clear();
+    this.rejectMeasurements('cancelled');
     if (this.disposed) return;
     this.setStatus({
       status: 'loading',

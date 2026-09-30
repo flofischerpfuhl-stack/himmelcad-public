@@ -6,6 +6,8 @@
 import type { Feature } from '../model/document.js';
 import type {
   Body,
+  DistanceMeasurement,
+  DistanceTarget,
   EvaluationProgress,
   EvaluationResult,
   KernelStatusInfo,
@@ -14,7 +16,14 @@ import type {
 
 export type WorkerRequest =
   | { type: 'evaluate'; jobId: number; features: Feature[]; quality?: TessellationQuality }
-  | { type: 'exportStep'; jobId: number; features: Feature[]; bodyIds?: string[] };
+  | { type: 'exportStep'; jobId: number; features: Feature[]; bodyIds?: string[] }
+  | {
+      type: 'measureDistance';
+      jobId: number;
+      features: Feature[];
+      a: DistanceTarget;
+      b: DistanceTarget;
+    };
 
 /** A body whose mesh arrays were already sent with the previous result (`meshRef: true`). */
 export type WireBody = Body & { meshRef?: true };
@@ -26,4 +35,6 @@ export type WorkerResponse =
   | { type: 'failed'; jobId: number; message: string }
   | { type: 'fatal'; jobId: number; message: string }
   | { type: 'exportResult'; jobId: number; bytes: ArrayBuffer }
-  | { type: 'exportFailed'; jobId: number; message: string };
+  | { type: 'exportFailed'; jobId: number; message: string }
+  | { type: 'measureResult'; jobId: number; result: DistanceMeasurement }
+  | { type: 'measureFailed'; jobId: number; message: string };

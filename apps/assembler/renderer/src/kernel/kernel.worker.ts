@@ -6,7 +6,9 @@
  * off the UI thread.
  *
  * Protocol (main -> worker): `{ type: 'evaluate', jobId, features, quality }`,
- * `{ type: 'exportStep', jobId, features, bodyIds? }`.
+ * `{ type: 'exportStep', jobId, features, bodyIds? }`,
+ * `{ type: 'measureDistance', jobId, features, a, b }` (→ `measureResult` |
+ * `measureFailed`).
  * Protocol (worker -> main): `{ type: 'status', status }`,
  * `{ type: 'progress', jobId, progress }` between features,
  * `{ type: 'result', jobId, result }`, `{ type: 'failed', jobId, message }`,
@@ -136,6 +138,25 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
         } catch (error) {
           post({
             type: isFatalKernelError(error) ? 'fatal' : 'exportFailed',
+            jobId: message.jobId,
+            message: error instanceof Error ? error.message : String(error),
+          });
+        }
+      },
+      () => undefined,
+    );
+    return;
+  }
+  if (message.type === 'measureDistance') {
+    void ready.then(
+      async (evaluator) => {
+        try {
+          if (!evaluator.measureDistance) throw new Error('Distance queries are not available');
+          const result = await evaluator.measureDistance(message.features, message.a, message.b);
+          post({ type: 'measureResult', jobId: message.jobId, result });
+        } catch (error) {
+          post({
+            type: isFatalKernelError(error) ? 'fatal' : 'measureFailed',
             jobId: message.jobId,
             message: error instanceof Error ? error.message : String(error),
           });
