@@ -21,7 +21,7 @@ import {
   directDependencies,
   moveFeature,
   relevantFeatureIds,
-} from '../../renderer/src/model/historyTools.js';
+} from '../../renderer/src/interface/shell-ui/historyTools.js';
 import {
   EMPTY_ITEMS_META,
   buildItemTree,
@@ -29,20 +29,20 @@ import {
   useItemsStore,
   visibleLeafOrder,
   withDisplayNames,
-} from '../../renderer/src/model/items.js';
+} from '../../renderer/src/interface/shell-ui/items.js';
 import {
   DEFAULT_PREFERENCES,
   formatLength,
   fromDisplayUnit,
   parsePreferences,
-} from '../../renderer/src/model/preferences.js';
+} from '../../renderer/src/interface/shell-ui/preferences.js';
 import { loadProjectFile, saveProjectFile } from '../../renderer/src/foundation/document/format.js';
 import {
   MAX_SAVED_VIEWS,
   parseSavedViews,
   setCameraPoseProbe,
   useWorkspaceStore,
-} from '../../renderer/src/model/workspace.js';
+} from '../../renderer/src/interface/shell-ui/workspace.js';
 import { EMPTY_EVALUATION } from '../../renderer/src/foundation/geometry-kernel/types.js';
 
 const demo = createDemoDocument();

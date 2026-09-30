@@ -8,8 +8,8 @@ import {
   sectionContour,
   silhouetteCandidates,
   vertexCurvature,
-} from '../../renderer/src/viewport/bodyGeometry.js';
-import { DEFAULT_POSE, depthRange, withFov } from '../../renderer/src/viewport/camera.js';
+} from '../../renderer/src/platform/viewport/bodyGeometry.js';
+import { DEFAULT_POSE, depthRange, withFov } from '../../renderer/src/platform/viewport/camera.js';
 import {
   activeDisplayEntry,
   bodyMaterials,
@@ -18,7 +18,7 @@ import {
   curvatureStrength,
   DISPLAY_MODE_ENTRIES,
   isDisplayMode,
-} from '../../renderer/src/viewport/displayModes.js';
+} from '../../renderer/src/platform/viewport/displayModes.js';
 import {
   imageExportSize,
   imageFileName,

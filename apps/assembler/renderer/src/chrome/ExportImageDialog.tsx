@@ -14,10 +14,10 @@ import {
   DEFAULT_IMAGE_EXPORT,
   usePreferences,
   type ImageExportPreference,
-} from '../model/preferences.js';
+} from '../interface/shell-ui/preferences.js';
 import { useAssemblerStore } from '../foundation/commands/store.js';
 import { currentViewportSize, renderViewportImage, useViewportUi } from '../model/viewportUi.js';
-import { useWorkspaceStore } from '../model/workspace.js';
+import { useWorkspaceStore } from '../interface/shell-ui/workspace.js';
 import { imageExportSize, imageFileName } from '../viewport/imageExport.js';
 import styles from './ExportImageDialog.module.css';
 

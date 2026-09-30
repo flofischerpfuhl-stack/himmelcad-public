@@ -6,8 +6,8 @@
  */
 import { useMemo } from 'react';
 
-import { bodyMaterials } from '../viewport/displayModes.js';
-import { displayBodyName, useItemsStore } from './items.js';
+import { bodyMaterials } from '../platform/viewport/displayModes.js';
+import { displayBodyName, useItemsStore } from '../interface/shell-ui/items.js';
 import {
   currentRefs,
   measure,
@@ -23,7 +23,7 @@ import {
   formatVolume,
   usePreferences,
   type LengthUnit,
-} from './preferences.js';
+} from '../interface/shell-ui/preferences.js';
 import { useAssemblerStore, type AssemblerState } from '../foundation/commands/store.js';
 
 export interface LiveMeasurement {

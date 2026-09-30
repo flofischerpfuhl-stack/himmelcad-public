@@ -7,7 +7,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { adaptiveCapacity, splitAdaptive } from '../../renderer/src/chrome/adaptiveLayout.js';
+import {
+  adaptiveCapacity,
+  splitAdaptive,
+} from '../../renderer/src/interface/shell-ui/adaptiveLayout.js';
 import type { EvaluationResult } from '../../renderer/src/foundation/geometry-kernel/types.js';
 import {
   COMMANDS,
@@ -27,13 +30,13 @@ import {
   adaptiveGridStep,
   effectiveGridStep,
   formatGridStep,
-} from '../../renderer/src/model/gridResolution.js';
+} from '../../renderer/src/platform/viewport/gridResolution.js';
 import {
   duplicateStep,
   featureZoomTargets,
   stepNamePrefix,
-} from '../../renderer/src/model/historyTools.js';
-import { parsePreferences } from '../../renderer/src/model/preferences.js';
+} from '../../renderer/src/interface/shell-ui/historyTools.js';
+import { parsePreferences } from '../../renderer/src/interface/shell-ui/preferences.js';
 import {
   useAssemblerStore,
   type ToolSession,
@@ -45,7 +48,7 @@ import {
   parseSavedViews,
   setCameraPoseProbe,
   useWorkspaceStore,
-} from '../../renderer/src/model/workspace.js';
+} from '../../renderer/src/interface/shell-ui/workspace.js';
 import { infer } from '../../renderer/src/sketch/inference.js';
 import { addRectangle } from '../../renderer/src/foundation/sketch-solver/builders.js';
 import { EMPTY_SKETCH } from '../../renderer/src/foundation/sketch-solver/types.js';

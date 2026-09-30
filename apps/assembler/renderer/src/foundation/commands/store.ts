@@ -41,7 +41,7 @@ import {
 import type { ProjectViewState } from '../document/format.js';
 import type { ReferenceMesh, ReferenceMeshTransform } from '../../model/referenceMesh.js';
 import { viewDisplayFromProject } from '../../model/viewDisplay.js';
-import { setSectionAccess } from '../../model/workspace.js';
+import { setSectionAccess } from '../../interface/shell-ui/workspace.js';
 import {
   EMPTY_EVALUATION,
   type Body,

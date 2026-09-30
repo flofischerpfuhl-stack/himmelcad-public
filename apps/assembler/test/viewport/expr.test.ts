@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { parseExpression } from '../../renderer/src/viewport/expr.js';
+import { parseExpression } from '../../renderer/src/platform/viewport/expr.js';
 
 void test('parseExpression evaluates plain numbers', () => {
   assert.equal(parseExpression('40'), 40);

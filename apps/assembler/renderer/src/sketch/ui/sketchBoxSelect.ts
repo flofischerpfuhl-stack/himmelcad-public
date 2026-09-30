@@ -11,7 +11,7 @@ import {
   type BoxMode,
   type ScreenPoint,
   type ScreenRect,
-} from '../../viewport/boxSelect.js';
+} from '../../platform/viewport/boxSelect.js';
 import { entityCurves, sampleCurve } from '../../foundation/sketch-solver/geometry.js';
 import {
   entityMap,

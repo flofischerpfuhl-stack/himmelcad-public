@@ -5,9 +5,9 @@
  * mesh (vertex normals), not from the kernel's exact surfaces.
  */
 import { visibleBounds } from '../model/modeling.js';
-import { formatLength, usePreferences } from '../model/preferences.js';
+import { formatLength, usePreferences } from '../interface/shell-ui/preferences.js';
 import type { AssemblerState } from '../foundation/commands/store.js';
-import { curvatureColor, curvatureRange } from '../viewport/displayModes.js';
+import { curvatureColor, curvatureRange } from '../platform/viewport/displayModes.js';
 import styles from './AnalysisLegend.module.css';
 
 function css(rgb: [number, number, number]): string {

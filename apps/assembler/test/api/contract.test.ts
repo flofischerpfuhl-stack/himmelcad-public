@@ -13,14 +13,17 @@ import {
   API_ERROR_CODES,
   JSON_RPC_ERROR,
 } from '../../renderer/src/foundation/commands/api/errors.js';
-import { validateStored } from '../../renderer/src/api/featureKinds.js';
+import { validateStored } from '../../renderer/src/interface/agent-api/featureKinds.js';
 import {
   AGENT_API_SCHEMA,
   DEFS,
   FEATURE_KIND_SCHEMAS,
   METHODS,
-} from '../../renderer/src/api/schema.js';
-import { AgentSession, HEADLESS_CAPABILITIES } from '../../renderer/src/api/session.js';
+} from '../../renderer/src/interface/agent-api/schema.js';
+import {
+  AgentSession,
+  HEADLESS_CAPABILITIES,
+} from '../../renderer/src/interface/agent-api/session.js';
 import {
   unsupportedKeywords,
   validateSchema,

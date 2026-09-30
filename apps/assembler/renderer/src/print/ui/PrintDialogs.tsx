@@ -14,7 +14,7 @@ import {
 } from '../../foundation/geometry-kernel/meshExport.js';
 import type { StlFormat } from '../../kernel/stlExport.js';
 import { useAssemblerStore } from '../../foundation/commands/store.js';
-import { useWorkspaceStore } from '../../model/workspace.js';
+import { useWorkspaceStore } from '../../interface/shell-ui/workspace.js';
 import {
   estimateStlBytes,
   exportStl,

@@ -21,13 +21,13 @@ import {
 } from '@himmelcad/ui';
 
 import { COMMANDS, findCommand } from '../foundation/commands/registry.js';
-import { usePreferences } from '../model/preferences.js';
+import { usePreferences } from '../interface/shell-ui/preferences.js';
 import type { AssemblerState } from '../foundation/commands/store.js';
 import {
   DISPLAY_MODE_ENTRIES,
   activeDisplayEntry,
   edgesToggleApplies,
-} from '../viewport/displayModes.js';
+} from '../platform/viewport/displayModes.js';
 import styles from './DisplayMenu.module.css';
 
 function run(state: AssemblerState, id: string): void {

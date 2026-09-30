@@ -3,7 +3,7 @@
  * for the decision). Pure: computes the next feature list; the caller
  * commits it as one undo step.
  */
-import { bodyMaterials, type MaterialId } from '../viewport/displayModes.js';
+import { bodyMaterials, type MaterialId } from '../platform/viewport/displayModes.js';
 import type { Feature, SetAppearanceFeature } from '../foundation/document/document.js';
 import {
   nextFeatureName,

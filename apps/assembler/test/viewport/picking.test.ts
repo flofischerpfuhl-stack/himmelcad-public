@@ -6,7 +6,7 @@ import {
   encodePickId,
   NO_PICK_ID,
   PickTable,
-} from '../../renderer/src/viewport/picking.js';
+} from '../../renderer/src/platform/viewport/picking.js';
 
 void test('encodePickId/decodePickId round-trip small and large ids', () => {
   for (const id of [1, 2, 255, 256, 65535, 1_000_000]) {

@@ -7,7 +7,7 @@ import {
   transformOps,
 } from '../../renderer/src/foundation/geometry-kernel/features/rigid.js';
 import { useAssemblerStore } from '../../renderer/src/foundation/commands/store.js';
-import { transformBody } from '../../renderer/src/viewport/bodyTransform.js';
+import { transformBody } from '../../renderer/src/platform/viewport/bodyTransform.js';
 import {
   applyToolHandleValue,
   movePreviewBodies,

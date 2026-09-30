@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { normalizeRect } from '../../renderer/src/viewport/boxSelect.js';
+import { normalizeRect } from '../../renderer/src/platform/viewport/boxSelect.js';
 import { addRectangle } from '../../renderer/src/foundation/sketch-solver/builders.js';
 import { EMPTY_SKETCH } from '../../renderer/src/foundation/sketch-solver/types.js';
 import {

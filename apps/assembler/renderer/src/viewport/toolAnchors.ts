@@ -17,8 +17,8 @@ import {
   type SectionAxis,
   type ShellTool,
 } from '../foundation/commands/store.js';
-import type { ToolHandleKind } from './picking.js';
-import type { Vec3 } from './math.js';
+import type { ToolHandleKind } from '../platform/viewport/picking.js';
+import type { Vec3 } from '../platform/viewport/math.js';
 
 export interface AxisHandle {
   handle: ToolHandleKind;

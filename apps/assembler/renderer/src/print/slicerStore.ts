@@ -1,7 +1,7 @@
 /** Registered slicers as the renderer sees them (desktop only; see `electron/slicerIpc.ts`). */
 import { create } from 'zustand';
 
-import { useWorkspaceStore } from '../model/workspace.js';
+import { useWorkspaceStore } from '../interface/shell-ui/workspace.js';
 import { openInSlicer } from './exporting.js';
 
 type SlicersApi = NonNullable<Window['assembler']>['slicers'];

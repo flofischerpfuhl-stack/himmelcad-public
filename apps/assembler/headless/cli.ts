@@ -23,9 +23,16 @@ import { promises as fs } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 
-import { handleJsonRpcText } from '../renderer/src/api/jsonRpc.js';
-import { AGENT_API_SCHEMA, API_ID, API_VERSION } from '../renderer/src/api/schema.js';
-import { AgentSession, HEADLESS_CAPABILITIES } from '../renderer/src/api/session.js';
+import { handleJsonRpcText } from '../renderer/src/interface/agent-api/jsonRpc.js';
+import {
+  AGENT_API_SCHEMA,
+  API_ID,
+  API_VERSION,
+} from '../renderer/src/interface/agent-api/schema.js';
+import {
+  AgentSession,
+  HEADLESS_CAPABILITIES,
+} from '../renderer/src/interface/agent-api/session.js';
 import { useAssemblerStore } from '../renderer/src/foundation/commands/store.js';
 import { setSketchSolverFactory } from '../renderer/src/foundation/sketch-solver/solverProvider.js';
 import { createHeadlessKernel } from './nodeKernel.js';

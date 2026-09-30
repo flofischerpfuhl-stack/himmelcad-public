@@ -23,8 +23,8 @@ import {
   bodyMaterials,
   DEFAULT_DENSITY_MATERIAL,
   materialPreset,
-} from '../viewport/displayModes.js';
-import { findBody } from './describe.js';
+} from '../platform/viewport/displayModes.js';
+import { findBody } from '../interface/agent-api/describe.js';
 import { ApiError } from '../foundation/commands/api/errors.js';
 import { resolveEdgeInput, resolveFaceInput } from '../foundation/commands/api/references.js';
 

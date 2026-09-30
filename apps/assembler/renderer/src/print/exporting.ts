@@ -11,7 +11,7 @@ import { MESH_RESOLUTIONS, type MeshResolution } from '../foundation/geometry-ke
 import { stlBytes, type StlFormat } from '../kernel/stlExport.js';
 import { buildThreeMf } from '../kernel/threeMf.js';
 import type { BodyMesh } from '../foundation/geometry-kernel/types.js';
-import { useItemsStore, withDisplayNames } from '../model/items.js';
+import { useItemsStore, withDisplayNames } from '../interface/shell-ui/items.js';
 import * as io from '../foundation/document/persistence.js';
 import { referenceMeshToBody } from '../model/referenceMesh.js';
 import { shownFeatures, useAssemblerStore } from '../foundation/commands/store.js';

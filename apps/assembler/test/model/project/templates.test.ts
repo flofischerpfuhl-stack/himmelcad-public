@@ -7,9 +7,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { useProjectStore } from '../../../renderer/src/model/project/projectStore.js';
+import { useProjectStore } from '../../../renderer/src/interface/shell-ui/project/projectStore.js';
 import { useAssemblerStore } from '../../../renderer/src/foundation/commands/store.js';
-import { useWorkspaceStore } from '../../../renderer/src/model/workspace.js';
+import { useWorkspaceStore } from '../../../renderer/src/interface/shell-ui/workspace.js';
 import { PROJECT_TEMPLATES } from '../../../renderer/src/templates/projectTemplates.js';
 import { setSketchSolverFactory } from '../../../renderer/src/foundation/sketch-solver/solverProvider.js';
 import { createNodeKernelAdapter } from '../../kernel/nodeKernel.js';

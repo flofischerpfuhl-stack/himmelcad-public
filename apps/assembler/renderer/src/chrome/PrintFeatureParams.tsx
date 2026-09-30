@@ -26,9 +26,9 @@ import {
 } from '../model/printFeatures.js';
 import type { AssemblerState, FeaturePatch } from '../foundation/commands/store.js';
 import { resolveParameterValues } from '../foundation/document/parameters.js';
-import { ExpressionField } from './ExpressionField.js';
-import { ParamExpressionField } from './ParamExpressionField.js';
-import styles from './HistoryPanel.module.css';
+import { ExpressionField } from '../interface/shell-ui/ExpressionField.js';
+import { ParamExpressionField } from '../interface/shell-ui/ParamExpressionField.js';
+import styles from '../interface/shell-ui/HistoryPanel.module.css';
 
 const OPERATION_OPTIONS = [
   { value: 'new', label: 'New body' },

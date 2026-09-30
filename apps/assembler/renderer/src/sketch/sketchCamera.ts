@@ -5,7 +5,7 @@
  * a body face is viewed from outside the body (along the outward normal).
  */
 import type { SketchFrame, SketchPlaneRef } from '../foundation/document/document.js';
-import type { CameraPose } from '../viewport/camera.js';
+import type { CameraPose } from '../platform/viewport/camera.js';
 import {
   entityMap,
   pointPos,

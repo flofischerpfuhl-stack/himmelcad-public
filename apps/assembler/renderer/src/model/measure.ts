@@ -18,7 +18,7 @@ import {
   DEFAULT_DENSITY_MATERIAL,
   materialPreset,
   type MaterialId,
-} from '../viewport/displayModes.js';
+} from '../platform/viewport/displayModes.js';
 import type { ReferenceMesh } from './referenceMesh.js';
 import { referenceMeshToBody } from './referenceMesh.js';
 import type { SelectionItem } from '../foundation/commands/store.js';

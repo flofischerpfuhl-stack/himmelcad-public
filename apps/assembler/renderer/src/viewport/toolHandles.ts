@@ -22,10 +22,10 @@ import {
   type AssemblerState,
   type MoveTool,
 } from '../foundation/commands/store.js';
-import { transformBody } from './bodyTransform.js';
-import type { Vec3 } from './math.js';
-import type { ToolHandleKind } from './picking.js';
-import type { AngleHandleState } from './scene.js';
+import { transformBody } from '../platform/viewport/bodyTransform.js';
+import type { Vec3 } from '../platform/viewport/math.js';
+import type { ToolHandleKind } from '../platform/viewport/picking.js';
+import type { AngleHandleState } from '../platform/viewport/scene.js';
 import type { AxisHandle } from './toolAnchors.js';
 
 /** Rotation-ring radius relative to the move arrows (40 mm). */

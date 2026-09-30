@@ -19,7 +19,7 @@ import {
   type SectionAxis,
 } from '../foundation/commands/store.js';
 import { useViewportUi } from '../model/viewportUi.js';
-import { ExpressionField } from './ExpressionField.js';
+import { ExpressionField } from '../interface/shell-ui/ExpressionField.js';
 import styles from './SectionControls.module.css';
 
 const AXES: readonly SectionAxis[] = ['X', 'Y', 'Z'];

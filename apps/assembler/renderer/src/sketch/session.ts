@@ -51,7 +51,7 @@ import {
 } from '../foundation/sketch-solver/projection.js';
 import { pointIdsOf } from '../foundation/sketch-solver/moveRegion.js';
 import { rememberRegions } from '../foundation/sketch-solver/regionMemory.js';
-import { usePreferences } from '../model/preferences.js';
+import { usePreferences } from '../interface/shell-ui/preferences.js';
 import { getSketchSolver } from '../foundation/sketch-solver/solverProvider.js';
 import type { SolveResult } from '../foundation/sketch-solver/solverTypes.js';
 import {

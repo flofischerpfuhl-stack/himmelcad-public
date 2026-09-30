@@ -8,12 +8,12 @@
  * and identical disabled reasons. Nothing outside this file should decide
  * whether a command is enabled.
  */
-import { useAutomationStore } from '../../api/app/automationStore.js';
+import { useAutomationStore } from '../../interface/agent-api/automationStore.js';
 import { INTEROP_COMMANDS } from '../../interop/interopCommands.js';
 import { useInteropStore } from '../../interop/interopStore.js';
 import { PRINT_COMMANDS } from '../../print/printCommands.js';
 import { DISPLAY_COMMANDS } from '../../model/commands/displayCommands.js';
-import { useProjectStore } from '../../model/project/projectStore.js';
+import { useProjectStore } from '../../interface/shell-ui/project/projectStore.js';
 import { BLEND_RULE_COMMANDS } from '../../model/commands/blendCommands.js';
 import { CONSTRUCT_COMMANDS } from '../../model/commands/constructCommands.js';
 import { FEATURE_COMMANDS } from '../../model/commands/featureCommands.js';
@@ -29,8 +29,8 @@ import {
 } from './store.js';
 import { SKETCH_COMMANDS } from '../../model/commands/sketchCommands.js';
 import { useSketchStore } from '../../sketch/session.js';
-import { useWorkspaceStore } from '../../model/workspace.js';
-import { WORKSPACE_COMMANDS } from '../../model/commands/workspaceCommands.js';
+import { useWorkspaceStore } from '../../interface/shell-ui/workspace.js';
+import { WORKSPACE_COMMANDS } from '../../interface/shell-ui/workspaceCommands.js';
 
 /** Read access to the store snapshot and its actions. Commands never mutate `ctx` directly — they call its action methods. */
 export type CommandContext = AssemblerState;

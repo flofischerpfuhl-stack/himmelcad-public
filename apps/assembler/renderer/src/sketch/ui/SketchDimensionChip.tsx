@@ -13,9 +13,9 @@ import { useEffect, useRef, useState } from 'react';
 
 import { registerEscapeRung } from '@himmelcad/ui';
 
-import type { SuggestionCandidate } from '../../chrome/expressionSuggest.js';
-import { ExpressionSuggestInput } from '../../chrome/ExpressionSuggestInput.js';
-import labelStyles from '../../viewport/DimensionLabel.module.css';
+import type { SuggestionCandidate } from '../../interface/shell-ui/expressionSuggest.js';
+import { ExpressionSuggestInput } from '../../interface/shell-ui/ExpressionSuggestInput.js';
+import labelStyles from '../../platform/viewport/DimensionLabel.module.css';
 import styles from './SketchOverlay.module.css';
 
 export interface SketchDimensionChipProps {

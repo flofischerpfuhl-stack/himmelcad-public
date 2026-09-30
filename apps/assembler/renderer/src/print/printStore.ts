@@ -12,9 +12,9 @@
 import { create } from 'zustand';
 
 import type { Body, EvaluationResult } from '../foundation/geometry-kernel/types.js';
-import { withDisplayNames, useItemsStore } from '../model/items.js';
+import { withDisplayNames, useItemsStore } from '../interface/shell-ui/items.js';
 import { useAssemblerStore, type SelectionItem } from '../foundation/commands/store.js';
-import { useWorkspaceStore } from '../model/workspace.js';
+import { useWorkspaceStore } from '../interface/shell-ui/workspace.js';
 import { bodyToPrintInput, type PrintFinding, type PrintReport } from './analysis.js';
 import type { OrientationCandidate } from './orientation.js';
 import {

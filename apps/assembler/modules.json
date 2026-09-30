@@ -57,17 +57,13 @@
       "id": "input",
       "layer": "platform",
       "summary": "Input devices: mouse navigation presets, keyboard wiring, later touch/pen and SpaceMouse.",
-      "paths": ["renderer/src/platform/input/", "renderer/src/viewport/navigation.ts"]
+      "paths": ["renderer/src/platform/input/"]
     },
     {
       "id": "viewport",
       "layer": "platform",
       "summary": "WebGL2 viewport: scene, camera, picking, selection boxes, grid, display-mode rendering, overlay host.",
-      "paths": [
-        "renderer/src/platform/viewport/",
-        "renderer/src/viewport/",
-        "renderer/src/model/gridResolution.ts"
-      ]
+      "paths": ["renderer/src/platform/viewport/"]
     },
     {
       "id": "sketching",
@@ -213,29 +209,13 @@
       "id": "agent-api",
       "layer": "interface",
       "summary": "hcasm.agent-api@1: session and dispatch, composed schema, JSON-RPC framing, read-model projections, in-app endpoint bridge.",
-      "paths": [
-        "renderer/src/interface/agent-api/",
-        "renderer/src/api/",
-        "renderer/src/chrome/AgentAccessIndicator"
-      ]
+      "paths": ["renderer/src/interface/agent-api/"]
     },
     {
       "id": "shell-ui",
       "layer": "interface",
       "summary": "The application shell: layout, docks, panels host, History and Items panels, command search, menus, dialogs, project lifecycle UI.",
-      "paths": [
-        "renderer/src/interface/shell-ui/",
-        "renderer/src/App",
-        "renderer/src/chrome/",
-        "renderer/src/model/commands/workspaceCommands.ts",
-        "renderer/src/model/fixReference.ts",
-        "renderer/src/model/historyTools.ts",
-        "renderer/src/model/items.ts",
-        "renderer/src/model/preferences.ts",
-        "renderer/src/model/workspace.ts",
-        "renderer/src/model/project/projectStore.ts",
-        "renderer/src/model/project/thumbnail.ts"
-      ]
+      "paths": ["renderer/src/interface/shell-ui/"]
     },
     {
       "id": "app",
@@ -245,8 +225,7 @@
         "renderer/src/app/",
         "renderer/src/main.tsx",
         "renderer/src/assembler.css",
-        "renderer/src/global.d.ts",
-        "renderer/src/devtools/"
+        "renderer/src/global.d.ts"
       ]
     },
     {

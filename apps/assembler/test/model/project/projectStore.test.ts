@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { useProjectStore } from '../../../renderer/src/model/project/projectStore.js';
+import { useProjectStore } from '../../../renderer/src/interface/shell-ui/project/projectStore.js';
 import { useAssemblerStore } from '../../../renderer/src/foundation/commands/store.js';
 import { sketchFromLegacyProfiles } from '../../../renderer/src/foundation/sketch-solver/builders.js';
 

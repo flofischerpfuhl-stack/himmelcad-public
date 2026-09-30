@@ -10,7 +10,7 @@
  */
 import type { Command, CommandContext, ShortcutScope } from './registry.js';
 import { COMMANDS } from './registry.js';
-import { useFixStore } from '../../model/fixReference.js';
+import { useFixStore } from '../../interface/shell-ui/fixReference.js';
 
 /**
  * A framework-agnostic view of a keyboard event. The chrome agent builds

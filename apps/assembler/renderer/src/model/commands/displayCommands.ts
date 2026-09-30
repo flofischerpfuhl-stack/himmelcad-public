@@ -5,12 +5,12 @@
  * into `registry.ts`'s `COMMANDS` so the display menu, View menu, command
  * search, shortcuts and the shortcut sheet all read the same entries.
  */
-import { DISPLAY_MODE_ENTRIES, activeDisplayEntry } from '../../viewport/displayModes.js';
+import { DISPLAY_MODE_ENTRIES, activeDisplayEntry } from '../../platform/viewport/displayModes.js';
 import { sectionNormal } from '../../viewport/toolAnchors.js';
-import { displayBodyName, useItemsStore } from '../items.js';
+import { displayBodyName, useItemsStore } from '../../interface/shell-ui/items.js';
 import { currentRefs } from '../measure.js';
 import { useMeasureStore } from '../measureStore.js';
-import { usePreferences } from '../preferences.js';
+import { usePreferences } from '../../interface/shell-ui/preferences.js';
 import {
   findFace,
   isPlanarFace,
@@ -19,7 +19,7 @@ import {
 } from '../../foundation/commands/store.js';
 import { sectionPlaneFromFace } from '../viewDisplay.js';
 import { useViewportUi } from '../viewportUi.js';
-import { useWorkspaceStore } from '../workspace.js';
+import { useWorkspaceStore } from '../../interface/shell-ui/workspace.js';
 import type { Command, CommandAvailability } from '../../foundation/commands/registry.js';
 
 const enabled: CommandAvailability = { enabled: true };

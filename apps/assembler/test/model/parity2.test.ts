@@ -30,10 +30,13 @@ import {
   missingReferences,
   startFix,
   useFixStore,
-} from '../../renderer/src/model/fixReference.js';
-import { historyFilterItems, relevantFeatureIds } from '../../renderer/src/model/historyTools.js';
+} from '../../renderer/src/interface/shell-ui/fixReference.js';
+import {
+  historyFilterItems,
+  relevantFeatureIds,
+} from '../../renderer/src/interface/shell-ui/historyTools.js';
 import { gizmoOps, gizmoTransformFields } from '../../renderer/src/model/moveGizmo.js';
-import { usePreferences } from '../../renderer/src/model/preferences.js';
+import { usePreferences } from '../../renderer/src/interface/shell-ui/preferences.js';
 import { loadProjectFile, saveProjectFile } from '../../renderer/src/foundation/document/format.js';
 import {
   makeFaceRef,
@@ -645,7 +648,8 @@ void test('Constraints keep the first (or last) selected item in place', async (
 // ---- Agent API --------------------------------------------------------------------------------
 
 void test('Agent API: construction plane + sketch on it, extrude extents, mirrored sketch, datums.list', async () => {
-  const { AgentSession, HEADLESS_CAPABILITIES } = await import('../../renderer/src/api/session.js');
+  const { AgentSession, HEADLESS_CAPABILITIES } =
+    await import('../../renderer/src/interface/agent-api/session.js');
   const kernel = createNodeKernelAdapter();
   store.getState().attachKernel(kernel);
   await load([]);

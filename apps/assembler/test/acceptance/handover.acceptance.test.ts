@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { loadProjectFile } from '../../renderer/src/foundation/document/format.js';
-import { currentProjectText } from '../../renderer/src/model/project/projectStore.js';
+import { currentProjectText } from '../../renderer/src/interface/shell-ui/project/projectStore.js';
 import type { SketchFeature } from '../../renderer/src/foundation/document/document.js';
 import { setSketchDimension } from '../../renderer/src/sketch/featureOps.js';
 import { projectTemplate } from '../../renderer/src/templates/projectTemplates.js';

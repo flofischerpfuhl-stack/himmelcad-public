@@ -22,7 +22,7 @@ import {
   viewDisplayFromProject,
   viewDisplayToProject,
 } from '../../renderer/src/model/viewDisplay.js';
-import { bodyMaterials } from '../../renderer/src/viewport/displayModes.js';
+import { bodyMaterials } from '../../renderer/src/platform/viewport/displayModes.js';
 import { boxBody, cylinderBody } from '../viewport/meshFixtures.js';
 
 const a = boxBody('a', [0, 0, 0], [10, 10, 10]);

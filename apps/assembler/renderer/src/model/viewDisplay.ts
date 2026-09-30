@@ -5,7 +5,7 @@
  * newer file never breaks Open — unknown values keep the current setting.
  */
 import type { Body, FaceInfo } from '../foundation/geometry-kernel/types.js';
-import { isDisplayMode } from '../viewport/displayModes.js';
+import { isDisplayMode } from '../platform/viewport/displayModes.js';
 import type { ProjectViewState } from '../foundation/document/format.js';
 import type { SectionPlane, ViewState } from '../foundation/commands/store.js';
 

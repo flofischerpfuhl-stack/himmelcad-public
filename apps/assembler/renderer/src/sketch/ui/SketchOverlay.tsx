@@ -19,12 +19,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { registerEscapeRung } from '@himmelcad/ui';
 
-import { effectiveGridStep } from '../../model/gridResolution.js';
-import { usePreferences } from '../../model/preferences.js';
+import { effectiveGridStep } from '../../platform/viewport/gridResolution.js';
+import { usePreferences } from '../../interface/shell-ui/preferences.js';
 import { useAssemblerStore } from '../../foundation/commands/store.js';
 import { useViewportUi } from '../../model/viewportUi.js';
-import { boxModeFor, normalizeRect } from '../../viewport/boxSelect.js';
-import { SelectionBox } from '../../viewport/SelectionBox.js';
+import { boxModeFor, normalizeRect } from '../../platform/viewport/boxSelect.js';
+import { SelectionBox } from '../../platform/viewport/SelectionBox.js';
 import {
   SKETCH_BOX_FILTERS,
   nextSketchBoxFilter,
@@ -75,7 +75,7 @@ import {
 } from '../../foundation/sketch-solver/types.js';
 import { chipSize, layoutBadges, layoutChips, nextChipText, type Rect } from './declutter.js';
 import { SketchDimensionChip } from './SketchDimensionChip.js';
-import { sketchDimensionCandidates } from '../../chrome/expressionSuggest.js';
+import { sketchDimensionCandidates } from '../../interface/shell-ui/expressionSuggest.js';
 import { ToolValueChip } from './ToolValueChip.js';
 import styles from './SketchOverlay.module.css';
 

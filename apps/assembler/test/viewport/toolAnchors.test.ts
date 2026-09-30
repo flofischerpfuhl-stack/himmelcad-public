@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { findAnchorPixel } from '../../renderer/src/viewport/automation.js';
-import { buildScreenRibbon } from '../../renderer/src/viewport/geometry.js';
+import { findAnchorPixel } from '../../renderer/src/platform/viewport/automation.js';
+import { buildScreenRibbon } from '../../renderer/src/platform/viewport/geometry.js';
 import {
   handleTip,
   sectionHandle,

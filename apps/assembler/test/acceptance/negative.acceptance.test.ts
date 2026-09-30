@@ -13,7 +13,7 @@ import {
   collectCandidates,
   isAmbiguous,
   rayCastFaces,
-} from '../../renderer/src/viewport/pickCandidates.js';
+} from '../../renderer/src/platform/viewport/pickCandidates.js';
 import { bodies, call, evidence, fails, near, reset, store, type Json } from './harness.js';
 
 async function plate(

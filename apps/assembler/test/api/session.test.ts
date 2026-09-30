@@ -14,7 +14,7 @@ import {
   APP_CAPABILITIES,
   AgentSession,
   HEADLESS_CAPABILITIES,
-} from '../../renderer/src/api/session.js';
+} from '../../renderer/src/interface/agent-api/session.js';
 import type { Feature, SketchFeature } from '../../renderer/src/foundation/document/document.js';
 import { useAssemblerStore } from '../../renderer/src/foundation/commands/store.js';
 import { addRectangle } from '../../renderer/src/foundation/sketch-solver/builders.js';

@@ -8,8 +8,8 @@
       "rule": "layer-order",
       "reason": "Known at the start of the ADR 0032 restructure (phase A): lower foundation/platform/interface modules must not depend on later ones.",
       "edges": [
-        "renderer/src/api/app/automationStore.ts -> renderer/src/model/project/projectStore.ts",
-        "renderer/src/api/session.ts -> renderer/src/model/items.ts"
+        "renderer/src/interface/agent-api/automationStore.ts -> renderer/src/interface/shell-ui/project/projectStore.ts",
+        "renderer/src/interface/agent-api/session.ts -> renderer/src/interface/shell-ui/items.ts"
       ]
     },
     {
@@ -18,8 +18,8 @@
       "rule": "upward",
       "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
       "edges": [
-        "renderer/src/foundation/commands/api/references.ts -> renderer/src/api/describe.ts",
-        "renderer/src/foundation/commands/registry.ts -> renderer/src/api/app/automationStore.ts"
+        "renderer/src/foundation/commands/api/references.ts -> renderer/src/interface/agent-api/describe.ts",
+        "renderer/src/foundation/commands/registry.ts -> renderer/src/interface/agent-api/automationStore.ts"
       ]
     },
     {
@@ -87,11 +87,11 @@
       "rule": "upward",
       "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
       "edges": [
-        "renderer/src/foundation/commands/registry.ts -> renderer/src/model/commands/workspaceCommands.ts",
-        "renderer/src/foundation/commands/registry.ts -> renderer/src/model/project/projectStore.ts",
-        "renderer/src/foundation/commands/registry.ts -> renderer/src/model/workspace.ts",
-        "renderer/src/foundation/commands/shortcuts.ts -> renderer/src/model/fixReference.ts",
-        "renderer/src/foundation/commands/store.ts -> renderer/src/model/workspace.ts"
+        "renderer/src/foundation/commands/registry.ts -> renderer/src/interface/shell-ui/workspaceCommands.ts",
+        "renderer/src/foundation/commands/registry.ts -> renderer/src/interface/shell-ui/project/projectStore.ts",
+        "renderer/src/foundation/commands/registry.ts -> renderer/src/interface/shell-ui/workspace.ts",
+        "renderer/src/foundation/commands/shortcuts.ts -> renderer/src/interface/shell-ui/fixReference.ts",
+        "renderer/src/foundation/commands/store.ts -> renderer/src/interface/shell-ui/workspace.ts"
       ]
     },
     {
@@ -154,17 +154,17 @@
       "rule": "upward",
       "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
       "edges": [
-        "renderer/src/chrome/AnalysisLegend.tsx -> renderer/src/model/preferences.ts",
-        "renderer/src/chrome/ColourDialog.tsx -> renderer/src/model/items.ts",
-        "renderer/src/chrome/ColourDialog.tsx -> renderer/src/model/workspace.ts",
-        "renderer/src/chrome/DisplayMenu.tsx -> renderer/src/model/preferences.ts",
-        "renderer/src/chrome/ExportImageDialog.tsx -> renderer/src/model/preferences.ts",
-        "renderer/src/chrome/ExportImageDialog.tsx -> renderer/src/model/workspace.ts",
-        "renderer/src/chrome/SectionControls.tsx -> renderer/src/chrome/ExpressionField.tsx",
-        "renderer/src/model/commands/displayCommands.ts -> renderer/src/model/items.ts",
-        "renderer/src/model/commands/displayCommands.ts -> renderer/src/model/preferences.ts",
-        "renderer/src/model/commands/displayCommands.ts -> renderer/src/model/workspace.ts",
-        "renderer/src/viewport/imageExport.ts -> renderer/src/model/preferences.ts"
+        "renderer/src/chrome/AnalysisLegend.tsx -> renderer/src/interface/shell-ui/preferences.ts",
+        "renderer/src/chrome/ColourDialog.tsx -> renderer/src/interface/shell-ui/items.ts",
+        "renderer/src/chrome/ColourDialog.tsx -> renderer/src/interface/shell-ui/workspace.ts",
+        "renderer/src/chrome/DisplayMenu.tsx -> renderer/src/interface/shell-ui/preferences.ts",
+        "renderer/src/chrome/ExportImageDialog.tsx -> renderer/src/interface/shell-ui/preferences.ts",
+        "renderer/src/chrome/ExportImageDialog.tsx -> renderer/src/interface/shell-ui/workspace.ts",
+        "renderer/src/chrome/SectionControls.tsx -> renderer/src/interface/shell-ui/ExpressionField.tsx",
+        "renderer/src/model/commands/displayCommands.ts -> renderer/src/interface/shell-ui/items.ts",
+        "renderer/src/model/commands/displayCommands.ts -> renderer/src/interface/shell-ui/preferences.ts",
+        "renderer/src/model/commands/displayCommands.ts -> renderer/src/interface/shell-ui/workspace.ts",
+        "renderer/src/viewport/imageExport.ts -> renderer/src/interface/shell-ui/preferences.ts"
       ]
     },
     {
@@ -223,7 +223,7 @@
       "to": "agent-api",
       "rule": "upward",
       "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
-      "edges": ["renderer/src/api/interopApi.ts -> renderer/src/api/schema.ts"]
+      "edges": ["renderer/src/api/interopApi.ts -> renderer/src/interface/agent-api/schema.ts"]
     },
     {
       "from": "interop",
@@ -238,13 +238,13 @@
       "rule": "upward",
       "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
       "edges": [
-        "renderer/src/api/interopApi.ts -> renderer/src/model/items.ts",
-        "renderer/src/interop/importFolders.ts -> renderer/src/model/items.ts",
-        "renderer/src/interop/interopStore.ts -> renderer/src/model/items.ts",
-        "renderer/src/interop/interopStore.ts -> renderer/src/model/project/projectStore.ts",
-        "renderer/src/interop/interopStore.ts -> renderer/src/model/workspace.ts",
-        "renderer/src/interop/stepTree.ts -> renderer/src/model/items.ts",
-        "renderer/src/interop/ui/InteropChrome.tsx -> renderer/src/model/workspace.ts"
+        "renderer/src/api/interopApi.ts -> renderer/src/interface/shell-ui/items.ts",
+        "renderer/src/interop/importFolders.ts -> renderer/src/interface/shell-ui/items.ts",
+        "renderer/src/interop/interopStore.ts -> renderer/src/interface/shell-ui/items.ts",
+        "renderer/src/interop/interopStore.ts -> renderer/src/interface/shell-ui/project/projectStore.ts",
+        "renderer/src/interop/interopStore.ts -> renderer/src/interface/shell-ui/workspace.ts",
+        "renderer/src/interop/stepTree.ts -> renderer/src/interface/shell-ui/items.ts",
+        "renderer/src/interop/ui/InteropChrome.tsx -> renderer/src/interface/shell-ui/workspace.ts"
       ]
     },
     {
@@ -252,7 +252,7 @@
       "to": "agent-api",
       "rule": "upward",
       "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
-      "edges": ["renderer/src/api/measureApi.ts -> renderer/src/api/describe.ts"]
+      "edges": ["renderer/src/api/measureApi.ts -> renderer/src/interface/agent-api/describe.ts"]
     },
     {
       "from": "measure",
@@ -267,11 +267,11 @@
       "rule": "upward",
       "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
       "edges": [
-        "renderer/src/chrome/MeasurePanel.tsx -> renderer/src/model/preferences.ts",
-        "renderer/src/chrome/MeasurePanel.tsx -> renderer/src/model/workspace.ts",
-        "renderer/src/model/measureLive.ts -> renderer/src/model/items.ts",
-        "renderer/src/model/measureLive.ts -> renderer/src/model/preferences.ts",
-        "renderer/src/model/measureStore.ts -> renderer/src/model/preferences.ts"
+        "renderer/src/chrome/MeasurePanel.tsx -> renderer/src/interface/shell-ui/preferences.ts",
+        "renderer/src/chrome/MeasurePanel.tsx -> renderer/src/interface/shell-ui/workspace.ts",
+        "renderer/src/model/measureLive.ts -> renderer/src/interface/shell-ui/items.ts",
+        "renderer/src/model/measureLive.ts -> renderer/src/interface/shell-ui/preferences.ts",
+        "renderer/src/model/measureStore.ts -> renderer/src/interface/shell-ui/preferences.ts"
       ]
     },
     {
@@ -317,11 +317,11 @@
       "rule": "upward",
       "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
       "edges": [
-        "renderer/src/chrome/FeatureParams.tsx -> renderer/src/chrome/ExpressionField.tsx",
-        "renderer/src/chrome/FeatureParams.tsx -> renderer/src/chrome/HistoryPanel.module.css",
-        "renderer/src/chrome/PrintFeatureParams.tsx -> renderer/src/chrome/ExpressionField.tsx",
-        "renderer/src/chrome/PrintFeatureParams.tsx -> renderer/src/chrome/HistoryPanel.module.css",
-        "renderer/src/chrome/PrintFeatureParams.tsx -> renderer/src/chrome/ParamExpressionField.tsx"
+        "renderer/src/chrome/FeatureParams.tsx -> renderer/src/interface/shell-ui/ExpressionField.tsx",
+        "renderer/src/chrome/FeatureParams.tsx -> renderer/src/interface/shell-ui/HistoryPanel.module.css",
+        "renderer/src/chrome/PrintFeatureParams.tsx -> renderer/src/interface/shell-ui/ExpressionField.tsx",
+        "renderer/src/chrome/PrintFeatureParams.tsx -> renderer/src/interface/shell-ui/HistoryPanel.module.css",
+        "renderer/src/chrome/PrintFeatureParams.tsx -> renderer/src/interface/shell-ui/ParamExpressionField.tsx"
       ]
     },
     {
@@ -330,9 +330,9 @@
       "rule": "upward",
       "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
       "edges": [
-        "renderer/src/chrome/ParametersPanel.tsx -> renderer/src/chrome/ExpressionSuggestInput.tsx",
-        "renderer/src/chrome/ParametersPanel.tsx -> renderer/src/chrome/Panel.module.css",
-        "renderer/src/chrome/ParametersPanel.tsx -> renderer/src/chrome/expressionSuggest.ts"
+        "renderer/src/chrome/ParametersPanel.tsx -> renderer/src/interface/shell-ui/ExpressionSuggestInput.tsx",
+        "renderer/src/chrome/ParametersPanel.tsx -> renderer/src/interface/shell-ui/Panel.module.css",
+        "renderer/src/chrome/ParametersPanel.tsx -> renderer/src/interface/shell-ui/expressionSuggest.ts"
       ]
     },
     {
@@ -340,7 +340,7 @@
       "to": "agent-api",
       "rule": "upward",
       "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
-      "edges": ["renderer/src/api/printApi.ts -> renderer/src/api/schema.ts"]
+      "edges": ["renderer/src/api/printApi.ts -> renderer/src/interface/agent-api/schema.ts"]
     },
     {
       "from": "print",
@@ -379,12 +379,12 @@
       "rule": "upward",
       "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
       "edges": [
-        "renderer/src/print/exporting.ts -> renderer/src/model/items.ts",
-        "renderer/src/print/printCommands.ts -> renderer/src/model/workspace.ts",
-        "renderer/src/print/printStore.ts -> renderer/src/model/items.ts",
-        "renderer/src/print/printStore.ts -> renderer/src/model/workspace.ts",
-        "renderer/src/print/ui/PrintDialogs.tsx -> renderer/src/model/workspace.ts",
-        "renderer/src/print/ui/PrintPanel.tsx -> renderer/src/chrome/ExpressionField.tsx"
+        "renderer/src/print/exporting.ts -> renderer/src/interface/shell-ui/items.ts",
+        "renderer/src/print/printCommands.ts -> renderer/src/interface/shell-ui/workspace.ts",
+        "renderer/src/print/printStore.ts -> renderer/src/interface/shell-ui/items.ts",
+        "renderer/src/print/printStore.ts -> renderer/src/interface/shell-ui/workspace.ts",
+        "renderer/src/print/ui/PrintDialogs.tsx -> renderer/src/interface/shell-ui/workspace.ts",
+        "renderer/src/print/ui/PrintPanel.tsx -> renderer/src/interface/shell-ui/ExpressionField.tsx"
       ]
     },
     {
@@ -399,7 +399,7 @@
       "to": "shell-ui",
       "rule": "upward",
       "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
-      "edges": ["renderer/src/print/slicerStore.ts -> renderer/src/model/workspace.ts"]
+      "edges": ["renderer/src/print/slicerStore.ts -> renderer/src/interface/shell-ui/workspace.ts"]
     },
     {
       "from": "sketching",
@@ -414,16 +414,16 @@
       "rule": "upward",
       "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
       "edges": [
-        "renderer/src/sketch/session.ts -> renderer/src/model/preferences.ts",
-        "renderer/src/sketch/ui/SketchChrome.tsx -> renderer/src/chrome/ExpressionField.module.css",
-        "renderer/src/sketch/ui/SketchDimensionChip.tsx -> renderer/src/chrome/ExpressionSuggestInput.tsx",
-        "renderer/src/sketch/ui/SketchDimensionChip.tsx -> renderer/src/chrome/expressionSuggest.ts",
-        "renderer/src/sketch/ui/SketchOverlay.tsx -> renderer/src/chrome/expressionSuggest.ts",
-        "renderer/src/sketch/ui/SketchOverlay.tsx -> renderer/src/model/preferences.ts",
-        "renderer/src/sketch/ui/SketchParams.tsx -> renderer/src/chrome/ExpressionField.module.css",
-        "renderer/src/sketch/ui/SketchParams.tsx -> renderer/src/chrome/ExpressionField.tsx",
-        "renderer/src/sketch/ui/SketchParams.tsx -> renderer/src/chrome/ExpressionSuggestInput.tsx",
-        "renderer/src/sketch/ui/SketchParams.tsx -> renderer/src/chrome/expressionSuggest.ts"
+        "renderer/src/sketch/session.ts -> renderer/src/interface/shell-ui/preferences.ts",
+        "renderer/src/sketch/ui/SketchChrome.tsx -> renderer/src/interface/shell-ui/ExpressionField.module.css",
+        "renderer/src/sketch/ui/SketchDimensionChip.tsx -> renderer/src/interface/shell-ui/ExpressionSuggestInput.tsx",
+        "renderer/src/sketch/ui/SketchDimensionChip.tsx -> renderer/src/interface/shell-ui/expressionSuggest.ts",
+        "renderer/src/sketch/ui/SketchOverlay.tsx -> renderer/src/interface/shell-ui/expressionSuggest.ts",
+        "renderer/src/sketch/ui/SketchOverlay.tsx -> renderer/src/interface/shell-ui/preferences.ts",
+        "renderer/src/sketch/ui/SketchParams.tsx -> renderer/src/interface/shell-ui/ExpressionField.module.css",
+        "renderer/src/sketch/ui/SketchParams.tsx -> renderer/src/interface/shell-ui/ExpressionField.tsx",
+        "renderer/src/sketch/ui/SketchParams.tsx -> renderer/src/interface/shell-ui/ExpressionSuggestInput.tsx",
+        "renderer/src/sketch/ui/SketchParams.tsx -> renderer/src/interface/shell-ui/expressionSuggest.ts"
       ]
     },
     {
@@ -432,9 +432,9 @@
       "rule": "upward",
       "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
       "edges": [
-        "renderer/src/viewport/Viewport.tsx -> renderer/src/model/commands/displayCommands.ts",
-        "renderer/src/viewport/Viewport.tsx -> renderer/src/model/viewportUi.ts",
-        "renderer/src/viewport/Viewport.tsx -> renderer/src/viewport/imageExport.ts"
+        "renderer/src/platform/viewport/Viewport.tsx -> renderer/src/model/commands/displayCommands.ts",
+        "renderer/src/platform/viewport/Viewport.tsx -> renderer/src/model/viewportUi.ts",
+        "renderer/src/platform/viewport/Viewport.tsx -> renderer/src/viewport/imageExport.ts"
       ]
     },
     {
@@ -443,10 +443,10 @@
       "rule": "upward",
       "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
       "edges": [
-        "renderer/src/viewport/Viewport.tsx -> renderer/src/model/referenceMesh.ts",
-        "renderer/src/viewport/boxSelect.ts -> renderer/src/model/referenceMesh.ts",
-        "renderer/src/viewport/pickCandidates.ts -> renderer/src/model/referenceMesh.ts",
-        "renderer/src/viewport/scene.ts -> renderer/src/model/referenceMesh.ts"
+        "renderer/src/platform/viewport/Viewport.tsx -> renderer/src/model/referenceMesh.ts",
+        "renderer/src/platform/viewport/boxSelect.ts -> renderer/src/model/referenceMesh.ts",
+        "renderer/src/platform/viewport/pickCandidates.ts -> renderer/src/model/referenceMesh.ts",
+        "renderer/src/platform/viewport/scene.ts -> renderer/src/model/referenceMesh.ts"
       ]
     },
     {
@@ -455,9 +455,9 @@
       "rule": "upward",
       "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
       "edges": [
-        "renderer/src/viewport/Viewport.tsx -> renderer/src/model/measure.ts",
-        "renderer/src/viewport/Viewport.tsx -> renderer/src/model/measureStore.ts",
-        "renderer/src/viewport/Viewport.tsx -> renderer/src/viewport/MeasureOverlay.tsx"
+        "renderer/src/platform/viewport/Viewport.tsx -> renderer/src/model/measure.ts",
+        "renderer/src/platform/viewport/Viewport.tsx -> renderer/src/model/measureStore.ts",
+        "renderer/src/platform/viewport/Viewport.tsx -> renderer/src/viewport/MeasureOverlay.tsx"
       ]
     },
     {
@@ -466,13 +466,13 @@
       "rule": "upward",
       "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
       "edges": [
-        "renderer/src/viewport/Viewport.tsx -> renderer/src/model/featureTools.ts",
-        "renderer/src/viewport/Viewport.tsx -> renderer/src/model/modeling.ts",
-        "renderer/src/viewport/Viewport.tsx -> renderer/src/model/moveGizmo.ts",
-        "renderer/src/viewport/Viewport.tsx -> renderer/src/viewport/toolAnchors.ts",
-        "renderer/src/viewport/Viewport.tsx -> renderer/src/viewport/toolHandles.ts",
-        "renderer/src/viewport/scene.ts -> renderer/src/model/modeling.ts",
-        "renderer/src/viewport/scene.ts -> renderer/src/viewport/toolAnchors.ts"
+        "renderer/src/platform/viewport/Viewport.tsx -> renderer/src/model/featureTools.ts",
+        "renderer/src/platform/viewport/Viewport.tsx -> renderer/src/model/modeling.ts",
+        "renderer/src/platform/viewport/Viewport.tsx -> renderer/src/model/moveGizmo.ts",
+        "renderer/src/platform/viewport/Viewport.tsx -> renderer/src/viewport/toolAnchors.ts",
+        "renderer/src/platform/viewport/Viewport.tsx -> renderer/src/viewport/toolHandles.ts",
+        "renderer/src/platform/viewport/scene.ts -> renderer/src/model/modeling.ts",
+        "renderer/src/platform/viewport/scene.ts -> renderer/src/viewport/toolAnchors.ts"
       ]
     },
     {
@@ -481,8 +481,8 @@
       "rule": "upward",
       "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
       "edges": [
-        "renderer/src/viewport/Viewport.tsx -> renderer/src/print/overlay.ts",
-        "renderer/src/viewport/Viewport.tsx -> renderer/src/print/printStore.ts"
+        "renderer/src/platform/viewport/Viewport.tsx -> renderer/src/print/overlay.ts",
+        "renderer/src/platform/viewport/Viewport.tsx -> renderer/src/print/printStore.ts"
       ]
     },
     {
@@ -491,11 +491,11 @@
       "rule": "upward",
       "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
       "edges": [
-        "renderer/src/viewport/DimensionLabel.tsx -> renderer/src/model/preferences.ts",
-        "renderer/src/viewport/Viewport.tsx -> renderer/src/model/fixReference.ts",
-        "renderer/src/viewport/Viewport.tsx -> renderer/src/model/items.ts",
-        "renderer/src/viewport/Viewport.tsx -> renderer/src/model/preferences.ts",
-        "renderer/src/viewport/Viewport.tsx -> renderer/src/model/workspace.ts"
+        "renderer/src/platform/viewport/DimensionLabel.tsx -> renderer/src/interface/shell-ui/preferences.ts",
+        "renderer/src/platform/viewport/Viewport.tsx -> renderer/src/interface/shell-ui/fixReference.ts",
+        "renderer/src/platform/viewport/Viewport.tsx -> renderer/src/interface/shell-ui/items.ts",
+        "renderer/src/platform/viewport/Viewport.tsx -> renderer/src/interface/shell-ui/preferences.ts",
+        "renderer/src/platform/viewport/Viewport.tsx -> renderer/src/interface/shell-ui/workspace.ts"
       ]
     },
     {
@@ -504,9 +504,9 @@
       "rule": "upward",
       "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
       "edges": [
-        "renderer/src/viewport/Viewport.tsx -> renderer/src/sketch/session.ts",
-        "renderer/src/viewport/Viewport.tsx -> renderer/src/sketch/ui/SketchOverlay.tsx",
-        "renderer/src/viewport/Viewport.tsx -> renderer/src/sketch/ui/useSketchViewport.ts"
+        "renderer/src/platform/viewport/Viewport.tsx -> renderer/src/sketch/session.ts",
+        "renderer/src/platform/viewport/Viewport.tsx -> renderer/src/sketch/ui/SketchOverlay.tsx",
+        "renderer/src/platform/viewport/Viewport.tsx -> renderer/src/sketch/ui/useSketchViewport.ts"
       ]
     }
   ]

@@ -28,13 +28,13 @@ import type {
   KernelFormatCapabilities,
 } from '../foundation/geometry-kernel/types.js';
 import type { Feature, SketchPlaneRef } from '../foundation/document/document.js';
-import { meshRowKey } from '../model/items.js';
+import { meshRowKey } from '../interface/shell-ui/items.js';
 import { referenceMeshBodyId, referenceMeshIdOf } from '../model/referenceMesh.js';
 import type { AssemblerState, SelectionItem } from '../foundation/commands/store.js';
 import { detectRegions } from '../foundation/sketch-solver/regions.js';
 import { ApiError } from '../foundation/commands/api/errors.js';
 import { resolveFaceInput } from '../foundation/commands/api/references.js';
-import type { MethodSpec } from './schema.js';
+import type { MethodSpec } from '../interface/agent-api/schema.js';
 import type { JsonSchema } from '../foundation/commands/api/validate.js';
 
 type Json = Record<string, unknown>;

@@ -24,8 +24,8 @@ import {
   zoomTowards,
   type CameraPose,
   type CubeFaceName,
-} from '../../renderer/src/viewport/camera.js';
-import { projectToScreen, type Vec3 } from '../../renderer/src/viewport/math.js';
+} from '../../renderer/src/platform/viewport/camera.js';
+import { projectToScreen, type Vec3 } from '../../renderer/src/platform/viewport/math.js';
 
 /** Applies a CSS matrix3d (column-major) to a vector (no translation). */
 function applyCss(m: number[], v: Vec3): Vec3 {

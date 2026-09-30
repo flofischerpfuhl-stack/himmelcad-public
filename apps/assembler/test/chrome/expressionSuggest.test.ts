@@ -8,7 +8,7 @@ import {
   matchSuggestions,
   moveActive,
   parameterCandidates,
-} from '../../renderer/src/chrome/expressionSuggest.js';
+} from '../../renderer/src/interface/shell-ui/expressionSuggest.js';
 
 const names = (list: { name: string }[]) => list.map((c) => c.name);
 

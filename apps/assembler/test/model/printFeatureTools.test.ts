@@ -38,7 +38,7 @@ import {
   type LegacySketchProfile,
 } from '../../renderer/src/foundation/sketch-solver/builders.js';
 import { EMPTY_SKETCH } from '../../renderer/src/foundation/sketch-solver/types.js';
-import { errorHighlightOf } from '../../renderer/src/viewport/errorHighlight.js';
+import { errorHighlightOf } from '../../renderer/src/platform/viewport/errorHighlight.js';
 import { createNodeKernelAdapter } from '../kernel/nodeKernel.js';
 
 const store = useAssemblerStore;

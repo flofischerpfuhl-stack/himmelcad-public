@@ -16,7 +16,7 @@ import {
   rayPlaneIntersect,
   transformPoint4,
   unprojectRay,
-} from '../../renderer/src/viewport/math.js';
+} from '../../renderer/src/platform/viewport/math.js';
 
 void test('multiplyMat4 with identity is a no-op', () => {
   const m = perspectiveMat4(Math.PI / 4, 1.5, 0.1, 100);
