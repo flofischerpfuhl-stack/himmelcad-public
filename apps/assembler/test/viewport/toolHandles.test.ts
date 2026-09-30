@@ -13,7 +13,7 @@ import {
   movePreviewBodies,
   pivotSnapPoint,
   toolHandleSet,
-} from '../../renderer/src/viewport/toolHandles.js';
+} from '../../renderer/src/modules/modeling/toolHandles.js';
 
 /** A unit-ish box body (two triangles per face are enough for bbox/centroid checks). */
 function boxBody(): Body {

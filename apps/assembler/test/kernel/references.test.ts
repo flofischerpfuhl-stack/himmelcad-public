@@ -30,7 +30,7 @@ import type {
   OffsetFaceFeature,
   PatternFeature,
   RevolveFeature,
-} from '../../renderer/src/model/features.js';
+} from '../../renderer/src/modules/modeling/features.js';
 import { detectRegions } from '../../renderer/src/foundation/sketch-solver/regions.js';
 import { extrude, fillet, sketch } from '../bench/parts.js';
 import { loadNodeKernel } from './nodeKernel.js';

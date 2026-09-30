@@ -20,7 +20,7 @@ import type {
   SketchPlaneRef,
 } from '../../renderer/src/foundation/document/document.js';
 import type { SketchFeature } from '../../renderer/src/foundation/sketch-solver/sketchFeature.js';
-import type { EmbossFeature } from '../../renderer/src/model/printFeatures.js';
+import type { EmbossFeature } from '../../renderer/src/modules/modeling/printFeatures.js';
 import {
   addCircle,
   addRectangle,

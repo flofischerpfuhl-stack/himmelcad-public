@@ -36,7 +36,7 @@ import type {
   SplitFeature,
   SweepFeature,
   TransformFeature,
-} from '../../renderer/src/model/features.js';
+} from '../../renderer/src/modules/modeling/features.js';
 import {
   addPolyline,
   sketchFromLegacyProfiles,

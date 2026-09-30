@@ -4,7 +4,7 @@
  * spliced into `schema.ts` (`DEFS`, `FEATURE_KIND_SCHEMAS`). Params are the
  * stored fields, exactly like every other kind.
  */
-import type { JsonSchema } from '../foundation/commands/api/validate.js';
+import type { JsonSchema } from '../../foundation/commands/api/validate.js';
 
 const str: JsonSchema = { type: 'string', minLength: 1 };
 const num: JsonSchema = { type: 'number' };

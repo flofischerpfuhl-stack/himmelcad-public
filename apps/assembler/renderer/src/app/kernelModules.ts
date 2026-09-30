@@ -5,5 +5,5 @@
  * and the tests, before the first evaluation.
  */
 import '../foundation/sketch-solver/sketchFeature.js';
-import '../kernel/features/modelingKernel.js';
+import '../modules/modeling/kernel.js';
 import '../kernel/features/constructionKernel.js';

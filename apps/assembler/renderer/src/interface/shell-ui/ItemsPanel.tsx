@@ -54,7 +54,7 @@ import {
   type ItemNode,
   type LeafRow,
 } from '../../foundation/commands/items.js';
-import { consumedSketchIds, isSketchVisible } from '../../model/modeling.js';
+import { consumedSketchIds, isSketchVisible } from '../../modules/modeling/modeling.js';
 import type { AssemblerState, SelectionItem } from '../../foundation/commands/store.js';
 import { useWorkspaceStore } from './workspace.js';
 import { useSketchStore } from '../../sketch/session.js';

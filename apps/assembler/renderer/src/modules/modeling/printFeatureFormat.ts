@@ -5,7 +5,7 @@
  * problem throws with a path-qualified message.
  */
 import type { Feature } from '../../foundation/document/document.js';
-import { PRINT_FEATURE_KINDS, type PrintFeature } from '../printFeatures.js';
+import { PRINT_FEATURE_KINDS, type PrintFeature } from './printFeatures.js';
 import { validatePlaneRef, type FormatHelpers } from './featureFormat.js';
 
 type Rec = Record<string, unknown>;

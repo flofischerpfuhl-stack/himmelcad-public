@@ -34,7 +34,7 @@ import {
   BLEND_OPTION_PARAMS,
   PRINT_DEFS,
   PRINT_FEATURE_KIND_SCHEMAS,
-} from '../../api/printSchema.js';
+} from '../../modules/modeling/printSchema.js';
 import type { FeatureKindSpec, MethodSpec } from '../../foundation/commands/api/contract.js';
 import {
   API_DEFS,
@@ -45,7 +45,7 @@ import {
   type ApiMethod,
 } from '../../foundation/commands/api/registry.js';
 import type { JsonSchema } from '../../foundation/commands/api/validate.js';
-import { OFFSET_FACE_MODES } from '../../model/features.js';
+import { OFFSET_FACE_MODES } from '../../modules/modeling/features.js';
 
 export const API_ID = 'hcasm.agent-api';
 export const API_VERSION = 1;

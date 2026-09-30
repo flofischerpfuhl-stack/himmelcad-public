@@ -6,7 +6,7 @@
  * sketch region `p` (the extrude naming; a face profile uses the edge index), `:start:<p>` / `:end:<p>` for the caps; a face OCCT does not
  * report falls back to the segment lying on its surface, else `:new`.
  */
-import '../../foundation/geometry-kernel/occtArena.js';
+import '../../../foundation/geometry-kernel/occtArena.js';
 import * as R from 'replicad';
 
 import {
@@ -14,19 +14,19 @@ import {
   bodyIdFor,
   type ExtrudeOperation,
   type Vec3,
-} from '../../foundation/document/document.js';
-import type { LoftFeature, RevolveFeature, SweepFeature } from '../../model/features.js';
+} from '../../../foundation/document/document.js';
+import type { LoftFeature, RevolveFeature, SweepFeature } from '../features.js';
 import {
   assignFaceKeys,
   type FaceGeom,
   type KeyedFace,
-} from '../../foundation/geometry-kernel/naming.js';
-import { edgePointAt, type RawShape } from '../../foundation/geometry-kernel/occt.js';
+} from '../../../foundation/geometry-kernel/naming.js';
+import { edgePointAt, type RawShape } from '../../../foundation/geometry-kernel/occt.js';
 import type {
   FeatureKit,
   ReplayContextLike,
   Shape3D,
-} from '../../foundation/geometry-kernel/features/kit.js';
+} from '../../../foundation/geometry-kernel/features/kit.js';
 import {
   bodyOrFail,
   distance,
@@ -36,8 +36,8 @@ import {
   resolveAxis,
   type Line3,
   type ProfileSection,
-} from '../../foundation/geometry-kernel/features/refs.js';
-import { cross, dot, normalize, sub } from '../../foundation/geometry-kernel/features/rigid.js';
+} from '../../../foundation/geometry-kernel/features/refs.js';
+import { cross, dot, normalize, sub } from '../../../foundation/geometry-kernel/features/rigid.js';
 
 interface Tool {
   shape: Shape3D;

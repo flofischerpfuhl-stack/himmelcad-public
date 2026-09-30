@@ -22,7 +22,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 
-import type { ModelingFeature } from '../model/features.js';
+import type { ModelingFeature } from '../features.js';
 
 export const MODELING_FEATURE_ICON: Record<ModelingFeature['kind'], LucideIcon> = {
   revolve: RotateCw,

@@ -14,7 +14,7 @@
  * one by one and fused (a sharp edge between two thickened faces leaves a
  * notch on its convex side: OCCT's simple offset joins no neighbours).
  */
-import '../../foundation/geometry-kernel/occtArena.js';
+import '../../../foundation/geometry-kernel/occtArena.js';
 import * as R from 'replicad';
 
 import {
@@ -22,26 +22,26 @@ import {
   bodyIdFor,
   framePoint,
   type Vec3,
-} from '../../foundation/document/document.js';
-import type { RibFeature, ThickenFeature } from '../../model/printFeatures.js';
-import { entityMap, pointPos } from '../../foundation/sketch-solver/types.js';
+} from '../../../foundation/document/document.js';
+import type { RibFeature, ThickenFeature } from '../printFeatures.js';
+import { entityMap, pointPos } from '../../../foundation/sketch-solver/types.js';
 import {
   assignFaceKeys,
   type FaceGeom,
   type KeyedFace,
-} from '../../foundation/geometry-kernel/naming.js';
-import type { RawShape } from '../../foundation/geometry-kernel/occt.js';
+} from '../../../foundation/geometry-kernel/naming.js';
+import type { RawShape } from '../../../foundation/geometry-kernel/occt.js';
 import type {
   BodyStateLike,
   FeatureKit,
   ReplayContextLike,
   Shape3D,
-} from '../../foundation/geometry-kernel/features/kit.js';
+} from '../../../foundation/geometry-kernel/features/kit.js';
 import {
   bodyOrFail,
   pickTarget,
   profileSections,
-} from '../../foundation/geometry-kernel/features/refs.js';
+} from '../../../foundation/geometry-kernel/features/refs.js';
 import {
   add,
   cross,
@@ -50,7 +50,7 @@ import {
   normalize,
   scale,
   sub,
-} from '../../foundation/geometry-kernel/features/rigid.js';
+} from '../../../foundation/geometry-kernel/features/rigid.js';
 
 interface Tool {
   shape: Shape3D;

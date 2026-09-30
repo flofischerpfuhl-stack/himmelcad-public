@@ -4,15 +4,15 @@
  * (`chrome/FeatureParams.tsx`, `chrome/PrintFeatureParams.tsx`; phase B moves
  * them into this folder).
  */
-import { BlendParams, BooleanParams, ShellParams } from '../../chrome/PrintFeatureParams.js';
-import { ModelingFeatureParams } from '../../chrome/FeatureParams.js';
+import { BlendParams, BooleanParams, ShellParams } from './ui/PrintFeatureParams.js';
+import { ModelingFeatureParams } from './ui/FeatureParams.js';
 import type {
   BooleanFeature,
   ChamferFeature,
   FilletFeature,
   ShellFeature,
 } from '../../foundation/document/document.js';
-import { MODELING_FEATURE_KINDS, type ModelingFeature } from '../../model/features.js';
+import { MODELING_FEATURE_KINDS, type ModelingFeature } from './features.js';
 import { defineModuleUi } from '../../platform/widgets/moduleUi.js';
 
 export const modelingUi = defineModuleUi({

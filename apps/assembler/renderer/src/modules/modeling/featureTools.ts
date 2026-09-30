@@ -23,8 +23,8 @@ import {
   faceSignatureOf,
   baseEdgeKey,
   baseFaceKey,
-} from '../foundation/geometry-kernel/naming.js';
-import type { Body, EvaluationResult } from '../foundation/geometry-kernel/types.js';
+} from '../../foundation/geometry-kernel/naming.js';
+import type { Body, EvaluationResult } from '../../foundation/geometry-kernel/types.js';
 import {
   frameForFace,
   frameForPlane,
@@ -41,9 +41,9 @@ import {
   type PlaneRef,
   type ProfileRef,
   type WorldAxis,
-} from '../foundation/document/document.js';
+} from '../../foundation/document/document.js';
 import { MAX_PATTERN_COUNT, type OffsetFaceMode, type PatternDefinition } from './features.js';
-import { constructionAxisLine, datumRef, planeRefPlane } from './construction.js';
+import { constructionAxisLine, datumRef, planeRefPlane } from '../../model/construction.js';
 import {
   acceptConstructionPick,
   constructionDraftBadges,
@@ -55,7 +55,7 @@ import {
   isConstructionDraftKind,
   referencedDatumIds,
   type ConstructionDraft,
-} from './constructionTools.js';
+} from '../../model/constructionTools.js';
 import { findSketchContact, pointInsideBody } from './modeling.js';
 import {
   OFFSET_FACE_MODE_LABEL,
@@ -65,7 +65,7 @@ import {
   modeValueOfOffset,
   offsetOfModeValue,
   totalGap,
-} from './offsetFaceModes.js';
+} from '../direct-edit/offsetFaceModes.js';
 import { PRINT_CLEARANCES } from './printFeatures.js';
 import {
   acceptPrintPick,
@@ -79,7 +79,7 @@ import {
   printDraftToFeature,
   type PrintDraft,
 } from './printFeatureTools.js';
-import type { SelectionItem } from '../foundation/commands/store.js';
+import type { SelectionItem } from '../../foundation/commands/store.js';
 
 // ---- drafts -------------------------------------------------------------------------
 

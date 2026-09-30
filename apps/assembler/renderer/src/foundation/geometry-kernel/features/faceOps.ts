@@ -23,7 +23,7 @@ import '../occtArena.js';
 import * as R from 'replicad';
 
 import { MIN_FEATURE_SIZE_MM, type FaceRef, type Vec3 } from '../../document/document.js';
-import type { DeleteFaceFeature, OffsetFaceFeature } from '../../../model/features.js';
+import type { DeleteFaceFeature, OffsetFaceFeature } from '../../../modules/modeling/features.js';
 import {
   assignFaceKeys,
   baseFaceKey,

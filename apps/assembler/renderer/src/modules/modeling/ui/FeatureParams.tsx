@@ -9,14 +9,14 @@ import {
   AXIS_DEF_LABEL,
   PLANE_DEF_LABEL,
   type ConstructionFeature,
-} from '../model/construction.js';
-import type { ExtrudeOperation, Plane, AxisRef } from '../foundation/document/document.js';
-import type { ModelingFeature } from '../model/features.js';
-import { OFFSET_FACE_MODE_LABEL } from '../model/offsetFaceModes.js';
-import type { AssemblerState, FeaturePatch } from '../foundation/commands/store.js';
-import { ExpressionField } from '../platform/widgets/ExpressionField.js';
+} from '../../../model/construction.js';
+import type { ExtrudeOperation, Plane, AxisRef } from '../../../foundation/document/document.js';
+import type { ModelingFeature } from '../features.js';
+import { OFFSET_FACE_MODE_LABEL } from '../../direct-edit/offsetFaceModes.js';
+import type { AssemblerState, FeaturePatch } from '../../../foundation/commands/store.js';
+import { ExpressionField } from '../../../platform/widgets/ExpressionField.js';
 import { PrintFeatureParams } from './PrintFeatureParams.js';
-import styles from '../platform/widgets/HistoryCard.module.css';
+import styles from '../../../platform/widgets/HistoryCard.module.css';
 
 const OPERATION_OPTIONS = [
   { value: 'new', label: 'New body' },

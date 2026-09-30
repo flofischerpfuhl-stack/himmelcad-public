@@ -87,34 +87,13 @@
       "id": "modeling",
       "layer": "domain",
       "summary": "Solid modelling features and tools: revolve, sweep, loft, mirror, pattern, split, transform, align, hole, emboss, draft, rib, thicken; their tools, history cards, commands, handles and API schemas.",
-      "paths": [
-        "renderer/src/modules/modeling/",
-        "renderer/src/kernel/features/",
-        "renderer/src/model/features.ts",
-        "renderer/src/model/modelingKinds.ts",
-        "renderer/src/model/featureTools.ts",
-        "renderer/src/model/printFeatures.ts",
-        "renderer/src/model/printFeatureTools.ts",
-        "renderer/src/model/modeling.ts",
-        "renderer/src/model/moveGizmo.ts",
-        "renderer/src/model/project/featureFormat.ts",
-        "renderer/src/model/project/printFeatureFormat.ts",
-        "renderer/src/model/commands/featureCommands.ts",
-        "renderer/src/model/commands/blendCommands.ts",
-        "renderer/src/model/commands/modelingCommands.ts",
-        "renderer/src/chrome/FeatureParams.tsx",
-        "renderer/src/chrome/PrintFeatureParams.tsx",
-        "renderer/src/chrome/featureIcons.ts",
-        "renderer/src/api/printSchema.ts",
-        "renderer/src/viewport/toolAnchors.ts",
-        "renderer/src/viewport/toolHandles.ts"
-      ]
+      "paths": ["renderer/src/modules/modeling/"]
     },
     {
       "id": "direct-edit",
       "layer": "domain",
       "summary": "Direct face edits: Offset Face (value modes), Delete Face, move face.",
-      "paths": ["renderer/src/modules/direct-edit/", "renderer/src/model/offsetFaceModes.ts"]
+      "paths": ["renderer/src/modules/direct-edit/"]
     },
     {
       "id": "construction",

@@ -35,7 +35,7 @@ import type {
   HoleFeature,
   RibFeature,
   ThickenFeature,
-} from '../../renderer/src/model/printFeatures.js';
+} from '../../renderer/src/modules/modeling/printFeatures.js';
 import {
   addPolyline,
   sketchFromLegacyProfiles,

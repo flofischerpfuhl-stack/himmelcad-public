@@ -4,7 +4,7 @@
  * the first problem throws with a path-qualified message.
  */
 import type { Feature } from '../../foundation/document/document.js';
-import { MODELING_FEATURE_KINDS, OFFSET_FACE_MODES, type ModelingFeature } from '../features.js';
+import { MODELING_FEATURE_KINDS, OFFSET_FACE_MODES, type ModelingFeature } from './features.js';
 import { isPrintFeatureKind, validatePrintFeature } from './printFeatureFormat.js';
 import { validatePlaneRef } from '../../foundation/document/validation.js';
 import type { FormatHelpers } from '../../foundation/document/featureKinds.js';

@@ -33,8 +33,8 @@ import { buildThreeMf } from '../../foundation/geometry-kernel/threeMf.js';
 import type { Body, EvaluationResult } from '../../foundation/geometry-kernel/types.js';
 import type { Feature } from '../../foundation/document/document.js';
 import type { SketchFeature } from '../../foundation/sketch-solver/sketchFeature.js';
-import { parseMirroredSketchId } from '../../model/features.js';
-import { consumedSketchIds } from '../../model/modeling.js';
+import { parseMirroredSketchId } from '../../modules/modeling/features.js';
+import { consumedSketchIds } from '../../modules/modeling/modeling.js';
 import { resolveParameterValues } from '../../foundation/document/parameters.js';
 import { runMeasureQuery } from '../../api/measureApi.js';
 import {

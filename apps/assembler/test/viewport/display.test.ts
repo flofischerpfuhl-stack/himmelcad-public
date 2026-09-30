@@ -29,7 +29,7 @@ import {
   sectionHandle,
   sectionOffsetRange,
   sectionOutline,
-} from '../../renderer/src/viewport/toolAnchors.js';
+} from '../../renderer/src/modules/modeling/toolAnchors.js';
 import { boxBody, cylinderBody } from './meshFixtures.js';
 
 void test('bodyGeometry: per-vertex face index and concatenated edges with ranges', () => {

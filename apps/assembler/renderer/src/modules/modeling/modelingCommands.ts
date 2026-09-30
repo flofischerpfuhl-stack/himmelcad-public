@@ -14,7 +14,7 @@ import {
   type CommandContext,
 } from '../../foundation/commands/registry.js';
 import { isPlanarFace, makeFaceRef } from '../../foundation/commands/store.js';
-import { createDraft } from '../featureTools.js';
+import { createDraft } from './featureTools.js';
 import { FEATURE_COMMANDS } from './featureCommands.js';
 
 /** Selected edges if they all belong to one body, else `null`. */

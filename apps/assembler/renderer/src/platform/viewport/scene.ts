@@ -13,7 +13,7 @@
  * grid, highlights and tool chrome.
  */
 import type { Body, EvaluatedSketch } from '../../foundation/geometry-kernel/types.js';
-import type { Bounds3 } from '../../model/modeling.js';
+import type { Bounds3 } from '../../modules/modeling/modeling.js';
 import { referenceMeshIdOf } from '../../foundation/commands/referenceMesh.js';
 import type {
   DisplayMode,
@@ -51,7 +51,7 @@ import {
   sectionPlaneDistance,
   type AxisHandle,
   type SectionView,
-} from '../../viewport/toolAnchors.js';
+} from '../../modules/modeling/toolAnchors.js';
 import { PickTable, type PickTarget, type ToolHandleKind } from './picking.js';
 import type {
   DrawBatch,

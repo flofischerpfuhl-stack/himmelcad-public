@@ -23,32 +23,32 @@
  * Face names: `<id>:top:<p>` (raised face or engraved floor is `:floor:`),
  * `<id>:side:<p>` (`#n` pieces) for profile `p`.
  */
-import '../../foundation/geometry-kernel/occtArena.js';
+import '../../../foundation/geometry-kernel/occtArena.js';
 import * as R from 'replicad';
 
-import { MIN_FEATURE_SIZE_MM, framePoint, type Vec3 } from '../../foundation/document/document.js';
-import type { EmbossFeature } from '../../model/printFeatures.js';
-import { isFullCircle, pointAt } from '../../foundation/sketch-solver/geometry.js';
-import type { RegionLoop, SketchRegion } from '../../foundation/sketch-solver/regions.js';
+import { MIN_FEATURE_SIZE_MM, framePoint, type Vec3 } from '../../../foundation/document/document.js';
+import type { EmbossFeature } from '../printFeatures.js';
+import { isFullCircle, pointAt } from '../../../foundation/sketch-solver/geometry.js';
+import type { RegionLoop, SketchRegion } from '../../../foundation/sketch-solver/regions.js';
 import {
   assignFaceKeys,
   type FaceGeom,
   type KeyedFace,
-} from '../../foundation/geometry-kernel/naming.js';
-import { rebindRegion } from '../../foundation/geometry-kernel/regionRebind.js';
+} from '../../../foundation/geometry-kernel/naming.js';
+import { rebindRegion } from '../../../foundation/geometry-kernel/regionRebind.js';
 import type {
   FeatureKit,
   ReplayContextLike,
   Shape3D,
-} from '../../foundation/geometry-kernel/features/kit.js';
-import { bodyOrFail, profileSections } from '../../foundation/geometry-kernel/features/refs.js';
+} from '../../../foundation/geometry-kernel/features/kit.js';
+import { bodyOrFail, profileSections } from '../../../foundation/geometry-kernel/features/refs.js';
 import {
   cross,
   dot,
   normalize,
   scale,
   sub,
-} from '../../foundation/geometry-kernel/features/rigid.js';
+} from '../../../foundation/geometry-kernel/features/rigid.js';
 
 interface Tool {
   shape: Shape3D;

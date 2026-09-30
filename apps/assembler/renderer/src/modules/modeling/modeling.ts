@@ -4,7 +4,7 @@
  * "consumed" sketch visibility, section-plane defaults and quick
  * measurements. No store access, no DOM — unit tested under `node:test`.
  */
-import type { Body, EvaluationResult } from '../foundation/geometry-kernel/types.js';
+import type { Body, EvaluationResult } from '../../foundation/geometry-kernel/types.js';
 import {
   frameForFace,
   frameForPlane,
@@ -13,11 +13,11 @@ import {
   type ExtrudeOperation,
   type Feature,
   type Vec3,
-} from '../foundation/document/document.js';
-import type { SketchFeature } from '../foundation/sketch-solver/sketchFeature.js';
-import { detectRegions, loopPolygon } from '../foundation/sketch-solver/regions.js';
+} from '../../foundation/document/document.js';
+import type { SketchFeature } from '../../foundation/sketch-solver/sketchFeature.js';
+import { detectRegions, loopPolygon } from '../../foundation/sketch-solver/regions.js';
 import { isModelingFeature, sketchIdsUsedBy } from './features.js';
-import type { SelectionItem } from '../foundation/commands/store.js';
+import type { SelectionItem } from '../../foundation/commands/store.js';
 
 // ---- Automatic extrude operation --------------------------------------------------
 

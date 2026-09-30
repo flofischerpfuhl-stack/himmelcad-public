@@ -22,7 +22,7 @@ import {
   type SketchFrame,
   type Vec3,
 } from '../../foundation/document/document.js';
-import { parseMirroredSketchId } from '../../model/features.js';
+import { parseMirroredSketchId } from '../../modules/modeling/features.js';
 import {
   findEdge,
   findFace,

@@ -6,7 +6,7 @@
  * search, shortcuts and the shortcut sheet all read the same entries.
  */
 import { DISPLAY_MODE_ENTRIES, activeDisplayEntry } from '../../platform/viewport/displayModes.js';
-import { sectionNormal } from '../../viewport/toolAnchors.js';
+import { sectionNormal } from '../../modules/modeling/toolAnchors.js';
 import { displayBodyName, useItemsStore } from '../../foundation/commands/items.js';
 import { currentRefs } from '../measure.js';
 import { useMeasureStore } from '../measureStore.js';

@@ -5,7 +5,7 @@
  * `rigid.ts`); copies are new, independent bodies whose faces carry the
  * source keys (a reference is `bodyId` + key, so they stay unambiguous).
  */
-import '../../foundation/geometry-kernel/occtArena.js';
+import '../../../foundation/geometry-kernel/occtArena.js';
 import * as R from 'replicad';
 
 import {
@@ -16,12 +16,12 @@ import {
   type SketchFrame,
   type Vec3,
   extraBodyId,
-} from '../../foundation/document/document.js';
-import type { SketchFeature } from '../../foundation/sketch-solver/sketchFeature.js';
-import { addProjection, projectSource } from '../../foundation/sketch-solver/projection.js';
-import { EMPTY_SKETCH } from '../../foundation/sketch-solver/types.js';
-import { evaluateSketchGeometry } from '../../foundation/geometry-kernel/sketchGeometry.js';
-import { sampleEdge } from '../../foundation/geometry-kernel/sketchProjection.js';
+} from '../../../foundation/document/document.js';
+import type { SketchFeature } from '../../../foundation/sketch-solver/sketchFeature.js';
+import { addProjection, projectSource } from '../../../foundation/sketch-solver/projection.js';
+import { EMPTY_SKETCH } from '../../../foundation/sketch-solver/types.js';
+import { evaluateSketchGeometry } from '../../../foundation/geometry-kernel/sketchGeometry.js';
+import { sampleEdge } from '../../../foundation/geometry-kernel/sketchProjection.js';
 import {
   mirroredSketchId,
   MAX_PATTERN_COUNT,
@@ -31,21 +31,21 @@ import {
   type RotateAxisFeature,
   type SplitFeature,
   type TransformFeature,
-} from '../../model/features.js';
-import { assignFaceKeys } from '../../foundation/geometry-kernel/naming.js';
-import { booleanWithHistory, type HistoryResult } from '../../foundation/geometry-kernel/occt.js';
+} from '../features.js';
+import { assignFaceKeys } from '../../../foundation/geometry-kernel/naming.js';
+import { booleanWithHistory, type HistoryResult } from '../../../foundation/geometry-kernel/occt.js';
 import type {
   BodyStateLike,
   FeatureKit,
   ReplayContextLike,
   Shape3D,
-} from '../../foundation/geometry-kernel/features/kit.js';
-import { transformShape } from '../../foundation/geometry-kernel/features/occRigid.js';
+} from '../../../foundation/geometry-kernel/features/kit.js';
+import { transformShape } from '../../../foundation/geometry-kernel/features/occRigid.js';
 import {
   bodyOrFail,
   resolveAxis,
   resolvePlane,
-} from '../../foundation/geometry-kernel/features/refs.js';
+} from '../../../foundation/geometry-kernel/features/refs.js';
 import {
   add,
   cross,
@@ -58,7 +58,7 @@ import {
   transformGeom,
   transformOps,
   type RigidOp,
-} from '../../foundation/geometry-kernel/features/rigid.js';
+} from '../../../foundation/geometry-kernel/features/rigid.js';
 
 /** Moves `body` in place by `ops`, keeping its face keys. */
 function moveBody(

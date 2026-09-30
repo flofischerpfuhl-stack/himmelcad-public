@@ -7,7 +7,7 @@
  * come from `featureTools.ts` (`createDraft`), so a disabled command shows
  * exactly the reason the tool could not start.
  */
-import { createDraft, type FeatureDraftKind } from '../featureTools.js';
+import { createDraft, type FeatureDraftKind } from './featureTools.js';
 import type { AssemblerState, SelectionItem } from '../../foundation/commands/store.js';
 import type {
   Command,

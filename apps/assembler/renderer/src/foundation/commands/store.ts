@@ -78,11 +78,11 @@ import {
 } from '../document/document.js';
 import { createDemoDocument } from './demoDocument.js';
 import type { SketchFeature } from '../sketch-solver/sketchFeature.js';
-import type { TransformFeature } from '../../model/features.js';
+import type { TransformFeature } from '../../modules/modeling/features.js';
 import { featureKindLabel } from '../document/featureKinds.js';
-import { draftToFeature, type FeatureDraft } from '../../model/featureTools.js';
+import { draftToFeature, type FeatureDraft } from '../../modules/modeling/featureTools.js';
 import { readyToFinish, startSession, type PickSessionState } from './pickSession.js';
-import { gizmoTransformFields } from '../../model/moveGizmo.js';
+import { gizmoTransformFields } from '../../modules/modeling/moveGizmo.js';
 import { regionCentre, translateSketchRegion } from '../sketch-solver/moveRegion.js';
 import {
   autoExtrudeOperation,
@@ -91,7 +91,7 @@ import {
   findSketchContact,
   visibleBounds,
   type SketchContact,
-} from '../../model/modeling.js';
+} from '../../modules/modeling/modeling.js';
 import {
   expressionFieldsOf,
   resolveFieldExpression,

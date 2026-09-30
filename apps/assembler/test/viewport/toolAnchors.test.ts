@@ -8,7 +8,7 @@ import {
   sectionHandle,
   sectionNormal,
   sectionOutline,
-} from '../../renderer/src/viewport/toolAnchors.js';
+} from '../../renderer/src/modules/modeling/toolAnchors.js';
 
 const BOUNDS = {
   min: [0, 0, 0] as [number, number, number],

@@ -24,7 +24,7 @@ import {
 } from '../../renderer/src/foundation/document/document.js';
 import { createDemoDocument } from '../../renderer/src/foundation/commands/demoDocument.js';
 import type { SketchFeature } from '../../renderer/src/foundation/sketch-solver/sketchFeature.js';
-import { createDraft, draftMeta, draftToFeature } from '../../renderer/src/model/featureTools.js';
+import { createDraft, draftMeta, draftToFeature } from '../../renderer/src/modules/modeling/featureTools.js';
 import {
   applyFixPick,
   missingReferences,
@@ -35,7 +35,7 @@ import {
   historyFilterItems,
   relevantFeatureIds,
 } from '../../renderer/src/interface/shell-ui/historyTools.js';
-import { gizmoOps, gizmoTransformFields } from '../../renderer/src/model/moveGizmo.js';
+import { gizmoOps, gizmoTransformFields } from '../../renderer/src/modules/modeling/moveGizmo.js';
 import { usePreferences } from '../../renderer/src/platform/input/preferences.js';
 import { loadProjectFile, saveProjectFile } from '../../renderer/src/foundation/document/format.js';
 import {

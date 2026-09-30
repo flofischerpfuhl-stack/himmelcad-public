@@ -24,10 +24,10 @@
       "rule": "upward",
       "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
       "edges": [
-        "renderer/src/foundation/commands/store.ts -> renderer/src/model/featureTools.ts",
-        "renderer/src/foundation/commands/store.ts -> renderer/src/model/features.ts",
-        "renderer/src/foundation/commands/store.ts -> renderer/src/model/modeling.ts",
-        "renderer/src/foundation/commands/store.ts -> renderer/src/model/moveGizmo.ts"
+        "renderer/src/foundation/commands/store.ts -> renderer/src/modules/modeling/featureTools.ts",
+        "renderer/src/foundation/commands/store.ts -> renderer/src/modules/modeling/features.ts",
+        "renderer/src/foundation/commands/store.ts -> renderer/src/modules/modeling/modeling.ts",
+        "renderer/src/foundation/commands/store.ts -> renderer/src/modules/modeling/moveGizmo.ts"
       ]
     },
     {
@@ -44,14 +44,14 @@
       "to": "measure",
       "rule": "cross-domain",
       "reason": "Known at the start of the ADR 0032 restructure (phase A): domain modules talk through foundation contracts and registrations, not directly.",
-      "edges": ["renderer/src/model/offsetFaceModes.ts -> renderer/src/model/measure.ts"]
+      "edges": ["renderer/src/modules/direct-edit/offsetFaceModes.ts -> renderer/src/model/measure.ts"]
     },
     {
       "from": "direct-edit",
       "to": "modeling",
       "rule": "cross-domain",
       "reason": "Known at the start of the ADR 0032 restructure (phase A): domain modules talk through foundation contracts and registrations, not directly.",
-      "edges": ["renderer/src/model/offsetFaceModes.ts -> renderer/src/model/features.ts"]
+      "edges": ["renderer/src/modules/direct-edit/offsetFaceModes.ts -> renderer/src/modules/modeling/features.ts"]
     },
     {
       "from": "display",
@@ -69,8 +69,8 @@
       "rule": "cross-domain",
       "reason": "Known at the start of the ADR 0032 restructure (phase A): domain modules talk through foundation contracts and registrations, not directly.",
       "edges": [
-        "renderer/src/chrome/AnalysisLegend.tsx -> renderer/src/model/modeling.ts",
-        "renderer/src/model/commands/displayCommands.ts -> renderer/src/viewport/toolAnchors.ts"
+        "renderer/src/chrome/AnalysisLegend.tsx -> renderer/src/modules/modeling/modeling.ts",
+        "renderer/src/model/commands/displayCommands.ts -> renderer/src/modules/modeling/toolAnchors.ts"
       ]
     },
     {
@@ -90,7 +90,7 @@
       "rule": "upward",
       "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
       "edges": [
-        "renderer/src/foundation/geometry-kernel/features/faceOps.ts -> renderer/src/model/features.ts"
+        "renderer/src/foundation/geometry-kernel/features/faceOps.ts -> renderer/src/modules/modeling/features.ts"
       ]
     },
     {
@@ -119,11 +119,11 @@
       "rule": "cross-domain",
       "reason": "Known at the start of the ADR 0032 restructure (phase A): domain modules talk through foundation contracts and registrations, not directly.",
       "edges": [
-        "renderer/src/chrome/FeatureParams.tsx -> renderer/src/model/construction.ts",
-        "renderer/src/model/featureTools.ts -> renderer/src/model/construction.ts",
-        "renderer/src/model/featureTools.ts -> renderer/src/model/constructionTools.ts",
-        "renderer/src/model/features.ts -> renderer/src/model/construction.ts",
-        "renderer/src/model/printFeatureTools.ts -> renderer/src/model/construction.ts"
+        "renderer/src/modules/modeling/ui/FeatureParams.tsx -> renderer/src/model/construction.ts",
+        "renderer/src/modules/modeling/featureTools.ts -> renderer/src/model/construction.ts",
+        "renderer/src/modules/modeling/featureTools.ts -> renderer/src/model/constructionTools.ts",
+        "renderer/src/modules/modeling/features.ts -> renderer/src/model/construction.ts",
+        "renderer/src/modules/modeling/printFeatureTools.ts -> renderer/src/model/construction.ts"
       ]
     },
     {
@@ -132,8 +132,8 @@
       "rule": "cross-domain",
       "reason": "Known at the start of the ADR 0032 restructure (phase A): domain modules talk through foundation contracts and registrations, not directly.",
       "edges": [
-        "renderer/src/chrome/FeatureParams.tsx -> renderer/src/model/offsetFaceModes.ts",
-        "renderer/src/model/featureTools.ts -> renderer/src/model/offsetFaceModes.ts"
+        "renderer/src/modules/modeling/ui/FeatureParams.tsx -> renderer/src/modules/direct-edit/offsetFaceModes.ts",
+        "renderer/src/modules/modeling/featureTools.ts -> renderer/src/modules/direct-edit/offsetFaceModes.ts"
       ]
     },
     {
@@ -142,12 +142,12 @@
       "rule": "external-owner",
       "reason": "Known at the start of the ADR 0032 restructure (phase A): reach this library through its owning module.",
       "edges": [
-        "renderer/src/kernel/features/bodyOps.ts -> replicad",
-        "renderer/src/kernel/features/draft.ts -> replicad",
-        "renderer/src/kernel/features/emboss.ts -> replicad",
-        "renderer/src/kernel/features/holes.ts -> replicad",
-        "renderer/src/kernel/features/profileSolids.ts -> replicad",
-        "renderer/src/kernel/features/ribThicken.ts -> replicad"
+        "renderer/src/modules/modeling/kernel/bodyOps.ts -> replicad",
+        "renderer/src/modules/modeling/kernel/draft.ts -> replicad",
+        "renderer/src/modules/modeling/kernel/emboss.ts -> replicad",
+        "renderer/src/modules/modeling/kernel/holes.ts -> replicad",
+        "renderer/src/modules/modeling/kernel/profileSolids.ts -> replicad",
+        "renderer/src/modules/modeling/kernel/ribThicken.ts -> replicad"
       ]
     },
     {
@@ -185,13 +185,13 @@
       "rule": "upward",
       "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
       "edges": [
-        "renderer/src/platform/viewport/Viewport.tsx -> renderer/src/model/featureTools.ts",
-        "renderer/src/platform/viewport/Viewport.tsx -> renderer/src/model/modeling.ts",
-        "renderer/src/platform/viewport/Viewport.tsx -> renderer/src/model/moveGizmo.ts",
-        "renderer/src/platform/viewport/Viewport.tsx -> renderer/src/viewport/toolAnchors.ts",
-        "renderer/src/platform/viewport/Viewport.tsx -> renderer/src/viewport/toolHandles.ts",
-        "renderer/src/platform/viewport/scene.ts -> renderer/src/model/modeling.ts",
-        "renderer/src/platform/viewport/scene.ts -> renderer/src/viewport/toolAnchors.ts"
+        "renderer/src/platform/viewport/Viewport.tsx -> renderer/src/modules/modeling/featureTools.ts",
+        "renderer/src/platform/viewport/Viewport.tsx -> renderer/src/modules/modeling/modeling.ts",
+        "renderer/src/platform/viewport/Viewport.tsx -> renderer/src/modules/modeling/moveGizmo.ts",
+        "renderer/src/platform/viewport/Viewport.tsx -> renderer/src/modules/modeling/toolAnchors.ts",
+        "renderer/src/platform/viewport/Viewport.tsx -> renderer/src/modules/modeling/toolHandles.ts",
+        "renderer/src/platform/viewport/scene.ts -> renderer/src/modules/modeling/modeling.ts",
+        "renderer/src/platform/viewport/scene.ts -> renderer/src/modules/modeling/toolAnchors.ts"
       ]
     },
     {

@@ -32,7 +32,7 @@ import {
   type MirrorFeature,
   type OffsetFaceFeature,
   type PatternFeature,
-} from '../../renderer/src/model/features.js';
+} from '../../renderer/src/modules/modeling/features.js';
 import { loadProjectFile, saveProjectFile } from '../../renderer/src/foundation/document/format.js';
 import {
   addPolyline,

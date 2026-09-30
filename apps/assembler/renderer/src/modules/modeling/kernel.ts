@@ -13,7 +13,7 @@ import {
   applyOffsetFace,
 } from '../../foundation/geometry-kernel/features/faceOps.js';
 import { defineKernelModule } from '../../foundation/geometry-kernel/features/registry.js';
-import '../../model/modelingKinds.js';
+import './kinds.js';
 import {
   applyAlign,
   applyMirror,
@@ -21,12 +21,12 @@ import {
   applyRotateAxis,
   applySplit,
   applyTransform,
-} from './bodyOps.js';
-import { applyDraft } from './draft.js';
-import { applyEmboss } from './emboss.js';
-import { applyHole } from './holes.js';
-import { applyLoft, applyRevolve, applySweep } from './profileSolids.js';
-import { applyRib, applyThicken } from './ribThicken.js';
+} from './kernel/bodyOps.js';
+import { applyDraft } from './kernel/draft.js';
+import { applyEmboss } from './kernel/emboss.js';
+import { applyHole } from './kernel/holes.js';
+import { applyLoft, applyRevolve, applySweep } from './kernel/profileSolids.js';
+import { applyRib, applyThicken } from './kernel/ribThicken.js';
 
 export const modelingKernel = defineKernelModule({
   id: 'modeling',

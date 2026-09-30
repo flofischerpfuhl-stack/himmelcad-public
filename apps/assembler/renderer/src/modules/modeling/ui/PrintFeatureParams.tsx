@@ -15,20 +15,20 @@ import type {
   ChamferFeature,
   FilletFeature,
   ShellFeature,
-} from '../foundation/document/document.js';
-import { edgeRuleLabel } from '../foundation/document/blendOptions.js';
+} from '../../../foundation/document/document.js';
+import { edgeRuleLabel } from '../../../foundation/document/blendOptions.js';
 import {
   METRIC_HOLE_SIZES,
   holePreset,
   holeSummary,
   type HoleFeature,
   type PrintFeature,
-} from '../model/printFeatures.js';
-import type { AssemblerState, FeaturePatch } from '../foundation/commands/store.js';
-import { resolveParameterValues } from '../foundation/document/parameters.js';
-import { ExpressionField } from '../platform/widgets/ExpressionField.js';
-import { ParamExpressionField } from '../platform/widgets/ParamExpressionField.js';
-import styles from '../platform/widgets/HistoryCard.module.css';
+} from '../printFeatures.js';
+import type { AssemblerState, FeaturePatch } from '../../../foundation/commands/store.js';
+import { resolveParameterValues } from '../../../foundation/document/parameters.js';
+import { ExpressionField } from '../../../platform/widgets/ExpressionField.js';
+import { ParamExpressionField } from '../../../platform/widgets/ParamExpressionField.js';
+import styles from '../../../platform/widgets/HistoryCard.module.css';
 
 const OPERATION_OPTIONS = [
   { value: 'new', label: 'New body' },

@@ -10,14 +10,14 @@ import {
   registerFeatureKind,
   type Feature,
   type FeatureKindDefinition,
-} from '../foundation/document/featureKinds.js';
+} from '../../foundation/document/featureKinds.js';
 import {
   MODELING_FEATURE_KINDS,
   MODELING_FEATURE_LABEL,
   sketchIdsUsedBy,
   type ModelingFeature,
 } from './features.js';
-import { validateModelingFeature } from './project/featureFormat.js';
+import { validateModelingFeature } from './featureFormat.js';
 
 /** Formula fields of the modelling kinds (`foundation/document/parameters.ts`). */
 const EXPRESSION_FIELDS: Partial<Record<ModelingFeature['kind'], readonly string[]>> = {

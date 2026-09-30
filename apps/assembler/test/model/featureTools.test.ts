@@ -17,7 +17,7 @@ import {
   draftBadges,
   draftHandles,
   type FeatureDraft,
-} from '../../renderer/src/model/featureTools.js';
+} from '../../renderer/src/modules/modeling/featureTools.js';
 import { loadProjectFile, saveProjectFile } from '../../renderer/src/foundation/document/format.js';
 import {
   makeFaceRef,

@@ -20,12 +20,12 @@ import type {
   ProfileRef,
   Vec3,
   WorldAxis,
-} from '../foundation/document/document.js';
+} from '../../foundation/document/document.js';
 import {
   CONSTRUCTION_FEATURE_KINDS,
   CONSTRUCTION_FEATURE_LABEL,
   type ConstructionFeature,
-} from './construction.js';
+} from '../../model/construction.js';
 import {
   PRINT_FEATURE_KINDS,
   PRINT_FEATURE_LABEL,
@@ -36,7 +36,7 @@ import {
 // The shared reference types moved to the document (`foundation/document/document.ts`),
 // where the kernel reads them; re-exported for the modelling code.
 export type { AxisRef, PathRef, PlaneRef, ProfileRef, WorldAxis };
-export { extraBodyId, worldAxisVector } from '../foundation/document/document.js';
+export { extraBodyId, worldAxisVector } from '../../foundation/document/document.js';
 
 /** Revolves a profile about an axis; New/Join/Cut like Extrude. */
 export interface RevolveFeature extends FeatureBase {
@@ -231,7 +231,7 @@ export type ModelingFeature =
   // Construction planes and axes (`construction.ts`).
   | ConstructionFeature;
 
-declare module '../foundation/document/featureKinds.js' {
+declare module '../../foundation/document/featureKinds.js' {
   interface FeatureKindMap {
     revolve: RevolveFeature;
     sweep: SweepFeature;

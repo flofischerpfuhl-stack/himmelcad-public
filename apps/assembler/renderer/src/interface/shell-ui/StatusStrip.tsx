@@ -7,7 +7,7 @@
  * a tool is active — the tool pill and prompt take over that space.
  */
 import { withDisplayNames, useItemsStore } from '../../foundation/commands/items.js';
-import { measureSelection } from '../../model/modeling.js';
+import { measureSelection } from '../../modules/modeling/modeling.js';
 import { formatLength, usePreferences, type LengthUnit } from '../../platform/input/preferences.js';
 import { referenceMeshWorldBounds } from '../../foundation/commands/referenceMesh.js';
 import { selectionSummary } from './format.js';

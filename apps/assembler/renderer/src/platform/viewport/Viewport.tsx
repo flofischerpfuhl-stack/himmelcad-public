@@ -14,7 +14,7 @@ import {
   isSketchVisible,
   visibleBounds,
   type Bounds3,
-} from '../../model/modeling.js';
+} from '../../modules/modeling/modeling.js';
 import {
   isReferenceMeshBodyId,
   REFERENCE_MESH_ID_PREFIX,
@@ -101,7 +101,7 @@ import {
   shellHandle,
   type AxisHandle,
   type SectionView,
-} from '../../viewport/toolAnchors.js';
+} from '../../modules/modeling/toolAnchors.js';
 import { bodyMaterials } from './displayModes.js';
 import { MeasureOverlay } from '../../viewport/MeasureOverlay.js';
 import { snapMeasurePoint, snapPoints, type Vec3 as MeasureVec3 } from '../../model/measure.js';
@@ -117,8 +117,8 @@ import {
   toolHandleSet,
   type ToolChip,
   type ToolHandleSet,
-} from '../../viewport/toolHandles.js';
-import { acceptPick, draftDatumIds } from '../../model/featureTools.js';
+} from '../../modules/modeling/toolHandles.js';
+import { acceptPick, draftDatumIds } from '../../modules/modeling/featureTools.js';
 import { applyFixPick, useFixStore } from '../../interface/shell-ui/fixReference.js';
 import {
   WORLD_AXES,
@@ -126,7 +126,7 @@ import {
   deltaAlong,
   isWorldAxes,
   withDeltaAlong,
-} from '../../model/moveGizmo.js';
+} from '../../modules/modeling/moveGizmo.js';
 import { addPick } from '../../foundation/commands/pickSession.js';
 import { emptyClickFinishes } from '../../foundation/commands/toolFinish.js';
 import { adaptiveGridStep } from './gridResolution.js';

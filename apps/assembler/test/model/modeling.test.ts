@@ -12,7 +12,7 @@ import {
   pointInsideBody,
   sectionRange,
   visibleBounds,
-} from '../../renderer/src/model/modeling.js';
+} from '../../renderer/src/modules/modeling/modeling.js';
 import { loadNodeKernel } from '../kernel/nodeKernel.js';
 
 const PLATE = 'body:feature-extrude-1';

@@ -8,17 +8,17 @@
  * is the pointer ray's closest point on the drag line — the tip therefore
  * follows the cursor 1:1 because the arrow grows with its value.
  */
-import type { Body } from '../foundation/geometry-kernel/types.js';
-import type { Bounds3 } from '../model/modeling.js';
+import type { Body } from '../../foundation/geometry-kernel/types.js';
+import type { Bounds3 } from './modeling.js';
 import {
   findEdge,
   findFace,
   type EdgeBlendTool,
   type SectionAxis,
   type ShellTool,
-} from '../foundation/commands/store.js';
-import type { ToolHandleKind } from '../platform/viewport/picking.js';
-import type { Vec3 } from '../platform/viewport/math.js';
+} from '../../foundation/commands/store.js';
+import type { ToolHandleKind } from '../../platform/viewport/picking.js';
+import type { Vec3 } from '../../platform/viewport/math.js';
 
 export interface AxisHandle {
   handle: ToolHandleKind;

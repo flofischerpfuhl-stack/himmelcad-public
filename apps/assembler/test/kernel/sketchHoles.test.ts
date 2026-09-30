@@ -15,7 +15,7 @@ import type {
   Plane,
 } from '../../renderer/src/foundation/document/document.js';
 import type { SketchFeature } from '../../renderer/src/foundation/sketch-solver/sketchFeature.js';
-import type { RevolveFeature } from '../../renderer/src/model/features.js';
+import type { RevolveFeature } from '../../renderer/src/modules/modeling/features.js';
 import {
   addCircle,
   addRectangle,
