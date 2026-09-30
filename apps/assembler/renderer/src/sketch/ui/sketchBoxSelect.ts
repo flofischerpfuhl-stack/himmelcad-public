@@ -12,7 +12,7 @@ import {
   type ScreenPoint,
   type ScreenRect,
 } from '../../viewport/boxSelect.js';
-import { entityCurve, sampleCurve } from '../geometry.js';
+import { entityCurves, sampleCurve } from '../geometry.js';
 import { entityMap, isCurve, type SketchData, type Vec2 } from '../types.js';
 
 export type SketchBoxFilter = 'all' | 'curves' | 'points';
@@ -55,16 +55,20 @@ export function sketchBoxSelect(
       continue;
     }
     if (!isCurve(entity) || filter === 'points') continue;
-    const curve = entityCurve(map, entity);
-    if (!curve) continue;
-    const screen = sampleCurve(curve).map(toScreen);
-    if (screen.some((p) => p === null)) continue;
-    const points = screen as ScreenPoint[];
+    // Text: all glyph contours together (window: every contour inside; crossing: any touched).
+    const polylines = entityCurves(map, entity).map(({ curve }) =>
+      sampleCurve(curve).map(toScreen),
+    );
+    if (polylines.length === 0 || polylines.some((s) => s.some((p) => p === null))) continue;
+    const lists = polylines as ScreenPoint[][];
     const hit =
       mode === 'window'
-        ? points.every((p) => pointInRect(p, rect))
-        : points.some((p, i) => i > 0 && segmentTouchesRect(points[i - 1]!, p, rect)) ||
-          points.some((p) => pointInRect(p, rect));
+        ? lists.every((points) => points.every((p) => pointInRect(p, rect)))
+        : lists.some(
+            (points) =>
+              points.some((p, i) => i > 0 && segmentTouchesRect(points[i - 1]!, p, rect)) ||
+              points.some((p) => pointInRect(p, rect)),
+          );
     if (hit) out.push(entity.id);
   }
   return out;

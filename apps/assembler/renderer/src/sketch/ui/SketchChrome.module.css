@@ -67,6 +67,72 @@
   pointer-events: auto;
 }
 
+.notice {
+  font-family: var(--hc-font-ui);
+  font-size: 12px;
+  color: var(--hc-warning-fg, var(--hc-fg-strong));
+}
+
+.warning {
+  position: absolute;
+  top: 100px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: var(--hc-space-2);
+  max-width: min(680px, calc(100vw - 360px));
+  padding: var(--hc-space-1) var(--hc-space-3);
+  background: var(--hc-bg-island);
+  border: 1px solid var(--hc-warning, var(--hc-border-default));
+  border-radius: var(--hc-radius-lg);
+  box-shadow: var(--hc-shadow-island);
+  color: var(--hc-fg-default);
+  font-family: var(--hc-font-ui);
+  font-size: 12px;
+  pointer-events: auto;
+}
+
+.textPanel {
+  position: absolute;
+  top: 100px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: flex-end;
+  gap: var(--hc-space-2);
+  padding: var(--hc-space-2) var(--hc-space-3);
+  background: var(--hc-bg-island);
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-lg);
+  box-shadow: var(--hc-shadow-island);
+  pointer-events: auto;
+}
+
+.textPanel input[aria-label='Text content'] {
+  min-width: 200px;
+}
+
+.inlineField {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--hc-space-1);
+  font-family: var(--hc-font-ui);
+  font-size: 11px;
+  color: var(--hc-fg-muted);
+}
+
+.inlineField input {
+  width: 56px;
+}
+
+.count {
+  padding: 0 var(--hc-space-2);
+  font-family: var(--hc-font-ui);
+  font-size: 11px;
+  color: var(--hc-fg-muted);
+}
+
 .palette {
   position: absolute;
   bottom: 20px;

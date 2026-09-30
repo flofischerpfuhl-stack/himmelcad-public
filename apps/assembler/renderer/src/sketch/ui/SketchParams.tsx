@@ -71,6 +71,22 @@ function DimensionField({
 
   const unit = dimension.kind === 'angle' ? '°' : 'mm';
   const label = `${dimension.name} · ${KIND_LABEL[dimension.kind]}`;
+  if (dimension.driven) {
+    return (
+      <div className={fieldStyles.field}>
+        <span className={fieldStyles.label}>{`${label} (reference)`}</span>
+        <div className={fieldStyles.wrap}>
+          <input
+            className={fieldStyles.input}
+            value={`(${formatValue(dimension.value)})`}
+            aria-label={`${label}, reference dimension`}
+            readOnly
+          />
+          <span className={fieldStyles.unit}>{unit}</span>
+        </div>
+      </div>
+    );
+  }
   return (
     <div className={fieldStyles.field}>
       <span className={fieldStyles.label}>{label}</span>
@@ -126,8 +142,20 @@ export function SketchParams({
   fullClassName?: string | undefined;
 }): JSX.Element {
   const curves = feature.entities.filter((e) => e.kind !== 'point').length;
+  const projections =
+    state.evaluation.sketches.find((s) => s.featureId === feature.id)?.projections ?? [];
+  const frozen = projections.filter((p) => p.status !== 'ok').length;
   return (
     <div className={className}>
+      {projections.length > 0 ? (
+        <div className={fullClassName}>
+          <span className={fieldStyles.label} role={frozen > 0 ? 'alert' : undefined}>
+            {frozen > 0
+              ? `Projected geometry: ${frozen} of ${projections.length} source${projections.length === 1 ? '' : 's'} missing — kept as it was`
+              : `Projected geometry: ${projections.length} linked source${projections.length === 1 ? '' : 's'}`}
+          </span>
+        </div>
+      ) : null}
       {feature.dimensions.map((dimension) => (
         <DimensionField key={dimension.id} feature={feature} dimension={dimension} />
       ))}

@@ -56,7 +56,12 @@ const ANGLE_TOL = (3 * Math.PI) / 180;
 function roleOf(sketch: SketchData, pointId: string): InferenceHint {
   if (pointId === ORIGIN_ID) return 'origin';
   return sketch.entities.some(
-    (e) => (e.kind === 'circle' || e.kind === 'arc') && e.center === pointId,
+    (e) =>
+      (e.kind === 'circle' ||
+        e.kind === 'arc' ||
+        e.kind === 'ellipse' ||
+        e.kind === 'ellipticArc') &&
+      e.center === pointId,
   )
     ? 'center'
     : 'endpoint';
@@ -104,8 +109,8 @@ export function infer(sketch: SketchData, raw: Vec2, ctx: InferContext): Inferen
     return withSegment({ pos: p.pos, pointId: p.id, hints: [roleOf(sketch, p.id)], guides: [] });
   }
 
-  // 2. Line midpoints.
-  const curves = sketchCurves(sketch, { includeConstruction: true });
+  // 2. Line midpoints. (Text glyphs are no snap/constraint targets.)
+  const curves = sketchCurves(sketch, { includeConstruction: true, includeText: false });
   for (const { id, entity, curve } of curves) {
     if (curve.kind !== 'line' || entity.kind !== 'line') continue;
     if (exclude.has(entity.a) || exclude.has(entity.b)) continue;
@@ -196,7 +201,8 @@ export function infer(sketch: SketchData, raw: Vec2, ctx: InferContext): Inferen
   if (!lockX && !lockY) {
     let best: { id: string; point: Vec2; d: number } | null = null;
     for (const { id, entity, curve } of curves) {
-      if (!isCurve(entity)) continue;
+      // Splines take no point-on-curve constraint (their end points snap as points).
+      if (!isCurve(entity) || entity.kind === 'spline') continue;
       const hit = closestOnCurve(curve, raw);
       if (hit.distance <= CURVE_PX * px && (!best || hit.distance < best.d)) {
         best = { id, point: hit.point, d: hit.distance };
@@ -243,9 +249,9 @@ export function hitTest(
     if (best) return { kind: 'point', id: (best as { id: string }).id };
   }
   let bestCurve: { id: string; d: number } | null = null;
-  for (const { id, curve } of sketchCurves(sketch, { includeConstruction: true })) {
+  for (const { entityId, curve } of sketchCurves(sketch, { includeConstruction: true })) {
     const d = closestOnCurve(curve, raw).distance;
-    if (d <= 6 * mmPerPx && (!bestCurve || d < bestCurve.d)) bestCurve = { id, d };
+    if (d <= 6 * mmPerPx && (!bestCurve || d < bestCurve.d)) bestCurve = { id: entityId, d };
   }
   return bestCurve ? { kind: 'curve', id: (bestCurve as { id: string }).id } : null;
 }

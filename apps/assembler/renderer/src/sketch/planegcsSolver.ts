@@ -315,6 +315,29 @@ function tangentPrimitives(
   const e1 = map.get(r1);
   const k0 = e0?.kind;
   const k1 = e1?.kind;
+  // Tangent at a shared end point (a line running into an arc, arc into arc): the curve
+  // distance form is degenerate there (first-order dependent on the arc rules), so use the
+  // direction form FreeCAD uses for endpoint tangency — well conditioned and never redundant.
+  const shared = endsOf(e0).find((p) => endsOf(e1).includes(p));
+  if (shared && (k0 === 'line' || k0 === 'arc') && (k1 === 'line' || k1 === 'arc') && k0 !== k1) {
+    const line = (k0 === 'line' ? e0 : e1) as Extract<SketchEntity, { kind: 'line' }>;
+    const arc = (k0 === 'arc' ? e0 : e1) as Extract<SketchEntity, { kind: 'arc' }>;
+    const far = line.a === shared ? line.b : line.a;
+    return [
+      {
+        type: 'perpendicular_pppp',
+        l1p1_id: arc.center,
+        l1p2_id: shared,
+        l2p1_id: shared,
+        l2p2_id: far,
+      },
+    ];
+  }
+  if (shared && k0 === 'arc' && k1 === 'arc') {
+    const a0 = e0 as Extract<SketchEntity, { kind: 'arc' }>;
+    const a1 = e1 as Extract<SketchEntity, { kind: 'arc' }>;
+    return [{ type: 'point_on_line_ppp', p_id: shared, lp1_id: a0.center, lp2_id: a1.center }];
+  }
   if (k0 === 'line' && k1 === 'circle') return [{ type: 'tangent_lc', l_id: r0, c_id: r1 }];
   if (k0 === 'circle' && k1 === 'line') return [{ type: 'tangent_lc', l_id: r1, c_id: r0 }];
   if (k0 === 'line' && k1 === 'arc') return [{ type: 'tangent_la', l_id: r0, a_id: r1 }];
@@ -375,6 +398,9 @@ function constraintPrimitives(
     case 'translate': {
       const [p, q, a, b] = c.refs;
       if (!p || !q || !a || !b || ![p, q, a, b].every((id) => isPointRef(map, id))) return bad();
+      // q − p = b − a. When p is b itself (a pattern's second copy of its base point),
+      // b is simply the midpoint of a and q.
+      if (p === b) return [{ type: 'p2p_symmetric_ppp', p1_id: q, p2_id: a, p_id: b }];
       const pp = pointPos(map, p)!;
       const pb = pointPos(map, b)!;
       const m = `${HIDDEN}${c.id}:m`;

@@ -27,12 +27,22 @@ import {
   type SketchFrame,
   type SketchPlaneRef,
 } from '../model/document.js';
-import { makeFaceRef, nextFeatureName, useAssemblerStore } from '../model/store.js';
-import { CONSTRAINT_INFO, planConstraint } from './constraintRules.js';
-import { deleteItems, toggleConstruction, type EditResult } from './edits.js';
+import { makeEdgeRef, makeFaceRef, nextFeatureName, useAssemblerStore } from '../model/store.js';
+import { initialAdvancedTool } from './advancedTools.js';
+import { constraintInfo, planConstraint } from './constraintRules.js';
+import { deleteItems, SketchBuilder, toggleConstruction, type EditResult } from './edits.js';
 import { isPlainNumber } from './expressions.js';
+import {
+  addProjection,
+  adoptProjectedEntities,
+  edgeSampleFromSegments,
+  projectSource,
+  type EdgeSample,
+} from './projection.js';
+import { rememberRegions } from './regionMemory.js';
 import { getSketchSolver } from './solverProvider.js';
 import type { SolveResult } from './solverTypes.js';
+import { DEFAULT_SKETCH_FONT, loadSketchFont, textOutline } from './text/fonts.js';
 import {
   initialTool,
   reduceTool,
@@ -44,8 +54,11 @@ import {
 import {
   EMPTY_SKETCH,
   idAllocator,
+  sketchDataOf,
   type SketchConstraintKind,
   type SketchData,
+  type SketchDimension,
+  type SketchProjection,
   type Vec2,
 } from './types.js';
 
@@ -53,6 +66,18 @@ export interface SketchProblem {
   message: string;
   /** Constraint/dimension ids to highlight. */
   ids: string[];
+  /**
+   * A way out the banner offers: a dimension that is already determined can
+   * be added as a reference (driven) dimension instead.
+   */
+  offer?: { kind: 'reference'; label: string; dimensionIds: string[] };
+}
+
+/** A body edge or face picked for Project. */
+export interface ProjectionPick {
+  kind: 'edge' | 'face';
+  bodyId: string;
+  key: string;
 }
 
 export interface SketchSession {
@@ -84,6 +109,19 @@ export interface SketchSession {
   editDimensionId: string | null;
   /** `true` while an edit is being solved. */
   solving: boolean;
+  /** Why the last tool input did nothing (cleared by the next input or tool change). */
+  notice: string | null;
+}
+
+/** Tool options set from the palette / text panel. */
+export interface SketchToolOptions {
+  mode: string;
+  sides: number;
+  inscribed: boolean;
+  count: number;
+  angle: number;
+  text: string;
+  height: number;
 }
 
 export interface SketchCameraRequest {
@@ -113,8 +151,27 @@ export interface SketchState {
   /** Leaves sketch mode discarding every change of this session. */
   discard: () => void;
   setTool: (kind: SketchToolKind) => void;
-  /** Tool options: rectangle mode, polygon sides, dimension mode. */
-  setToolOption: (patch: Partial<{ mode: string; sides: number }>) => void;
+  /**
+   * Tool options: rectangle/spline/slot/ellipse/pattern/corner/dimension
+   * mode, polygon sides and inscribed/circumscribed, pattern count/angle,
+   * text content/height/rotation.
+   */
+  setToolOption: (patch: Partial<SketchToolOptions>) => void;
+  /** Places the text being edited by the Text tool (one undo step). Resolves `true` when added. */
+  commitText: () => Promise<boolean>;
+  /** Opens the Text tool on an existing text entity. */
+  editText: (textId: string) => void;
+  /** Projects a body edge/face into the sketch (Project tool). Resolves a reason when not possible. */
+  projectItem: (pick: ProjectionPick) => Promise<string | null>;
+  /** Applies the offer of the current problem (add the rejected dimension as a reference). */
+  acceptOffer: () => Promise<boolean>;
+  /** Toggles a dimension between driving and reference (driven). */
+  toggleReference: (dimensionId: string) => Promise<boolean>;
+  /** Moves a dimension label (layout only; one undo step). */
+  moveDimensionLabel: (
+    dimensionId: string,
+    layout: { offset?: number; along?: number },
+  ) => Promise<boolean>;
   setConstruction: (on: boolean) => void;
   /** Feeds a click / typed value / finish into the active tool (serialized). */
   dispatch: (event: ToolEvent) => Promise<void>;
@@ -149,14 +206,6 @@ function frameOf(plane: SketchPlaneRef): SketchFrame | null {
   return normal ? frameForFace(normal, plane.face.signature.centroid) : null;
 }
 
-function sketchDataOf(feature: SketchFeature): SketchData {
-  return {
-    entities: feature.entities,
-    constraints: feature.constraints,
-    dimensions: feature.dimensions,
-  };
-}
-
 function sameSketch(a: SketchData, b: SketchData): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
 }
@@ -165,9 +214,27 @@ function labelOf(sketch: SketchData, id: string): string {
   const dimension = sketch.dimensions.find((d) => d.id === id);
   if (dimension) return dimension.name;
   const constraint = sketch.constraints.find((c) => c.id === id);
-  if (constraint)
-    return CONSTRAINT_INFO.find((c) => c.kind === constraint.kind)?.label ?? constraint.kind;
+  if (constraint) return constraintInfo(constraint.kind).label;
+  if (sketch.projections?.some((p) => p.id === id)) return 'Projected geometry';
   return id;
+}
+
+/** New driving dimensions of `next` (not in `previous`). */
+function addedDimensions(previous: SketchData, next: SketchData): SketchDimension[] {
+  const known = new Set(previous.dimensions.map((d) => d.id));
+  return next.dimensions.filter((d) => !known.has(d.id) && !d.driven);
+}
+
+/** `sketch` with the given dimensions turned into reference (driven) dimensions. */
+function asReference(sketch: SketchData, ids: readonly string[]): SketchData {
+  return {
+    ...sketch,
+    dimensions: sketch.dimensions.map((d) => {
+      if (!ids.includes(d.id)) return d;
+      const { expression: _expression, ...rest } = d;
+      return { ...rest, driven: true };
+    }),
+  };
 }
 
 /** User-facing message for a rejected solve. */
@@ -195,6 +262,88 @@ export function describeProblem(result: SolveResult, attempted: SketchData): Ske
   };
 }
 
+/** Keeps the options of the previous tool of the same kind (modes, sides, counts). */
+function carryOptions(tool: SketchTool, previous: SketchTool): SketchTool {
+  if (tool.kind !== previous.kind) return tool;
+  switch (tool.kind) {
+    case 'rectangle':
+    case 'spline':
+    case 'slot':
+    case 'ellipse':
+    case 'corner':
+      return { ...tool, mode: (previous as typeof tool).mode } as SketchTool;
+    case 'polygon': {
+      const p = previous as typeof tool;
+      return { ...tool, sides: p.sides, inscribed: p.inscribed };
+    }
+    case 'pattern': {
+      const p = previous as typeof tool;
+      return { ...tool, mode: p.mode, count: p.count, angle: p.angle };
+    }
+    default:
+      return tool;
+  }
+}
+
+/** A tool with one option changed (unchanged object when the option does not apply). */
+function applyToolOption(tool: SketchTool, option: Partial<SketchToolOptions>): SketchTool {
+  const mode = option.mode;
+  switch (tool.kind) {
+    case 'rectangle':
+      return mode === 'corner' || mode === 'center' ? { ...tool, mode, first: null } : tool;
+    case 'polygon': {
+      let next = tool;
+      if (option.sides !== undefined) {
+        next = { ...next, sides: Math.max(3, Math.min(64, Math.round(option.sides))) };
+      }
+      if (option.inscribed !== undefined) next = { ...next, inscribed: option.inscribed };
+      return next;
+    }
+    case 'dimension':
+      return mode === 'aligned' || mode === 'horizontal' || mode === 'vertical'
+        ? { ...tool, mode }
+        : tool;
+    case 'spline':
+      return mode === 'fit' || mode === 'control' ? { ...tool, mode, points: [] } : tool;
+    case 'slot':
+      return mode === 'straight' || mode === 'arc'
+        ? { ...tool, mode, first: null, second: null, third: null, length: null, width: null }
+        : tool;
+    case 'ellipse':
+      return mode === 'full' || mode === 'arc'
+        ? { ...tool, mode, center: null, major: null, minor: null, start: null }
+        : tool;
+    case 'corner':
+      return mode === 'fillet' || mode === 'chamfer' ? { ...tool, mode } : tool;
+    case 'pattern': {
+      let next = tool;
+      if (mode === 'linear' || mode === 'circular') next = { ...next, mode };
+      if (option.count !== undefined && option.count >= 2 && option.count <= 200) {
+        next = { ...next, count: Math.round(option.count) };
+      }
+      if (
+        option.angle !== undefined &&
+        Math.abs(option.angle) > 0 &&
+        Math.abs(option.angle) <= 360
+      ) {
+        next = { ...next, angle: option.angle };
+      }
+      return next;
+    }
+    case 'text': {
+      let next = tool;
+      if (option.text !== undefined) next = { ...next, text: option.text };
+      if (option.height !== undefined && option.height > 0)
+        next = { ...next, height: option.height };
+      if (option.angle !== undefined && Number.isFinite(option.angle))
+        next = { ...next, angle: option.angle };
+      return next;
+    }
+    default:
+      return tool;
+  }
+}
+
 // ---- store ------------------------------------------------------------------------------
 
 export const useSketchStore = create<SketchState>((set, get) => {
@@ -207,6 +356,8 @@ export const useSketchStore = create<SketchState>((set, get) => {
     targets: Vec2[] | null;
     inFlight: Promise<void> | null;
   } | null = null;
+  /** The edit behind the current problem's offer (e.g. the dimension as a reference). */
+  let pendingOffer: { edit: EditResult; token: number } | null = null;
 
   const enqueue = (task: () => Promise<void>): Promise<void> => {
     queue = queue.then(task, task);
@@ -237,9 +388,11 @@ export const useSketchStore = create<SketchState>((set, get) => {
         const session = get().session;
         if (!session) return false;
         if (result.status === 'ok') {
+          pendingOffer = null;
           set({
             session: {
               ...session,
+              notice: null,
               sketch: result.sketch,
               past: [...session.past, session.sketch],
               future: [],
@@ -271,6 +424,28 @@ export const useSketchStore = create<SketchState>((set, get) => {
           optional = optional.filter((id) => !removed.includes(id));
           continue;
         }
+        // A new dimension that is merely determined already: offer it as a reference dimension.
+        const redundantNew = addedDimensions(session.sketch, sketch).filter((d) =>
+          result.redundant.includes(d.id),
+        );
+        if (
+          result.status === 'overconstrained' &&
+          result.conflicting.length === 0 &&
+          redundantNew.length > 0
+        ) {
+          const ids = redundantNew.map((d) => d.id);
+          pendingOffer = { edit: { ...edit, sketch: asReference(sketch, ids), optional }, token };
+          const names = redundantNew.map((d) => d.name).join(', ');
+          patch({
+            problem: {
+              ...describeProblem(result, sketch),
+              message: `Over-constrained — already determined by other constraints: ${names}. Add it as a reference dimension instead?`,
+              offer: { kind: 'reference', label: 'Add as reference', dimensionIds: ids },
+            },
+          });
+          return false;
+        }
+        pendingOffer = null;
         patch({ problem: describeProblem(result, sketch) });
         return false;
       }
@@ -311,9 +486,11 @@ export const useSketchStore = create<SketchState>((set, get) => {
       camera: { mode: 'exit', frame: session.frame, nonce: (get().camera?.nonce ?? 0) + 1 },
     });
     if (mode === 'discard') return;
-    const sketch = session.sketch;
+    if (session.isNew && session.sketch.entities.length === 0) return;
+    const changed = session.isNew || !sameSketch(session.sketch, session.baseline);
+    // Fingerprint the regions so references to redrawn profiles re-bind by geometry.
+    const sketch = changed ? rememberRegions(session.sketch, session.baseline) : session.sketch;
     if (session.isNew) {
-      if (sketch.entities.length === 0) return;
       const feature: SketchFeature = {
         id: session.featureId,
         name: nextFeatureName('Sketch', main.features),
@@ -325,8 +502,12 @@ export const useSketchStore = create<SketchState>((set, get) => {
       main.addFeature(feature, [{ kind: 'sketchProfile', featureId: feature.id }]);
       return;
     }
-    if (!sameSketch(sketch, session.baseline)) {
-      main.editFeatureParams(session.featureId, { ...sketch });
+    if (changed) {
+      main.editFeatureParams(session.featureId, {
+        ...sketch,
+        // A sketch whose last projection was deleted must drop the stored list too.
+        ...(session.baseline.projections && !sketch.projections ? { projections: [] } : {}),
+      });
     }
   };
 
@@ -350,6 +531,7 @@ export const useSketchStore = create<SketchState>((set, get) => {
       let isNew = true;
       let planeLocked = true;
       let frame: SketchFrame | null = null;
+      let projectedUpdate: SketchData | null = null;
       if (options.featureId) {
         const feature = main.features.find((f) => f.id === options.featureId);
         if (feature?.kind !== 'sketch') return false;
@@ -357,8 +539,13 @@ export const useSketchStore = create<SketchState>((set, get) => {
         plane = feature.plane;
         sketch = sketchDataOf(feature);
         isNew = false;
-        frame =
-          main.evaluation.sketches.find((s) => s.featureId === featureId)?.frame ?? frameOf(plane);
+        const evaluated = main.evaluation.sketches.find((s) => s.featureId === featureId);
+        frame = evaluated?.frame ?? frameOf(plane);
+        // Projected geometry whose source moved: adopt it and re-solve (one session step).
+        if (evaluated?.projectedEntities) {
+          const adopted = adoptProjectedEntities(sketch, evaluated.projectedEntities);
+          if (adopted !== sketch) projectedUpdate = adopted;
+        }
       } else if (options.face) {
         const ref = makeFaceRef(main.evaluation, options.face.bodyId, options.face.faceKey);
         if (!ref || ref.signature.surface !== 'plane' || !ref.signature.normal) return false;
@@ -395,17 +582,30 @@ export const useSketchStore = create<SketchState>((set, get) => {
           dragPreview: null,
           editDimensionId: null,
           solving: false,
+          notice: null,
         },
         camera: { mode: 'enter', frame, nonce: (get().camera?.nonce ?? 0) + 1 },
       });
+      pendingOffer = null;
       main.setHistoryDelegate({
         undo: () => get().undo(),
         redo: () => get().redo(),
         canUndo: () => (get().session?.past.length ?? 0) > 0,
         canRedo: () => (get().session?.future.length ?? 0) > 0,
       });
-      // Initial analysis (degrees of freedom, fully constrained geometry) of an existing sketch.
-      if (!isNew && sketch.entities.length > 0) {
+      if (projectedUpdate) {
+        const update = projectedUpdate;
+        void enqueue(async () => {
+          const ok = await commitEdit({ sketch: update, optional: [] });
+          if (!ok) {
+            patch({
+              notice:
+                'Projected geometry moved with its source, but the sketch could not follow it; fix the constraints shown.',
+            });
+          }
+        });
+      } else if (!isNew && sketch.entities.length > 0) {
+        // Initial analysis (degrees of freedom, fully constrained geometry) of an existing sketch.
         const mine = token;
         void enqueue(async () => {
           try {
@@ -436,12 +636,25 @@ export const useSketchStore = create<SketchState>((set, get) => {
       const session = get().session;
       if (!session) return;
       const previous = session.tool;
-      let tool = initialTool(kind);
-      // Keep the chosen rectangle mode / polygon sides when re-selecting the tool.
-      if (tool.kind === 'rectangle' && previous.kind === 'rectangle')
-        tool = { ...tool, mode: previous.mode };
-      if (tool.kind === 'polygon' && previous.kind === 'polygon')
-        tool = { ...tool, sides: previous.sides };
+      let tool = initialTool(kind, session.selection);
+      // Keep the chosen options (modes, sides, counts) when re-selecting the tool.
+      tool = carryOptions(tool, previous);
+      if (tool.kind === 'text') {
+        void loadSketchFont(DEFAULT_SKETCH_FONT).catch(() => undefined);
+        const selected = session.sketch.entities.find(
+          (e) =>
+            e.kind === 'text' && session.selection.length === 1 && session.selection[0] === e.id,
+        );
+        if (selected?.kind === 'text') {
+          tool = {
+            ...tool,
+            editing: selected.id,
+            text: selected.text,
+            height: selected.height,
+            angle: selected.angle,
+          };
+        }
+      }
       // Pressing A while drawing lines continues with a tangent arc from the last point.
       if (
         tool.kind === 'arc' &&
@@ -458,24 +671,205 @@ export const useSketchStore = create<SketchState>((set, get) => {
           };
         }
       }
-      patch({ tool, editDimensionId: null });
+      patch({ tool, editDimensionId: null, notice: null });
     },
 
     setToolOption: (option) => {
       const session = get().session;
       if (!session) return;
-      const tool = session.tool;
-      if (tool.kind === 'rectangle' && (option.mode === 'corner' || option.mode === 'center')) {
-        patch({ tool: { ...tool, mode: option.mode, first: null } });
-      } else if (tool.kind === 'polygon' && option.sides !== undefined) {
-        patch({ tool: { ...tool, sides: Math.max(3, Math.min(64, Math.round(option.sides))) } });
-      } else if (
-        tool.kind === 'dimension' &&
-        (option.mode === 'aligned' || option.mode === 'horizontal' || option.mode === 'vertical')
-      ) {
-        patch({ tool: { ...tool, mode: option.mode } });
-      }
+      const next = applyToolOption(session.tool, option);
+      if (next !== session.tool) patch({ tool: next, notice: null });
     },
+
+    commitText: async () => {
+      const session = get().session;
+      const tool = session?.tool;
+      if (!session || tool?.kind !== 'text') return false;
+      const content = tool.text.replace(/[\r\n\t]+/g, ' ');
+      if (content.trim() === '') {
+        patch({ notice: 'Type some text first.' });
+        return false;
+      }
+      if (!(tool.height >= 0.1)) {
+        patch({ notice: 'The text height must be at least 0.1 mm.' });
+        return false;
+      }
+      if (!tool.editing && !tool.anchor) {
+        patch({ notice: 'Click where the text starts first.' });
+        return false;
+      }
+      let outline: Awaited<ReturnType<typeof textOutline>>;
+      try {
+        outline = await textOutline(DEFAULT_SKETCH_FONT, content);
+      } catch (error) {
+        patch({
+          notice: `The font could not be loaded: ${error instanceof Error ? error.message : String(error)}`,
+        });
+        return false;
+      }
+      const ok = await applyEdit((sketch) => {
+        if (tool.editing) {
+          const existing = sketch.entities.find((e) => e.id === tool.editing);
+          if (existing?.kind !== 'text') return null;
+          return {
+            sketch: {
+              ...sketch,
+              entities: sketch.entities.map((e) =>
+                e.id === tool.editing
+                  ? {
+                      ...existing,
+                      text: content,
+                      height: tool.height,
+                      angle: tool.angle,
+                      font: DEFAULT_SKETCH_FONT,
+                      outline: outline.outline,
+                    }
+                  : e,
+              ),
+            },
+            optional: [],
+            select: [existing.id],
+          };
+        }
+        const b = new SketchBuilder(sketch);
+        const anchor = b.pointFor(tool.anchor!);
+        const id = b.id('t');
+        b.entities.push({
+          id,
+          kind: 'text',
+          anchor,
+          text: content,
+          height: tool.height,
+          angle: tool.angle,
+          font: DEFAULT_SKETCH_FONT,
+          outline: outline.outline,
+          ...(get().session?.construction ? { construction: true } : {}),
+        });
+        return b.result([id]);
+      });
+      if (ok) {
+        patch({
+          tool: {
+            ...initialAdvancedTool('text'),
+            height: tool.height,
+            angle: tool.angle,
+          } as SketchTool,
+          notice:
+            outline.missing.length > 0
+              ? `Not in the font: ${outline.missing.join(' ')} (drawn as boxes).`
+              : null,
+        });
+      }
+      return ok;
+    },
+
+    editText: (textId) => {
+      const session = get().session;
+      const text = session?.sketch.entities.find((e) => e.id === textId);
+      if (!session || text?.kind !== 'text') return;
+      void loadSketchFont(DEFAULT_SKETCH_FONT).catch(() => undefined);
+      patch({
+        tool: {
+          ...initialAdvancedTool('text'),
+          editing: text.id,
+          text: text.text,
+          height: text.height,
+          angle: text.angle,
+        } as SketchTool,
+        selection: [text.id],
+        notice: null,
+      });
+    },
+
+    projectItem: async (pick) => {
+      const session = get().session;
+      if (!session) return 'No sketch is being edited.';
+      const main = useAssemblerStore.getState();
+      const body = main.evaluation.bodies.find((b) => b.id === pick.bodyId);
+      if (!body) return 'That body is not available.';
+      const samples: EdgeSample[] = [];
+      let source: SketchProjection['source'] | null = null;
+      if (pick.kind === 'edge') {
+        const edge = body.edges.find((e) => e.key === pick.key);
+        const ref = makeEdgeRef(main.evaluation, pick.bodyId, pick.key);
+        if (!edge || !ref) return 'That edge is not available.';
+        samples.push(edgeSampleFromSegments(edge.curve, edge.segments));
+        source = { kind: 'edge', ref };
+      } else {
+        const face = body.faces.find((f) => f.key === pick.key || f.aliases.includes(pick.key));
+        const ref = makeFaceRef(main.evaluation, pick.bodyId, pick.key);
+        if (!face || !ref) return 'That face is not available.';
+        for (const index of face.edgeIndices) {
+          const edge = body.edges[index];
+          if (edge) samples.push(edgeSampleFromSegments(edge.curve, edge.segments));
+        }
+        source = { kind: 'face', ref };
+      }
+      const curves = projectSource(samples, session.frame);
+      if (curves.length === 0)
+        return 'It projects to a point (it is parallel to the sketch normal).';
+      const already = (session.sketch.projections ?? []).some(
+        (p) =>
+          p.source.kind === source!.kind &&
+          p.source.ref.key === source!.ref.key &&
+          p.source.ref.bodyId === source!.ref.bodyId,
+      );
+      if (already) return 'That geometry is already projected into this sketch.';
+      const ok = await applyEdit((sketch) => addProjection(sketch, source!, curves, true));
+      return ok ? null : 'The projection could not be added.';
+    },
+
+    acceptOffer: async () => {
+      const offer = pendingOffer;
+      if (!offer || offer.token !== token) return false;
+      pendingOffer = null;
+      patch({ problem: null });
+      return applyEdit(() => offer.edit);
+    },
+
+    toggleReference: (dimensionId) =>
+      applyEdit((sketch) => {
+        const dimension = sketch.dimensions.find((d) => d.id === dimensionId);
+        if (!dimension) return null;
+        if (!dimension.driven) {
+          return {
+            sketch: asReference(sketch, [dimensionId]),
+            optional: [],
+            select: [dimensionId],
+          };
+        }
+        const { driven: _driven, ...rest } = dimension;
+        return {
+          sketch: {
+            ...sketch,
+            dimensions: sketch.dimensions.map((d) => (d.id === dimensionId ? rest : d)),
+          },
+          optional: [],
+          select: [dimensionId],
+        };
+      }),
+
+    moveDimensionLabel: (dimensionId, layout) =>
+      applyEdit((sketch) => {
+        const dimension = sketch.dimensions.find((d) => d.id === dimensionId);
+        if (!dimension) return null;
+        const next = {
+          ...dimension,
+          ...(layout.offset !== undefined && Number.isFinite(layout.offset)
+            ? { offset: layout.offset }
+            : {}),
+          ...(layout.along !== undefined && Number.isFinite(layout.along)
+            ? { along: Math.min(1.5, Math.max(-0.5, layout.along)) }
+            : {}),
+        };
+        return {
+          sketch: {
+            ...sketch,
+            dimensions: sketch.dimensions.map((d) => (d.id === dimensionId ? next : d)),
+          },
+          optional: [],
+        };
+      }),
 
     setConstruction: (on) => patch({ construction: on }),
 
@@ -487,7 +881,7 @@ export const useSketchStore = create<SketchState>((set, get) => {
           construction: session.construction,
         });
         if (!step.edit) {
-          patch({ tool: step.tool });
+          patch({ tool: step.tool, notice: step.notice ?? null });
           return;
         }
         const ok = await commitEdit(step.edit);

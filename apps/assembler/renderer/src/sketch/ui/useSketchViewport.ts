@@ -130,6 +130,12 @@ export function useSketchViewport(refs: SketchViewportRefs): {
         ? { bodyId: pick.bodyId, faceKey: pick.faceKey }
         : null;
     },
+    pickBodyItem: (clientX, clientY) => {
+      const pick = pickAt(clientX, clientY);
+      if (pick?.kind === 'edge') return { kind: 'edge', bodyId: pick.bodyId, key: pick.edgeKey };
+      if (pick?.kind === 'face') return { kind: 'face', bodyId: pick.bodyId, key: pick.faceKey };
+      return null;
+    },
   };
   return { session, api };
 }

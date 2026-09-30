@@ -14,7 +14,10 @@ import { WorkerKernelAdapter } from './kernel/workerAdapter.js';
 import { useProjectStore } from './model/project/projectStore.js';
 import { useAssemblerStore } from './model/store.js';
 import { setSketchSolverFactory } from './sketch/solverProvider.js';
+import { setFontLoader } from './sketch/text/fonts.js';
 import { WorkerSketchSolver } from './sketch/workerSolver.js';
+// Sketch text font (Inter, SIL OFL 1.1 — LICENSES/THIRD_PARTY.md), bundled as an asset.
+import interWoffUrl from '@fontsource/inter/files/inter-latin-400-normal.woff?url';
 
 // Dev-only automation hook for screen recordings (`window.__assembler`, see
 // `devtools/automationHook.ts`). Never present in production builds.
@@ -39,6 +42,15 @@ setSketchSolverFactory(
       () => new Worker(new URL('./sketch/solver.worker.ts', import.meta.url), { type: 'module' }),
     ),
 );
+
+// Sketch text: the font is fetched and parsed when the Text tool is first used.
+setFontLoader(async (font) => {
+  if (font.file !== 'inter-latin-400-normal.woff')
+    throw new Error(`Font ${font.id} is not bundled`);
+  const response = await fetch(interWoffUrl);
+  if (!response.ok) throw new Error(`Font ${font.label} could not be loaded (${response.status})`);
+  return response.arrayBuffer();
+});
 
 const rootEl = document.getElementById('hc-root');
 if (!rootEl) throw new Error('Missing #hc-root mount point');

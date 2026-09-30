@@ -1,7 +1,9 @@
 /**
  * Sketch commands (registered into `registry.ts`'s `COMMANDS`): entering
  * and leaving sketch mode, the drawing tools (single-key shortcuts from the
- * Shapr3D shortcut list: L, A, C, R, G, T, O, D) and the constraints
+ * Shapr3D shortcut list: L, A, C, R, G, I (Spline), T, O, P (Project), D;
+ * Assembler's own for tools Shapr3D has no key for: U Slot, Y Ellipse,
+ * K Text, J Mirror, N Pattern, Shift+R Fillet/Chamfer) and the constraints
  * (Shift + letter), with availability derived from the sketch session and
  * its selection — the same source for toolbar, command search, context
  * menu and keyboard.
@@ -165,9 +167,45 @@ export const SKETCH_COMMANDS: readonly Command[] = [
   drawingTool('sketch.arc', 'Arc', 'A', 'arc', ['curve', 'tangent arc', 'three point']),
   drawingTool('sketch.circle', 'Circle', 'C', 'circle', ['round', 'hole', 'diameter']),
   drawingTool('sketch.rectangle', 'Rectangle', 'R', 'rectangle', ['rect', 'box profile']),
-  drawingTool('sketch.polygon', 'Polygon', 'G', 'polygon', ['hexagon', 'regular']),
+  drawingTool('sketch.polygon', 'Polygon', 'G', 'polygon', [
+    'hexagon',
+    'regular',
+    'inscribed',
+    'circumscribed',
+  ]),
+  drawingTool('sketch.spline', 'Spline', 'I', 'spline', [
+    'curve',
+    'bezier',
+    'freeform',
+    'fit point',
+    'control point',
+  ]),
+  drawingTool('sketch.slot', 'Slot', 'U', 'slot', ['oblong', 'arc slot', 'obround', 'long hole']),
+  drawingTool('sketch.ellipse', 'Ellipse', 'Y', 'ellipse', ['oval', 'elliptical arc']),
+  drawingTool('sketch.text', 'Text', 'K', 'text', ['lettering', 'label', 'font', 'emboss']),
   sessionTool('sketch.trim', 'Trim', 'T', 'trim', ['cut', 'split', 'delete segment']),
   sessionTool('sketch.offset', 'Offset', 'O', 'offset', ['parallel copy', 'offset edge']),
+  sessionTool('sketch.fillet', 'Sketch Fillet / Chamfer', 'Shift+R', 'corner', [
+    'round corner',
+    'chamfer',
+    'bevel',
+    'radius',
+  ]),
+  sessionTool('sketch.mirror', 'Sketch Mirror', 'J', 'mirror', ['symmetry', 'flip', 'reflect']),
+  sessionTool('sketch.pattern', 'Sketch Pattern', 'N', 'pattern', [
+    'array',
+    'repeat',
+    'linear',
+    'circular',
+    'copies',
+  ]),
+  sessionTool('sketch.project', 'Project', 'P', 'project', [
+    'use edge',
+    'reference',
+    'silhouette',
+    'intersect',
+    'include geometry',
+  ]),
   sessionTool('sketch.dimension', 'Dimension', 'D', 'dimension', [
     'measure',
     'length',
@@ -188,6 +226,44 @@ export const SKETCH_COMMANDS: readonly Command[] = [
     run: () => void useSketchStore.getState().toggleConstructionOfSelection(),
   },
   ...CONSTRAINT_INFO.map(constraintCommand),
+  {
+    id: 'sketch.toggleReference',
+    label: 'Reference Dimension',
+    group: 'sketch',
+    keywords: ['sketch', 'driven', 'reference', 'dimension', 'measure only'],
+    availability: () => {
+      const s = session();
+      if (!s) return { enabled: false, reason: NOT_SKETCHING };
+      const dimension = s.sketch.dimensions.find((d) => s.selection.includes(d.id));
+      return dimension
+        ? { enabled: true, recommended: true, priority: 35 }
+        : { enabled: false, reason: 'Select a dimension.' };
+    },
+    run: () => {
+      const s = session();
+      const dimension = s?.sketch.dimensions.find((d) => s.selection.includes(d.id));
+      if (dimension) void useSketchStore.getState().toggleReference(dimension.id);
+    },
+  },
+  {
+    id: 'sketch.editText',
+    label: 'Edit Text',
+    group: 'sketch',
+    keywords: ['sketch', 'text', 'lettering', 'change'],
+    availability: () => {
+      const s = session();
+      if (!s) return { enabled: false, reason: NOT_SKETCHING };
+      const text = s.sketch.entities.find((e) => e.kind === 'text' && s.selection.includes(e.id));
+      return text
+        ? { enabled: true, recommended: true, priority: 45 }
+        : { enabled: false, reason: 'Select a text.' };
+    },
+    run: () => {
+      const s = session();
+      const text = s?.sketch.entities.find((e) => e.kind === 'text' && s.selection.includes(e.id));
+      if (text) useSketchStore.getState().editText(text.id);
+    },
+  },
   {
     id: 'sketch.deleteSelection',
     label: 'Delete Sketch Selection',
