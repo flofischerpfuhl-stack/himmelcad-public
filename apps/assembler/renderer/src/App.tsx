@@ -14,6 +14,7 @@ import { LeftDock } from './chrome/LeftDock.js';
 import { NoticeToast } from './chrome/NoticeToast.js';
 import { ParametersPanel } from './chrome/ParametersPanel.js';
 import { RightDock } from './chrome/RightDock.js';
+import panelStyles from './chrome/Panel.module.css';
 import { SectionControls } from './chrome/SectionControls.js';
 import { SettingsDialog } from './chrome/SettingsDialog.js';
 import { ShortcutOverlay } from './chrome/ShortcutOverlay.js';
@@ -80,10 +81,15 @@ export function App(): JSX.Element {
       <LeftDock state={state} onOpenSearch={() => openSearch()} />
       <RightDock state={state} />
       {state.panels.items ? <ItemsPanel state={state} onContextMenu={openContextMenuAt} /> : null}
-      {state.panels.history ? (
-        <HistoryPanel state={state} onContextMenu={openContextMenuAt} />
+      {state.panels.parameters || state.panels.history ? (
+        // Parameters above History in one column below the right dock: they stack, never overlap.
+        <div className={panelStyles.rightStack}>
+          {state.panels.parameters ? <ParametersPanel state={state} /> : null}
+          {state.panels.history ? (
+            <HistoryPanel state={state} onContextMenu={openContextMenuAt} />
+          ) : null}
+        </div>
       ) : null}
-      {state.panels.parameters ? <ParametersPanel state={state} /> : null}
       <ToolSession state={state} />
       <SketchChrome />
       {state.viewState.sectionEnabled ? <SectionControls state={state} /> : null}

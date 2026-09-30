@@ -17,16 +17,35 @@
   left: 68px;
 }
 
-.historyPlacement {
-  top: 340px;
+/* Right column below the right dock (view cube, Grid/Display island and the
+   Parameters/History toggles end at ~364px): Parameters above History,
+   stacked so neither covers the dock or the other. */
+.rightStack {
+  position: absolute;
+  top: 372px;
   right: 12px;
+  bottom: 64px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--hc-space-2);
+  width: 272px;
+  pointer-events: none;
+}
+
+.rightStack > .root {
+  position: relative;
+  max-height: none;
+  min-height: 0;
+}
+
+.historyPlacement {
+  flex: 0 1 auto;
 }
 
 .parametersPlacement {
-  /* Below the viewport's reserved view-cube area (top:12/right:12, ~150x150,
-     see `RightDock.tsx`) so its buttons never intercept pointer events. */
-  top: 172px;
-  right: 12px;
+  /* Its own height (up to 45 % of the column); History takes the rest and scrolls. */
+  flex: 0 0 auto;
+  max-height: 45%;
 }
 
 .header {
