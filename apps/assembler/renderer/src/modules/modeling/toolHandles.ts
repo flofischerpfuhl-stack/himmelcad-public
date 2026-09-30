@@ -26,7 +26,8 @@ import { transformBody } from '../../platform/viewport/bodyTransform.js';
 import type { Vec3 } from '../../platform/viewport/math.js';
 import type { ToolHandleKind } from '../../platform/viewport/picking.js';
 import type { AngleHandleState } from '../../platform/viewport/scene.js';
-import type { AxisHandle } from './toolAnchors.js';
+
+import type { AxisHandle } from '../../platform/viewport/section.js';
 
 /** Rotation-ring radius relative to the move arrows (40 mm). */
 const RING_RADIUS_MM = 28;

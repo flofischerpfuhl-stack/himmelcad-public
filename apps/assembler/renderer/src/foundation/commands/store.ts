@@ -88,11 +88,10 @@ import { regionCentre, translateSketchRegion } from '../sketch-solver/moveRegion
 import {
   autoExtrudeOperation,
   extrudeStartDepth,
-  defaultSectionOffset,
   findSketchContact,
-  visibleBounds,
   type SketchContact,
 } from '../../modules/modeling/modeling.js';
+import { defaultSectionOffset, visibleBounds } from './viewBounds.js';
 import {
   expressionFieldsOf,
   resolveFieldExpression,

@@ -3,12 +3,13 @@ import test from 'node:test';
 
 import { findAnchorPixel } from '../../renderer/src/platform/viewport/automation.js';
 import { buildScreenRibbon } from '../../renderer/src/platform/viewport/geometry.js';
+
 import {
   handleTip,
   sectionHandle,
   sectionNormal,
   sectionOutline,
-} from '../../renderer/src/modules/modeling/toolAnchors.js';
+} from '../../renderer/src/platform/viewport/section.js';
 
 const BOUNDS = {
   min: [0, 0, 0] as [number, number, number],

@@ -1,8 +1,9 @@
 /**
- * Pure modelling helpers shared by the store, the command registry, the
- * viewport and the chrome: Shapr3D-style automatic extrude operation,
- * "consumed" sketch visibility, section-plane defaults and quick
- * measurements. No store access, no DOM — unit tested under `node:test`.
+ * Pure modelling helpers: Shapr3D-style automatic extrude operation (sketch
+ * contact, start depth, point-in-body) and quick measurements. No store
+ * access, no DOM — unit tested under `node:test`. Sketch visibility is the
+ * document's (`foundation/document/sketchVisibility.ts`), section bounds the
+ * command gate's (`foundation/commands/viewBounds.ts`).
  */
 import type { Body, EvaluationResult } from '../../foundation/geometry-kernel/types.js';
 import {
@@ -16,7 +17,6 @@ import {
 } from '../../foundation/document/document.js';
 import type { SketchFeature } from '../../foundation/sketch-solver/sketchFeature.js';
 import { detectRegions, loopPolygon } from '../../foundation/sketch-solver/regions.js';
-import { isModelingFeature, sketchIdsUsedBy } from './features.js';
 import type { SelectionItem } from '../../foundation/commands/store.js';
 
 // ---- Automatic extrude operation --------------------------------------------------
@@ -368,85 +368,6 @@ function pointInTriangle(p: Vec3, a: Vec3, b: Vec3, c: Vec3): boolean {
   const v = (d00 * d12 - d01 * d02) / denom;
   const eps = 1e-6;
   return u >= -eps && v >= -eps && u + v <= 1 + eps;
-}
-
-// ---- Sketch visibility ---------------------------------------------------------
-
-/** Sketches used as the profile of a (non-suppressed) extrude: hidden by default, like Shapr3D. */
-export function consumedSketchIds(features: readonly Feature[]): Set<string> {
-  const out = new Set<string>();
-  for (const f of features) {
-    if (f.kind === 'extrude' && !f.suppressed && f.profile.kind === 'sketch') {
-      out.add(f.profile.featureId);
-    }
-    if (!f.suppressed && isModelingFeature(f)) for (const id of sketchIdsUsedBy(f)) out.add(id);
-  }
-  return out;
-}
-
-/** Visibility of a sketch in the viewport: an explicit user choice wins, else hidden once consumed. */
-export function isSketchVisible(
-  featureId: string,
-  consumed: ReadonlySet<string>,
-  overrides: Readonly<Record<string, boolean>>,
-): boolean {
-  const override = overrides[featureId];
-  if (override !== undefined) return override;
-  return !consumed.has(featureId);
-}
-
-// ---- Section view ----------------------------------------------------------------
-
-export type Axis = 'X' | 'Y' | 'Z';
-const AXIS_INDEX: Record<Axis, 0 | 1 | 2> = { X: 0, Y: 1, Z: 2 };
-
-export interface Bounds3 {
-  min: Vec3;
-  max: Vec3;
-}
-
-/** Union bounding box of the visible bodies, or `null` when nothing is visible. */
-export function visibleBounds(
-  bodies: readonly Body[],
-  hiddenBodyIds: readonly string[],
-  isolatedBodyIds: readonly string[] | null,
-): Bounds3 | null {
-  let min: Vec3 | null = null;
-  let max: Vec3 | null = null;
-  for (const body of bodies) {
-    if (hiddenBodyIds.includes(body.id)) continue;
-    if (isolatedBodyIds && !isolatedBodyIds.includes(body.id)) continue;
-    min = min
-      ? [
-          Math.min(min[0], body.min[0]),
-          Math.min(min[1], body.min[1]),
-          Math.min(min[2], body.min[2]),
-        ]
-      : [...body.min];
-    max = max
-      ? [
-          Math.max(max[0], body.max[0]),
-          Math.max(max[1], body.max[1]),
-          Math.max(max[2], body.max[2]),
-        ]
-      : [...body.max];
-  }
-  return min && max ? { min, max } : null;
-}
-
-/** Default section offset: through the centre of the visible model along `axis` (0 without a model). */
-export function defaultSectionOffset(bounds: Bounds3 | null, axis: Axis): number {
-  if (!bounds) return 0;
-  const i = AXIS_INDEX[axis];
-  return (bounds.min[i] + bounds.max[i]) / 2;
-}
-
-/** Extent of the model along `axis` (for clamping the section handle), with a margin. */
-export function sectionRange(bounds: Bounds3 | null, axis: Axis): [number, number] {
-  if (!bounds) return [-100, 100];
-  const i = AXIS_INDEX[axis];
-  const margin = Math.max(1, (bounds.max[i] - bounds.min[i]) * 0.05);
-  return [bounds.min[i] - margin, bounds.max[i] + margin];
 }
 
 // ---- Measure -------------------------------------------------------------------

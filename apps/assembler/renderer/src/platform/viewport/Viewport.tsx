@@ -9,12 +9,9 @@ import { MIN_FEATURE_SIZE_MM } from '../../foundation/document/document.js';
 import { useSketchStore } from '../../sketch/session.js';
 import { SketchOverlay } from '../../sketch/ui/SketchOverlay.js';
 import { useSketchViewport } from '../../sketch/ui/useSketchViewport.js';
-import {
-  consumedSketchIds,
-  isSketchVisible,
-  visibleBounds,
-  type Bounds3,
-} from '../../modules/modeling/modeling.js';
+
+import { consumedSketchIds, isSketchVisible } from '../../foundation/document/sketchVisibility.js';
+import { visibleBounds, type Bounds3 } from '../../foundation/commands/viewBounds.js';
 import {
   isReferenceMeshBodyId,
   REFERENCE_MESH_ID_PREFIX,
@@ -92,16 +89,15 @@ import { encodePng } from '../../viewport/imageExport.js';
 import { setImageRenderer, useViewportUi } from '../../model/viewportUi.js';
 import { sectionAtFace } from '../../model/commands/displayCommands.js';
 import { readViewportColors, type ViewportColors } from './theme.js';
+import { blendHandle, shellHandle } from '../../modules/modeling/toolAnchors.js';
 import {
-  blendHandle,
   handleTip,
   sectionClip,
   sectionHandle,
   sectionOffsetRange,
-  shellHandle,
   type AxisHandle,
   type SectionView,
-} from '../../modules/modeling/toolAnchors.js';
+} from './section.js';
 import { bodyMaterials } from './displayModes.js';
 import { MeasureOverlay } from '../../viewport/MeasureOverlay.js';
 import { snapMeasurePoint, snapPoints, type Vec3 as MeasureVec3 } from '../../model/measure.js';

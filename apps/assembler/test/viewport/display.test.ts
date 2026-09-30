@@ -24,12 +24,13 @@ import {
   imageFileName,
   unpremultiply,
 } from '../../renderer/src/viewport/imageExport.js';
+
 import {
   sectionClip,
   sectionHandle,
   sectionOffsetRange,
   sectionOutline,
-} from '../../renderer/src/modules/modeling/toolAnchors.js';
+} from '../../renderer/src/platform/viewport/section.js';
 import { boxBody, cylinderBody } from './meshFixtures.js';
 
 void test('bodyGeometry: per-vertex face index and concatenated edges with ranges', () => {

@@ -4,7 +4,8 @@
  * stripes show. States the approximation: curvature is estimated from the
  * mesh (vertex normals), not from the kernel's exact surfaces.
  */
-import { visibleBounds } from '../modules/modeling/modeling.js';
+
+import { visibleBounds } from '../foundation/commands/viewBounds.js';
 import { formatLength, usePreferences } from '../platform/input/preferences.js';
 import type { AssemblerState } from '../foundation/commands/store.js';
 import { curvatureColor, curvatureRange } from '../platform/viewport/displayModes.js';
