@@ -161,6 +161,22 @@ function wireOf(frame: SketchFrame, loop: RegionLoop): R.Wire {
   return R.assembleWire(loop.pieces.flatMap((piece) => edgesOf(frame, piece)));
 }
 
+/**
+ * Area of a face by adaptive integration to a relative precision of 1e-9
+ * (replicad's `measureArea` uses a fixed-point Gauss rule that is off by
+ * over 10 % on B-spline glyph boundaries with many knot spans).
+ */
+function preciseArea(face: R.Face): number {
+  const oc = R.getOC();
+  const props = new oc.GProp_GProps();
+  try {
+    oc.BRepGProp.SurfaceProperties(face.wrapped as never, props, 1e-9, false);
+    return props.Mass();
+  } finally {
+    props.delete();
+  }
+}
+
 function reversedWire(wire: R.Wire): R.Wire {
   const oc = R.getOC();
   return new R.Wire(oc.TopoDS.Wire(wire.wrapped.Reversed() as never));
@@ -180,14 +196,13 @@ export function regionFace(frame: SketchFrame, region: SketchRegion): R.Face {
   const holes = region.holes.map((hole) => wireOf(frame, hole));
   const face = R.makeFace(outer, holes);
   if (holes.length === 0) return face;
-  // A wrongly oriented hole is off by twice its area; OCCT's area integration of B-spline
-  // boundaries is only accurate to ~1e-4, so compare against the hole area, not a fixed ε.
+  // A wrongly oriented hole is off by twice its area: take the orientation closer to the exact net area.
   const expected = Math.abs(region.area);
   const holeArea = region.holes.reduce((sum, h) => sum + Math.abs(h.area), 0);
-  const first = Math.abs(R.measureArea(face) - expected);
-  if (first <= 1e-9 * Math.max(1, expected)) return face;
+  const first = Math.abs(preciseArea(face) - expected);
+  if (first <= 1e-6 * Math.max(1, expected)) return face;
   const fixed = R.makeFace(outer, holes.map(reversedWire));
-  const second = Math.abs(R.measureArea(fixed) - expected);
+  const second = Math.abs(preciseArea(fixed) - expected);
   const [best, other, deviation] = first <= second ? [face, fixed, first] : [fixed, face, second];
   other.delete();
   if (deviation < 0.5 * holeArea) return best;

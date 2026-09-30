@@ -126,20 +126,20 @@ void test('revolving a region with a hole gives the Pappus volume and a valid so
   assert.ok(Math.abs(body.volume - expected) < 1e-3, `${body.volume} vs ${expected}`);
 });
 
-void test('text with counters (O, A, B) extrudes to glyph solids with open counters; cut into a plate', async () => {
-  const text = await textOutline(DEFAULT_SKETCH_FONT, 'OAB');
+void test('text with counters (O, e, A, B) extrudes to glyph solids with open counters; cut into a plate', async () => {
+  const text = await textOutline(DEFAULT_SKETCH_FONT, 'OeAB');
   const data = addText(EMPTY_SKETCH, [2, 2], {
-    text: 'OAB',
+    text: 'OeAB',
     height: 10,
     font: DEFAULT_SKETCH_FONT,
     outline: text.outline,
   }).sketch;
   const regions = detectRegions(data);
-  assert.equal(regions.length, 3, 'one region per glyph');
+  assert.equal(regions.length, 4, 'one region per glyph');
   assert.deepEqual(
     regions.map((r) => r.holes.length).sort(),
-    [1, 1, 2],
-    'O and A have one counter, B two',
+    [1, 1, 1, 2],
+    'O, e and A have one counter, B two',
   );
   const area = regions.reduce((sum, r) => sum + r.area, 0);
   for (const plane of ['XY', 'YZ'] as const) {
