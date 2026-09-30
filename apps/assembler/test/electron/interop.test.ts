@@ -12,6 +12,8 @@ import test from 'node:test';
 
 import { _electron as electron, type Page } from 'playwright-core';
 
+import { selectedOcctModule } from '../../headless/occtModule.js';
+import { loadNodeKernel } from '../kernel/nodeKernel.js';
 import { closeApp } from './closeApp.js';
 import { dismissHome } from './home.js';
 
@@ -21,11 +23,15 @@ const SHOTS_DIR =
   process.env.ASSEMBLER_SHOTS_DIR ?? join('D:', 'AgentWork', 'HimmelCAD-Assembler', 'shots');
 
 /** Drops files on the window the way the OS does (a DataTransfer with File objects). */
-async function dropFiles(page: Page, names: string[]): Promise<void> {
-  const files = names.map((name) => ({
-    name,
-    b64: readFileSync(join(FIXTURES, name)).toString('base64'),
-  }));
+async function dropFiles(
+  page: Page,
+  names: (string | { name: string; bytes: Uint8Array })[],
+): Promise<void> {
+  const files = names.map((entry) =>
+    typeof entry === 'string'
+      ? { name: entry, b64: readFileSync(join(FIXTURES, entry)).toString('base64') }
+      : { name: entry.name, b64: Buffer.from(entry.bytes).toString('base64') },
+  );
   await page.evaluate((list) => {
     const dt = new DataTransfer();
     for (const f of list) {
@@ -113,5 +119,58 @@ void test('packaged app: STEP assembly, 3MF, DXF and Mesh to Solid by drag & dro
     .click();
   await history.getByText('Mesh to Solid 1', { exact: true }).waitFor({ timeout: 60_000 });
   await page.screenshot({ path: join(SHOTS_DIR, 'io-electron-mesh-solid.png') });
+  assert.deepEqual(errors, []);
+});
+
+void test('packaged app: IGES by drag & drop (HimmelCAD OCCT build) or refused with the reason', async (t) => {
+  const himmelcad = selectedOcctModule() === 'himmelcad';
+  // An IGES file of the robot's five solids, written by the same OCCT module in Node.
+  let iges: Uint8Array = new TextEncoder().encode('not iges');
+  if (himmelcad) {
+    const { evaluator } = await loadNodeKernel();
+    iges = await evaluator.exportIges!([
+      {
+        id: 'import-1',
+        name: 'Import 1',
+        suppressed: false,
+        kind: 'importStep',
+        data: readFileSync(join(FIXTURES, 'robot-assembly.step')).toString('base64'),
+        fileName: 'robot-assembly.step',
+        structure: 'assembly',
+      },
+    ]);
+  }
+  const userDataDir = mkdtempSync(join(tmpdir(), 'assembler-iges-'));
+  const app = await electron.launch({
+    args: [APP_DIR, `--user-data-dir=${userDataDir}`],
+    env: { ...process.env, ASSEMBLER_FORCE_PRODUCTION: '1' },
+    timeout: 60_000,
+  });
+  t.after(async () => {
+    await closeApp(app);
+    rmSync(userDataDir, { recursive: true, force: true });
+  });
+  const page = await app.firstWindow();
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await page.waitForLoadState('domcontentloaded');
+  await dismissHome(page);
+  await kernelReady(page);
+  const items = page.getByLabel('Items panel');
+  const history = page.getByLabel('History panel');
+  await dropFiles(page, [{ name: 'robot.igs', bytes: iges }]);
+  if (himmelcad) {
+    await history.getByText('Import 1', { exact: true }).waitFor({ timeout: 60_000 });
+    for (const name of ['robot 1', 'robot 5']) {
+      await items.getByText(name, { exact: true }).waitFor({ timeout: 30_000 });
+    }
+    await page.screenshot({ path: join(SHOTS_DIR, 'k7-electron-iges.png') });
+  } else {
+    await page
+      .getByText('IGES is not in this build', { exact: false })
+      .waitFor({ timeout: 30_000 });
+    await page.getByRole('button', { name: 'OK' }).click();
+    assert.equal(await history.getByText('Import 1', { exact: true }).count(), 0);
+  }
   assert.deepEqual(errors, []);
 });

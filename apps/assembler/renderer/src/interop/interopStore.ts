@@ -60,6 +60,24 @@ export function kernelFormatCapabilities(): KernelFormatCapabilities | null {
   return kernel?.status.capabilities ?? null;
 }
 
+/**
+ * The capabilities once the kernel has finished loading (a file dropped while
+ * it loads must not be refused as "not in this build"); `null` if it failed.
+ */
+function settledCapabilities(): Promise<KernelFormatCapabilities | null> {
+  const adapter = kernel;
+  if (!adapter || adapter.status.status !== 'loading') {
+    return Promise.resolve(adapter?.status.capabilities ?? null);
+  }
+  return new Promise((resolve) => {
+    const off = adapter.onStatus((status) => {
+      if (status.status === 'loading') return;
+      queueMicrotask(() => off());
+      resolve(status.capabilities ?? null);
+    });
+  });
+}
+
 /** Why IGES is unavailable (the default OCCT module). */
 export const IGES_UNAVAILABLE_TEXT =
   'IGES is not in this build: the CAD kernel (replicad-opencascadejs 1.1.0) has no IGES reader or writer. It needs the HimmelCAD OCCT build. Export the part as STEP from the source system instead.';
@@ -415,7 +433,7 @@ export const useInteropStore = create<InteropState>((set, get) => {
             await importStep(file.name, file.bytes);
             break;
           case 'iges':
-            if (kernel?.status.capabilities?.igesRead) {
+            if ((await settledCapabilities())?.igesRead) {
               await importStep(file.name, file.bytes, 'iges');
             } else {
               fail(`Could not import "${file.name}"`, [IGES_UNAVAILABLE_TEXT]);

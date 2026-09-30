@@ -1,3 +1,4 @@
+import { createReadStream, existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -64,10 +65,40 @@ const occtSelection = (() => {
     ],
   };
 })();
+// Dev only: Vite's raw `/@fs/` middleware serves from the root of the current
+// drive on Windows, so the `.wasm` in a cache directory on another drive
+// (fetched raw by the kernel worker) would fall through to `index.html`. Serve
+// it from the verified cache directory directly.
+function occtCacheFiles(): Plugin {
+  return {
+    name: 'assembler-occt-cache-files',
+    configureServer(server) {
+      if (!occtSelection) return;
+      const root = path.resolve(occtSelection.dir);
+      server.middlewares.use((req, res, next) => {
+        // Plain requests only: `…wasm?import&url` is the JS module Vite generates for the import.
+        const url = req.url ?? '';
+        if (!url.startsWith('/@fs/') || url.includes('?')) {
+          next();
+          return;
+        }
+        const file = path.resolve(decodeURIComponent(url.slice('/@fs/'.length)));
+        // Only the raw `.wasm`; the glue `.js` goes through Vite's transform as usual.
+        if (path.dirname(file) !== root || !file.endsWith('.wasm') || !existsSync(file)) {
+          next();
+          return;
+        }
+        res.setHeader('Content-Type', 'application/wasm');
+        createReadStream(file).pipe(res);
+      });
+    },
+  };
+}
+
 export default defineConfig({
   root: 'renderer',
   base: './',
-  plugins: [react(), kernelWorkerCsp()],
+  plugins: [react(), kernelWorkerCsp(), occtCacheFiles()],
   resolve: { alias: occtSelection?.aliases ?? [] },
   server: {
     port: 5175,
