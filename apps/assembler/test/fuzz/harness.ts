@@ -983,7 +983,29 @@ export class FuzzHarness {
         return;
       }
     }
+    // A cold evaluation (fresh evaluator, empty caches) on the fuzzed kernel's own, long-lived
+    // OCCT instance: if it agrees with the incremental result, two cold evaluations of the same
+    // document on two instances disagree — the kernel's heap state, not the cache (F6).
+    const onMain = evaluationSignature(await this.coldEvaluateOnMain(active));
+    if (!firstDifference(incremental, onMain)) {
+      this.marginal.push(`instance dependent (cold on the fuzzed instance agrees): ${d}`);
+      return;
+    }
     fail('determinism', `incremental ≠ cold evaluation: ${d}`);
+  }
+
+  /** Cold evaluation with a fresh evaluator on the fuzzed kernel's OCCT instance (store settled). */
+  private async coldEvaluateOnMain(features: Feature[]): Promise<EvaluationResult> {
+    await this.settle();
+    await this.call('document.get');
+    await this.call('bodies.list', { scope: 'committed' });
+    if (!this.mainOc) throw new Error('the fuzzed kernel is not loaded');
+    const evaluator = createEvaluator(this.mainOc);
+    try {
+      return await evaluator.evaluate(features, { quality: 'final' });
+    } finally {
+      evaluator.clearCache();
+    }
   }
 
   private async checkUndoRedo(): Promise<void> {

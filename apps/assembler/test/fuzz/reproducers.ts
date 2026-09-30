@@ -117,4 +117,21 @@ export const MARGINAL_REPRODUCERS: RegressionCase[] = [
       { op: 'polyline', r: [0.0295, 0.6546, 0.1875, 0.8846, 0.0303, 0.1, 0.0967, 0.4114] },
     ],
   },
+  {
+    // A circle revolved about the X axis beside its XZ plane (a torus-like ring), suppress +
+    // undo, then a cylinder cut through it: after ~430 sequences in one process the cut was a
+    // no-op in the incremental evaluation and an invalid, inside-out result (-10 298 mm³, with
+    // the safety-net warning) in the cold one; in fresh processes both give the invalid result.
+    name: 'determinism-s101-q434',
+    finding: 'F6',
+    invariant: 'determinism',
+    ops: [
+      { op: 'sketch', r: [0.204, 0.7819, 0.7669, 0.9375, 0.118, 0.5458, 0.0076, 0.6466] },
+      { op: 'sketch', r: [0.3917, 0.6262, 0.9586, 0.6011, 0.2061, 0.5817, 0.805, 0.8276] },
+      { op: 'revolve', r: [0.5667, 0.1598, 0.3889, 0.2352, 0.6554, 0.0312, 0.1025, 0.4445] },
+      { op: 'suppress', r: [0.7389, 0.5664, 0.3815, 0.8546, 0.9596, 0.4488, 0.5899, 0.8689] },
+      { op: 'undo', r: [0.421, 0.3493, 0.7746, 0.5317, 0.9695, 0.3315, 0.5464, 0.5447] },
+      { op: 'extrude', r: [0.4082, 0.9931, 0.2881, 0.5022, 0.2382, 0.8309, 0.2567, 0.7621] },
+    ],
+  },
 ];

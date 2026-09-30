@@ -176,6 +176,8 @@ void test(`monkey: ${MINUTES} min of random input keeps the production app error
   const deadline = Date.now() + MINUTES * 60_000;
   let actions = 0;
   let ladders = 0;
+  // What was open when a ladder started (evidence that the ladder had something to close).
+  const closedByEscape: Record<string, number> = {};
   const stuck: string[] = [];
   const failures = (): string[] => [...errors, ...stuck, ...(closed ? ['the app closed'] : [])];
 
@@ -232,6 +234,10 @@ void test(`monkey: ${MINUTES} min of random input keeps the production app error
     await page.waitForTimeout(20 + Math.floor(next() * 60));
     if (actions % 40 === 0 && !closed) {
       ladders += 1;
+      for (const item of await busyState(page)) {
+        const kind = item.split(':')[0]!;
+        closedByEscape[kind] = (closedByEscape[kind] ?? 0) + 1;
+      }
       let busy: string[] = [];
       for (let i = 0; i < 6; i += 1) {
         await page.keyboard.press('Escape');
@@ -257,6 +263,7 @@ void test(`monkey: ${MINUTES} min of random input keeps the production app error
     minutes: MINUTES,
     actions,
     escapeLadders: ladders,
+    closedByEscape,
     failures: failures(),
     lastActions: log.slice(-60),
   };
@@ -266,7 +273,7 @@ void test(`monkey: ${MINUTES} min of random input keeps the production app error
     'utf8',
   );
   t.diagnostic(
-    `monkey: ${actions} actions, ${ladders} Escape ladders, report ${join(OUT_DIR, `monkey-seed${SEED}.json`)}`,
+    `monkey: ${actions} actions, ${ladders} Escape ladders (open before: ${JSON.stringify(closedByEscape)}), report ${join(OUT_DIR, `monkey-seed${SEED}.json`)}`,
   );
   if (!closed)
     await page.screenshot({ path: join(OUT_DIR, `monkey-seed${SEED}.png`) }).catch(() => undefined);

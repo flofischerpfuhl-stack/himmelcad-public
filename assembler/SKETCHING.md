@@ -170,7 +170,9 @@ Session store `sketch/session.ts`, overlay `sketch/ui/SketchOverlay.tsx`
   double-click edits, the field accepts expressions.
 - **Feedback:** under-constrained geometry blue, fully constrained green,
   construction dashed, selection orange; the pill shows the remaining degrees
-  of freedom or "Fully constrained". An edit that conflicts, is redundant, has
+  of freedom or "Fully constrained" ("Analyzing constraints…" until the
+  solver's analysis of a re-entered sketch has reported; `dof` is `null`
+  meanwhile). An edit that conflicts, is redundant, has
   an invalid expression or would collapse geometry is **rejected**: the last
   valid sketch stays, a red banner names the constraints/dimensions involved
   and they are drawn red.
