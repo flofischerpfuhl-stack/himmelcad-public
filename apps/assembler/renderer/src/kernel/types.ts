@@ -5,6 +5,7 @@
  * and into the store and viewport.
  */
 import type { CurveKind, Feature, SketchFrame, SurfaceKind, Vec3 } from '../model/document.js';
+import type { SketchEntity } from '../sketch/types.js';
 
 export type KernelStatus = 'loading' | 'ready' | 'error';
 
@@ -116,6 +117,17 @@ export interface EvaluatedSketch {
     /** Net area, mm². */
     area: number;
   }[];
+  /**
+   * Projected geometry (`sketch/projection.ts`): per projection whether its
+   * source resolved (`ok`), is missing (`frozen`) or changed shape
+   * (`changed`). Absent when the sketch has no projections.
+   */
+  projections?: { id: string; status: 'ok' | 'frozen' | 'changed'; message?: string }[];
+  /**
+   * The projected entities as re-derived from their sources, present only
+   * when they moved: sketch mode adopts them (and re-solves) on entry.
+   */
+  projectedEntities?: SketchEntity[];
   /** Every curve (construction included) as a world polyline. */
   curves: {
     entityId: string;

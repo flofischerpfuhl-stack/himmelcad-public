@@ -271,6 +271,17 @@ export interface SketchData {
 
 export const EMPTY_SKETCH: SketchData = { entities: [], constraints: [], dimensions: [] };
 
+/** The sketch data of a sketch feature (or any object carrying it), optional parts only when present. */
+export function sketchDataOf(source: SketchData): SketchData {
+  return {
+    entities: source.entities,
+    constraints: source.constraints,
+    dimensions: source.dimensions,
+    ...(source.projections ? { projections: source.projections } : {}),
+    ...(source.regionMemory ? { regionMemory: source.regionMemory } : {}),
+  };
+}
+
 export function isCurve(entity: SketchEntity | undefined): entity is SketchCurve {
   return entity !== undefined && entity.kind !== 'point';
 }

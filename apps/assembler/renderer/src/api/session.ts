@@ -31,6 +31,7 @@ import type { Feature, SketchFeature } from '../model/document.js';
 import { consumedSketchIds } from '../model/modeling.js';
 import { ProjectFormatError, loadProjectFile, saveProjectFile } from '../model/project/format.js';
 import type { AssemblerState, SelectionItem } from '../model/store.js';
+import { rememberRegions } from '../sketch/regionMemory.js';
 import {
   describeBody,
   describeEdge,
@@ -682,7 +683,11 @@ export class AgentSession {
     data: SketchData,
   ): Promise<{ feature: SketchFeature; dof: number }> {
     const { sketch, dof } = await solveSketch(data);
-    const stored = validateStored({ ...feature, ...sketch }) as SketchFeature;
+    // Region fingerprints, like a sketch commit in the app (geometric re-binding of profiles).
+    const stored = validateStored({
+      ...feature,
+      ...rememberRegions(sketch, feature),
+    }) as SketchFeature;
     return { feature: stored, dof };
   }
 

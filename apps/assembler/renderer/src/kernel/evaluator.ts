@@ -40,8 +40,11 @@ import {
   type SurfaceKind,
   type Vec3,
 } from '../model/document.js';
+import { projectedEntities, refreshProjections, type EdgeSample } from '../sketch/projection.js';
 import type { SketchRegion } from '../sketch/regions.js';
+import type { SketchProjection } from '../sketch/types.js';
 import { evaluateSketchGeometry, regionFace, sideFaceKey } from './sketchGeometry.js';
+import { sampleEdge } from './sketchProjection.js';
 import {
   GEOMETRY_TOLERANCE,
   assignEdgeKeys,
@@ -525,15 +528,57 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
     return frameForFace(geom.normal, geom.centroid);
   }
 
+  /** Exact samples of a projection's source edges (a face: its boundary), or why it cannot be resolved. */
+  function projectionSamples(
+    projection: SketchProjection,
+    bodies: Map<string, BodyState>,
+    warn: (message: string) => void,
+  ): EdgeSample[] | string {
+    const ref = projection.source.ref;
+    const body = bodies.get(ref.bodyId);
+    if (!body) return `Missing reference: body "${ref.bodyId}"`;
+    try {
+      if (projection.source.kind === 'edge') {
+        const { topology, indices } = resolveEdges(body, [projection.source.ref], warn);
+        const e = indices[0]!;
+        return [sampleEdge(oc, topology.edges[e]!, topology.edgeGeoms[e]!.curve)];
+      }
+      const { topology, index } = resolveFace(body, projection.source.ref, warn);
+      return topology.faceEdges[index]!.map((e) =>
+        sampleEdge(oc, topology.edges[e]!, topology.edgeGeoms[e]!.curve),
+      );
+    } catch (error) {
+      if (isFatalKernelError(error)) throw error;
+      return describeError(error);
+    }
+  }
+
   function evaluateSketch(
     feature: SketchFeature,
     bodies: Map<string, BodyState>,
     warn: (message: string) => void,
   ): { evaluated: EvaluatedSketch; regions: SketchRegion[] } {
     const frame = sketchFrame(feature, bodies, warn);
+    // Associative projections: re-derived from their (resolved) sources; frozen when missing.
+    const projected = refreshProjections(feature, frame, (projection) =>
+      projectionSamples(projection, bodies, warn),
+    );
+    for (const status of projected.statuses) {
+      if (status.status !== 'ok') {
+        warn(
+          `Projected geometry ${status.id}: ${status.message ?? 'source missing'} — kept as it was`,
+        );
+      }
+    }
+    const source: SketchFeature =
+      projected.sketch === feature ? feature : { ...feature, ...projected.sketch };
     try {
-      const { evaluated, regions, warnings } = evaluateSketchGeometry(feature, frame);
+      const { evaluated, regions, warnings } = evaluateSketchGeometry(source, frame);
       for (const message of warnings) warn(message);
+      if (projected.statuses.length > 0) {
+        evaluated.projections = projected.statuses;
+        if (projected.moved.length > 0) evaluated.projectedEntities = projectedEntities(source);
+      }
       return { evaluated, regions };
     } catch (error) {
       if (isFatalKernelError(error)) throw error;

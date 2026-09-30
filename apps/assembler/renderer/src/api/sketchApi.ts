@@ -21,6 +21,7 @@ import { getSketchSolver } from '../sketch/solverProvider.js';
 import {
   idAllocator,
   nextDimensionName,
+  sketchDataOf as sketchDataOfFeature,
   type SketchConstraintKind,
   type SketchData,
   type SketchDimension,
@@ -47,11 +48,7 @@ export interface ShapeResult {
 }
 
 export function sketchDataOf(feature: SketchFeature): SketchData {
-  return {
-    entities: feature.entities,
-    constraints: feature.constraints,
-    dimensions: feature.dimensions,
-  };
+  return sketchDataOfFeature(feature);
 }
 
 const RECTANGLE_ROLES = ['x', 'y', 'width', 'height'];

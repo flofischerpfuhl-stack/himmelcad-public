@@ -19,6 +19,7 @@ import type { Feature, SketchFeature } from '../../renderer/src/model/document.j
 import { useAssemblerStore } from '../../renderer/src/model/store.js';
 import { addRectangle } from '../../renderer/src/sketch/builders.js';
 import { setSketchDimension } from '../../renderer/src/sketch/featureOps.js';
+import { rememberRegions } from '../../renderer/src/sketch/regionMemory.js';
 import { setSketchSolverFactory } from '../../renderer/src/sketch/solverProvider.js';
 import { EMPTY_SKETCH } from '../../renderer/src/sketch/types.js';
 import { createNodeKernelAdapter } from '../kernel/nodeKernel.js';
@@ -111,7 +112,10 @@ async function uiPlate(): Promise<void> {
     suppressed: false,
     kind: 'sketch',
     plane: { kind: 'plane', plane: 'XY', offset: 0 },
-    ...addRectangle(EMPTY_SKETCH, [0, 0], [80, 50], { position: true, size: true }).sketch,
+    // A session commit records the region fingerprints (`sketch/regionMemory.ts`).
+    ...rememberRegions(
+      addRectangle(EMPTY_SKETCH, [0, 0], [80, 50], { position: true, size: true }).sketch,
+    ),
   };
   store.getState().addFeature(sketch, [{ kind: 'sketchProfile', featureId: sketch.id }]);
   const sketchId = sketch.id;

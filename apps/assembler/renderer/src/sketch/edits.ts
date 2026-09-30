@@ -71,16 +71,27 @@ export class SketchBuilder {
   constraints: SketchConstraint[];
   dimensions: SketchData['dimensions'];
   readonly optional: string[] = [];
+  /** Projections and region memory, carried through unchanged. */
+  private readonly extras: Pick<SketchData, 'projections' | 'regionMemory'>;
 
   constructor(sketch: SketchData) {
     this.alloc = idAllocator(sketch);
     this.entities = [...sketch.entities];
     this.constraints = [...sketch.constraints];
     this.dimensions = [...sketch.dimensions];
+    this.extras = {
+      ...(sketch.projections ? { projections: sketch.projections } : {}),
+      ...(sketch.regionMemory ? { regionMemory: sketch.regionMemory } : {}),
+    };
   }
 
   get data(): SketchData {
-    return { entities: this.entities, constraints: this.constraints, dimensions: this.dimensions };
+    return {
+      ...this.extras,
+      entities: this.entities,
+      constraints: this.constraints,
+      dimensions: this.dimensions,
+    };
   }
 
   id(prefix: string): string {
@@ -168,14 +179,24 @@ export function removeDangling(sketch: SketchData): SketchData {
     for (const e of current.entities)
       if (isCurve(e)) for (const id of curvePointIds(e)) used.add(id);
     for (const c of current.constraints) {
-      if (c.refs.some((r) => curveIds.has(r))) for (const r of c.refs) used.add(r);
+      // Pattern constraints tie copies to their base/centre points: those points stay.
+      const pattern = c.kind === 'translate' || c.kind === 'rotate';
+      if (pattern || c.refs.some((r) => curveIds.has(r))) for (const r of c.refs) used.add(r);
     }
     const entities = current.entities.filter((e) => e.kind !== 'point' || used.has(e.id));
     const alive = new Set(entities.map((e) => e.id));
     alive.add(ORIGIN_ID);
     const constraints = current.constraints.filter((c) => c.refs.every((r) => alive.has(r)));
     const dimensions = current.dimensions.filter((d) => d.refs.every((r) => alive.has(r)));
-    const next = { entities, constraints, dimensions };
+    const next: SketchData = { ...current, entities, constraints, dimensions };
+    if (current.projections) {
+      // A projection keeps the entities that still exist; one without any is removed.
+      const projections = current.projections
+        .map((p) => ({ ...p, entities: p.entities.filter((id) => alive.has(id)) }))
+        .filter((p) => p.entities.length > 0);
+      if (projections.length > 0) next.projections = projections;
+      else delete next.projections;
+    }
     if (
       entities.length === current.entities.length &&
       constraints.length === current.constraints.length &&
@@ -195,6 +216,7 @@ export function deleteItems(sketch: SketchData, ids: readonly string[]): SketchD
     if (isCurve(e) && curvePointIds(e).some((p) => remove.has(p))) remove.add(e.id);
   }
   return removeDangling({
+    ...sketch,
     entities: sketch.entities.filter((e) => !remove.has(e.id)),
     constraints: sketch.constraints.filter((c) => !remove.has(c.id)),
     dimensions: sketch.dimensions.filter((d) => !remove.has(d.id)),
@@ -318,15 +340,17 @@ export function trimAt(sketch: SketchData, curveId: string, at: Vec2): EditResul
 }
 
 /** A point at a trim cut: an existing point there, else a new one attached to the cutter and the curve. */
-function cutPointFor(b: SketchBuilder, curveId: string, cut: { point: Vec2; by: string }): string {
+function cutPointFor(b: SketchBuilder, cut: { point: Vec2; by: string }): string {
   for (const e of b.entities) {
     if (e.kind === 'point' && dist([e.x, e.y], cut.point) < 1e-6) return e.id;
   }
   const id = b.addPoint(cut.point);
-  // Text glyph contours (`t1.3`) are not constraint targets.
-  if (!cut.by.includes('.')) b.constrain('pointOnObject', [id, cut.by], true);
-  const target = b.entities.find((e) => e.id === curveId);
-  if (target?.kind !== 'spline') b.constrain('pointOnObject', [id, curveId], true);
+  // Text glyph contours (`t1.3`) and splines are no point-on targets; the trimmed curve's
+  // own ends lie on it by construction (arc rules, poles).
+  const cutter = b.entities.find((e) => e.id === cut.by);
+  if (!cut.by.includes('.') && cutter?.kind !== 'spline') {
+    b.constrain('pointOnObject', [id, cut.by], true);
+  }
   return id;
 }
 
@@ -363,17 +387,15 @@ function trimGeneric(
     ranges.push({
       t0: startCut.t,
       t1,
-      start: cutPointFor(b, entity.id, startCut),
-      end: cutPointFor(b, entity.id, endCut),
+      start: cutPointFor(b, startCut),
+      end: cutPointFor(b, endCut),
     });
   } else {
     const before = [...inner].reverse().find((c) => c.t < t);
     const after = inner.find((c) => c.t > t);
     if (!ends) return null;
-    if (before)
-      ranges.push({ t0: 0, t1: before.t, start: ends[0], end: cutPointFor(b, entity.id, before) });
-    if (after)
-      ranges.push({ t0: after.t, t1: 1, start: cutPointFor(b, entity.id, after), end: ends[1] });
+    if (before) ranges.push({ t0: 0, t1: before.t, start: ends[0], end: cutPointFor(b, before) });
+    if (after) ranges.push({ t0: after.t, t1: 1, start: cutPointFor(b, after), end: ends[1] });
   }
   if (ranges.length === 0) return { sketch: deleteItems(sketch, [entity.id]), optional: [] };
   const construction = entity.construction === true;
