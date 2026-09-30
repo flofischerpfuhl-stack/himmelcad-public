@@ -38,6 +38,11 @@ stable-reference scheme and open risks: `assembler/KERNEL-SPIKE.md`.
   persistence) and one long Electron scenario (Home → template, hand-over,
   Select Through, kernel worker killed mid-edit, app killed → recovery).
   Case list and results: `assembler/ACCEPTANCE.md`.
+- `pnpm test:fuzz [-- --seed N --minutes M]` — model-based fuzzer of the agent
+  API with invariant checks and delta-debugged reproducers (default 3 min);
+  `pnpm test:monkey` — seeded random UI input against the production app
+  (after `pnpm build`; `ASSEMBLER_MONKEY_MINUTES`, default 5). Design,
+  invariants and findings: `assembler/ROBUSTNESS.md`.
 - `pnpm bench:kernel` — kernel performance table (`assembler/KERNEL-SPIKE.md`).
 - `pnpm package:win` — Windows installer (NSIS, per-user, no admin prompt)
   into `release/` via `electron-builder.win.yml`; `pnpm icon` regenerates the

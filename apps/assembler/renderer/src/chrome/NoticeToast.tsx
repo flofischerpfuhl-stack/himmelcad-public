@@ -31,7 +31,12 @@ export function NoticeToast(): JSX.Element | null {
   return (
     <div className={styles.host} data-raised={kernelIslands > 0 ? kernelIslands : undefined}>
       {showLoadError ? (
-        <Toast key={`load:${loadError}`} tone="error" onDismiss={dismissLoadError}>
+        <Toast
+          key={`load:${loadError}`}
+          tone="error"
+          onDismiss={dismissLoadError}
+          autoDismiss={false}
+        >
           {loadError}
         </Toast>
       ) : null}

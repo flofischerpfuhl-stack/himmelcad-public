@@ -594,7 +594,33 @@ export function loadProjectFile(text: string): ProjectFileV1 {
   if (!isNumber(raw.schemaVersion)) {
     throw new ProjectFormatError('Invalid project file: missing or invalid schemaVersion.');
   }
+  // The validators recurse; a deeply nested (corrupt or hostile) file must fail as a format
+  // error, not as a stack overflow (fuzzing finding F5, `assembler/ROBUSTNESS.md`).
+  if (nestingDepth(raw, MAX_NESTING_DEPTH) > MAX_NESTING_DEPTH) {
+    throw new ProjectFormatError(
+      `Invalid project file: data is nested more than ${MAX_NESTING_DEPTH} levels deep.`,
+    );
+  }
   return migrateAndValidate(raw.schemaVersion, raw);
+}
+
+/** Far above any real project (features → sketch entities → points is under 10 levels). */
+export const MAX_NESTING_DEPTH = 64;
+
+/** Nesting depth of parsed JSON, iteratively; stops counting once past `limit`. */
+function nestingDepth(value: unknown, limit: number): number {
+  let deepest = 0;
+  const stack: [unknown, number][] = [[value, 1]];
+  while (stack.length > 0) {
+    const [node, depth] = stack.pop()!;
+    if (node === null || typeof node !== 'object') continue;
+    if (depth > deepest) deepest = depth;
+    if (deepest > limit) return deepest;
+    for (const child of Array.isArray(node) ? node : Object.values(node as object)) {
+      if (child !== null && typeof child === 'object') stack.push([child, depth + 1]);
+    }
+  }
+  return deepest;
 }
 
 /** Serializes a document into v1 project file JSON text (pretty-printed for diffability). */
