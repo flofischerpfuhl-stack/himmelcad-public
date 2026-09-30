@@ -25,6 +25,12 @@ export interface ApiContribution {
   methods?: readonly { order: number; methods: Readonly<Record<string, ApiMethod>> }[];
   defs?: readonly { order: number; defs: Readonly<Record<string, JsonSchema>> }[];
   featureKinds?: readonly { order: number; kinds: Readonly<Record<string, FeatureKindSpec>> }[];
+  /**
+   * Handlers of methods whose spec another block publishes (the published
+   * order keeps a method inside a core block until that block is split):
+   * the module owns the behaviour, the contract text stays where it is.
+   */
+  handlers?: Readonly<Record<string, ApiHandler>>;
 }
 
 /**
@@ -62,6 +68,16 @@ export const API_DEFS: Record<string, JsonSchema> = {};
 /** Every feature-kind parameter schema, in contract order (live). */
 export const API_FEATURE_KINDS: Record<string, FeatureKindSpec> = {};
 const handlers = new Map<string, ApiHandler>();
+const handlerOwners = new Map<string, string>();
+
+function setHandler(module: string, name: string, handler: ApiHandler): void {
+  const owner = handlerOwners.get(name);
+  if (owner && handlers.get(name) !== handler) {
+    throw new Error(`API handler of "${name}" is registered twice (${owner}, ${module})`);
+  }
+  handlers.set(name, handler);
+  handlerOwners.set(name, module);
+}
 
 function merge<T, R>(
   blocks: Block<T>[],
@@ -111,8 +127,11 @@ export function registerApiContribution(module: string, contribution: ApiContrib
   merge(kindBlocks, API_FEATURE_KINDS, 'feature kind', (k) => k);
   for (const block of contribution.methods ?? []) {
     for (const [name, method] of Object.entries(block.methods)) {
-      if (method.handler) handlers.set(name, method.handler);
+      if (method.handler) setHandler(module, name, method.handler);
     }
+  }
+  for (const [name, handler] of Object.entries(contribution.handlers ?? {})) {
+    setHandler(module, name, handler);
   }
 }
 

@@ -7,12 +7,14 @@
  */
 import { COMMAND_ORDER, setModalSessionProbe } from '../../foundation/commands/registry.js';
 import { defineAssemblerModule } from '../../foundation/commands/module.js';
+import { SKETCHING_API } from './api.js';
 import { SKETCH_COMMANDS } from './sketchCommands.js';
 import { useSketchStore } from './session.js';
 
 export const sketchingModule = defineAssemblerModule({
   id: 'sketching',
   commands: [{ order: COMMAND_ORDER.sketch, commands: SKETCH_COMMANDS }],
+  api: SKETCHING_API,
   // An open sketch owns the keyboard and the selection: no pick sessions meanwhile.
   onInstall: () => setModalSessionProbe(() => useSketchStore.getState().session !== null),
 });

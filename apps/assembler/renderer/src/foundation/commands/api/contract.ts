@@ -186,4 +186,11 @@ export interface ApiContext {
   readFile(p: Json, fallbackName: string): Promise<{ bytes: Uint8Array; fileName: string }>;
   allocateFeatureId(kind: string): string;
   nextFeatureName(prefix: string, features: readonly Feature[]): string;
+  /** The feature `featureId` of `features`; throws `notFound` (with the candidates) otherwise. */
+  findFeature(features: readonly Feature[], featureId: string): Feature;
+  /**
+   * The feature as the `.hcasm` validator stores it (the persistence
+   * contract); throws `invalidParams` naming the bad field otherwise.
+   */
+  validateStored(feature: Feature): Feature;
 }
