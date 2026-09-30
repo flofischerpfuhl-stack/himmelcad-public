@@ -27,10 +27,10 @@ import type {
 import type { EdgeRef, FaceRef, Feature } from '../../renderer/src/foundation/document/document.js';
 import type { SketchFeature } from '../../renderer/src/foundation/sketch-solver/sketchFeature.js';
 import type {
-  OffsetFaceFeature,
   PatternFeature,
   RevolveFeature,
 } from '../../renderer/src/modules/modeling/features.js';
+import type { OffsetFaceFeature } from '../../renderer/src/modules/direct-edit/kinds.js';
 import { detectRegions } from '../../renderer/src/foundation/sketch-solver/regions.js';
 import { extrude, fillet, sketch } from '../bench/parts.js';
 import { loadNodeKernel } from './nodeKernel.js';

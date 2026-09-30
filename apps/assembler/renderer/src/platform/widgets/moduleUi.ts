@@ -5,6 +5,7 @@
  * installed by the desktop composition (`app/uiComposition.ts`). The shell
  * renders what is registered; it never imports a module's panel.
  */
+import type { LucideIcon } from 'lucide-react';
 import type { ComponentType } from 'react';
 
 import type { AssemblerState } from '../../foundation/commands/store.js';
@@ -67,6 +68,10 @@ export interface ModuleUi {
   modeButtons?: readonly ModeButtonRegistration[];
   historyCards?: readonly HistoryCardRegistration[];
   viewportOverlays?: readonly ViewportOverlayProvider[];
+  /** Icons of the module's feature kinds (History cards, Items). */
+  featureIcons?: Readonly<Record<string, LucideIcon>>;
+  /** Icons of the module's commands (toolbar, menus, search). */
+  commandIcons?: Readonly<Record<string, LucideIcon>>;
 }
 
 export function defineModuleUi(ui: ModuleUi): ModuleUi {
@@ -76,6 +81,8 @@ export function defineModuleUi(ui: ModuleUi): ModuleUi {
 const panels: PanelRegistration[] = [];
 const modeButtons: ModeButtonRegistration[] = [];
 const historyCards = new Map<string, HistoryCardRegistration>();
+const featureIcons = new Map<string, LucideIcon>();
+const commandIcons = new Map<string, LucideIcon>();
 const installed = new Set<string>();
 
 /** Registers the modules' UI parts (desktop renderer only), once per module. */
@@ -93,6 +100,8 @@ export function installModuleUis(uis: readonly ModuleUi[]): void {
       }
     }
     for (const overlay of ui.viewportOverlays ?? []) registerViewportOverlay(overlay);
+    for (const [kind, icon] of Object.entries(ui.featureIcons ?? {})) featureIcons.set(kind, icon);
+    for (const [id, icon] of Object.entries(ui.commandIcons ?? {})) commandIcons.set(id, icon);
   }
   panels.sort((a, b) => a.order - b.order);
   modeButtons.sort((a, b) => a.order - b.order);
@@ -111,4 +120,14 @@ export function registeredModeButtons(): readonly ModeButtonRegistration[] {
 /** The History-card editor a module registered for `kind`, or `undefined`. */
 export function historyCardFor(kind: string): HistoryCardRegistration | undefined {
   return historyCards.get(kind);
+}
+
+/** The icon a module registered for feature `kind`, or `undefined`. */
+export function registeredFeatureIcon(kind: string): LucideIcon | undefined {
+  return featureIcons.get(kind);
+}
+
+/** The icon a module registered for command `id`, or `undefined`. */
+export function registeredCommandIcon(id: string): LucideIcon | undefined {
+  return commandIcons.get(id);
 }

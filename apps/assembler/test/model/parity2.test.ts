@@ -24,7 +24,12 @@ import {
 } from '../../renderer/src/foundation/document/document.js';
 import { createDemoDocument } from '../../renderer/src/foundation/commands/demoDocument.js';
 import type { SketchFeature } from '../../renderer/src/foundation/sketch-solver/sketchFeature.js';
-import { createDraft, draftMeta, draftToFeature } from '../../renderer/src/modules/modeling/featureTools.js';
+
+import {
+  createDraft,
+  draftMeta,
+  draftToFeature,
+} from '../../renderer/src/foundation/commands/featureDrafts.js';
 import {
   applyFixPick,
   missingReferences,

@@ -5,6 +5,7 @@
  * (`renderer/src/app/kernelModules.ts`).
  */
 import { defineKernelModule } from '../../foundation/geometry-kernel/features/registry.js';
+import '../../modules/construction/kinds.js';
 import { applyConstructionAxis, applyConstructionPlane } from './construction.js';
 
 export const constructionKernel = defineKernelModule({

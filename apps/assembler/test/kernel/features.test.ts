@@ -27,16 +27,18 @@ import type {
 import type { SketchFeature } from '../../renderer/src/foundation/sketch-solver/sketchFeature.js';
 import type {
   AlignFeature,
-  DeleteFaceFeature,
   LoftFeature,
   MirrorFeature,
-  OffsetFaceFeature,
   PatternFeature,
   RevolveFeature,
   SplitFeature,
   SweepFeature,
   TransformFeature,
 } from '../../renderer/src/modules/modeling/features.js';
+import type {
+  DeleteFaceFeature,
+  OffsetFaceFeature,
+} from '../../renderer/src/modules/direct-edit/kinds.js';
 import {
   addPolyline,
   sketchFromLegacyProfiles,

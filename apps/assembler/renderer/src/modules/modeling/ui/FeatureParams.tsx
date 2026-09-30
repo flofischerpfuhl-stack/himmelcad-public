@@ -1,18 +1,12 @@
 /**
- * History-card parameters of the modelling features (`model/features.ts`):
+ * History-card parameters of the modelling features (`features.ts`):
  * every numeric parameter is an `ExpressionField`, options are `Select`s;
  * each edit is one `editFeatureParams` call (one undo step).
  */
 import { Select } from '@himmelcad/ui';
 
-import {
-  AXIS_DEF_LABEL,
-  PLANE_DEF_LABEL,
-  type ConstructionFeature,
-} from '../../../model/construction.js';
 import type { ExtrudeOperation, Plane, AxisRef } from '../../../foundation/document/document.js';
 import type { ModelingFeature } from '../features.js';
-import { OFFSET_FACE_MODE_LABEL } from '../../direct-edit/offsetFaceModes.js';
 import type { AssemblerState, FeaturePatch } from '../../../foundation/commands/store.js';
 import { ExpressionField } from '../../../platform/widgets/ExpressionField.js';
 import { PrintFeatureParams } from './PrintFeatureParams.js';
@@ -35,54 +29,6 @@ function axisText(axis: AxisRef): string {
 
 function plural(n: number, one: string, many = `${one}s`): string {
   return `${n} ${n === 1 ? one : many}`;
-}
-
-/** History card of a construction plane/axis: its definition and numeric values, Flip. */
-function ConstructionParams({
-  feature,
-  edit,
-}: {
-  feature: ConstructionFeature;
-  edit: (patch: Record<string, unknown>) => void;
-}): JSX.Element {
-  const def = feature.definition;
-  const label =
-    feature.kind === 'constructionPlane'
-      ? PLANE_DEF_LABEL[feature.definition.kind]
-      : AXIS_DEF_LABEL[feature.definition.kind];
-  return (
-    <div className={styles.params}>
-      <span className={styles.paramNote}>{label}</span>
-      {def.kind === 'offset' ? (
-        <ExpressionField
-          label="Offset"
-          value={def.distance}
-          unit="mm"
-          onCommit={(v) => edit({ definition: { ...def, distance: v } })}
-        />
-      ) : null}
-      {def.kind === 'angle' || def.kind === 'tangent' ? (
-        <ExpressionField
-          label="Angle"
-          value={def.angle}
-          unit="°"
-          onCommit={(v) => edit({ definition: { ...def, angle: v } })}
-        />
-      ) : null}
-      <div>
-        <span className={styles.paramLabel}>Direction</span>
-        <Select
-          aria-label={`${feature.name} direction`}
-          value={feature.flip ? 'flipped' : 'normal'}
-          options={[
-            { value: 'normal', label: 'Normal' },
-            { value: 'flipped', label: 'Flipped' },
-          ]}
-          onChange={(event) => edit({ flip: event.currentTarget.value === 'flipped' })}
-        />
-      </div>
-    </div>
-  );
 }
 
 export function ModelingFeatureParams({
@@ -230,9 +176,7 @@ export function ModelingFeatureParams({
           </span>
         </div>
       );
-    case 'constructionPlane':
-    case 'constructionAxis':
-      return <ConstructionParams feature={feature} edit={edit} />;
+
     case 'pattern': {
       const p = feature.pattern;
       return (
@@ -370,34 +314,6 @@ export function ModelingFeatureParams({
               onChange={(event) => edit({ center: event.currentTarget.value === 'center' })}
             />
           </div>
-        </div>
-      );
-    case 'offsetFace': {
-      // Radius/Diameter/Total are target values, re-measured on every evaluation (DIR-01);
-      // the mode is chosen in the Offset Face tool, where the face geometry is known.
-      const mode = feature.mode ?? 'offset';
-      return (
-        <div className={styles.params}>
-          <ExpressionField
-            label={mode === 'offset' ? 'Distance' : OFFSET_FACE_MODE_LABEL[mode]}
-            value={feature.distance}
-            unit="mm"
-            onCommit={(v) => edit({ distance: v })}
-          />
-          <span className={styles.paramNote}>
-            {mode === 'offset'
-              ? plural(feature.faces.length, 'face')
-              : mode === 'total'
-                ? 'to the opposite face'
-                : `${mode} of the face`}
-          </span>
-        </div>
-      );
-    }
-    case 'deleteFace':
-      return (
-        <div className={styles.params}>
-          <span className={styles.paramNote}>{plural(feature.faces.length, 'face')} removed</span>
         </div>
       );
     case 'hole':

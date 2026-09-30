@@ -1,43 +1,21 @@
 /**
- * Commands of the modelling-feature tools (Revolve, Sweep, Loft, Mirror,
- * Pattern, Split, Align, Offset Face, Delete Face, and the print-part tools
- * Hole, Emboss, Draft, Rib, Thicken), spliced into
- * `registry.ts`'s `COMMANDS` so the menu, adaptive toolbar, search,
- * context menu and shortcuts all see them. Availability and the tool start
- * come from `featureTools.ts` (`createDraft`), so a disabled command shows
- * exactly the reason the tool could not start.
+ * Commands of the modelling-feature tools (Revolve, Sweep, Loft, Split,
+ * Mirror, Pattern, Rotate Around Axis, Align, and the print-part tools
+ * Hole, Emboss, Draft, Rib, Thicken), registered by the modelling module.
+ * Availability and the tool start come from the tool drafts
+ * (`featureToolCommand`, `drafts.ts`), so a disabled command shows exactly
+ * the reason the tool could not start. Offset Face and Delete Face are the
+ * direct-edit module's; their block sits between the two blocks here, so
+ * the published command order is unchanged.
  */
-import { createDraft, type FeatureDraftKind } from './featureTools.js';
-import type { AssemblerState, SelectionItem } from '../../foundation/commands/store.js';
-import type {
-  Command,
-  CommandAvailability,
-  CommandGroup,
-} from '../../foundation/commands/registry.js';
-
-const KERNEL_LOADING = 'The CAD kernel is still loading.';
-const KERNEL_FAILED = 'The CAD kernel failed to load.';
-
-function count(ctx: AssemblerState, kind: SelectionItem['kind']): number {
-  return ctx.selection.filter((s) => s.kind === kind).length;
-}
-
-/** Every selected item is a face (at least one). */
-function onlyFaces(ctx: AssemblerState): boolean {
-  return ctx.selection.length > 0 && ctx.selection.every((s) => s.kind === 'face');
-}
-
-/** Exactly two faces, on two different bodies (Shapr3D: Align / Replace Face). */
-function twoFacesOfTwoBodies(ctx: AssemblerState): boolean {
-  const faces = ctx.selection.filter((s) => s.kind === 'face');
-  return (
-    faces.length === 2 &&
-    ctx.selection.length === 2 &&
-    faces[0]!.kind === 'face' &&
-    faces[1]!.kind === 'face' &&
-    faces[0]!.bodyId !== faces[1]!.bodyId
-  );
-}
+import type { AssemblerState } from '../../foundation/commands/store.js';
+import type { Command } from '../../foundation/commands/registry.js';
+import {
+  countSelected as count,
+  featureToolCommand,
+  twoFacesOfTwoBodies,
+  type FeatureToolCommandSpec,
+} from '../../foundation/commands/featureToolCommand.js';
 
 function nonPlanarFaceSelected(ctx: AssemblerState): boolean {
   return ctx.selection.some((s) => {
@@ -48,19 +26,8 @@ function nonPlanarFaceSelected(ctx: AssemblerState): boolean {
     return face !== undefined && face.surface !== 'plane';
   });
 }
-
-interface FeatureCommandSpec {
-  id: string;
-  label: string;
-  group: CommandGroup;
-  kind: FeatureDraftKind;
-  shortcut?: string;
-  keywords: string[];
-  /** Recommended (adaptive toolbar first) when this returns a priority. */
-  recommend?: (ctx: AssemblerState) => number | null;
-}
-
-const SPECS: readonly FeatureCommandSpec[] = [
+/** Revolve, Sweep, Loft (before the direct-edit block). */
+const PROFILE_SPECS: readonly FeatureToolCommandSpec[] = [
   {
     id: 'tools.revolve',
     label: 'Revolve',
@@ -88,23 +55,10 @@ const SPECS: readonly FeatureCommandSpec[] = [
     keywords: ['blend profiles', 'transition', 'sections'],
     recommend: (ctx) => (count(ctx, 'sketchProfile') >= 2 ? 105 : null),
   },
-  {
-    id: 'tools.offsetFace',
-    label: 'Offset Face',
-    group: 'tools',
-    kind: 'offsetFace',
-    keywords: ['push', 'pull', 'hole size', 'enlarge', 'thicken', 'direct edit'],
-    // Shapr3D (interaction research §2): selecting a face activates Offset Face.
-    // Two faces of two bodies are an Align case instead.
-    recommend: (ctx) => (onlyFaces(ctx) && !twoFacesOfTwoBodies(ctx) ? 120 : null),
-  },
-  {
-    id: 'tools.deleteFace',
-    label: 'Delete Face',
-    group: 'tools',
-    kind: 'deleteFace',
-    keywords: ['remove fillet', 'fill hole', 'heal', 'defeature', 'direct edit'],
-  },
+];
+
+/** Split, the print-part tools and the transform tools (after the direct-edit block). */
+const SPECS: readonly FeatureToolCommandSpec[] = [
   {
     id: 'tools.split',
     label: 'Split Body',
@@ -202,34 +156,5 @@ const SPECS: readonly FeatureCommandSpec[] = [
   },
 ];
 
-function toCommand(spec: FeatureCommandSpec): Command {
-  const availability = (ctx: AssemblerState): CommandAvailability => {
-    if (ctx.kernelStatus !== 'ready') {
-      return {
-        enabled: false,
-        reason: ctx.kernelStatus === 'error' ? KERNEL_FAILED : KERNEL_LOADING,
-      };
-    }
-    const start = createDraft(spec.kind, ctx);
-    if (!start.ok) return { enabled: false, reason: start.reason };
-    const priority = spec.recommend?.(ctx) ?? null;
-    return priority === null
-      ? { enabled: true, priority: 40 }
-      : { enabled: true, recommended: true, priority };
-  };
-  return {
-    id: spec.id,
-    label: spec.label,
-    group: spec.group,
-    ...(spec.shortcut ? { shortcut: spec.shortcut } : {}),
-    keywords: spec.keywords,
-    requiresKernel: true,
-    availability,
-    run: (ctx) => {
-      const start = createDraft(spec.kind, ctx);
-      if (start.ok) ctx.beginFeatureTool(start.draft);
-    },
-  };
-}
-
-export const FEATURE_COMMANDS: readonly Command[] = SPECS.map(toCommand);
+export const PROFILE_FEATURE_COMMANDS: readonly Command[] = PROFILE_SPECS.map(featureToolCommand);
+export const FEATURE_COMMANDS: readonly Command[] = SPECS.map(featureToolCommand);

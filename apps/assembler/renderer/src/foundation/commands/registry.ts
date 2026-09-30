@@ -150,6 +150,8 @@ export const COMMAND_ORDER = {
   modelingTools: 200,
   blendRules: 300,
   modelingFeatures: 400,
+  directEdit: 410,
+  modelingFeaturesTail: 420,
   construct: 500,
   booleans: 600,
   transform: 700,
@@ -226,6 +228,11 @@ export function registerCommands(
     }
   }
   for (const listener of listeners) listener();
+}
+
+/** A command as its module registered it (without the pick-session start of {@link COMMANDS}). */
+export function registeredCommand(commandId: string): Command | undefined {
+  return registered.get(commandId)?.command;
 }
 
 /** The shortcut a command was registered with (the default for "Reset"). */

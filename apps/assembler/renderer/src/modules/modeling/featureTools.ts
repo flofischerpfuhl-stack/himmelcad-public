@@ -1,20 +1,20 @@
 /**
  * Interactive tools for the modelling features of `features.ts` — Revolve,
- * Sweep, Loft, Mirror, Pattern, Split, Rotate Around Axis, Align, Offset
- * Face, Delete Face —
- * as pure data + functions, so the store keeps a single generic
- * `feature` tool session (`store.ts`) and the viewport/chrome render what
- * this module describes:
+ * Sweep, Loft, Mirror, Pattern, Split, Rotate Around Axis, Align — as drafts
+ * of the generic feature tool (`foundation/commands/featureDrafts.ts`,
+ * registered in `drafts.ts`), so the store keeps a single `feature` tool
+ * session and the viewport/chrome render what this file describes:
  *
- * - a {@link FeatureDraft} (the tool's references and parameters),
- * - {@link createDraft}: the Shapr3D-style start from the current selection
- *   (or the reason the command is unavailable),
- * - {@link acceptPick}: a viewport click while the tool runs (add/remove a
- *   body/face/edge/profile, pick an axis or plane),
- * - {@link draftToFeature}: the feature to preview/commit (`null` while a
- *   required reference is missing),
- * - {@link draftHandles}, {@link draftBadges}, {@link draftMeta}: drag
- *   handles with value chips, pill badges and the prompt.
+ * - a {@link ModelingDraft} (the tool's references and parameters),
+ * - {@link createModelingDraft}: the Shapr3D-style start from the current
+ *   selection (or the reason the command is unavailable),
+ * - {@link acceptModelingPick}: a viewport click while the tool runs
+ *   (add/remove a body/face/edge/profile, pick an axis or plane),
+ * - {@link modelingDraftToFeature}: the feature to preview/commit (`null`
+ *   while a required reference is missing),
+ * - {@link modelingDraftHandles}, {@link modelingDraftBadges},
+ *   {@link modelingDraftMeta}: drag handles with value chips, pill badges and
+ *   the prompt.
  *
  * No store access, no DOM; unit tested under `node:test`.
  */
@@ -42,43 +42,20 @@ import {
   type ProfileRef,
   type WorldAxis,
 } from '../../foundation/document/document.js';
-import { MAX_PATTERN_COUNT, type OffsetFaceMode, type PatternDefinition } from './features.js';
-import { constructionAxisLine, datumRef, planeRefPlane } from '../../model/construction.js';
-import {
-  acceptConstructionPick,
-  constructionDraftBadges,
-  constructionDraftGuides,
-  constructionDraftHandles,
-  constructionDraftMeta,
-  constructionDraftToFeature,
-  createConstructionDraft,
-  isConstructionDraftKind,
-  referencedDatumIds,
-  type ConstructionDraft,
-} from '../../model/constructionTools.js';
+import { constructionAxisLine, datumRef, planeRefPlane } from '../../foundation/document/datums.js';
+import type {
+  DraftBadge,
+  DraftContext,
+  DraftGuides,
+  DraftHandle,
+  DraftMeta,
+  DraftStart,
+  FeatureDraft,
+  HandleBase,
+  ToolPick,
+} from '../../foundation/commands/featureDrafts.js';
+import { MAX_PATTERN_COUNT, type PatternDefinition } from './features.js';
 import { findSketchContact, pointInsideBody } from './modeling.js';
-import {
-  OFFSET_FACE_MODE_LABEL,
-  availableOffsetFaceModes,
-  defaultOpposite,
-  modeGrowthSign,
-  modeValueOfOffset,
-  offsetOfModeValue,
-  totalGap,
-} from '../direct-edit/offsetFaceModes.js';
-import { PRINT_CLEARANCES } from './printFeatures.js';
-import {
-  acceptPrintPick,
-  createPrintDraft,
-  isPrintDraftKind,
-  printDraftBadges,
-  printDraftGuides,
-  printDraftHandles,
-  printDraftMeta,
-  printDraftModifiedBodyIds,
-  printDraftToFeature,
-  type PrintDraft,
-} from './printFeatureTools.js';
 import type { SelectionItem } from '../../foundation/commands/store.js';
 
 // ---- drafts -------------------------------------------------------------------------
@@ -90,93 +67,104 @@ interface ProfileOperation {
   targetBodyId?: string;
 }
 
-export type FeatureDraft =
-  | ({
-      kind: 'revolve';
-      profile: ProfileRef;
-      axis: AxisRef | null;
-      angle: number;
-    } & ProfileOperation)
-  | ({
-      kind: 'sweep';
-      profile: ProfileRef;
-      path: PathRef;
-    } & ProfileOperation)
-  | ({ kind: 'loft'; profiles: ProfileRef[]; ruled: boolean } & ProfileOperation)
-  | {
-      kind: 'mirror';
-      bodyIds: string[];
-      plane: PlaneRef;
-      keepOriginal: boolean;
-      /** Sketches mirrored as a whole (their profiles become a mirrored sketch). */
-      sketchIds?: string[];
-      /** Planar faces mirrored as profiles. */
-      faces?: FaceRef[];
-      /** Mirror about this line (a half turn) instead of `plane`. */
-      axis?: AxisRef;
-      /** What a clicked planar face does: set the mirror plane (default) or join the targets. */
-      facePicks?: 'plane' | 'target';
-    }
-  | { kind: 'pattern'; bodyIds: string[]; pattern: PatternDefinition }
-  | { kind: 'split'; bodyId: string; plane: PlaneRef }
-  /** Rotate Around Axis: bodies, an axis (edge / sketch line / world), degrees, copy. */
-  | { kind: 'rotateAxis'; bodyIds: string[]; axis: AxisRef; angle: number; copy: boolean }
-  | {
-      kind: 'align';
-      bodyId: string;
-      face: FaceRef;
-      target: FaceRef;
-      flip: boolean;
-      center: boolean;
-      offset: number;
-    }
-  /** `viaMove`: started from Move/Rotate on a face (Shapr3D moves faces with the gizmo). */
-  | {
-      kind: 'offsetFace';
-      faces: FaceRef[];
-      /** The value in `mode` (`OffsetFaceFeature.distance`). */
-      distance: number;
-      viaMove?: boolean;
-      /** Radius / Diameter / Total (one face); absent: Offset. */
-      mode?: OffsetFaceMode;
-      opposite?: FaceRef;
-    }
-  | { kind: 'deleteFace'; faces: FaceRef[] }
-  // Hole, Emboss, Draft, Rib, Thicken (`printFeatureTools.ts`).
-  | PrintDraft
-  // Construction planes and axes (`constructionTools.ts`).
-  | ConstructionDraft;
+export type RevolveDraft = {
+  kind: 'revolve';
+  profile: ProfileRef;
+  axis: AxisRef | null;
+  angle: number;
+} & ProfileOperation;
 
-export type FeatureDraftKind = FeatureDraft['kind'];
+export type SweepDraft = { kind: 'sweep'; profile: ProfileRef; path: PathRef } & ProfileOperation;
 
-function isConstructionDraft(draft: FeatureDraft): draft is ConstructionDraft {
-  return isConstructionDraftKind(draft.kind);
+export type LoftDraft = { kind: 'loft'; profiles: ProfileRef[]; ruled: boolean } & ProfileOperation;
+
+export interface MirrorDraft {
+  kind: 'mirror';
+  bodyIds: string[];
+  plane: PlaneRef;
+  keepOriginal: boolean;
+  /** Sketches mirrored as a whole (their profiles become a mirrored sketch). */
+  sketchIds?: string[];
+  /** Planar faces mirrored as profiles. */
+  faces?: FaceRef[];
+  /** Mirror about this line (a half turn) instead of `plane`. */
+  axis?: AxisRef;
+  /** What a clicked planar face does: set the mirror plane (default) or join the targets. */
+  facePicks?: 'plane' | 'target';
 }
 
-/** Construction planes/axes a draft references (highlighted while the tool runs). */
-export function draftDatumIds(draft: FeatureDraft): string[] {
-  return referencedDatumIds(draft);
+export interface PatternDraft {
+  kind: 'pattern';
+  bodyIds: string[];
+  pattern: PatternDefinition;
 }
 
-function isPrintDraft(draft: FeatureDraft): draft is PrintDraft {
-  return isPrintDraftKind(draft.kind);
+export interface SplitDraft {
+  kind: 'split';
+  bodyId: string;
+  plane: PlaneRef;
 }
 
-/** What a draft can be started from. */
-export interface DraftContext {
-  selection: readonly SelectionItem[];
-  evaluation: EvaluationResult;
-  features: readonly Feature[];
+/** Rotate Around Axis: bodies, an axis (edge / sketch line / world), degrees, copy. */
+export interface RotateAxisDraft {
+  kind: 'rotateAxis';
+  bodyIds: string[];
+  axis: AxisRef;
+  angle: number;
+  copy: boolean;
 }
 
-export type DraftStart = { ok: true; draft: FeatureDraft } | { ok: false; reason: string };
+export interface AlignDraft {
+  kind: 'align';
+  bodyId: string;
+  face: FaceRef;
+  target: FaceRef;
+  flip: boolean;
+  center: boolean;
+  offset: number;
+}
+
+/** The drafts of this file (the print drafts are in `printFeatureTools.ts`). */
+export type ModelingDraft =
+  | RevolveDraft
+  | SweepDraft
+  | LoftDraft
+  | MirrorDraft
+  | PatternDraft
+  | SplitDraft
+  | RotateAxisDraft
+  | AlignDraft;
+
+export type ModelingDraftKind = ModelingDraft['kind'];
+
+declare module '../../foundation/commands/featureDrafts.js' {
+  interface FeatureDraftMap {
+    revolve: RevolveDraft;
+    sweep: SweepDraft;
+    loft: LoftDraft;
+    mirror: MirrorDraft;
+    pattern: PatternDraft;
+    split: SplitDraft;
+    rotateAxis: RotateAxisDraft;
+    align: AlignDraft;
+  }
+}
+
+export const MODELING_DRAFT_KINDS: readonly ModelingDraftKind[] = [
+  'revolve',
+  'sweep',
+  'loft',
+  'mirror',
+  'pattern',
+  'split',
+  'rotateAxis',
+  'align',
+];
 
 export const DEFAULT_REVOLVE_ANGLE = 360;
 export const DEFAULT_PATTERN_COUNT = 3;
-export const DEFAULT_OFFSET_MM = 1;
 export const DEFAULT_SWEEP_LENGTH_MM = 20;
 export const DEFAULT_ROTATE_ANGLE = 90;
-
 // ---- reference helpers ------------------------------------------------------------------
 
 function bodyOf(evaluation: EvaluationResult, bodyId: string): Body | undefined {
@@ -458,19 +446,10 @@ function round(value: number): number {
 // ---- starting a tool -------------------------------------------------------------------
 
 /** Starts `kind` from the selection, or explains what is missing (the command's disabled reason). */
-export function createDraft(kind: FeatureDraftKind, ctx: DraftContext): DraftStart {
-  if (isPrintDraftKind(kind)) return createPrintDraft(kind, ctx);
-  if (kind === 'constructionPlane' || kind === 'constructionAxis') {
-    return {
-      ok: true,
-      draft: createConstructionDraft(
-        kind,
-        kind === 'constructionPlane' ? 'offset' : 'edge',
-        ctx.selection,
-        ctx.evaluation,
-      ),
-    };
-  }
+export function createModelingDraft(
+  kind: ModelingDraftKind,
+  ctx: DraftContext,
+): DraftStart<ModelingDraft> {
   switch (kind) {
     case 'revolve': {
       const profiles = selectedProfiles(ctx);
@@ -702,44 +681,10 @@ export function createDraft(kind: FeatureDraftKind, ctx: DraftContext): DraftSta
         },
       };
     }
-    case 'offsetFace':
-    case 'deleteFace': {
-      const faces = selectedFaceRefs(ctx);
-      if (faces.length === 0 || faces.length !== ctx.selection.length) {
-        return { ok: false, reason: 'Select one or more faces of one body.' };
-      }
-      if (faces.some((f) => f.bodyId !== faces[0]!.bodyId)) {
-        return { ok: false, reason: 'All faces must belong to one body.' };
-      }
-      return kind === 'offsetFace'
-        ? { ok: true, draft: { kind, faces, distance: -DEFAULT_OFFSET_MM } }
-        : { ok: true, draft: { kind, faces } };
-    }
   }
 }
 
 // ---- picks while the tool runs -----------------------------------------------------------
-
-export type ToolPick =
-  | { kind: 'body'; bodyId: string }
-  /**
-   * `point`: where the face was clicked (world), when the viewport knows it;
-   * `ray`: the pointer ray (tools that place things on their own plane, e.g. Hole).
-   */
-  | {
-      kind: 'face';
-      bodyId: string;
-      faceKey: string;
-      point?: Vec3;
-      ray?: { origin: Vec3; direction: Vec3 };
-    }
-  /** `ray`: the pointer ray, when the viewport knows it (which end of the edge was clicked). */
-  | { kind: 'edge'; bodyId: string; edgeKey: string; ray?: { origin: Vec3; direction: Vec3 } }
-  | { kind: 'sketchProfile'; featureId: string; regionKey?: string }
-  /** A straight sketch line (construction lines included): an axis or direction. */
-  | { kind: 'sketchLine'; featureId: string; entityId: string }
-  /** A construction plane or axis. */
-  | { kind: 'datum'; featureId: string };
 
 function toggle<T>(
   list: readonly T[],
@@ -761,15 +706,12 @@ const sameProfile = (a: ProfileRef, b: ProfileRef) =>
       : false;
 
 /** Applies a viewport click to the draft (unchanged draft = the click did not apply). */
-export function acceptPick(
-  draft: FeatureDraft,
+export function acceptModelingPick(
+  draft: ModelingDraft,
   pick: ToolPick,
   evaluation: EvaluationResult,
-  features: readonly Feature[] = [],
-): FeatureDraft {
-  if (isConstructionDraft(draft)) return acceptConstructionPick(draft, pick, evaluation);
+): ModelingDraft {
   if (pick.kind === 'datum') return acceptDatumPick(draft, pick.featureId, evaluation);
-  if (isPrintDraft(draft)) return acceptPrintPick(draft, pick, evaluation, features);
   const faceRef = pick.kind === 'face' ? faceRefOf(evaluation, pick.bodyId, pick.faceKey) : null;
   const edgeRef = pick.kind === 'edge' ? edgeRefOf(evaluation, pick.bodyId, pick.edgeKey) : null;
   const pickedBody =
@@ -895,38 +837,6 @@ export function acceptPick(
         return { ...draft, target: faceRef };
       }
       return draft;
-    case 'offsetFace': {
-      if (!faceRef) return draft;
-      const face = draft.faces[0];
-      // Total: a parallel planar face (not the moved one) becomes the opposite face.
-      if (
-        draft.mode === 'total' &&
-        face &&
-        faceRef.key !== face.key &&
-        totalGap(evaluation, face, faceRef) !== null
-      ) {
-        const offset = offsetOfModeValue(evaluation, draft);
-        const next = { ...draft, opposite: faceRef };
-        const value = offset === null ? null : modeValueOfOffset(evaluation, next, 'total', offset);
-        return value !== null && value > 0 ? { ...next, distance: roundMm(value) } : next;
-      }
-      if (faceRef.bodyId !== face?.bodyId) return draft;
-      const faces = toggle(draft.faces, faceRef, (a, b) => a.key === b.key);
-      if ((draft.mode ?? 'offset') === 'offset' || faces.length === 1) return { ...draft, faces };
-      // Radius/Diameter/Total are single-face modes: more faces continue as Offset.
-      const offset = offsetOfModeValue(evaluation, draft) ?? 0;
-      return {
-        kind: 'offsetFace',
-        faces,
-        distance: roundMm(offset),
-        ...(draft.viaMove ? { viaMove: true } : {}),
-      };
-    }
-    case 'deleteFace':
-      if (faceRef && faceRef.bodyId === draft.faces[0]?.bodyId) {
-        return { ...draft, faces: toggle(draft.faces, faceRef, (a, b) => a.key === b.key) };
-      }
-      return draft;
   }
 }
 
@@ -936,13 +846,10 @@ export function acceptPick(
  * mirror line (Shapr3D: construction geometry serves as those references).
  */
 function acceptDatumPick(
-  draft: FeatureDraft,
+  draft: ModelingDraft,
   featureId: string,
   evaluation: EvaluationResult,
-): FeatureDraft {
-  if (isPrintDraft(draft)) {
-    return acceptPrintPick(draft, { kind: 'datum', featureId }, evaluation, []);
-  }
+): ModelingDraft {
   const ref = datumRef(evaluation, featureId);
   if (!ref) return draft;
   const plane = 'frame' in ref ? ref : null;
@@ -972,7 +879,7 @@ function acceptDatumPick(
 }
 
 /** Re-runs the automatic operation after the profiles changed (unless locked). */
-function retarget<T extends FeatureDraft & ProfileOperation>(
+function retarget<T extends ModelingDraft & ProfileOperation>(
   draft: T,
   evaluation: EvaluationResult,
 ): T {
@@ -1009,12 +916,10 @@ export function setDraftOperation(
 // ---- feature -----------------------------------------------------------------------------
 
 /** The feature a draft stands for, or `null` while it is incomplete. */
-export function draftToFeature(
-  draft: FeatureDraft,
+export function modelingDraftToFeature(
+  draft: ModelingDraft,
   base: { id: string; name: string },
 ): Feature | null {
-  if (isConstructionDraft(draft)) return constructionDraftToFeature(draft, base);
-  if (isPrintDraft(draft)) return printDraftToFeature(draft, base);
   const common = { id: base.id, name: base.name, suppressed: false };
   const op = (d: ProfileOperation) => ({
     operation: d.operation,
@@ -1088,39 +993,14 @@ export function draftToFeature(
         center: draft.center,
         offset: draft.offset,
       };
-    case 'offsetFace': {
-      const mode = draft.mode ?? 'offset';
-      if (draft.faces.length === 0) return null;
-      if (mode === 'offset' ? draft.distance === 0 : !(draft.distance > 0)) return null;
-      if (mode === 'total' && !draft.opposite) return null;
-      return {
-        ...common,
-        kind: 'offsetFace',
-        faces: draft.faces,
-        distance: draft.distance,
-        ...(mode !== 'offset' ? { mode } : {}),
-        ...(mode === 'total' && draft.opposite ? { opposite: draft.opposite } : {}),
-      };
-    }
-    case 'deleteFace':
-      if (draft.faces.length === 0) return null;
-      return { ...common, kind: 'deleteFace', faces: draft.faces };
   }
 }
 
 // ---- pill: label, prompt, badges ------------------------------------------------------
 
-export interface DraftMeta {
-  label: string;
-  shortcut: string;
-  prompt: string;
-}
-
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
-export function draftMeta(draft: FeatureDraft): DraftMeta {
-  if (isConstructionDraft(draft)) return constructionDraftMeta(draft);
-  if (isPrintDraft(draft)) return printDraftMeta(draft);
+export function modelingDraftMeta(draft: ModelingDraft): DraftMeta {
   switch (draft.kind) {
     case 'revolve':
       return {
@@ -1193,37 +1073,7 @@ export function draftMeta(draft: FeatureDraft): DraftMeta {
         prompt:
           'The first body moves onto the target face. Type a gap, or click faces to change them.',
       };
-    case 'offsetFace':
-      return draft.viaMove
-        ? {
-            label: 'Move Face',
-            shortcut: 'M',
-            prompt: `Drag the arrow: a face moves along its normal (neighbours follow as with Offset Face). ${plural(draft.faces.length, 'face')}.`,
-          }
-        : {
-            label: 'Offset Face',
-            shortcut: '',
-            prompt:
-              draft.mode === 'radius' || draft.mode === 'diameter'
-                ? `Drag the arrow or type the ${draft.mode} of the face; it is kept when earlier steps change.`
-                : draft.mode === 'total'
-                  ? 'Drag the arrow or type the distance to the opposite face; click a parallel face to measure to it instead.'
-                  : `Drag the arrow or type a distance (negative removes material). ${plural(draft.faces.length, 'face')}.`,
-          };
-    case 'deleteFace':
-      return {
-        label: 'Delete Face',
-        shortcut: '',
-        prompt: `Removes ${plural(draft.faces.length, 'face')} and heals the body. Click faces to add or remove.`,
-      };
   }
-}
-
-export interface DraftBadge {
-  ariaLabel: string;
-  value: string;
-  options: { value: string; label: string }[];
-  apply: (draft: FeatureDraft, value: string, evaluation: EvaluationResult) => FeatureDraft;
 }
 
 const OPERATION_BADGE: DraftBadge = {
@@ -1264,58 +1114,8 @@ function planeBadge(plane: PlaneRef, ariaLabel: string): DraftBadge {
   };
 }
 
-type OffsetFaceDraft = Extract<FeatureDraft, { kind: 'offsetFace' }>;
-
-const roundMm = (value: number) => Math.round(value * 1e6) / 1e6;
-
-/**
- * Offset Face in another value mode (DIR-01), keeping the geometry: the
- * value is converted (offset 1 on a Ø10 boss → radius 6), Total measures to
- * the nearest parallel face unless one was picked. Unchanged when the face
- * does not support `mode`.
- */
-export function setOffsetFaceMode(
-  draft: OffsetFaceDraft,
-  mode: OffsetFaceMode,
-  evaluation: EvaluationResult,
-): OffsetFaceDraft {
-  if (mode === (draft.mode ?? 'offset')) return draft;
-  const offset = offsetOfModeValue(evaluation, draft) ?? 0;
-  const opposite =
-    mode === 'total' && draft.faces[0]
-      ? (draft.opposite ?? defaultOpposite(evaluation, draft.faces[0]) ?? undefined)
-      : undefined;
-  const value = modeValueOfOffset(evaluation, { faces: draft.faces, opposite }, mode, offset);
-  if (value === null || (mode !== 'offset' && !(value > 0))) return draft;
-  return {
-    kind: 'offsetFace',
-    faces: draft.faces,
-    ...(draft.viaMove ? { viaMove: true } : {}),
-    distance: roundMm(value),
-    ...(mode !== 'offset' ? { mode } : {}),
-    ...(opposite ? { opposite } : {}),
-  };
-}
-
-/**
- * The running tool's option badges. `evaluation` (the document the tool
- * edits) lets a badge offer only what the picked geometry supports (Offset
- * Face modes); without it those badges are left out.
- */
-export function draftBadges(draft: FeatureDraft, evaluation?: EvaluationResult): DraftBadge[] {
-  if (isConstructionDraft(draft)) {
-    return constructionDraftBadges(draft).map((badge) => ({
-      ...badge,
-      apply: (d, value, evaluation) =>
-        isConstructionDraft(d) ? badge.apply(d, value, evaluation) : d,
-    }));
-  }
-  if (isPrintDraft(draft)) {
-    return printDraftBadges(draft).map((badge) => ({
-      ...badge,
-      apply: (d, value, evaluation) => (isPrintDraft(d) ? badge.apply(d, value, evaluation) : d),
-    }));
-  }
+/** The running tool's option badges. */
+export function modelingDraftBadges(draft: ModelingDraft): DraftBadge[] {
   switch (draft.kind) {
     case 'revolve':
       return [
@@ -1503,79 +1303,10 @@ export function draftBadges(draft: FeatureDraft, evaluation?: EvaluationResult):
           apply: (d, value) => (d.kind === 'align' ? { ...d, center: value === 'center' } : d),
         },
       ];
-    case 'offsetFace': {
-      // Move Face (Move/Rotate on a face) is a plain drag; no modes or clearance presets there.
-      if (draft.viaMove) return [];
-      const mode = draft.mode ?? 'offset';
-      const modes = evaluation ? availableOffsetFaceModes(evaluation, draft.faces) : [mode];
-      if (!modes.includes(mode)) modes.push(mode);
-      const out: DraftBadge[] = [];
-      if (modes.length > 1) {
-        out.push({
-          ariaLabel: 'Offset mode',
-          value: mode,
-          options: modes.map((m) => ({ value: m, label: OFFSET_FACE_MODE_LABEL[m] })),
-          apply: (d, value, evaluation) =>
-            d.kind === 'offsetFace' ? setOffsetFaceMode(d, value as OffsetFaceMode, evaluation) : d,
-        });
-      }
-      // Printing clearances: remove 0.1-0.4 mm from mating faces (a hole wall grows, a peg shrinks).
-      if (mode === 'offset') {
-        out.push({
-          ariaLabel: 'Clearance',
-          value:
-            PRINT_CLEARANCES.find((c) => Math.abs(draft.distance + c) < 1e-9)?.toString() ?? '',
-          options: PRINT_CLEARANCES.map((c) => ({ value: String(c), label: `−${c}` })),
-          apply: (d, value) => (d.kind === 'offsetFace' ? { ...d, distance: -Number(value) } : d),
-        });
-      }
-      return out;
-    }
-    default:
-      return [];
   }
 }
 
 // ---- handles & chips ----------------------------------------------------------------------
-
-/** Value unit of a handle chip. */
-export type HandleUnit = 'mm' | 'deg' | 'count';
-
-interface HandleBase {
-  id: string;
-  label: string;
-  prefix?: string;
-  unit: HandleUnit;
-  value: number;
-  /** Returns the draft with the new value (already validated/clamped). */
-  apply: (draft: FeatureDraft, value: number) => FeatureDraft;
-}
-
-/** Arrow dragged along `dir`; the value grows by the drag distance. */
-export interface LinearHandle extends HandleBase {
-  kind: 'linear';
-  base: Vec3;
-  dir: Vec3;
-  /** Drawn arrow length (mm). */
-  length: number;
-}
-
-/** Arc about `axis` through `center`, from `ref` by `value` degrees; dragged around. */
-export interface AngleHandle extends HandleBase {
-  kind: 'angle';
-  center: Vec3;
-  axis: Vec3;
-  ref: Vec3;
-  radius: number;
-}
-
-/** A value chip without a drag handle (e.g. a pattern count). */
-export interface ChipHandle extends HandleBase {
-  kind: 'chip';
-  at: Vec3;
-}
-
-export type DraftHandle = LinearHandle | AngleHandle | ChipHandle;
 
 const STEM_MM = 8;
 
@@ -1654,33 +1385,6 @@ function planeOf(
   return { point: face?.centroid ?? plane.face.signature.centroid, normal };
 }
 
-/** A point on a face's surface with its outward normal (first mesh triangle), for handles on curved faces. */
-function faceAnchor(
-  evaluation: EvaluationResult,
-  ref: FaceRef,
-): { point: Vec3; normal: Vec3 } | null {
-  const body = bodyOf(evaluation, ref.bodyId);
-  const face = body ? faceOf(body, ref.key) : undefined;
-  if (!body || !face) return null;
-  if (face.normal) return { point: face.centroid, normal: face.normal };
-  if (face.triangleCount === 0) return null;
-  const t = face.triangleStart + Math.floor(face.triangleCount / 2);
-  const corners = [0, 1, 2].map((k) => {
-    const v = body.mesh.indices[t * 3 + k]! * 3;
-    return {
-      p: [
-        body.mesh.positions[v]!,
-        body.mesh.positions[v + 1]!,
-        body.mesh.positions[v + 2]!,
-      ] as Vec3,
-      n: [body.mesh.normals[v]!, body.mesh.normals[v + 1]!, body.mesh.normals[v + 2]!] as Vec3,
-    };
-  });
-  const point = scale(add(add(corners[0]!.p, corners[1]!.p), corners[2]!.p), 1 / 3);
-  const normal = normalize(add(add(corners[0]!.n, corners[1]!.n), corners[2]!.n));
-  return { point, normal };
-}
-
 function bodyCentre(evaluation: EvaluationResult, ids: readonly string[]): Vec3 | null {
   const bounds = unionBounds(evaluation.bodies.filter((b) => ids.includes(b.id)));
   return bounds ? scale(add(bounds.min, bounds.max), 0.5) : null;
@@ -1691,23 +1395,11 @@ function perpendicular(axis: Vec3): Vec3 {
 }
 
 /** Drag handles and value chips of the draft (evaluated against the committed model). */
-export function draftHandles(
-  draft: FeatureDraft,
+export function modelingDraftHandles(
+  draft: ModelingDraft,
   evaluation: EvaluationResult,
   features: readonly Feature[] = [],
 ): DraftHandle[] {
-  if (isConstructionDraft(draft)) {
-    return constructionDraftHandles(draft, evaluation).map((h) => ({
-      ...h,
-      apply: (d: FeatureDraft, value: number) => (isConstructionDraft(d) ? h.apply(d, value) : d),
-    }));
-  }
-  if (isPrintDraft(draft)) {
-    return printDraftHandles(draft, evaluation, features).map((h) => ({
-      ...h,
-      apply: (d: FeatureDraft, value: number) => (isPrintDraft(d) ? h.apply(d, value) : d),
-    }));
-  }
   switch (draft.kind) {
     case 'revolve': {
       const line = axisLine(evaluation, draft.axis, features);
@@ -1896,37 +1588,6 @@ export function draftHandles(
         },
       ];
     }
-    case 'offsetFace': {
-      const first = draft.faces[0];
-      const anchor = first ? faceAnchor(evaluation, first) : null;
-      if (!anchor) return [];
-      const mode = draft.mode ?? 'offset';
-      // The arrow points the way the value grows (a hole's radius grows into the material)
-      // and reaches past the moved face.
-      const sign = modeGrowthSign(evaluation, draft);
-      const offset = offsetOfModeValue(evaluation, draft) ?? 0;
-      return [
-        {
-          kind: 'linear',
-          id: 'distance',
-          label: mode === 'offset' ? 'Offset distance' : OFFSET_FACE_MODE_LABEL[mode],
-          ...(mode === 'diameter' ? { prefix: 'Ø' } : mode === 'radius' ? { prefix: 'R' } : {}),
-          unit: 'mm',
-          value: draft.distance,
-          base: anchor.point,
-          dir: sign === 1 ? anchor.normal : scale(anchor.normal, -1),
-          length: STEM_MM + Math.max(0, sign * offset),
-          apply: (d, value) =>
-            d.kind !== 'offsetFace'
-              ? d
-              : {
-                  ...d,
-                  // Target sizes stay positive; Offset may cross zero (add ↔ remove).
-                  distance: (d.mode ?? 'offset') === 'offset' ? value : Math.max(0.01, value),
-                },
-        },
-      ];
-    }
     default:
       return [];
   }
@@ -1934,21 +1595,11 @@ export function draftHandles(
 
 // ---- guides (axis lines, planes) -----------------------------------------------------------
 
-export interface DraftGuides {
-  /** Axis lines (world segments). */
-  lines: [Vec3, Vec3][];
-  /** Planes as closed quads. */
-  planes: [Vec3, Vec3, Vec3, Vec3][];
-}
-
 /** Reference geometry the tool shows while it runs: the revolve/pattern axis, the mirror/split plane. */
-export function draftGuides(
-  draft: FeatureDraft,
+export function modelingDraftGuides(
+  draft: ModelingDraft,
   evaluation: EvaluationResult,
-  features: readonly Feature[] = [],
 ): DraftGuides {
-  if (isConstructionDraft(draft)) return constructionDraftGuides(draft, evaluation);
-  if (isPrintDraft(draft)) return printDraftGuides(draft, evaluation, features);
   const out: DraftGuides = { lines: [], planes: [] };
   const axisSegment = (ref: AxisRef | null, around: Vec3 | null, reach: number) => {
     const line = axisLine(evaluation, ref, []);
@@ -1993,9 +1644,7 @@ export function draftGuides(
 }
 
 /** Bodies the running tool modifies in place (shown with the preview accent). */
-export function draftModifiedBodyIds(draft: FeatureDraft): string[] {
-  if (isConstructionDraft(draft)) return [];
-  if (isPrintDraft(draft)) return printDraftModifiedBodyIds(draft);
+export function modelingDraftModifiedBodyIds(draft: ModelingDraft): string[] {
   switch (draft.kind) {
     case 'revolve':
     case 'sweep':
@@ -2008,9 +1657,6 @@ export function draftModifiedBodyIds(draft: FeatureDraft): string[] {
     case 'split':
     case 'align':
       return [draft.bodyId];
-    case 'offsetFace':
-    case 'deleteFace':
-      return draft.faces[0] ? [draft.faces[0].bodyId] : [];
     default:
       return [];
   }

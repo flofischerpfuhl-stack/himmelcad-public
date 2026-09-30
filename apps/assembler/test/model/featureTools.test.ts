@@ -12,12 +12,13 @@ import { findCommand, resolveAdaptive } from '../../renderer/src/foundation/comm
 import { resolveShortcut } from '../../renderer/src/foundation/commands/shortcuts.js';
 import type { ExtrudeFeature, Feature } from '../../renderer/src/foundation/document/document.js';
 import type { SketchFeature } from '../../renderer/src/foundation/sketch-solver/sketchFeature.js';
+
 import {
   acceptPick,
   draftBadges,
   draftHandles,
   type FeatureDraft,
-} from '../../renderer/src/modules/modeling/featureTools.js';
+} from '../../renderer/src/foundation/commands/featureDrafts.js';
 import { loadProjectFile, saveProjectFile } from '../../renderer/src/foundation/document/format.js';
 import {
   makeFaceRef,

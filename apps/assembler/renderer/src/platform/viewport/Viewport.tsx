@@ -118,7 +118,8 @@ import {
   type ToolChip,
   type ToolHandleSet,
 } from '../../modules/modeling/toolHandles.js';
-import { acceptPick, draftDatumIds } from '../../modules/modeling/featureTools.js';
+
+import { acceptPick, draftDatumIds } from '../../foundation/commands/featureDrafts.js';
 import { applyFixPick, useFixStore } from '../../interface/shell-ui/fixReference.js';
 import {
   WORLD_AXES,

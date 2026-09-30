@@ -30,9 +30,9 @@ import type { SketchFeature } from '../../renderer/src/foundation/sketch-solver/
 import {
   mirroredSketchId,
   type MirrorFeature,
-  type OffsetFaceFeature,
   type PatternFeature,
 } from '../../renderer/src/modules/modeling/features.js';
+import type { OffsetFaceFeature } from '../../renderer/src/modules/direct-edit/kinds.js';
 import { loadProjectFile, saveProjectFile } from '../../renderer/src/foundation/document/format.js';
 import {
   addPolyline,

@@ -1,9 +1,23 @@
 /**
- * The direct-edit module (assembler/MODULES.md): Offset Face (value modes),
- * Delete Face, move face. Its commands and kinds are still part of the
- * modelling module (`model/commands/featureCommands.ts`,
- * `model/features.ts`); phase B moves them here.
+ * The direct-edit module (assembler/MODULES.md): Offset Face (value modes,
+ * and Move Face started from Move/Rotate on a face) and Delete Face.
+ *
+ * - kinds: `kinds.ts` (types, `.hcasm` validation, labels);
+ * - evaluators: `kernel.ts` / `faceEdits.ts` (kernel-worker composition);
+ * - tools: `drafts.ts` (drafts of the generic feature tool);
+ * - commands: `commands.ts`;
+ * - agent API: `api.ts` (the kinds' `feature.create` parameter schemas);
+ * - UI: `module.ui.tsx` (History card, icons).
  */
+import { COMMAND_ORDER } from '../../foundation/commands/registry.js';
 import { defineAssemblerModule } from '../../foundation/commands/module.js';
+import { DIRECT_EDIT_API } from './api.js';
+import { DIRECT_EDIT_COMMANDS } from './commands.js';
+import './drafts.js';
+import './kinds.js';
 
-export const directEditModule = defineAssemblerModule({ id: 'direct-edit' });
+export const directEditModule = defineAssemblerModule({
+  id: 'direct-edit',
+  commands: [{ order: COMMAND_ORDER.directEdit, commands: DIRECT_EDIT_COMMANDS }],
+  api: DIRECT_EDIT_API,
+});

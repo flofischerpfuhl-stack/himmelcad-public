@@ -13,12 +13,13 @@ import { findCommand } from '../../renderer/src/foundation/commands/registry.js'
 import type { ExtrudeFeature, Feature } from '../../renderer/src/foundation/document/document.js';
 import type { SketchFeature } from '../../renderer/src/foundation/sketch-solver/sketchFeature.js';
 import type { EvaluationResult } from '../../renderer/src/foundation/geometry-kernel/types.js';
+
 import {
   acceptPick,
   draftBadges,
   draftHandles,
   type FeatureDraft,
-} from '../../renderer/src/modules/modeling/featureTools.js';
+} from '../../renderer/src/foundation/commands/featureDrafts.js';
 import {
   holePreset,
   METRIC_HOLE_SIZES,

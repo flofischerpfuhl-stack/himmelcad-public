@@ -176,9 +176,6 @@ export const PRINT_FITS = [
 
 export type PrintFitId = (typeof PRINT_FITS)[number]['id'];
 
-/** Printing clearance presets for Offset Face / Shell gaps (mm). */
-export const PRINT_CLEARANCES: readonly number[] = [0.1, 0.2, 0.3, 0.4];
-
 export type HolePresetKind = 'clearanceFine' | 'clearanceNormal' | 'clearanceCoarse' | 'tapDrill';
 
 export const HOLE_PRESET_LABEL: Record<HolePresetKind, string> = {

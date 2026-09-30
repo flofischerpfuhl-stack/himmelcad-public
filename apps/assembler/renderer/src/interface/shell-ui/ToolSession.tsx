@@ -11,8 +11,8 @@ import { useEffect, useState } from 'react';
 
 import { Button, Select, Tooltip } from '@himmelcad/ui';
 
-import { edgeRuleLabel } from '../../foundation/document/blendOptions.js';
-import { PRINT_CLEARANCES } from '../../modules/modeling/printFeatures.js';
+import { edgeRuleLabel, PRINT_CLEARANCES } from '../../foundation/document/blendOptions.js';
+
 import { evaluateExpression } from '../../platform/widgets/expression.js';
 
 import {
@@ -20,7 +20,8 @@ import {
   type AssemblerState,
   type ToolSession as ToolSessionState,
 } from '../../foundation/commands/store.js';
-import { draftBadges, draftMeta } from '../../modules/modeling/featureTools.js';
+
+import { draftBadges, draftMeta } from '../../foundation/commands/featureDrafts.js';
 import { useFixStore } from './fixReference.js';
 import { isWorldAxes } from '../../modules/modeling/moveGizmo.js';
 import { PICK_PLANS, removePick, swapPicks } from '../../foundation/commands/pickSession.js';

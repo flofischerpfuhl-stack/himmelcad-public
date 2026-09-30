@@ -40,7 +40,14 @@ export const API_ORDER = {
     coreTail: 140,
     printFeatures: 900,
   },
-  featureKinds: { core: 100, printFeatures: 900 },
+  featureKinds: {
+    core: 100,
+    modeling: 200,
+    construction: 300,
+    modelingTail: 400,
+    directEdit: 500,
+    printFeatures: 900,
+  },
   methods: { coreHead: 100, parameters: 200, coreTail: 300, print: 400, interop: 500 },
 } as const;
 

@@ -23,7 +23,11 @@ import type {
   Plane,
 } from '../../renderer/src/foundation/document/document.js';
 import type { SketchFeature } from '../../renderer/src/foundation/sketch-solver/sketchFeature.js';
-import type { DeleteFaceFeature, OffsetFaceFeature } from '../../renderer/src/modules/modeling/features.js';
+
+import type {
+  DeleteFaceFeature,
+  OffsetFaceFeature,
+} from '../../renderer/src/modules/direct-edit/kinds.js';
 import {
   addPolyline,
   sketchFromLegacyProfiles,

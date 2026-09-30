@@ -84,6 +84,31 @@ export function validatePlaneRef(v: unknown, p: string, h: FormatHelpers): void 
   }
 }
 
+/**
+ * An axis reference (revolve/pattern/rotate axis, mirror line, construction
+ * input): world axis, body edge, sketch line or construction axis.
+ */
+export function validateAxisRef(v: unknown, p: string, h: FormatHelpers): void {
+  if (!isRecord(v)) h.fail(p, 'expected an object');
+  if (v.kind === 'world') {
+    if (!['X', 'Y', 'Z'].includes(v.axis as string)) h.fail(`${p}.axis`, 'expected X, Y or Z');
+    if (v.origin !== undefined && !isVec3(v.origin)) h.fail(`${p}.origin`, 'expected a Vec3');
+  } else if (v.kind === 'edge') {
+    h.edgeRef(v.edge, `${p}.edge`);
+  } else if (v.kind === 'sketchLine') {
+    if (!isString(v.featureId)) h.fail(`${p}.featureId`, 'expected a string');
+    if (!isString(v.entityId)) h.fail(`${p}.entityId`, 'expected a string');
+  } else if (v.kind === 'construction') {
+    if (!isString(v.featureId)) h.fail(`${p}.featureId`, 'expected a string');
+    const line = v.line;
+    if (!isRecord(line) || !isVec3(line.point) || !isVec3(line.dir)) {
+      h.fail(`${p}.line`, 'expected {point, dir}');
+    }
+  } else {
+    h.fail(`${p}.kind`, 'expected "world", "edge", "sketchLine" or "construction"');
+  }
+}
+
 /** A profile reference: regions of a sketch, or a planar body face. */
 export function validateProfileRef(v: unknown, p: string, h: FormatHelpers): void {
   if (!isRecord(v)) h.fail(p, 'expected an object');

@@ -5,8 +5,10 @@
  */
 import { COMMAND_ORDER } from '../../foundation/commands/registry.js';
 import { defineAssemblerModule } from '../../foundation/commands/module.js';
+import { MODELING_API } from './api.js';
 import { BLEND_RULE_COMMANDS } from './blendCommands.js';
-import { FEATURE_COMMANDS } from './featureCommands.js';
+import './drafts.js';
+import { FEATURE_COMMANDS, PROFILE_FEATURE_COMMANDS } from './featureCommands.js';
 import {
   BOOLEAN_COMMANDS,
   MODELING_TOOL_COMMANDS,
@@ -19,8 +21,10 @@ export const modelingModule = defineAssemblerModule({
   commands: [
     { order: COMMAND_ORDER.modelingTools, commands: MODELING_TOOL_COMMANDS },
     { order: COMMAND_ORDER.blendRules, commands: BLEND_RULE_COMMANDS },
-    { order: COMMAND_ORDER.modelingFeatures, commands: FEATURE_COMMANDS },
+    { order: COMMAND_ORDER.modelingFeatures, commands: PROFILE_FEATURE_COMMANDS },
+    { order: COMMAND_ORDER.modelingFeaturesTail, commands: FEATURE_COMMANDS },
     { order: COMMAND_ORDER.booleans, commands: BOOLEAN_COMMANDS },
     { order: COMMAND_ORDER.transform, commands: TRANSFORM_COMMANDS },
   ],
+  api: MODELING_API,
 });

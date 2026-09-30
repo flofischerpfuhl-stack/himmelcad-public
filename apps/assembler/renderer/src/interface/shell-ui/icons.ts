@@ -50,9 +50,9 @@ import type { Command, CommandGroup } from '../../foundation/commands/registry.j
 import type { Feature } from '../../foundation/document/document.js';
 import type { SelectionItem } from '../../foundation/commands/store.js';
 import { SKETCH_COMMAND_ICONS } from '../../sketch/ui/sketchIcons.js';
-import { MODELING_COMMAND_ICON, MODELING_FEATURE_ICON } from '../../modules/modeling/ui/featureIcons.js';
 import { PRINT_COMMAND_ICONS } from '../../modules/print/printIcons.js';
 import { PRINTERS_COMMAND_ICONS } from '../../modules/printers/icons.js';
+import { registeredCommandIcon, registeredFeatureIcon } from '../../platform/widgets/moduleUi.js';
 
 export const GROUP_ICON: Record<CommandGroup, LucideIcon> = {
   sketch: PenSquare,
@@ -114,14 +114,16 @@ export const COMMAND_ICON: Partial<Record<string, LucideIcon>> = {
   'file.exportStep': FileOutput,
   'file.exportDxf': FileOutput,
   'tools.meshToSolid': Box,
-  ...MODELING_COMMAND_ICON,
   ...PRINT_COMMAND_ICONS,
   ...PRINTERS_COMMAND_ICONS,
 };
 
-/** `COMMAND_ICON[command.id]`, falling back to the command's group icon. */
+/**
+ * `COMMAND_ICON[command.id]`, else the icon the command's module registered
+ * (`defineModuleUi({ commandIcons })`), else the command's group icon.
+ */
 export function commandIcon(command: Pick<Command, 'id' | 'group'>): LucideIcon {
-  return COMMAND_ICON[command.id] ?? GROUP_ICON[command.group];
+  return COMMAND_ICON[command.id] ?? registeredCommandIcon(command.id) ?? GROUP_ICON[command.group];
 }
 
 export function featureKindIcon(kind: Feature['kind']): LucideIcon {
@@ -146,7 +148,8 @@ export function featureKindIcon(kind: Feature['kind']): LucideIcon {
     case 'meshSolid':
       return Box;
     default:
-      return MODELING_FEATURE_ICON[kind];
+      // A module's kind: the icon its UI registered (`defineModuleUi({ featureIcons })`).
+      return registeredFeatureIcon(kind) ?? Box;
   }
 }
 

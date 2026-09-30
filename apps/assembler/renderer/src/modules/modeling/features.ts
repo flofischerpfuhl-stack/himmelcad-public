@@ -1,8 +1,9 @@
 /**
  * Modelling features beyond sketch/extrude/fillet/shell/boolean: Revolve,
- * Sweep, Loft, Mirror, Pattern, Split, Transform (move/rotate/copy), Align,
- * Offset Face and Delete Face. Plain, structured-clone-safe data like the
- * rest of `document.ts`; evaluation lives in `kernel/features/`.
+ * Sweep, Loft, Mirror, Pattern, Split, Transform (move/rotate/copy) and
+ * Align. Plain, structured-clone-safe data like the rest of `document.ts`;
+ * evaluation lives in `kernel/`. Offset Face and Delete Face belong to the
+ * direct-edit module, construction planes/axes to the construction module.
  *
  * Profiles are read through the same profile-reference abstraction as
  * Extrude ({@link ProfileRef}: a sketch profile or a planar body face), so a
@@ -21,11 +22,7 @@ import type {
   Vec3,
   WorldAxis,
 } from '../../foundation/document/document.js';
-import {
-  CONSTRUCTION_FEATURE_KINDS,
-  CONSTRUCTION_FEATURE_LABEL,
-  type ConstructionFeature,
-} from '../../model/construction.js';
+
 import {
   PRINT_FEATURE_KINDS,
   PRINT_FEATURE_LABEL,
@@ -176,44 +173,6 @@ export interface AlignFeature extends FeatureBase {
   offset: Millimeters;
 }
 
-/**
- * Offsets existing faces of one body along their normals (planar,
- * cylindrical and other smooth faces): positive adds material, negative
- * removes it (e.g. a negative offset on a hole's wall enlarges the hole).
- */
-/**
- * How Offset Face reads its value (Shapr3D DIR-01): `offset` moves the faces
- * by `distance` along their outward normals; with one face `radius` /
- * `diameter` set a cylindrical face's size and `total` its distance to the
- * parallel `opposite` face — re-measured on every evaluation, so the target
- * holds when earlier steps change the face.
- */
-export type OffsetFaceMode = 'offset' | 'radius' | 'diameter' | 'total';
-
-export const OFFSET_FACE_MODES: readonly OffsetFaceMode[] = [
-  'offset',
-  'radius',
-  'diameter',
-  'total',
-];
-
-export interface OffsetFaceFeature extends FeatureBase {
-  kind: 'offsetFace';
-  faces: FaceRef[];
-  /** The value in `mode`: offset distance (signed), target radius, diameter or total distance. */
-  distance: Millimeters;
-  /** Absent: `offset`. */
-  mode?: OffsetFaceMode;
-  /** `total`: the parallel planar face the distance is measured to. */
-  opposite?: FaceRef;
-}
-
-/** Removes faces (holes, fillets, chamfers) and heals the body. */
-export interface DeleteFaceFeature extends FeatureBase {
-  kind: 'deleteFace';
-  faces: FaceRef[];
-}
-
 export type ModelingFeature =
   | RevolveFeature
   | SweepFeature
@@ -224,12 +183,8 @@ export type ModelingFeature =
   | TransformFeature
   | RotateAxisFeature
   | AlignFeature
-  | OffsetFaceFeature
-  | DeleteFaceFeature
   // Hole, Emboss, Draft, Rib, Thicken (`printFeatures.ts`).
-  | PrintFeature
-  // Construction planes and axes (`construction.ts`).
-  | ConstructionFeature;
+  | PrintFeature;
 
 declare module '../../foundation/document/featureKinds.js' {
   interface FeatureKindMap {
@@ -242,8 +197,6 @@ declare module '../../foundation/document/featureKinds.js' {
     transform: TransformFeature;
     rotateAxis: RotateAxisFeature;
     align: AlignFeature;
-    offsetFace: OffsetFaceFeature;
-    deleteFace: DeleteFaceFeature;
   }
 }
 
@@ -257,10 +210,7 @@ export const MODELING_FEATURE_KINDS: readonly ModelingFeature['kind'][] = [
   'transform',
   'rotateAxis',
   'align',
-  'offsetFace',
-  'deleteFace',
   ...PRINT_FEATURE_KINDS,
-  ...CONSTRUCTION_FEATURE_KINDS,
 ];
 
 export function isModelingFeature(feature: Feature): feature is ModelingFeature {
@@ -278,10 +228,7 @@ export const MODELING_FEATURE_LABEL: Record<ModelingFeature['kind'], string> = {
   transform: 'Move/Rotate',
   rotateAxis: 'Rotate',
   align: 'Align',
-  offsetFace: 'Offset Face',
-  deleteFace: 'Delete Face',
   ...PRINT_FEATURE_LABEL,
-  ...CONSTRUCTION_FEATURE_LABEL,
 };
 
 /** Largest pattern instance count (bounds evaluation cost). */

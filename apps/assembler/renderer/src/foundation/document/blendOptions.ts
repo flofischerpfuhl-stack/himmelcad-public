@@ -45,3 +45,6 @@ export function edgeRuleLabel(rule: EdgeRule): string {
 export function edgeRuleBodyId(rule: EdgeRule): string {
   return rule.kind === 'faceEdges' ? rule.face.bodyId : rule.bodyId;
 }
+
+/** Printing clearance presets for Offset Face / Shell gaps (mm). */
+export const PRINT_CLEARANCES: readonly number[] = [0.1, 0.2, 0.3, 0.4];

@@ -8,14 +8,14 @@
 import {
   alwaysEnabled,
   kernelNotReady,
+  registeredCommand,
   selected,
   type Command,
   type CommandAvailability,
   type CommandContext,
 } from '../../foundation/commands/registry.js';
 import { isPlanarFace, makeFaceRef } from '../../foundation/commands/store.js';
-import { createDraft } from './featureTools.js';
-import { FEATURE_COMMANDS } from './featureCommands.js';
+import { createDraft } from '../../foundation/commands/featureDrafts.js';
 
 /** Selected edges if they all belong to one body, else `null`. */
 function edgesOfOneBody(ctx: CommandContext) {
@@ -241,7 +241,7 @@ export const TRANSFORM_COMMANDS: readonly Command[] = [
     run: (ctx) => {
       // Deleting faces removes them from the body and heals it (Delete Face tool).
       if (ctx.selection.every((item) => item.kind === 'face')) {
-        const deleteFace = FEATURE_COMMANDS.find((c) => c.id === 'tools.deleteFace');
+        const deleteFace = registeredCommand('tools.deleteFace');
         if (deleteFace?.availability(ctx).enabled) deleteFace.run(ctx);
         return;
       }

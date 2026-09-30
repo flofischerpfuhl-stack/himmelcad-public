@@ -8,15 +8,15 @@
 import { opsAffine } from '../../foundation/geometry-kernel/features/rigid.js';
 import { WORLD_AXES, gizmoOps, isWorldAxes } from './moveGizmo.js';
 import type { Body } from '../../foundation/geometry-kernel/types.js';
+import { profileSamples } from './featureTools.js';
 import {
-  profileSamples,
   draftGuides,
   draftHandles,
   draftModifiedBodyIds,
   type DraftGuides,
   type DraftHandle,
   type HandleUnit,
-} from './featureTools.js';
+} from '../../foundation/commands/featureDrafts.js';
 import {
   useAssemblerStore,
   type AssemblerState,

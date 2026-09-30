@@ -30,11 +30,8 @@ import {
   STEP_EXPORT_PARAMS,
   STEP_IMPORT_STRUCTURE,
 } from '../../api/interopApi.js';
-import {
-  BLEND_OPTION_PARAMS,
-  PRINT_DEFS,
-  PRINT_FEATURE_KIND_SCHEMAS,
-} from '../../modules/modeling/printSchema.js';
+import { BLEND_OPTION_PARAMS } from '../../modules/modeling/printSchema.js';
+
 import type { FeatureKindSpec, MethodSpec } from '../../foundation/commands/api/contract.js';
 import {
   API_DEFS,
@@ -45,7 +42,6 @@ import {
   type ApiMethod,
 } from '../../foundation/commands/api/registry.js';
 import type { JsonSchema } from '../../foundation/commands/api/validate.js';
-import { OFFSET_FACE_MODES } from '../../modules/modeling/features.js';
 
 export const API_ID = 'hcasm.agent-api';
 export const API_VERSION = 1;
@@ -482,13 +478,6 @@ const DEFS_TAIL: Record<string, JsonSchema> = {
   },
 };
 
-const operation: JsonSchema = {
-  enum: ['new', 'join', 'cut', 'intersect'],
-  default: 'new',
-  description:
-    'New body, or join into / cut from / intersect with `targetBodyId` (default: the most recently changed body).',
-};
-
 /**
  * Parameter schemas of the feature kinds this build knows. A feature kind
  * added to `model/document.ts` should get an entry here; until it does, the
@@ -670,75 +659,14 @@ const CORE_FEATURE_KIND_SCHEMAS: Record<string, FeatureKindSpec> = {
       ['data', 'fileName', 'triangles'],
     ),
   },
-  revolve: {
-    label: 'Revolve',
-    summary:
-      'Revolves a profile about an axis (world axis, body edge or sketch line — e.g. a construction centre line); New/Join/Cut like Extrude. The axis must not cross the profile.',
-    params: obj(
-      {
-        profile: ref('ExtrudeProfile'),
-        axis: ref('AxisRef'),
-        angle: {
-          type: 'number',
-          minimum: -360,
-          maximum: 360,
-          default: 360,
-          description: 'Degrees; 360 is a full revolution, negative turns the other way.',
-        },
-        operation,
-        targetBodyId: str,
-        resultBodyName: str,
-      },
-      ['profile', 'axis'],
-    ),
-  },
-  sweep: {
-    label: 'Sweep',
-    summary:
-      'Sweeps a profile (without holes) along a path (edge chain, sketch region outline or straight line); New/Join/Cut.',
-    params: obj(
-      {
-        profile: ref('ExtrudeProfile'),
-        path: ref('PathRef'),
-        operation,
-        targetBodyId: str,
-        resultBodyName: str,
-      },
-      ['profile', 'path'],
-    ),
-  },
-  loft: {
-    label: 'Loft',
-    summary:
-      'Lofts through two or more single profiles on different planes, in order; smooth or ruled; New/Join/Cut.',
-    params: obj(
-      {
-        profiles: { type: 'array', items: ref('ExtrudeProfile'), minItems: 2 },
-        ruled: { type: 'boolean', default: false },
-        operation,
-        targetBodyId: str,
-        resultBodyName: str,
-      },
-      ['profiles'],
-    ),
-  },
-  mirror: {
-    label: 'Mirror',
-    summary:
-      'Mirrors bodies, sketches and planar faces across a plane (world plane, planar face, construction plane) or, with `axis`, about a line (a half turn); with keepOriginal (default) the mirror images of bodies are new bodies. Mirrored sketches/faces become sketches "<featureId>:sketch:<i>" (sketchIds first, then faces) whose profiles extrude/revolve reference.',
-    params: obj(
-      {
-        bodyIds: { type: 'array', items: str },
-        plane: ref('SketchPlane'),
-        keepOriginal: { type: 'boolean', default: true },
-        sketchIds: { type: 'array', items: str },
-        faces: { type: 'array', items: ref('FaceInput') },
-        axis: ref('AxisRef'),
-      },
-      [],
-      'At least one of bodyIds / sketchIds / faces must be non-empty. `plane` defaults to the YZ plane (and is ignored with `axis`).',
-    ),
-  },
+};
+
+/**
+ * The construction kinds' parameter schemas, between the modelling blocks
+ * (`API_ORDER.featureKinds.construction`). Phase B: they move into the
+ * construction module's `api` with that order.
+ */
+const CONSTRUCTION_FEATURE_KIND_SCHEMAS: Record<string, FeatureKindSpec> = {
   constructionPlane: {
     label: 'Plane',
     summary:
@@ -812,92 +740,6 @@ const CORE_FEATURE_KIND_SCHEMAS: Record<string, FeatureKindSpec> = {
       },
       ['definition'],
     ),
-  },
-  pattern: {
-    label: 'Pattern',
-    summary: 'Copies bodies in a linear or circular pattern (independent copies).',
-    params: obj(
-      { bodyIds: { type: 'array', items: str, minItems: 1 }, pattern: ref('PatternDefinition') },
-      ['bodyIds', 'pattern'],
-    ),
-  },
-  split: {
-    label: 'Split',
-    summary: 'Splits a body by a plane into two bodies (the positive side becomes new).',
-    params: obj({ bodyId: str, plane: ref('SketchPlane') }, ['bodyId', 'plane']),
-  },
-  transform: {
-    label: 'Move/Rotate',
-    summary:
-      'Rigid transform of a body: rotate rx, ry, rz degrees about world X, then Y, then Z through `pivot`, then translate (dx, dy, dz); `copy` makes a new body.',
-    params: obj(
-      {
-        bodyId: str,
-        dx: num,
-        dy: num,
-        dz: num,
-        rx: num,
-        ry: num,
-        rz: num,
-        pivot: ref('Vec3'),
-        copy: { type: 'boolean', default: false },
-      },
-      ['bodyId'],
-      'Missing components default to 0, the pivot to the world origin.',
-    ),
-  },
-  rotateAxis: {
-    label: 'Rotate',
-    summary:
-      'Rotates bodies by `angle` degrees about an axis (a straight or circular edge, a sketch line or a world axis) — "Rotate Around Axis"; `copy` keeps the originals and adds rotated copies.',
-    params: obj(
-      {
-        bodyIds: { type: 'array', items: str, minItems: 1 },
-        axis: ref('AxisRef'),
-        angle: num,
-        copy: { type: 'boolean', default: false },
-      },
-      ['bodyIds', 'axis', 'angle'],
-    ),
-  },
-  align: {
-    label: 'Align',
-    summary:
-      'Moves a body so its planar `face` lies on the plane of `target` (a planar face of another body): face to face by default, same direction with flip; `offset` leaves a gap; `center` slides the face centres together.',
-    params: obj(
-      {
-        bodyId: str,
-        face: ref('FaceInput'),
-        target: ref('FaceInput'),
-        flip: { type: 'boolean', default: false },
-        center: { type: 'boolean', default: true },
-        offset: { type: 'number', default: 0 },
-      },
-      ['face', 'target'],
-    ),
-  },
-  offsetFace: {
-    label: 'Offset Face',
-    summary:
-      'Offsets faces of one body along their normals: positive adds material, negative removes it (e.g. enlarges a hole). With one face, `mode` "radius"/"diameter" sets a cylindrical face to that size and "total" sets its distance to the parallel `opposite` face; `distance` is then that target value, re-measured on every evaluation.',
-    params: obj(
-      {
-        faces: { type: 'array', items: ref('FaceInput'), minItems: 1 },
-        distance: {
-          type: 'number',
-          description:
-            'mode "offset": signed offset (mm); "radius"/"diameter"/"total": the positive target value (mm).',
-        },
-        mode: { enum: [...OFFSET_FACE_MODES], default: 'offset' },
-        opposite: ref('FaceInput'),
-      },
-      ['faces', 'distance'],
-    ),
-  },
-  deleteFace: {
-    label: 'Delete Face',
-    summary: 'Removes faces (holes, fillets, chamfers) of one body and heals it.',
-    params: obj({ faces: { type: 'array', items: ref('FaceInput'), minItems: 1 } }, ['faces']),
   },
 };
 
@@ -1611,11 +1453,10 @@ registerApiContribution('agent-api', {
     { order: API_ORDER.defs.coreHead, defs: DEFS_HEAD },
     { order: API_ORDER.defs.coreMid, defs: DEFS_MID },
     { order: API_ORDER.defs.coreTail, defs: DEFS_TAIL },
-    { order: API_ORDER.defs.printFeatures, defs: PRINT_DEFS },
   ],
   featureKinds: [
     { order: API_ORDER.featureKinds.core, kinds: CORE_FEATURE_KIND_SCHEMAS },
-    { order: API_ORDER.featureKinds.printFeatures, kinds: PRINT_FEATURE_KIND_SCHEMAS },
+    { order: API_ORDER.featureKinds.construction, kinds: CONSTRUCTION_FEATURE_KIND_SCHEMAS },
   ],
   methods: [
     { order: API_ORDER.methods.coreHead, methods: spec(METHODS_HEAD) },

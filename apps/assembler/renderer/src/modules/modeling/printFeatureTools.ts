@@ -1,7 +1,7 @@
 /**
  * Interactive tools of the print features (`printFeatures.ts`): Hole,
  * Emboss, Draft, Rib and Thicken, as drafts of the generic feature tool
- * session (`featureTools.ts` delegates these kinds here), so they get the
+ * session (registered in `drafts.ts`), so they get the
  * same pill, badges, handles/chips, live preview, Done/Cancel and one-step
  * commit as Revolve or Offset Face. Pure data + functions; no store access.
  */
@@ -21,7 +21,7 @@ import {
   type ProfileRef,
 } from '../../foundation/document/document.js';
 import type { SketchFeature } from '../../foundation/sketch-solver/sketchFeature.js';
-import { datumRef, planeRefFrame } from '../../model/construction.js';
+import { datumRef, planeRefFrame } from '../../foundation/document/datums.js';
 
 import {
   HOLE_PRESET_LABEL,

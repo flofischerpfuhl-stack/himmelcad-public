@@ -1,10 +1,10 @@
-/** Icons of the modelling features/commands (`model/features.ts`, `commands/featureCommands.ts`). */
+/**
+ * Icons of the modelling features and commands (`features.ts`,
+ * `featureCommands.ts`), registered through `module.ui.tsx`.
+ */
 import {
   AlignVerticalSpaceAround,
-  Axis3d,
   CircleDot,
-  Eraser,
-  Expand,
   FlipHorizontal2,
   Layers,
   Layers2,
@@ -14,7 +14,6 @@ import {
   RotateCw,
   Route,
   Spline,
-  SquareDashed,
   SquareSlash,
   SquareSplitHorizontal,
   Stamp,
@@ -24,7 +23,7 @@ import {
 
 import type { ModelingFeature } from '../features.js';
 
-export const MODELING_FEATURE_ICON: Record<ModelingFeature['kind'], LucideIcon> = {
+export const MODELING_FEATURE_ICON: Readonly<Record<ModelingFeature['kind'], LucideIcon>> = {
   revolve: RotateCw,
   sweep: Route,
   loft: Layers,
@@ -34,18 +33,14 @@ export const MODELING_FEATURE_ICON: Record<ModelingFeature['kind'], LucideIcon> 
   transform: Move3d,
   rotateAxis: Rotate3d,
   align: AlignVerticalSpaceAround,
-  offsetFace: Expand,
-  deleteFace: Eraser,
   hole: CircleDot,
   emboss: Stamp,
   draft: TriangleRight,
   rib: SquareSlash,
   thicken: Layers2,
-  constructionPlane: SquareDashed,
-  constructionAxis: Axis3d,
 };
 
-export const MODELING_COMMAND_ICON: Partial<Record<string, LucideIcon>> = {
+export const MODELING_COMMAND_ICON: Readonly<Record<string, LucideIcon>> = {
   'tools.revolve': RotateCw,
   'tools.sweep': Route,
   'tools.loft': Layers,
@@ -54,8 +49,6 @@ export const MODELING_COMMAND_ICON: Partial<Record<string, LucideIcon>> = {
   'tools.split': SquareSplitHorizontal,
   'transform.rotateAxis': Rotate3d,
   'transform.align': AlignVerticalSpaceAround,
-  'tools.offsetFace': Expand,
-  'tools.deleteFace': Eraser,
   'tools.hole': CircleDot,
   'tools.emboss': Stamp,
   'tools.draft': TriangleRight,
@@ -64,13 +57,4 @@ export const MODELING_COMMAND_ICON: Partial<Record<string, LucideIcon>> = {
   'tools.filletFaceEdges': Spline,
   'tools.filletConcave': Spline,
   'tools.filletConvex': Spline,
-  'construct.planeOffset': SquareDashed,
-  'construct.planeAngle': SquareDashed,
-  'construct.planeThreePoints': SquareDashed,
-  'construct.midplane': SquareDashed,
-  'construct.planeTangent': SquareDashed,
-  'construct.axisEdge': Axis3d,
-  'construct.axisTwoPoints': Axis3d,
-  'construct.axisCylinder': Axis3d,
-  'construct.axisPlanes': Axis3d,
 };
