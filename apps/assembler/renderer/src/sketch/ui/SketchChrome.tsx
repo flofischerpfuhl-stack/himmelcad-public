@@ -151,6 +151,8 @@ export function toolPrompt(tool: SketchTool): string {
 function statusText(session: SketchSession): { text: string; done: boolean } {
   if (session.solving) return { text: 'Solving…', done: false };
   if (session.sketch.entities.length === 0) return { text: 'Empty sketch', done: false };
+  // The initial analysis runs asynchronously: no result yet is not "fully constrained".
+  if (session.dof === null) return { text: 'Analyzing constraints…', done: false };
   if (session.dof === 0) return { text: 'Fully constrained', done: true };
   return {
     text: `${session.dof} ${session.dof === 1 ? 'degree' : 'degrees'} of freedom`,

@@ -99,7 +99,11 @@ export interface SketchSession {
   construction: boolean;
   /** Selected entity/constraint/dimension ids. */
   selection: string[];
-  dof: number;
+  /**
+   * Remaining degrees of freedom; `null` until the solver's constraint
+   * analysis of the sketch has reported (it runs asynchronously on entry).
+   */
+  dof: number | null;
   /** Ids of fully determined points/curves (`null` = unknown). */
   determined: string[] | null;
   problem: SketchProblem | null;
@@ -576,7 +580,8 @@ export const useSketchStore = create<SketchState>((set, get) => {
           tool: initialTool(options.tool ?? (isNew ? 'line' : 'select')),
           construction: false,
           selection: [],
-          dof: 0,
+          // Unknown until the analysis below (or the projected-geometry update) reports.
+          dof: sketch.entities.length === 0 ? 0 : null,
           determined: null,
           problem: null,
           dragPreview: null,
@@ -604,7 +609,7 @@ export const useSketchStore = create<SketchState>((set, get) => {
             });
           }
         });
-      } else if (!isNew && sketch.entities.length > 0) {
+      } else if (sketch.entities.length > 0) {
         // Initial analysis (degrees of freedom, fully constrained geometry) of an existing sketch.
         const mine = token;
         void enqueue(async () => {

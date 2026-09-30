@@ -19,7 +19,8 @@ export interface SketchAutomation {
   sketchSession(): {
     featureId: string;
     tool: string;
-    dof: number;
+    /** `null` while the initial constraint analysis has not reported. */
+    dof: number | null;
     solving: boolean;
     problem: string | null;
     entities: number;
