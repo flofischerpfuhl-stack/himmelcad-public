@@ -20,7 +20,13 @@ import {
 import { sectionPlaneFromFace } from '../viewDisplay.js';
 import { useViewportUi } from '../viewportUi.js';
 import { useWorkspaceStore } from '../../interface/shell-ui/workspace.js';
-import type { Command, CommandAvailability } from '../../foundation/commands/registry.js';
+import {
+  alwaysEnabled,
+  selected,
+  type Command,
+  type CommandAvailability,
+  type CommandContext,
+} from '../../foundation/commands/registry.js';
 
 const enabled: CommandAvailability = { enabled: true };
 
@@ -240,4 +246,110 @@ export const DISPLAY_COMMANDS: readonly Command[] = [
 
 function currentView(): AssemblerState['viewState'] {
   return useAssemblerStore.getState().viewState;
+}
+
+/** Section View on/off, its axis and side, and Isolate. */
+export const SECTION_COMMANDS: readonly Command[] = [
+  {
+    id: 'modes.section',
+    label: 'Section View',
+    group: 'modes',
+    keywords: ['clip', 'cutaway'],
+    availability: (ctx) => ({ enabled: true, recommended: ctx.viewState.sectionEnabled }),
+    run: (ctx) => ctx.setSectionEnabled(!ctx.viewState.sectionEnabled),
+  },
+  ...(['X', 'Y', 'Z'] as const).map(
+    (axis): Command => ({
+      id: `modes.sectionAxis${axis}`,
+      label: `Section along ${axis}`,
+      group: 'modes',
+      keywords: ['section', 'clip', 'axis', 'plane', axis.toLowerCase()],
+      availability: sectionOnly,
+      run: (ctx) => ctx.setSectionAxis(axis),
+    }),
+  ),
+  {
+    id: 'modes.sectionFlip',
+    label: 'Flip section',
+    group: 'modes',
+    keywords: ['section', 'clip', 'reverse', 'other side'],
+    availability: sectionOnly,
+    run: (ctx) => ctx.setSectionFlipped(!ctx.viewState.sectionFlipped),
+  },
+  {
+    id: 'modes.isolate',
+    label: 'Isolate',
+    group: 'modes',
+    keywords: ['focus', 'hide others'],
+    availability: (ctx) => {
+      const active = ctx.isolatedBodyIds !== null;
+      const bodies = selected(ctx, 'body');
+      if (active || bodies.length > 0) return { enabled: true, recommended: active };
+      return { enabled: false, reason: 'Select a body to isolate.' };
+    },
+    run: (ctx) => {
+      if (ctx.isolatedBodyIds !== null) {
+        ctx.setIsolatedBodyIds(null);
+        return;
+      }
+      const bodies = selected(ctx, 'body');
+      if (bodies.length > 0) ctx.setIsolatedBodyIds(bodies.map((b) => b.bodyId));
+    },
+  },
+];
+
+/** Hide, Show all and Select all bodies. */
+export const VISIBILITY_COMMANDS: readonly Command[] = [
+  {
+    id: 'edit.hide',
+    label: 'Hide',
+    group: 'edit',
+    keywords: ['visibility', 'invisible'],
+    availability: (ctx) => {
+      const count = selected(ctx, 'body').length + selected(ctx, 'mesh').length;
+      return count > 0 ? alwaysEnabled : { enabled: false, reason: 'Select a body to hide.' };
+    },
+    run: (ctx) => {
+      ctx.hideBodies(selected(ctx, 'body').map((b) => b.bodyId));
+      for (const mesh of selected(ctx, 'mesh')) ctx.setReferenceMeshHidden(mesh.meshId, true);
+    },
+  },
+  {
+    id: 'edit.showAll',
+    label: 'Show all',
+    group: 'edit',
+    keywords: ['visibility', 'unhide'],
+    availability: (ctx) =>
+      ctx.hiddenBodyIds.length > 0 || ctx.referenceMeshes.some((m) => m.hidden)
+        ? alwaysEnabled
+        : { enabled: false, reason: 'Nothing hidden.' },
+    run: (ctx) => {
+      ctx.showAllBodies();
+      for (const mesh of ctx.referenceMeshes) {
+        if (mesh.hidden) ctx.setReferenceMeshHidden(mesh.id, false);
+      }
+    },
+  },
+  {
+    id: 'edit.selectAllBodies',
+    label: 'Select all bodies',
+    group: 'edit',
+    shortcut: 'Ctrl+A',
+    keywords: ['selection'],
+    availability: (ctx) =>
+      ctx.evaluation.bodies.length > 0
+        ? alwaysEnabled
+        : { enabled: false, reason: 'No bodies in the document.' },
+    run: (ctx) => {
+      ctx.evaluation.bodies.forEach((body, index) => {
+        ctx.select({ kind: 'body', bodyId: body.id }, { additive: index > 0 });
+      });
+    },
+  },
+];
+
+function sectionOnly(ctx: CommandContext): CommandAvailability {
+  return ctx.viewState.sectionEnabled
+    ? alwaysEnabled
+    : { enabled: false, reason: 'Turn Section View on first.' };
 }

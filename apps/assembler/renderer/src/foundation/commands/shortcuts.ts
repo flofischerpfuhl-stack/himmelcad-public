@@ -9,8 +9,7 @@
  * availability is enabled, call `command.run(ctx)`.
  */
 import type { Command, CommandContext, ShortcutScope } from './registry.js';
-import { COMMANDS } from './registry.js';
-import { useFixStore } from '../../interface/shell-ui/fixReference.js';
+import { COMMANDS, onCommandsChanged } from './registry.js';
 
 /**
  * A framework-agnostic view of a keyboard event. The chrome agent builds
@@ -78,6 +77,15 @@ export function invalidateShortcutMap(): void {
   shortcutMap = null;
 }
 
+// A module registering commands changes the map too.
+onCommandsChanged(invalidateShortcutMap);
+
+/**
+ * An extra Escape rung between the tool and the selection (the shell's
+ * History "Fix…" mode): handles Escape and returns `true`, or returns `false`.
+ */
+export type EscapeLayer = (ctx: CommandContext) => boolean;
+
 /**
  * Resolves a key event to the command it should trigger, or `null` if
  * none applies. Returns `null` while the event target is a text input,
@@ -109,11 +117,12 @@ export function resolveShortcut(
 /**
  * Layered Escape handling (interaction research §4): a focused numeric
  * field consumes Escape first (leaving `numericEditing`), then an active
- * tool (cancelling it, `features` untouched), then the current selection
- * and hover. Each layer only acts if the one before it had nothing to do.
- * Sketch sessions have their own rung (`sketch/session.ts` `escape`).
+ * tool (cancelling it, `features` untouched), then the caller's `layers`
+ * (the shell's History "Fix…" mode), then the current selection and hover.
+ * Each layer only acts if the one before it had nothing to do. Sketch
+ * sessions have their own rung (`sketch/session.ts` `escape`).
  */
-export function handleEscape(ctx: CommandContext): void {
+export function handleEscape(ctx: CommandContext, layers: readonly EscapeLayer[] = []): void {
   if (ctx.activeTool?.phase === 'numericEditing') {
     ctx.endNumericEditing();
     return;
@@ -122,11 +131,7 @@ export function handleEscape(ctx: CommandContext): void {
     ctx.cancel();
     return;
   }
-  // History "Fix…" is a mode of its own: Esc leaves it before touching the selection.
-  if (useFixStore.getState().session) {
-    useFixStore.getState().end();
-    return;
-  }
+  for (const layer of layers) if (layer(ctx)) return;
   if (ctx.selection.length > 0) ctx.clearSelection();
   if (ctx.hover) ctx.setHover(null);
 }

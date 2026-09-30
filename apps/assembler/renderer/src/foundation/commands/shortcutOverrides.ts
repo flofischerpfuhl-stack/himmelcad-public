@@ -7,7 +7,7 @@
  * menus, tooltips, command search and the cheat sheet all show and use the
  * same key; the registry's own shortcut stays the default for "Reset".
  */
-import { COMMANDS, type Command } from './registry.js';
+import { COMMANDS, registeredShortcut, type Command } from './registry.js';
 import { invalidateShortcutMap } from './shortcuts.js';
 
 /** Keys the shell handles itself (Escape ladder, Enter = Done, search, cheat sheet, panels). */
@@ -25,11 +25,9 @@ export const RESERVED_SHORTCUTS: readonly string[] = [
   'Ctrl+Alt+P',
 ];
 
-const DEFAULTS = new Map<string, string | undefined>(COMMANDS.map((c) => [c.id, c.shortcut]));
-
-/** The registry's built-in shortcut of a command. */
+/** The registry's built-in shortcut of a command (the one its module registered). */
 export function defaultShortcut(commandId: string): string | undefined {
-  return DEFAULTS.get(commandId);
+  return registeredShortcut(commandId);
 }
 
 const MODIFIER_KEYS = new Set(['Control', 'Shift', 'Alt', 'Meta', 'AltGraph', 'CapsLock']);
@@ -117,7 +115,7 @@ export function applyShortcutOverrides(overrides: Readonly<Record<string, string
   const ignored: string[] = [];
   const accepted: Record<string, string> = {};
   for (const [id, combo] of Object.entries(overrides)) {
-    if (!DEFAULTS.has(id)) {
+    if (!COMMANDS.some((c) => c.id === id)) {
       ignored.push(id);
       continue;
     }

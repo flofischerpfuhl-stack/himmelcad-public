@@ -17,12 +17,25 @@ import { useEffect } from 'react';
 
 import { installEscapeLadder, registerEscapeRung } from '@himmelcad/ui';
 
-import { handleEscape, resolveShortcut } from '../../foundation/commands/shortcuts.js';
+import {
+  handleEscape,
+  resolveShortcut,
+  type EscapeLayer,
+} from '../../foundation/commands/shortcuts.js';
 import { useFixStore } from './fixReference.js';
 import { usePreferences } from './preferences.js';
 import type { AssemblerState } from '../../foundation/commands/store.js';
 import { useWorkspaceStore } from './workspace.js';
 import { useSketchStore } from '../../sketch/session.js';
+
+/** History "Fix…" is a mode of its own: Esc leaves it before touching the selection. */
+const FIX_ESCAPE: readonly EscapeLayer[] = [
+  () => {
+    if (!useFixStore.getState().session) return false;
+    useFixStore.getState().end();
+    return true;
+  },
+];
 
 /** Holding Ctrl alone this long shows the shortcut overlay (Shapr3D, Windows). */
 export const CTRL_HOLD_MS = 700;
@@ -46,7 +59,7 @@ export function useGlobalKeyboard(
         const state = getState();
         // A History "Fix…" session is a mode like a tool: Esc ends it even with nothing selected.
         if (!state.activeTool && !useFixStore.getState().session) return false;
-        handleEscape(state);
+        handleEscape(state, FIX_ESCAPE);
         return true;
       }),
     [getState],
@@ -57,7 +70,7 @@ export function useGlobalKeyboard(
       registerEscapeRung('selection', () => {
         const state = getState();
         if (state.selection.length === 0 && !state.hover) return false;
-        handleEscape(state);
+        handleEscape(state, FIX_ESCAPE);
         return true;
       }),
     [getState],

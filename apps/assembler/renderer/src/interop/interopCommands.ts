@@ -3,10 +3,12 @@
  * search, context menu and adaptive toolbar for a selected reference
  * mesh). Spread into `COMMANDS` by `model/commands/registry.ts`.
  */
-import type {
-  Command,
-  CommandAvailability,
-  CommandContext,
+import {
+  alwaysEnabled,
+  kernelNotReady,
+  type Command,
+  type CommandAvailability,
+  type CommandContext,
 } from '../foundation/commands/registry.js';
 import { dxfExportTarget, kernelFormatCapabilities, useInteropStore } from './interopStore.js';
 
@@ -125,5 +127,46 @@ export const INTEROP_COMMANDS: readonly Command[] = [
       const meshId = selectedMesh(ctx);
       if (meshId) void useInteropStore.getState().convertMeshToSolid(meshId);
     },
+  },
+];
+
+/** File › Export STEP…, Import STEP…, Import STL… (moved out of the command registry unchanged). */
+export const FILE_INTEROP_COMMANDS: readonly Command[] = [
+  {
+    id: 'file.exportStep',
+    label: 'Export STEP…',
+    group: 'file',
+    keywords: ['export', 'step', 'cad', 'assembly', 'ap214', 'ap242'],
+    requiresKernel: true,
+    availability: (ctx) => {
+      const notReady = kernelNotReady(ctx);
+      if (notReady) return notReady;
+      return ctx.evaluation.bodies.length > 0
+        ? alwaysEnabled
+        : { enabled: false, reason: 'No bodies to export.' };
+    },
+    // Options dialog (assembly/flat/per body, AP214/AP242, units, visible only): `interop/`.
+    run: () => useInteropStore.getState().setStepExportOpen(true),
+  },
+  {
+    id: 'file.importStep',
+    label: 'Import STEP…',
+    group: 'file',
+    keywords: ['import', 'step', 'cad', 'assembly'],
+    requiresKernel: true,
+    availability: (ctx) => kernelNotReady(ctx) ?? alwaysEnabled,
+    // Keeps the product structure (Items folders, names, colours): `interop/interopStore.ts`.
+    run: () => void useInteropStore.getState().openImport('step'),
+  },
+  {
+    id: 'file.importStl',
+    label: 'Import STL…',
+    group: 'file',
+    keywords: ['import', 'stl', 'mesh', 'scan', 'reference'],
+    // Never a kernel input (`apps/assembler/README.md` "STL import"): the
+    // reference mesh is stored and rendered outside OCCT entirely, so this
+    // works even while the kernel is still loading or unavailable.
+    availability: () => alwaysEnabled,
+    run: () => void useInteropStore.getState().openImport('stl'),
   },
 ];

@@ -1,0 +1,20 @@
+/**
+ * The shell's own registrations (assembler/MODULES.md): view presets,
+ * workspace and File commands, and the notice toast the command gate uses.
+ */
+import { COMMAND_ORDER, setCommandNotifier } from '../../foundation/commands/registry.js';
+import { defineAssemblerModule } from '../../foundation/commands/module.js';
+import { FILE_COMMANDS, VIEW_COMMANDS } from './shellCommands.js';
+import { useWorkspaceStore } from './workspace.js';
+import { WORKSPACE_COMMANDS } from './workspaceCommands.js';
+
+export const shellUiModule = defineAssemblerModule({
+  id: 'shell-ui',
+  commands: [
+    { order: COMMAND_ORDER.view, commands: VIEW_COMMANDS },
+    { order: COMMAND_ORDER.workspace, commands: WORKSPACE_COMMANDS },
+    { order: COMMAND_ORDER.file, commands: FILE_COMMANDS },
+  ],
+  onInstall: () =>
+    setCommandNotifier((message) => useWorkspaceStore.getState().notify(message, 'warning')),
+});

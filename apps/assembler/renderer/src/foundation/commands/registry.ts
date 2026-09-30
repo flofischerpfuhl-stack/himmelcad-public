@@ -1,36 +1,28 @@
 /**
- * Central command registry for the HimmelCAD Assembler UI shell.
+ * Command registry of the HimmelCAD Assembler UI shell.
  *
  * This is the single source of truth for the main menu, the adaptive
  * toolbar, command search, the context menu and keyboard shortcuts (see
  * `shortcuts.ts`) — per the interaction research (§1, §2, §7), the same
  * action must be reachable from all of these with identical availability
- * and identical disabled reasons. Nothing outside this file should decide
- * whether a command is enabled.
+ * and identical disabled reasons. A command decides its own availability;
+ * nothing else does.
+ *
+ * The commands come from the modules (assembler/MODULES.md §3): each
+ * module registers blocks of commands with an `order`
+ * ({@link registerCommands}, normally through `defineAssemblerModule` and
+ * the product composition). {@link COMMANDS} is the merged list, blocks in
+ * `order`, which is also the declaration-order tie-break of
+ * {@link resolveAdaptive} and {@link searchCommands}. This file holds no
+ * domain command; only Undo/Redo belong to the gate itself.
  */
-import { useAutomationStore } from '../../interface/agent-api/automationStore.js';
-import { INTEROP_COMMANDS } from '../../interop/interopCommands.js';
-import { useInteropStore } from '../../interop/interopStore.js';
-import { PRINT_COMMANDS } from '../../print/printCommands.js';
-import { DISPLAY_COMMANDS } from '../../model/commands/displayCommands.js';
-import { useProjectStore } from '../../interface/shell-ui/project/projectStore.js';
-import { BLEND_RULE_COMMANDS } from '../../model/commands/blendCommands.js';
-import { CONSTRUCT_COMMANDS } from '../../model/commands/constructCommands.js';
-import { FEATURE_COMMANDS } from '../../model/commands/featureCommands.js';
-import { createDraft } from '../../model/featureTools.js';
 import { canStartPickSession, nextStep, PICK_PLANS, sessionSelection } from './pickSession.js';
 import {
-  isPlanarFace,
-  makeFaceRef,
   setPickFinisher,
   useAssemblerStore,
   type AssemblerState,
   type SelectionItem,
 } from './store.js';
-import { SKETCH_COMMANDS } from '../../model/commands/sketchCommands.js';
-import { useSketchStore } from '../../sketch/session.js';
-import { useWorkspaceStore } from '../../interface/shell-ui/workspace.js';
-import { WORKSPACE_COMMANDS } from '../../interface/shell-ui/workspaceCommands.js';
 
 /** Read access to the store snapshot and its actions. Commands never mutate `ctx` directly — they call its action methods. */
 export type CommandContext = AssemblerState;
@@ -90,14 +82,10 @@ export interface Command {
 }
 
 export const KERNEL_LOADING_REASON = 'The CAD kernel is still loading.';
-const KERNEL_FAILED_REASON = 'The CAD kernel failed to load.';
-function sectionOnly(ctx: CommandContext): CommandAvailability {
-  return ctx.viewState.sectionEnabled
-    ? alwaysEnabled
-    : { enabled: false, reason: 'Turn Section View on first.' };
-}
+export const KERNEL_FAILED_REASON = 'The CAD kernel failed to load.';
 
-function selected<K extends SelectionItem['kind']>(
+/** The selected items of one kind. */
+export function selected<K extends SelectionItem['kind']>(
   ctx: CommandContext,
   kind: K,
 ): Array<Extract<SelectionItem, { kind: K }>> {
@@ -106,10 +94,10 @@ function selected<K extends SelectionItem['kind']>(
   );
 }
 
-const alwaysEnabled: CommandAvailability = { enabled: true };
+export const alwaysEnabled: CommandAvailability = { enabled: true };
 
 /** Disabled availability while the kernel is not ready, else `null`. */
-function kernelNotReady(ctx: CommandContext): CommandAvailability | null {
+export function kernelNotReady(ctx: CommandContext): CommandAvailability | null {
   if (ctx.kernelStatus === 'ready') return null;
   return {
     enabled: false,
@@ -117,336 +105,26 @@ function kernelNotReady(ctx: CommandContext): CommandAvailability | null {
   };
 }
 
-/** Selected edges if they all belong to one body, else `null`. */
-function edgesOfOneBody(ctx: CommandContext) {
-  const edges = selected(ctx, 'edge');
-  if (edges.length === 0 || edges.length !== ctx.selection.length) return null;
-  return edges.every((e) => e.bodyId === edges[0]!.bodyId) ? edges : null;
+// ---- hooks the modules provide ------------------------------------------------------------
+
+/** Whether a modal editing session (a sketch) owns the keyboard and the selection. */
+let modalSessionActive: () => boolean = () => false;
+/** Shows a short notice to the user (the shell's toast). */
+let notify: (message: string) => void = () => undefined;
+
+/** Sketching installs its session probe: pick sessions never start inside a sketch. */
+export function setModalSessionProbe(probe: () => boolean): void {
+  modalSessionActive = probe;
 }
 
-function facesOfOneBody(ctx: CommandContext) {
-  const faces = selected(ctx, 'face');
-  if (faces.length === 0 || faces.length !== ctx.selection.length) return null;
-  return faces.every((f) => f.bodyId === faces[0]!.bodyId) ? faces : null;
+/** The shell installs its notice toast (a pick session whose command cannot start says why). */
+export function setCommandNotifier(show: (message: string) => void): void {
+  notify = show;
 }
 
-function booleanAvailability(ctx: CommandContext): CommandAvailability {
-  const notReady = kernelNotReady(ctx);
-  if (notReady) return notReady;
-  const bodies = selected(ctx, 'body');
-  if (bodies.length < 2 || bodies.length !== ctx.selection.length) {
-    return {
-      enabled: false,
-      reason: 'Select two or more bodies; the first one selected is kept.',
-    };
-  }
-  return { enabled: true, recommended: true, priority: 60 };
-}
+// ---- the gate's own commands ---------------------------------------------------------------
 
-/**
- * The full command set. Order here is the declaration-order tiebreak used
- * by {@link resolveAdaptive} and the disabled tail of
- * {@link searchCommands} — keep additions grouped with their siblings.
- */
-const RAW_COMMANDS: readonly Command[] = [
-  ...SKETCH_COMMANDS,
-  {
-    id: 'tools.extrude',
-    label: 'Extrude',
-    group: 'tools',
-    shortcut: 'E',
-    keywords: ['push', 'pull', 'solidify'],
-    availability: (ctx) => {
-      const faces = selected(ctx, 'face');
-      const profiles = selected(ctx, 'sketchProfile');
-      const singleFace = ctx.selection.length === 1 && faces.length === 1;
-      const singleProfile = ctx.selection.length === 1 && profiles.length === 1;
-      if (!singleFace && !singleProfile) {
-        return { enabled: false, reason: 'Select a sketch profile or a body face to extrude.' };
-      }
-      const notReady = kernelNotReady(ctx);
-      if (notReady) return notReady;
-      if (singleFace && !isPlanarFace(ctx.evaluation, faces[0]!.bodyId, faces[0]!.faceKey)) {
-        return { enabled: false, reason: 'Only planar faces can be extruded.' };
-      }
-      return { enabled: true, recommended: true, priority: 100 };
-    },
-    run: (ctx) => {
-      const faces = selected(ctx, 'face');
-      const profiles = selected(ctx, 'sketchProfile');
-      if (ctx.selection.length === 1 && faces.length === 1) {
-        const face = faces[0]!;
-        const ref = makeFaceRef(ctx.evaluation, face.bodyId, face.faceKey);
-        if (ref) ctx.beginExtrude({ kind: 'face', face: ref });
-        return;
-      }
-      if (ctx.selection.length === 1 && profiles.length === 1) {
-        const { featureId, regionKey } = profiles[0]!;
-        ctx.beginExtrude({
-          kind: 'sketch',
-          featureId,
-          ...(regionKey ? { regions: [regionKey] } : {}),
-        });
-      }
-    },
-  },
-  {
-    id: 'tools.filletChamfer',
-    label: 'Fillet/Chamfer',
-    group: 'tools',
-    shortcut: 'F',
-    keywords: ['round', 'bevel', 'edge'],
-    requiresKernel: true,
-    availability: (ctx) => {
-      const notReady = kernelNotReady(ctx);
-      if (notReady) return notReady;
-      if (!edgesOfOneBody(ctx)) {
-        return { enabled: false, reason: 'Select one or more edges of one body.' };
-      }
-      return { enabled: true, recommended: true, priority: 100 };
-    },
-    run: (ctx) => ctx.beginEdgeBlend('fillet'),
-  },
-  {
-    id: 'tools.chamfer',
-    label: 'Chamfer',
-    group: 'tools',
-    keywords: ['bevel', 'edge', 'fillet'],
-    requiresKernel: true,
-    availability: (ctx) => {
-      const notReady = kernelNotReady(ctx);
-      if (notReady) return notReady;
-      if (!edgesOfOneBody(ctx)) {
-        return { enabled: false, reason: 'Select one or more edges of one body.' };
-      }
-      return { enabled: true, recommended: true, priority: 90 };
-    },
-    run: (ctx) => ctx.beginEdgeBlend('chamfer'),
-  },
-  {
-    id: 'tools.shell',
-    label: 'Shell',
-    group: 'tools',
-    shortcut: 'H',
-    keywords: ['hollow', 'thin wall'],
-    requiresKernel: true,
-    availability: (ctx) => {
-      const notReady = kernelNotReady(ctx);
-      if (notReady) return notReady;
-      if (!facesOfOneBody(ctx)) {
-        return { enabled: false, reason: 'Select the faces of one body to open.' };
-      }
-      return { enabled: true, priority: 50 };
-    },
-    run: (ctx) => ctx.beginShell(),
-  },
-  ...BLEND_RULE_COMMANDS,
-  ...FEATURE_COMMANDS,
-  ...CONSTRUCT_COMMANDS,
-  {
-    id: 'tools.union',
-    label: 'Union',
-    group: 'tools',
-    shortcut: 'Ctrl+U',
-    keywords: ['boolean', 'combine', 'add'],
-    requiresKernel: true,
-    availability: booleanAvailability,
-    run: (ctx) => ctx.beginBoolean('union'),
-  },
-  {
-    id: 'tools.subtract',
-    label: 'Subtract',
-    group: 'tools',
-    shortcut: 'Ctrl+B',
-    keywords: ['boolean', 'cut', 'remove'],
-    requiresKernel: true,
-    availability: booleanAvailability,
-    run: (ctx) => ctx.beginBoolean('subtract'),
-  },
-  {
-    id: 'tools.intersect',
-    label: 'Intersect',
-    group: 'tools',
-    shortcut: 'Ctrl+I',
-    keywords: ['boolean', 'common'],
-    requiresKernel: true,
-    availability: booleanAvailability,
-    run: (ctx) => ctx.beginBoolean('intersect'),
-  },
-  {
-    id: 'transform.moveRotate',
-    label: 'Move/Rotate',
-    group: 'transform',
-    shortcut: 'M',
-    keywords: [
-      'move',
-      'rotate',
-      'translate',
-      'transform',
-      'gizmo',
-      'mv',
-      'move face',
-      'move profile',
-    ],
-    availability: (ctx) => {
-      // Shapr3D Move/Rotate takes sketch regions, edges, faces and bodies (modelling research §4).
-      if (ctx.selection.length !== 1) {
-        return {
-          enabled: false,
-          reason: 'Select one body, face or sketch profile to move or rotate.',
-        };
-      }
-      const item = ctx.selection[0]!;
-      if (item.kind === 'body') return { enabled: true, recommended: true, priority: 90 };
-      if (item.kind === 'sketchProfile') return { enabled: true, priority: 60 };
-      if (item.kind === 'face') {
-        const notReady = kernelNotReady(ctx);
-        if (notReady) return notReady;
-        // A face moves along its normal (Offset Face); Offset Face stays the recommended entry.
-        return { enabled: true, priority: 70 };
-      }
-      if (item.kind === 'edge') {
-        return {
-          enabled: false,
-          reason:
-            'Edges cannot be moved on their own with this kernel build (it lacks face replacement); move a face next to the edge, or the body.',
-        };
-      }
-      return {
-        enabled: false,
-        reason: 'Select one body, face or sketch profile to move or rotate.',
-      };
-    },
-    run: (ctx) => {
-      if (ctx.selection.length !== 1) return;
-      const item = ctx.selection[0]!;
-      if (item.kind === 'body') ctx.beginMove(item.bodyId);
-      else if (item.kind === 'sketchProfile') ctx.beginMoveSketch(item.featureId, item.regionKey);
-      else if (item.kind === 'face') {
-        const start = createDraft('offsetFace', ctx);
-        if (start.ok && start.draft.kind === 'offsetFace') {
-          ctx.beginFeatureTool({ ...start.draft, distance: 0, viaMove: true });
-        }
-      }
-    },
-  },
-  {
-    id: 'transform.delete',
-    label: 'Delete',
-    group: 'transform',
-    shortcut: 'Del',
-    keywords: ['remove', 'erase'],
-    availability: (ctx) =>
-      ctx.selection.length > 0 ? alwaysEnabled : { enabled: false, reason: 'Nothing selected.' },
-    run: (ctx) => {
-      // Deleting faces removes them from the body and heals it (Delete Face tool).
-      if (ctx.selection.every((item) => item.kind === 'face')) {
-        const deleteFace = FEATURE_COMMANDS.find((c) => c.id === 'tools.deleteFace');
-        if (deleteFace?.availability(ctx).enabled) deleteFace.run(ctx);
-        return;
-      }
-      for (const item of ctx.selection) {
-        if (item.kind === 'feature' || item.kind === 'sketchProfile' || item.kind === 'datum') {
-          ctx.deleteFeature(item.featureId);
-        } else if (item.kind === 'body') {
-          const body = ctx.evaluation.bodies.find((b) => b.id === item.bodyId);
-          if (body) ctx.deleteFeature(body.createdBy);
-        } else if (item.kind === 'mesh') {
-          // An imported STL reference mesh is not a step: it is removed from the project.
-          ctx.removeReferenceMesh(item.meshId);
-        }
-      }
-      ctx.clearSelection();
-    },
-  },
-  ...(
-    [
-      ['view.front', 'Front', 'front', 'Ctrl+2'],
-      ['view.back', 'Back', 'back', 'Ctrl+3'],
-      ['view.top', 'Top', 'top', 'Ctrl+4'],
-      ['view.bottom', 'Bottom', 'bottom', 'Ctrl+5'],
-      ['view.right', 'Right', 'right', 'Ctrl+6'],
-      ['view.left', 'Left', 'left', 'Ctrl+7'],
-      ['view.iso', 'Iso (reset)', 'iso', 'Ctrl+1'],
-    ] as const
-  ).map(([id, label, preset, shortcut]) => ({
-    id,
-    label,
-    group: 'view' as const,
-    shortcut,
-    keywords: ['view', 'camera', preset, ...(preset === 'iso' ? ['home', 'reset'] : [])],
-    availability: (): CommandAvailability => alwaysEnabled,
-    run: (ctx: CommandContext) => {
-      // Ctrl+1 is Shapr3D's "Reset": the isometric home view, fitted.
-      if (preset === 'iso') useWorkspaceStore.getState().sendCamera({ kind: 'home' });
-      else ctx.requestCamera(preset);
-    },
-  })),
-  {
-    id: 'view.zoomToFit',
-    label: 'Zoom to fit',
-    group: 'view',
-    keywords: ['view', 'camera', 'frame all'],
-    availability: () => alwaysEnabled,
-    run: (ctx) => ctx.requestCamera('fit'),
-  },
-  ...WORKSPACE_COMMANDS,
-  ...PRINT_COMMANDS,
-  ...DISPLAY_COMMANDS,
-  {
-    id: 'modes.section',
-    label: 'Section View',
-    group: 'modes',
-    keywords: ['clip', 'cutaway'],
-    availability: (ctx) => ({ enabled: true, recommended: ctx.viewState.sectionEnabled }),
-    run: (ctx) => ctx.setSectionEnabled(!ctx.viewState.sectionEnabled),
-  },
-  ...(['X', 'Y', 'Z'] as const).map(
-    (axis): Command => ({
-      id: `modes.sectionAxis${axis}`,
-      label: `Section along ${axis}`,
-      group: 'modes',
-      keywords: ['section', 'clip', 'axis', 'plane', axis.toLowerCase()],
-      availability: sectionOnly,
-      run: (ctx) => ctx.setSectionAxis(axis),
-    }),
-  ),
-  {
-    id: 'modes.sectionFlip',
-    label: 'Flip section',
-    group: 'modes',
-    keywords: ['section', 'clip', 'reverse', 'other side'],
-    availability: sectionOnly,
-    run: (ctx) => ctx.setSectionFlipped(!ctx.viewState.sectionFlipped),
-  },
-  {
-    id: 'modes.isolate',
-    label: 'Isolate',
-    group: 'modes',
-    keywords: ['focus', 'hide others'],
-    availability: (ctx) => {
-      const active = ctx.isolatedBodyIds !== null;
-      const bodies = selected(ctx, 'body');
-      if (active || bodies.length > 0) return { enabled: true, recommended: active };
-      return { enabled: false, reason: 'Select a body to isolate.' };
-    },
-    run: (ctx) => {
-      if (ctx.isolatedBodyIds !== null) {
-        ctx.setIsolatedBodyIds(null);
-        return;
-      }
-      const bodies = selected(ctx, 'body');
-      if (bodies.length > 0) ctx.setIsolatedBodyIds(bodies.map((b) => b.bodyId));
-    },
-  },
-  {
-    id: 'modes.measure',
-    label: 'Measure',
-    group: 'modes',
-    keywords: ['distance', 'dimension'],
-    availability: (ctx) => ({ enabled: true, recommended: ctx.viewState.measureEnabled }),
-    run: (ctx) => ctx.setMeasureEnabled(!ctx.viewState.measureEnabled),
-  },
+const GATE_COMMANDS: readonly Command[] = [
   {
     id: 'edit.undo',
     label: 'Undo',
@@ -467,196 +145,104 @@ const RAW_COMMANDS: readonly Command[] = [
       ctx.history.canRedo ? alwaysEnabled : { enabled: false, reason: 'Nothing to redo.' },
     run: (ctx) => ctx.redo(),
   },
-  {
-    id: 'edit.hide',
-    label: 'Hide',
-    group: 'edit',
-    keywords: ['visibility', 'invisible'],
-    availability: (ctx) => {
-      const count = selected(ctx, 'body').length + selected(ctx, 'mesh').length;
-      return count > 0 ? alwaysEnabled : { enabled: false, reason: 'Select a body to hide.' };
-    },
-    run: (ctx) => {
-      ctx.hideBodies(selected(ctx, 'body').map((b) => b.bodyId));
-      for (const mesh of selected(ctx, 'mesh')) ctx.setReferenceMeshHidden(mesh.meshId, true);
-    },
-  },
-  {
-    id: 'edit.showAll',
-    label: 'Show all',
-    group: 'edit',
-    keywords: ['visibility', 'unhide'],
-    availability: (ctx) =>
-      ctx.hiddenBodyIds.length > 0 || ctx.referenceMeshes.some((m) => m.hidden)
-        ? alwaysEnabled
-        : { enabled: false, reason: 'Nothing hidden.' },
-    run: (ctx) => {
-      ctx.showAllBodies();
-      for (const mesh of ctx.referenceMeshes) {
-        if (mesh.hidden) ctx.setReferenceMeshHidden(mesh.id, false);
-      }
-    },
-  },
-  {
-    id: 'edit.selectAllBodies',
-    label: 'Select all bodies',
-    group: 'edit',
-    shortcut: 'Ctrl+A',
-    keywords: ['selection'],
-    availability: (ctx) =>
-      ctx.evaluation.bodies.length > 0
-        ? alwaysEnabled
-        : { enabled: false, reason: 'No bodies in the document.' },
-    run: (ctx) => {
-      ctx.evaluation.bodies.forEach((body, index) => {
-        ctx.select({ kind: 'body', bodyId: body.id }, { additive: index > 0 });
-      });
-    },
-  },
-  {
-    id: 'file.home',
-    label: 'Home',
-    group: 'file',
-    shortcut: 'Ctrl+Shift+H',
-    keywords: ['start', 'dashboard', 'recent', 'templates', 'welcome', 'projects'],
-    adaptive: false,
-    availability: () => alwaysEnabled,
-    run: () => {
-      const workspace = useWorkspaceStore.getState();
-      workspace.setHomeOpen(!workspace.homeOpen);
-    },
-  },
-  {
-    id: 'file.new',
-    label: 'New',
-    group: 'file',
-    shortcut: 'Ctrl+N',
-    keywords: ['project', 'blank'],
-    availability: () => alwaysEnabled,
-    run: () => useProjectStore.getState().requestNew(),
-  },
-  {
-    id: 'file.open',
-    label: 'Open…',
-    group: 'file',
-    shortcut: 'Ctrl+O',
-    keywords: ['project', 'load'],
-    availability: () => alwaysEnabled,
-    run: () => useProjectStore.getState().requestOpen(),
-  },
-  {
-    id: 'file.save',
-    label: 'Save',
-    group: 'file',
-    shortcut: 'Ctrl+S',
-    keywords: ['project', 'persist'],
-    availability: () => alwaysEnabled,
-    run: () => void useProjectStore.getState().save(),
-  },
-  {
-    id: 'file.saveAs',
-    label: 'Save As…',
-    group: 'file',
-    // Ctrl+Shift+S is Select Through (Shapr3D mapping).
-    shortcut: 'Ctrl+Shift+Alt+S',
-    keywords: ['project', 'persist', 'copy'],
-    availability: () => alwaysEnabled,
-    run: () => void useProjectStore.getState().saveAs(),
-  },
-  {
-    id: 'file.exportStlAll',
-    label: 'Export STL (All Bodies)',
-    group: 'file',
-    keywords: ['export', 'print', 'stl'],
-    availability: (ctx) =>
-      ctx.evaluation.bodies.length > 0
-        ? alwaysEnabled
-        : { enabled: false, reason: 'No bodies to export.' },
-    run: () => void useProjectStore.getState().exportStlAll(),
-  },
-  {
-    id: 'file.exportStlBody',
-    label: 'Export STL (Selected Body)',
-    group: 'file',
-    keywords: ['export', 'print', 'stl', 'body'],
-    availability: (ctx) => {
-      const bodies = selected(ctx, 'body');
-      return bodies.length === 1 && ctx.selection.length === 1
-        ? alwaysEnabled
-        : { enabled: false, reason: 'Select exactly one body.' };
-    },
-    run: (ctx) => {
-      const bodies = selected(ctx, 'body');
-      if (bodies.length === 1) void useProjectStore.getState().exportStlBody(bodies[0]!.bodyId);
-    },
-  },
-  {
-    id: 'file.export3mf',
-    label: 'Export 3MF',
-    group: 'file',
-    keywords: ['export', 'print', '3mf'],
-    availability: (ctx) =>
-      ctx.evaluation.bodies.length > 0
-        ? alwaysEnabled
-        : { enabled: false, reason: 'No bodies to export.' },
-    run: () => void useProjectStore.getState().export3mf(),
-  },
-  {
-    id: 'file.exportStep',
-    label: 'Export STEP…',
-    group: 'file',
-    keywords: ['export', 'step', 'cad', 'assembly', 'ap214', 'ap242'],
-    requiresKernel: true,
-    availability: (ctx) => {
-      const notReady = kernelNotReady(ctx);
-      if (notReady) return notReady;
-      return ctx.evaluation.bodies.length > 0
-        ? alwaysEnabled
-        : { enabled: false, reason: 'No bodies to export.' };
-    },
-    // Options dialog (assembly/flat/per body, AP214/AP242, units, visible only): `interop/`.
-    run: () => useInteropStore.getState().setStepExportOpen(true),
-  },
-  {
-    id: 'file.importStep',
-    label: 'Import STEP…',
-    group: 'file',
-    keywords: ['import', 'step', 'cad', 'assembly'],
-    requiresKernel: true,
-    availability: (ctx) => kernelNotReady(ctx) ?? alwaysEnabled,
-    // Keeps the product structure (Items folders, names, colours): `interop/interopStore.ts`.
-    run: () => void useInteropStore.getState().openImport('step'),
-  },
-  {
-    id: 'file.importStl',
-    label: 'Import STL…',
-    group: 'file',
-    keywords: ['import', 'stl', 'mesh', 'scan', 'reference'],
-    // Never a kernel input (`apps/assembler/README.md` "STL import"): the
-    // reference mesh is stored and rendered outside OCCT entirely, so this
-    // works even while the kernel is still loading or unavailable.
-    availability: () => alwaysEnabled,
-    run: () => void useInteropStore.getState().openImport('stl'),
-  },
-  ...INTEROP_COMMANDS,
-  {
-    id: 'file.agentAccess',
-    label: 'Agent Access (Local)',
-    group: 'file',
-    keywords: ['agent', 'automation', 'python', 'api', 'ai', 'script', 'endpoint'],
-    availability: () => {
-      const automation = useAutomationStore.getState();
-      if (!automation.available) {
-        return { enabled: false, reason: 'Only available in the desktop app.' };
-      }
-      return { enabled: true, recommended: automation.enabled };
-    },
-    run: () => {
-      const automation = useAutomationStore.getState();
-      void automation.setEnabled(!automation.enabled);
-    },
-  },
 ];
+
+/**
+ * Block orders of the published command order. Modules pick their own
+ * numbers; these are the ones in use (keep gaps for new blocks).
+ */
+export const COMMAND_ORDER = {
+  sketch: 100,
+  modelingTools: 200,
+  blendRules: 300,
+  modelingFeatures: 400,
+  construct: 500,
+  booleans: 600,
+  transform: 700,
+  view: 800,
+  workspace: 900,
+  print: 1000,
+  display: 1100,
+  section: 1200,
+  measure: 1250,
+  history: 1300,
+  visibility: 1400,
+  file: 1500,
+  fileInterop: 1600,
+  interop: 1700,
+  agent: 1800,
+} as const;
+
+// ---- registration ---------------------------------------------------------------------------
+
+interface Block {
+  order: number;
+  sequence: number;
+  module: string;
+  commands: readonly Command[];
+}
+
+const blocks: Block[] = [];
+/** Registered commands by id, as the module wrote them (before {@link withPickSession}). */
+const registered = new Map<string, { command: Command; module: string }>();
+/** The shortcut each command was registered with (custom shortcuts overwrite `Command.shortcut`). */
+const defaultShortcuts = new Map<string, string | undefined>();
+/** One wrapped instance per command id, so custom shortcuts written onto it survive a re-merge. */
+const wrapped = new Map<string, Command>();
+const listeners = new Set<() => void>();
+
+/**
+ * The full command set of this build, blocks in `order`: tools with a pick
+ * plan start before their selection too ({@link withPickSession}). A live
+ * list — registrations update it in place.
+ */
+export const COMMANDS: readonly Command[] = [];
+
+/** Registers a block of commands; ids must be unique across all modules. */
+export function registerCommands(
+  order: number,
+  commands: readonly Command[],
+  module: string,
+): void {
+  for (const command of commands) {
+    const existing = registered.get(command.id);
+    if (existing) {
+      throw new Error(
+        `Command "${command.id}" is registered twice (${existing.module}, ${module})`,
+      );
+    }
+  }
+  for (const command of commands) {
+    registered.set(command.id, { command, module });
+    defaultShortcuts.set(command.id, command.shortcut);
+  }
+  blocks.push({ order, sequence: blocks.length, module, commands });
+  blocks.sort((a, b) => a.order - b.order || a.sequence - b.sequence);
+  const merged = COMMANDS as Command[];
+  merged.length = 0;
+  for (const block of blocks) {
+    for (const command of block.commands) {
+      let instance = wrapped.get(command.id);
+      if (!instance) {
+        instance = withPickSession(command);
+        wrapped.set(command.id, instance);
+      }
+      merged.push(instance);
+    }
+  }
+  for (const listener of listeners) listener();
+}
+
+/** The shortcut a command was registered with (the default for "Reset"). */
+export function registeredShortcut(commandId: string): string | undefined {
+  return defaultShortcuts.get(commandId);
+}
+
+/** Calls `listener` after every registration (shortcut maps, caches). */
+export function onCommandsChanged(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+}
 
 // ---- tool before selection (UI-16) --------------------------------------------------------
 
@@ -673,7 +259,7 @@ function withPickSession(command: Command): Command {
     availability: (ctx) => {
       const own = command.availability(ctx);
       // Not while a tool runs or a sketch is open (its keys belong to the sketch).
-      if (own.enabled || ctx.activeTool || useSketchStore.getState().session) return own;
+      if (own.enabled || ctx.activeTool || modalSessionActive()) return own;
       if (command.id !== 'transform.moveRotate') {
         const notReady = kernelNotReady(ctx);
         if (notReady) return notReady;
@@ -706,26 +292,21 @@ function finishPickSession(): void {
     store.updatePickSession(() => next);
     return;
   }
-  const command = RAW_COMMANDS.find((c) => c.id === session.commandId);
+  const command = registered.get(session.commandId)?.command;
   store.cancel();
   store.setSelection(sessionSelection(session));
   const ctx = useAssemblerStore.getState();
   if (!command) return;
   const availability = command.availability(ctx);
   if (!availability.enabled) {
-    useWorkspaceStore.getState().notify(availability.reason ?? 'The tool cannot start.', 'warning');
+    notify(availability.reason ?? 'The tool cannot start.');
     return;
   }
   command.run(ctx);
 }
 
-/**
- * The full command set: tools with a pick plan start before their selection too
- * ({@link withPickSession}).
- */
-export const COMMANDS: readonly Command[] = RAW_COMMANDS.map(withPickSession);
-
 setPickFinisher(finishPickSession);
+registerCommands(COMMAND_ORDER.history, GATE_COMMANDS, 'commands');
 
 function toResultAvailability(availability: CommandAvailability): CommandAvailability {
   if (availability.reason === undefined) {

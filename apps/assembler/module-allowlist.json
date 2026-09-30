@@ -18,17 +18,7 @@
       "rule": "upward",
       "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
       "edges": [
-        "renderer/src/foundation/commands/api/references.ts -> renderer/src/interface/agent-api/describe.ts",
-        "renderer/src/foundation/commands/registry.ts -> renderer/src/interface/agent-api/automationStore.ts"
-      ]
-    },
-    {
-      "from": "commands",
-      "to": "construction",
-      "rule": "upward",
-      "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
-      "edges": [
-        "renderer/src/foundation/commands/registry.ts -> renderer/src/model/commands/constructCommands.ts"
+        "renderer/src/foundation/commands/api/references.ts -> renderer/src/interface/agent-api/describe.ts"
       ]
     },
     {
@@ -36,21 +26,14 @@
       "to": "display",
       "rule": "upward",
       "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
-      "edges": [
-        "renderer/src/foundation/commands/registry.ts -> renderer/src/model/commands/displayCommands.ts",
-        "renderer/src/foundation/commands/store.ts -> renderer/src/model/viewDisplay.ts"
-      ]
+      "edges": ["renderer/src/foundation/commands/store.ts -> renderer/src/model/viewDisplay.ts"]
     },
     {
       "from": "commands",
       "to": "interop",
       "rule": "upward",
       "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
-      "edges": [
-        "renderer/src/foundation/commands/registry.ts -> renderer/src/interop/interopCommands.ts",
-        "renderer/src/foundation/commands/registry.ts -> renderer/src/interop/interopStore.ts",
-        "renderer/src/foundation/commands/store.ts -> renderer/src/model/referenceMesh.ts"
-      ]
+      "edges": ["renderer/src/foundation/commands/store.ts -> renderer/src/model/referenceMesh.ts"]
     },
     {
       "from": "commands",
@@ -58,9 +41,6 @@
       "rule": "upward",
       "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
       "edges": [
-        "renderer/src/foundation/commands/registry.ts -> renderer/src/model/commands/blendCommands.ts",
-        "renderer/src/foundation/commands/registry.ts -> renderer/src/model/commands/featureCommands.ts",
-        "renderer/src/foundation/commands/registry.ts -> renderer/src/model/featureTools.ts",
         "renderer/src/foundation/commands/store.ts -> renderer/src/model/featureTools.ts",
         "renderer/src/foundation/commands/store.ts -> renderer/src/model/features.ts",
         "renderer/src/foundation/commands/store.ts -> renderer/src/model/modeling.ts",
@@ -76,34 +56,11 @@
     },
     {
       "from": "commands",
-      "to": "print",
-      "rule": "upward",
-      "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
-      "edges": [
-        "renderer/src/foundation/commands/registry.ts -> renderer/src/print/printCommands.ts"
-      ]
-    },
-    {
-      "from": "commands",
       "to": "shell-ui",
       "rule": "upward",
       "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
       "edges": [
-        "renderer/src/foundation/commands/registry.ts -> renderer/src/interface/shell-ui/project/projectStore.ts",
-        "renderer/src/foundation/commands/registry.ts -> renderer/src/interface/shell-ui/workspace.ts",
-        "renderer/src/foundation/commands/registry.ts -> renderer/src/interface/shell-ui/workspaceCommands.ts",
-        "renderer/src/foundation/commands/shortcuts.ts -> renderer/src/interface/shell-ui/fixReference.ts",
         "renderer/src/foundation/commands/store.ts -> renderer/src/interface/shell-ui/workspace.ts"
-      ]
-    },
-    {
-      "from": "commands",
-      "to": "sketching",
-      "rule": "upward",
-      "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
-      "edges": [
-        "renderer/src/foundation/commands/registry.ts -> renderer/src/model/commands/sketchCommands.ts",
-        "renderer/src/foundation/commands/registry.ts -> renderer/src/sketch/session.ts"
       ]
     },
     {
