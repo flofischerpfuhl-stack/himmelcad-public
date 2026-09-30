@@ -2,7 +2,8 @@
  * The shell's own panels, hosted like every module's (assembler/MODULES.md
  * §3): History sits in the right stack below the modules' panels.
  */
-import { defineModuleUi } from '../../foundation/commands/module.js';
+
+import { defineModuleUi } from '../../platform/widgets/moduleUi.js';
 import { HistoryPanel } from './HistoryPanel.js';
 
 export const shellUi = defineModuleUi({

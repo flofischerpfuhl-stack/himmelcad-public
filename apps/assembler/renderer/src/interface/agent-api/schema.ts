@@ -24,11 +24,7 @@
  * `apps/assembler/api/agent-api-v1.schema.json` is kept identical by a test.
  */
 import { API_ERROR_CODES } from '../../foundation/commands/api/errors.js';
-import {
-  MESH_RESOLUTION_SCHEMA,
-  PRINT_METHODS,
-  PRINT_SETTINGS_SCHEMA,
-} from '../../api/printApi.js';
+import { MESH_RESOLUTION_SCHEMA } from '../../modules/print/api.js';
 import {
   INTEROP_METHODS,
   STEP_EXPORT_PARAMS,
@@ -1613,7 +1609,6 @@ const spec = (methods: Record<string, MethodSpec>): Record<string, ApiMethod> =>
 registerApiContribution('agent-api', {
   defs: [
     { order: API_ORDER.defs.coreHead, defs: DEFS_HEAD },
-    { order: API_ORDER.defs.printSettings, defs: { PrintSettings: PRINT_SETTINGS_SCHEMA } },
     { order: API_ORDER.defs.coreMid, defs: DEFS_MID },
     { order: API_ORDER.defs.coreTail, defs: DEFS_TAIL },
     { order: API_ORDER.defs.printFeatures, defs: PRINT_DEFS },
@@ -1625,7 +1620,6 @@ registerApiContribution('agent-api', {
   methods: [
     { order: API_ORDER.methods.coreHead, methods: spec(METHODS_HEAD) },
     { order: API_ORDER.methods.coreTail, methods: spec(METHODS_TAIL) },
-    { order: API_ORDER.methods.print, methods: spec(PRINT_METHODS) },
     { order: API_ORDER.methods.interop, methods: spec(INTEROP_METHODS) },
   ],
 });

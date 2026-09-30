@@ -7,7 +7,7 @@
  */
 import { DISPLAY_MODE_ENTRIES, activeDisplayEntry } from '../../platform/viewport/displayModes.js';
 import { sectionNormal } from '../../viewport/toolAnchors.js';
-import { displayBodyName, useItemsStore } from '../../interface/shell-ui/items.js';
+import { displayBodyName, useItemsStore } from '../../foundation/commands/items.js';
 import { currentRefs } from '../measure.js';
 import { useMeasureStore } from '../measureStore.js';
 import { usePreferences } from '../../interface/shell-ui/preferences.js';

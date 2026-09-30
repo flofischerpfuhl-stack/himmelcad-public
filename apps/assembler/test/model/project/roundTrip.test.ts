@@ -17,7 +17,7 @@ import {
   bodyRowKey,
   meshRowKey,
   useItemsStore,
-} from '../../../renderer/src/interface/shell-ui/items.js';
+} from '../../../renderer/src/foundation/commands/items.js';
 import { loadProjectFile } from '../../../renderer/src/foundation/document/format.js';
 import { useProjectStore } from '../../../renderer/src/interface/shell-ui/project/projectStore.js';
 import { useAssemblerStore } from '../../../renderer/src/foundation/commands/store.js';

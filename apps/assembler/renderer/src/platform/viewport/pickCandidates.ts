@@ -10,7 +10,7 @@
  * pointer at any depth). Without Select Through only visible geometry is a
  * candidate; with Select Through everything along the ray is.
  */
-import { referenceMeshIdOf } from '../../model/referenceMesh.js';
+import { referenceMeshIdOf } from '../../foundation/commands/referenceMesh.js';
 import type {
   Body,
   EdgeInfo,

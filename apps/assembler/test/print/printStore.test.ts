@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { useAssemblerStore } from '../../renderer/src/foundation/commands/store.js';
-import { usePrintStore } from '../../renderer/src/print/printStore.js';
+import { usePrintStore } from '../../renderer/src/modules/print/printStore.js';
 import { createNodeKernelAdapter } from '../kernel/nodeKernel.js';
 import { boxFeatures, mushroom } from './fixtures.js';
 

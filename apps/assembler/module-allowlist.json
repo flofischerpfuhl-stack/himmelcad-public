@@ -8,8 +8,7 @@
       "rule": "layer-order",
       "reason": "Known at the start of the ADR 0032 restructure (phase A): lower foundation/platform/interface modules must not depend on later ones.",
       "edges": [
-        "renderer/src/interface/agent-api/automationStore.ts -> renderer/src/interface/shell-ui/project/projectStore.ts",
-        "renderer/src/interface/agent-api/session.ts -> renderer/src/interface/shell-ui/items.ts"
+        "renderer/src/interface/agent-api/automationStore.ts -> renderer/src/interface/shell-ui/project/projectStore.ts"
       ]
     },
     {
@@ -18,13 +17,6 @@
       "rule": "upward",
       "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
       "edges": ["renderer/src/foundation/commands/store.ts -> renderer/src/model/viewDisplay.ts"]
-    },
-    {
-      "from": "commands",
-      "to": "interop",
-      "rule": "upward",
-      "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
-      "edges": ["renderer/src/foundation/commands/store.ts -> renderer/src/model/referenceMesh.ts"]
     },
     {
       "from": "commands",
@@ -88,12 +80,10 @@
       "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
       "edges": [
         "renderer/src/chrome/AnalysisLegend.tsx -> renderer/src/interface/shell-ui/preferences.ts",
-        "renderer/src/chrome/ColourDialog.tsx -> renderer/src/interface/shell-ui/items.ts",
         "renderer/src/chrome/ColourDialog.tsx -> renderer/src/interface/shell-ui/workspace.ts",
         "renderer/src/chrome/DisplayMenu.tsx -> renderer/src/interface/shell-ui/preferences.ts",
         "renderer/src/chrome/ExportImageDialog.tsx -> renderer/src/interface/shell-ui/preferences.ts",
         "renderer/src/chrome/ExportImageDialog.tsx -> renderer/src/interface/shell-ui/workspace.ts",
-        "renderer/src/model/commands/displayCommands.ts -> renderer/src/interface/shell-ui/items.ts",
         "renderer/src/model/commands/displayCommands.ts -> renderer/src/interface/shell-ui/preferences.ts",
         "renderer/src/model/commands/displayCommands.ts -> renderer/src/interface/shell-ui/workspace.ts",
         "renderer/src/viewport/imageExport.ts -> renderer/src/interface/shell-ui/preferences.ts"
@@ -110,32 +100,14 @@
     },
     {
       "from": "interop",
-      "to": "print",
-      "rule": "cross-domain",
-      "reason": "Known at the start of the ADR 0032 restructure (phase A): domain modules talk through foundation contracts and registrations, not directly.",
-      "edges": ["renderer/src/kernel/threeMf.ts -> renderer/src/print/meshTools.ts"]
-    },
-    {
-      "from": "interop",
       "to": "shell-ui",
       "rule": "upward",
       "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
       "edges": [
-        "renderer/src/api/interopApi.ts -> renderer/src/interface/shell-ui/items.ts",
-        "renderer/src/interop/importFolders.ts -> renderer/src/interface/shell-ui/items.ts",
-        "renderer/src/interop/interopStore.ts -> renderer/src/interface/shell-ui/items.ts",
         "renderer/src/interop/interopStore.ts -> renderer/src/interface/shell-ui/project/projectStore.ts",
         "renderer/src/interop/interopStore.ts -> renderer/src/interface/shell-ui/workspace.ts",
-        "renderer/src/interop/stepTree.ts -> renderer/src/interface/shell-ui/items.ts",
         "renderer/src/interop/ui/InteropChrome.tsx -> renderer/src/interface/shell-ui/workspace.ts"
       ]
-    },
-    {
-      "from": "measure",
-      "to": "interop",
-      "rule": "cross-domain",
-      "reason": "Known at the start of the ADR 0032 restructure (phase A): domain modules talk through foundation contracts and registrations, not directly.",
-      "edges": ["renderer/src/model/measure.ts -> renderer/src/model/referenceMesh.ts"]
     },
     {
       "from": "measure",
@@ -145,7 +117,6 @@
       "edges": [
         "renderer/src/chrome/MeasurePanel.tsx -> renderer/src/interface/shell-ui/preferences.ts",
         "renderer/src/chrome/MeasurePanel.tsx -> renderer/src/interface/shell-ui/workspace.ts",
-        "renderer/src/model/measureLive.ts -> renderer/src/interface/shell-ui/items.ts",
         "renderer/src/model/measureLive.ts -> renderer/src/interface/shell-ui/preferences.ts",
         "renderer/src/model/measureStore.ts -> renderer/src/interface/shell-ui/preferences.ts"
       ]
@@ -198,64 +169,6 @@
       ]
     },
     {
-      "from": "print",
-      "to": "interop",
-      "rule": "cross-domain",
-      "reason": "Known at the start of the ADR 0032 restructure (phase A): domain modules talk through foundation contracts and registrations, not directly.",
-      "edges": [
-        "renderer/src/print/exporting.ts -> renderer/src/kernel/stlExport.ts",
-        "renderer/src/print/exporting.ts -> renderer/src/kernel/threeMf.ts",
-        "renderer/src/print/exporting.ts -> renderer/src/model/referenceMesh.ts",
-        "renderer/src/print/placement.ts -> renderer/src/model/referenceMesh.ts",
-        "renderer/src/print/printCommands.ts -> renderer/src/model/referenceMesh.ts",
-        "renderer/src/print/ui/PrintDialogs.tsx -> renderer/src/kernel/stlExport.ts"
-      ]
-    },
-    {
-      "from": "print",
-      "to": "modeling",
-      "rule": "cross-domain",
-      "reason": "Known at the start of the ADR 0032 restructure (phase A): domain modules talk through foundation contracts and registrations, not directly.",
-      "edges": ["renderer/src/print/placement.ts -> renderer/src/model/features.ts"]
-    },
-    {
-      "from": "print",
-      "to": "printers",
-      "rule": "cross-domain",
-      "reason": "Known at the start of the ADR 0032 restructure (phase A): domain modules talk through foundation contracts and registrations, not directly.",
-      "edges": [
-        "renderer/src/print/printCommands.ts -> renderer/src/print/slicerStore.ts",
-        "renderer/src/print/ui/PrintDialogs.tsx -> renderer/src/print/slicerStore.ts"
-      ]
-    },
-    {
-      "from": "print",
-      "to": "shell-ui",
-      "rule": "upward",
-      "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
-      "edges": [
-        "renderer/src/print/exporting.ts -> renderer/src/interface/shell-ui/items.ts",
-        "renderer/src/print/printCommands.ts -> renderer/src/interface/shell-ui/workspace.ts",
-        "renderer/src/print/printStore.ts -> renderer/src/interface/shell-ui/items.ts",
-        "renderer/src/print/printStore.ts -> renderer/src/interface/shell-ui/workspace.ts",
-        "renderer/src/print/ui/PrintDialogs.tsx -> renderer/src/interface/shell-ui/workspace.ts"
-      ]
-    },
-    {
-      "from": "printers",
-      "to": "print",
-      "rule": "cross-domain",
-      "reason": "Known at the start of the ADR 0032 restructure (phase A): domain modules talk through foundation contracts and registrations, not directly.",
-      "edges": ["renderer/src/print/slicerStore.ts -> renderer/src/print/exporting.ts"]
-    },
-    {
-      "from": "printers",
-      "to": "shell-ui",
-      "rule": "upward",
-      "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
-      "edges": ["renderer/src/print/slicerStore.ts -> renderer/src/interface/shell-ui/workspace.ts"]
-    },
-    {
       "from": "sketching",
       "to": "display",
       "rule": "cross-domain",
@@ -281,18 +194,6 @@
         "renderer/src/platform/viewport/Viewport.tsx -> renderer/src/model/commands/displayCommands.ts",
         "renderer/src/platform/viewport/Viewport.tsx -> renderer/src/model/viewportUi.ts",
         "renderer/src/platform/viewport/Viewport.tsx -> renderer/src/viewport/imageExport.ts"
-      ]
-    },
-    {
-      "from": "viewport",
-      "to": "interop",
-      "rule": "upward",
-      "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
-      "edges": [
-        "renderer/src/platform/viewport/Viewport.tsx -> renderer/src/model/referenceMesh.ts",
-        "renderer/src/platform/viewport/boxSelect.ts -> renderer/src/model/referenceMesh.ts",
-        "renderer/src/platform/viewport/pickCandidates.ts -> renderer/src/model/referenceMesh.ts",
-        "renderer/src/platform/viewport/scene.ts -> renderer/src/model/referenceMesh.ts"
       ]
     },
     {
@@ -323,23 +224,12 @@
     },
     {
       "from": "viewport",
-      "to": "print",
-      "rule": "upward",
-      "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
-      "edges": [
-        "renderer/src/platform/viewport/Viewport.tsx -> renderer/src/print/overlay.ts",
-        "renderer/src/platform/viewport/Viewport.tsx -> renderer/src/print/printStore.ts"
-      ]
-    },
-    {
-      "from": "viewport",
       "to": "shell-ui",
       "rule": "upward",
       "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
       "edges": [
         "renderer/src/platform/viewport/DimensionLabel.tsx -> renderer/src/interface/shell-ui/preferences.ts",
         "renderer/src/platform/viewport/Viewport.tsx -> renderer/src/interface/shell-ui/fixReference.ts",
-        "renderer/src/platform/viewport/Viewport.tsx -> renderer/src/interface/shell-ui/items.ts",
         "renderer/src/platform/viewport/Viewport.tsx -> renderer/src/interface/shell-ui/preferences.ts",
         "renderer/src/platform/viewport/Viewport.tsx -> renderer/src/interface/shell-ui/workspace.ts"
       ]

@@ -6,7 +6,8 @@ import '@himmelcad/theme/tokens.css';
 import '@himmelcad/theme/reset.css';
 import './assembler.css';
 
-import './app/composition.js';
+import { ASSEMBLER_MODULES } from './app/composition.js';
+import { startModules } from './foundation/commands/module.js';
 import './app/uiComposition.js';
 import { App } from './interface/shell-ui/App.js';
 import { installPreferenceEffects } from './interface/shell-ui/preferenceEffects.js';
@@ -19,9 +20,6 @@ import { WorkerKernelAdapter } from './foundation/geometry-kernel/workerAdapter.
 import { useMeasureStore } from './model/measureStore.js';
 import { useProjectStore } from './interface/shell-ui/project/projectStore.js';
 import { useAssemblerStore } from './foundation/commands/store.js';
-import { setPrintKernel } from './print/exporting.js';
-import { setAgentPrintRunner, setPrintRunner } from './print/printStore.js';
-import { PrintabilityRunner } from './print/runner.js';
 import { setSketchSolverFactory } from './foundation/sketch-solver/solverProvider.js';
 import { setFontLoader } from './foundation/sketch-solver/text/fonts.js';
 import { WorkerSketchSolver } from './foundation/sketch-solver/workerSolver.js';
@@ -49,12 +47,8 @@ useProjectStore.getState().attachKernelAdapter(kernelAdapter);
 useMeasureStore.getState().attachKernel(kernelAdapter);
 // Agent access (desktop only, off until the user enables it): canonical command layer on this document.
 installAutomationBridge(kernelAdapter);
-// Print mode: printability analysis/orientation in their own worker; export re-tessellation on the kernel.
-const printWorker = () =>
-  new Worker(new URL('./print/printability.worker.ts', import.meta.url), { type: 'module' });
-setPrintRunner(new PrintabilityRunner(printWorker));
-setAgentPrintRunner(new PrintabilityRunner(printWorker));
-setPrintKernel(kernelAdapter);
+// The modules' runtime wiring (Print mode: its worker and the kernel for exports).
+startModules(ASSEMBLER_MODULES, { kernel: kernelAdapter, workers: true });
 // Import/export: file parsing in its own worker (Cancel = terminate); STEP export on the kernel;
 // imported STEP assemblies are filed into Items folders when their parts appear.
 setImportRunner(

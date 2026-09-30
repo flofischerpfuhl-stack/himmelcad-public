@@ -12,7 +12,7 @@
  * (`visibleKeys` anywhere on screen, `touchedKeys` inside the rectangle);
  * with Select Through the test is purely geometric (hidden geometry too).
  */
-import { referenceMeshIdOf } from '../../model/referenceMesh.js';
+import { referenceMeshIdOf } from '../../foundation/commands/referenceMesh.js';
 import type { Body, EvaluatedSketch } from '../../foundation/geometry-kernel/types.js';
 import type { SelectionItem } from '../../foundation/commands/store.js';
 import type { Vec3 } from './math.js';

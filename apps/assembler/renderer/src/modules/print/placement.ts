@@ -5,11 +5,14 @@
  * one undo step, editable in History and replayed by the kernel like a
  * Move/Rotate. Shared by the UI commands and the agent API.
  */
-import type { Body, EvaluationResult } from '../foundation/geometry-kernel/types.js';
-import type { Feature, Vec3 } from '../foundation/document/document.js';
-import type { TransformFeature } from '../model/features.js';
-import { referenceMeshIdOf } from '../model/referenceMesh.js';
-import { findFace } from '../foundation/commands/store.js';
+import type { Body, EvaluationResult } from '../../foundation/geometry-kernel/types.js';
+import type { Feature, Vec3 } from '../../foundation/document/document.js';
+import type { FeatureOf } from '../../foundation/document/featureKinds.js';
+
+/** The modelling module's rigid-transform kind, read through the kind registry (no module import). */
+type TransformFeature = FeatureOf<'transform'>;
+import { referenceMeshIdOf } from '../../foundation/commands/referenceMesh.js';
+import { findFace } from '../../foundation/commands/store.js';
 import type { OrientationMesh, PlacementTransform } from './orientation.js';
 import { placeOnPlate } from './orientation.js';
 

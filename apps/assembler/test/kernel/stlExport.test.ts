@@ -3,7 +3,10 @@ import test from 'node:test';
 
 import { type Feature } from '../../renderer/src/foundation/document/document.js';
 import { createDemoDocument } from '../../renderer/src/foundation/commands/demoDocument.js';
-import { exportAllBodiesStl, exportBodyStl } from '../../renderer/src/kernel/stlExport.js';
+import {
+  exportAllBodiesStl,
+  exportBodyStl,
+} from '../../renderer/src/foundation/geometry-kernel/stlExport.js';
 import { circle, rect, sketchFeature } from '../sketch/fixtures.js';
 import { loadNodeKernel } from './nodeKernel.js';
 

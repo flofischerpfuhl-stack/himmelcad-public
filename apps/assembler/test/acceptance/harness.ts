@@ -22,7 +22,8 @@ import {
   HEADLESS_CAPABILITIES,
 } from '../../renderer/src/interface/agent-api/session.js';
 import { useAssemblerStore } from '../../renderer/src/foundation/commands/store.js';
-import { manifoldStats, weldMesh } from '../../renderer/src/print/meshTools.js';
+import { manifoldStats } from '../../renderer/src/modules/print/meshTools.js';
+import { weldMesh } from '../../renderer/src/foundation/geometry-kernel/meshWeld.js';
 import { parseStl } from '../../renderer/src/kernel/stlImport.js';
 import { setSketchSolverFactory } from '../../renderer/src/foundation/sketch-solver/solverProvider.js';
 import { createNodeKernelAdapter } from '../kernel/nodeKernel.js';

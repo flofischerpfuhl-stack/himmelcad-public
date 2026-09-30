@@ -1,4 +1,4 @@
-import { useCallback, useState, type ComponentType } from 'react';
+import { useCallback, useState } from 'react';
 
 import { AgentAccessIndicator } from '../agent-api/ui/AgentAccessIndicator.js';
 import { AnalysisLegend } from '../../chrome/AnalysisLegend.js';
@@ -12,7 +12,8 @@ import { ItemsPanel } from './ItemsPanel.js';
 import { KernelActivity } from './KernelActivity.js';
 import { LeftDock } from './LeftDock.js';
 import { NoticeToast } from './NoticeToast.js';
-import { registeredPanels, type PanelProps } from '../../foundation/commands/module.js';
+
+import { registeredPanels } from '../../platform/widgets/moduleUi.js';
 import { RightDock } from './RightDock.js';
 import panelStyles from '../../platform/widgets/Panel.module.css';
 import { SectionControls } from '../../chrome/SectionControls.js';
@@ -24,7 +25,6 @@ import { TopBar } from './TopBar.js';
 import { useGlobalKeyboard } from './useGlobalKeyboard.js';
 import { InteropChrome } from '../../interop/ui/InteropChrome.js';
 import { useAssemblerStore, type SelectionItem } from '../../foundation/commands/store.js';
-import { PrintChrome } from '../../print/ui/PrintChrome.js';
 import { SketchChrome } from '../../sketch/ui/SketchChrome.js';
 import { Viewport } from '../../platform/viewport/Viewport.js';
 import styles from './App.module.css';
@@ -60,6 +60,7 @@ export function App(): JSX.Element {
   const rightStack = registeredPanels('rightStack').filter(
     (panel) => panel.isOpen?.(state) ?? true,
   );
+  const overlayPanels = registeredPanels('overlay');
 
   const handleViewportContextMenu = useCallback(
     (event: { clientX: number; clientY: number; target: SelectionItem | null }) => {
@@ -90,7 +91,7 @@ export function App(): JSX.Element {
         // they stack, never overlap. Registered with `defineModuleUi` (`app/uiComposition.ts`).
         <div className={panelStyles.rightStack}>
           {rightStack.map((panel) => {
-            const Panel = panel.component as unknown as ComponentType<PanelProps>;
+            const Panel = panel.component;
             return <Panel key={panel.id} state={state} onContextMenu={openContextMenuAt} />;
           })}
         </div>
@@ -98,7 +99,12 @@ export function App(): JSX.Element {
       <ToolSession state={state} />
       <SketchChrome />
       {state.viewState.sectionEnabled ? <SectionControls state={state} /> : null}
-      <PrintChrome />
+      {overlayPanels.map((panel) => {
+        // The modules' floating chrome and dialogs (Print mode, Slicers…), registered with
+        // defineModuleUi; each decides its own visibility.
+        const Panel = panel.component;
+        return <Panel key={panel.id} state={state} onContextMenu={openContextMenuAt} />;
+      })}
       {state.viewState.measureEnabled ? <MeasurePanel state={state} /> : null}
       <AnalysisLegend state={state} />
       <StatusStrip state={state} />

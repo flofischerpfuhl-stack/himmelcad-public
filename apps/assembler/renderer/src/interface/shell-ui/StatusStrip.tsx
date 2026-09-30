@@ -6,10 +6,10 @@
  * diameter, face area, distance of two parallel planar faces). Hidden while
  * a tool is active — the tool pill and prompt take over that space.
  */
-import { withDisplayNames, useItemsStore } from './items.js';
+import { withDisplayNames, useItemsStore } from '../../foundation/commands/items.js';
 import { measureSelection } from '../../model/modeling.js';
 import { formatLength, usePreferences, type LengthUnit } from './preferences.js';
-import { referenceMeshWorldBounds } from '../../model/referenceMesh.js';
+import { referenceMeshWorldBounds } from '../../foundation/commands/referenceMesh.js';
 import { selectionSummary } from './format.js';
 import type { AssemblerState } from '../../foundation/commands/store.js';
 import styles from './StatusStrip.module.css';

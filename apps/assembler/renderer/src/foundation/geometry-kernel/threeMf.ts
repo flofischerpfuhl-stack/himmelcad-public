@@ -24,7 +24,8 @@
  * {@link buildZip} (store-only ZIP; no `jszip` in the lockfile). No
  * proprietary slicer project files are written (see `assembler/PRINTING.md`).
  */
-import { weldMesh } from '../print/meshTools.js';
+
+import { weldMesh } from './meshWeld.js';
 import { buildZip, type ZipEntryInput } from './zipWriter.js';
 
 export const CORE_NS = 'http://schemas.microsoft.com/3dmanufacturing/core/2015/02';

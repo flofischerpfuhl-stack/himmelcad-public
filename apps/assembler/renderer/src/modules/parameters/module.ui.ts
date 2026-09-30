@@ -3,7 +3,8 @@
  * below the right dock (toggled with Ctrl+Alt+P, command search and the
  * right dock; open state is `panels.parameters`).
  */
-import { defineModuleUi } from '../../foundation/commands/module.js';
+
+import { defineModuleUi } from '../../platform/widgets/moduleUi.js';
 import { ParametersPanel } from './ui/ParametersPanel.js';
 
 export const parametersUi = defineModuleUi({

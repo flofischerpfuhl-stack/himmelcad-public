@@ -1,8 +1,8 @@
 /** Registered slicers as the renderer sees them (desktop only; see `electron/slicerIpc.ts`). */
 import { create } from 'zustand';
 
-import { useWorkspaceStore } from '../interface/shell-ui/workspace.js';
-import { openInSlicer } from './exporting.js';
+import { notify } from '../../foundation/commands/notices.js';
+import { openInSlicer } from './handoff.js';
 
 type SlicersApi = NonNullable<Window['assembler']>['slicers'];
 type SlicerListInfo = Awaited<ReturnType<SlicersApi['list']>>;
@@ -20,6 +20,9 @@ export interface SlicerState {
   add: () => Promise<void>;
   remove: (id: string) => Promise<void>;
   setDefault: (id: string) => Promise<void>;
+  /** The Slicers… dialog. */
+  dialogOpen: boolean;
+  setDialogOpen: (open: boolean) => void;
   /** Hands the model to `id` (default slicer when omitted). */
   open: (id?: string) => Promise<void>;
 }
@@ -38,6 +41,8 @@ export const useSlicerStore = create<SlicerState>((set, get) => {
     loaded: false,
     busy: false,
     message: null,
+    dialogOpen: false,
+    setDialogOpen: (open) => set({ dialogOpen: open }),
     refresh: async () => {
       const slicers = api();
       if (!slicers) {
@@ -69,11 +74,11 @@ export const useSlicerStore = create<SlicerState>((set, get) => {
         const target = id ?? get().defaultId;
         const result = await openInSlicer(target);
         set({ message: { text: result.message, tone: result.ok ? 'info' : 'warning' } });
-        useWorkspaceStore.getState().notify(result.message, result.ok ? 'info' : 'warning');
+        notify(result.message, result.ok ? 'info' : 'warning');
       } catch (error) {
         const text = error instanceof Error ? error.message : String(error);
         set({ message: { text, tone: 'warning' } });
-        useWorkspaceStore.getState().notify(text, 'warning');
+        notify(text, 'warning');
       } finally {
         set({ busy: false });
       }

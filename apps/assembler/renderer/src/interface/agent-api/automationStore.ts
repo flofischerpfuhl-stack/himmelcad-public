@@ -9,7 +9,7 @@ import { create } from 'zustand';
 import type { KernelAdapter } from '../../foundation/geometry-kernel/adapter.js';
 import { currentProjectText, useProjectStore } from '../shell-ui/project/projectStore.js';
 import { useAssemblerStore } from '../../foundation/commands/store.js';
-import { agentPrintability, usePrintStore } from '../../print/printStore.js';
+import { agentPrintability, usePrintStore } from '../../modules/print/printStore.js';
 import { handleJsonRpcText } from './jsonRpc.js';
 import { APP_CAPABILITIES, AgentSession, type SessionHost } from './session.js';
 

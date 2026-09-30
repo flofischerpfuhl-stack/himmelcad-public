@@ -14,7 +14,7 @@
  *   reopening the project keep the user's arrangement.
  */
 import type { Body } from '../foundation/geometry-kernel/types.js';
-import { bodyRowKey, useItemsStore } from '../interface/shell-ui/items.js';
+import { bodyRowKey, useItemsStore } from '../foundation/commands/items.js';
 
 export interface FolderRow {
   /** Items row key (`body:<id>`, `mesh:<id>`). */

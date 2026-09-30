@@ -25,7 +25,7 @@ import type {
   SketchPlaneRef,
 } from '../foundation/document/document.js';
 import type { SketchFeature } from '../foundation/sketch-solver/sketchFeature.js';
-import { IDENTITY_TRANSFORM, type ReferenceMesh } from '../model/referenceMesh.js';
+import { IDENTITY_TRANSFORM, type ReferenceMesh } from '../foundation/commands/referenceMesh.js';
 import { EMPTY_SKETCH } from '../foundation/sketch-solver/types.js';
 
 export function bytesToBase64(bytes: Uint8Array): string {

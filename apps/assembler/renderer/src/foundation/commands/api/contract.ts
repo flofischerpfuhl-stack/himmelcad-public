@@ -10,7 +10,11 @@
  * methods with `api/registry.ts`.
  */
 import type { KernelAdapter } from '../../geometry-kernel/adapter.js';
-import type { EvaluationResult, KernelFormatCapabilities } from '../../geometry-kernel/types.js';
+import type {
+  Body,
+  EvaluationResult,
+  KernelFormatCapabilities,
+} from '../../geometry-kernel/types.js';
 import type { Feature } from '../../document/document.js';
 import type { AssemblerState, SelectionItem } from '../store.js';
 import type { JsonSchema } from './validate.js';
@@ -168,6 +172,14 @@ export interface ApiContext {
   assertNoFeatureErrors(touched: readonly string[], evaluation: EvaluationResult): void;
   /** `{errors, warnings, bodies}` of an evaluation. */
   evaluationSummary(evaluation: EvaluationResult): Json;
+  /**
+   * Meshes of `bodyIds` at `p.resolution` (`current`: the evaluated display
+   * meshes; presets re-tessellate in the kernel).
+   */
+  exportMeshes(
+    p: Json,
+    bodyIds: string[],
+  ): Promise<{ id: string; name: string; mesh: Body['mesh'] }[]>;
   /** Bytes as a file at `path` (headless) or base64 inline. */
   deliver(bytes: Uint8Array, mediaType: string, path: unknown): Promise<Json>;
   /** A file's bytes from `path` (headless) or inline `data`. */

@@ -1,20 +1,20 @@
 /**
  * Print exports from the UI: STL with options (scope, binary/ASCII,
- * resolution preset, triangle-count preview) and "Open in slicer" (3MF
- * handed to a registered slicer by the Electron main process; `dev:web`
- * downloads the file instead). Meshes of the `current` resolution are the
+ * resolution preset, triangle-count preview); the slicer hand-off is the
+ * printers module's (`modules/printers/handoff.ts`). Meshes of the `current` resolution are the
  * evaluated render meshes; the presets re-tessellate a copy of each body in
  * the kernel worker (`kernel/meshExport.ts`).
  */
-import type { KernelAdapter } from '../foundation/geometry-kernel/adapter.js';
-import { MESH_RESOLUTIONS, type MeshResolution } from '../foundation/geometry-kernel/meshExport.js';
-import { stlBytes, type StlFormat } from '../kernel/stlExport.js';
-import { buildThreeMf } from '../kernel/threeMf.js';
-import type { BodyMesh } from '../foundation/geometry-kernel/types.js';
-import { useItemsStore, withDisplayNames } from '../interface/shell-ui/items.js';
-import * as io from '../foundation/document/persistence.js';
-import { referenceMeshToBody } from '../model/referenceMesh.js';
-import { shownFeatures, useAssemblerStore } from '../foundation/commands/store.js';
+import type { KernelAdapter } from '../../foundation/geometry-kernel/adapter.js';
+import {
+  MESH_RESOLUTIONS,
+  type MeshResolution,
+} from '../../foundation/geometry-kernel/meshExport.js';
+import { stlBytes, type StlFormat } from '../../foundation/geometry-kernel/stlExport.js';
+import type { BodyMesh } from '../../foundation/geometry-kernel/types.js';
+import { useItemsStore, withDisplayNames } from '../../foundation/commands/items.js';
+import * as io from '../../foundation/document/persistence.js';
+import { shownFeatures, useAssemblerStore } from '../../foundation/commands/store.js';
 
 let kernel: KernelAdapter | null = null;
 
@@ -124,46 +124,4 @@ export async function exportStl(options: StlExportOptions): Promise<number> {
     'model/stl',
   );
   return result ? 1 : 0;
-}
-
-/** The 3MF handed to a slicer: every body (display names, colours) plus visible reference meshes. */
-export function handoffThreeMf(): Uint8Array {
-  const state = useAssemblerStore.getState();
-  const bodies = [
-    ...withDisplayNames(state.evaluation.bodies, useItemsStore.getState()),
-    ...state.referenceMeshes.filter((m) => !m.hidden).map(referenceMeshToBody),
-  ];
-  return buildThreeMf(bodies, { title: state.projectName });
-}
-
-/**
- * Opens the model in slicer `slicerId` (desktop), or downloads the 3MF in
- * the browser build. Returns a user-facing result message.
- */
-export async function openInSlicer(
-  slicerId: string | null,
-): Promise<{ ok: boolean; message: string }> {
-  const state = useAssemblerStore.getState();
-  if (state.evaluation.bodies.length === 0 && state.referenceMeshes.every((m) => m.hidden)) {
-    return { ok: false, message: 'There is nothing to print yet.' };
-  }
-  const bytes = handoffThreeMf();
-  const api = typeof window !== 'undefined' ? window.assembler?.slicers : undefined;
-  if (!api) {
-    await io.exportBinary(
-      bytes,
-      `${sanitizeFileName(state.projectName)}.3mf`,
-      [{ name: '3MF', extensions: ['3mf'] }],
-      'model/3mf',
-    );
-    return {
-      ok: true,
-      message: 'Downloaded the 3MF: open it in your slicer (direct handoff needs the desktop app).',
-    };
-  }
-  if (!slicerId) return { ok: false, message: 'Register a slicer first (Slicers…).' };
-  const result = await api.open(slicerId, bytes, state.projectName);
-  return result.ok
-    ? { ok: true, message: `Opened in ${result.slicer}.` }
-    : { ok: false, message: result.error };
 }

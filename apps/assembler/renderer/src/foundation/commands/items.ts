@@ -15,7 +15,7 @@
  */
 import { create } from 'zustand';
 
-import type { Body } from '../../foundation/geometry-kernel/types.js';
+import type { Body } from '../geometry-kernel/types.js';
 
 export interface ItemFolder {
   id: string;

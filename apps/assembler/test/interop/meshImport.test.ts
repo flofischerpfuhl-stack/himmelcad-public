@@ -6,7 +6,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { buildThreeMf } from '../../renderer/src/kernel/threeMf.js';
+import { buildThreeMf } from '../../renderer/src/foundation/geometry-kernel/threeMf.js';
 import { importFormatOf, parseMeshFile } from '../../renderer/src/interop/importParsers.js';
 import { referenceMeshesFromImport } from '../../renderer/src/interop/importActions.js';
 import {

@@ -14,7 +14,7 @@
  */
 import type { Body, EvaluatedSketch } from '../../foundation/geometry-kernel/types.js';
 import type { Bounds3 } from '../../model/modeling.js';
-import { referenceMeshIdOf } from '../../model/referenceMesh.js';
+import { referenceMeshIdOf } from '../../foundation/commands/referenceMesh.js';
 import type {
   DisplayMode,
   SectionAxis,

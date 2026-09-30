@@ -18,6 +18,7 @@ import {
   resolveFieldExpression,
 } from '../../foundation/document/parameters.js';
 import { ApiError } from '../../foundation/commands/api/errors.js';
+import { paramsOf } from '../../foundation/commands/api/describe.js';
 import { addShape, type ShapeResult, type SketchShape } from '../../api/sketchApi.js';
 import {
   resolveEdgeInput,
@@ -31,6 +32,7 @@ type Json = Record<string, unknown>;
 
 const SCHEMA_ROOT: JsonSchema = { $defs: DEFS };
 const RESERVED_FIELDS = ['id', 'name', 'kind', 'suppressed'];
+// `paramsOf` (the stored fields the API exposes) is a read-model projection: `api/describe.ts`.
 
 function isRecord(value: unknown): value is Json {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -63,14 +65,7 @@ function expandSketchShapes(
   return { ...rest, ...sketch };
 }
 
-/** The stored fields of a feature that the API exposes as `params`. */
-export function paramsOf(feature: Feature): Json {
-  const out: Json = {};
-  for (const [key, value] of Object.entries(feature)) {
-    if (!RESERVED_FIELDS.includes(key)) out[key] = value;
-  }
-  return out;
-}
+export { paramsOf };
 
 /** Agent-friendly shorthands accepted on input (normalised before validation). */
 function preprocess(kind: string, params: Json): Json {

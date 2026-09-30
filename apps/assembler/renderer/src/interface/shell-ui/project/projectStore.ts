@@ -12,8 +12,11 @@ import { create } from 'zustand';
 import { APP_CAPABILITIES, AgentSession } from '../../agent-api/session.js';
 import type { KernelAdapter } from '../../../foundation/geometry-kernel/adapter.js';
 import { parseStl, suggestStlUnitHint, type StlUnitHint } from '../../../kernel/stlImport.js';
-import { exportBodyStl, stlBufferForMeshes } from '../../../kernel/stlExport.js';
-import { buildThreeMf } from '../../../kernel/threeMf.js';
+import {
+  exportBodyStl,
+  stlBufferForMeshes,
+} from '../../../foundation/geometry-kernel/stlExport.js';
+import { buildThreeMf } from '../../../foundation/geometry-kernel/threeMf.js';
 import type { Feature } from '../../../foundation/document/document.js';
 import {
   EMPTY_ITEMS_META,
@@ -21,12 +24,12 @@ import {
   itemsMetaSnapshot,
   useItemsStore,
   withDisplayNames,
-} from '../items.js';
+} from '../../../foundation/commands/items.js';
 import {
   referenceMeshFromParsedStl,
   referenceMeshToBody,
   type ReferenceMesh,
-} from '../../../model/referenceMesh.js';
+} from '../../../foundation/commands/referenceMesh.js';
 import { parsePins, serializePins, useMeasureStore } from '../../../model/measureStore.js';
 import { shownFeatures, useAssemblerStore } from '../../../foundation/commands/store.js';
 import { viewDisplayToProject } from '../../../model/viewDisplay.js';

@@ -17,17 +17,17 @@
  *
  * Pure TypeScript: runs in the printability worker, headless and in tests.
  */
-import type { Body } from '../foundation/geometry-kernel/types.js';
+import type { Body } from '../../foundation/geometry-kernel/types.js';
 import {
   buildBvh,
   manifoldStats,
   meshVolume,
   raycast,
   triangleCross,
-  weldMesh,
   type IndexedMesh,
   type Vec3,
 } from './meshTools.js';
+import { weldMesh } from '../../foundation/geometry-kernel/meshWeld.js';
 import { buildVolumeSize, type PrintSettings } from './settings.js';
 
 /** The part of a {@link Body} the analysis needs (structured-clone friendly). */

@@ -6,7 +6,7 @@
  * unit (`docs/PROJECT-FORMAT.md` conventions, `AGENTS.md`), so this is
  * always a millimetre file.
  */
-import type { Body, BodyMesh } from '../foundation/geometry-kernel/types.js';
+import type { Body, BodyMesh } from './types.js';
 
 const HEADER_SIZE = 80;
 

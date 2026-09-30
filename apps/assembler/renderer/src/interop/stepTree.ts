@@ -4,7 +4,7 @@
  * panel), every exported body a part in its folder.
  */
 import type { StepAssemblyTree } from '../foundation/geometry-kernel/stepExport.js';
-import { bodyRowKey, folderRowKey, type ItemsMeta } from '../interface/shell-ui/items.js';
+import { bodyRowKey, folderRowKey, type ItemsMeta } from '../foundation/commands/items.js';
 
 export function stepAssemblyFromItems(
   projectName: string,

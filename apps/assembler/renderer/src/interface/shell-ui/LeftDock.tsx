@@ -9,7 +9,7 @@ import { Boxes, Crosshair, Layers, Scan, Search } from 'lucide-react';
 import { Tooltip } from '@himmelcad/ui';
 
 import { findCommand } from '../../foundation/commands/registry.js';
-import { PrintModeButton } from '../../print/ui/PrintModeButton.js';
+import { registeredModeButtons } from '../../platform/widgets/moduleUi.js';
 import { usePreferences } from './preferences.js';
 
 type SketchIconType = (typeof GROUP_ICON)['sketch'];
@@ -175,11 +175,15 @@ export function LeftDock({ state, onOpenSearch }: LeftDockProps): JSX.Element {
             </span>
           </button>
         </Tooltip>
-        <PrintModeButton
-          className={styles.modeButton}
-          activeClassName={styles.modeButtonActive}
-          stateClassName={styles.modeState}
-        />
+        {registeredModeButtons().map(({ id, component: ModeButton }) => (
+          // The modules' mode toggles (Print), registered with defineModuleUi.
+          <ModeButton
+            key={id}
+            className={styles.modeButton}
+            activeClassName={styles.modeButtonActive}
+            stateClassName={styles.modeState}
+          />
+        ))}
       </div>
     </div>
   );

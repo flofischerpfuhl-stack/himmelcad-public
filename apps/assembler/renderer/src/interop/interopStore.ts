@@ -27,10 +27,10 @@ import { suggestStlUnitHint } from '../kernel/stlImport.js';
 import type { Body, KernelFormatCapabilities } from '../foundation/geometry-kernel/types.js';
 import type { Feature, SketchPlaneRef } from '../foundation/document/document.js';
 import type { SketchFeature } from '../foundation/sketch-solver/sketchFeature.js';
-import { meshRowKey, useItemsStore, withDisplayNames } from '../interface/shell-ui/items.js';
+import { meshRowKey, useItemsStore, withDisplayNames } from '../foundation/commands/items.js';
 import * as io from '../foundation/document/persistence.js';
 import { useProjectStore } from '../interface/shell-ui/project/projectStore.js';
-import type { ReferenceMesh } from '../model/referenceMesh.js';
+import type { ReferenceMesh } from '../foundation/commands/referenceMesh.js';
 import {
   nextFeatureName,
   shownFeatures,

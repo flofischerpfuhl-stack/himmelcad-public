@@ -28,42 +28,12 @@ import {
   MESH_RESOLUTIONS,
   type MeshResolution,
 } from '../../foundation/geometry-kernel/meshExport.js';
-import { stlAsciiForMeshes, stlBytes } from '../../kernel/stlExport.js';
-import { buildThreeMf } from '../../kernel/threeMf.js';
+import { stlBytes } from '../../foundation/geometry-kernel/stlExport.js';
+import { buildThreeMf } from '../../foundation/geometry-kernel/threeMf.js';
 import type { Body, EvaluationResult } from '../../foundation/geometry-kernel/types.js';
 import type { Feature } from '../../foundation/document/document.js';
 import type { SketchFeature } from '../../foundation/sketch-solver/sketchFeature.js';
-import { parseMirroredSketchId, type TransformFeature } from '../../model/features.js';
-import { referenceMeshIdOf } from '../../model/referenceMesh.js';
-import {
-  analyzePrintability,
-  bodyToPrintInput,
-  type PrintBodyInput,
-  type PrintReport,
-} from '../../print/analysis.js';
-import {
-  placementFor,
-  rankOrientations,
-  rotationToDown,
-  type OrientationCandidate,
-  type OrientationMesh,
-  type PlacementTransform,
-} from '../../print/orientation.js';
-import {
-  orientationInput,
-  orientFeatureName,
-  placeOnPlateFeature,
-  placementFeature,
-  PlacementError,
-} from '../../print/placement.js';
-import {
-  DEFAULT_PRINT_SETTINGS,
-  MATERIAL_PRESETS,
-  sanitizePrintSettings,
-  type PrintSettings,
-} from '../../print/settings.js';
-import { candidateJson, printReportJson } from '../../api/printApi.js';
-import { resolveFaceInput } from '../../foundation/commands/api/references.js';
+import { parseMirroredSketchId } from '../../model/features.js';
 import { consumedSketchIds } from '../../model/modeling.js';
 import { resolveParameterValues } from '../../foundation/document/parameters.js';
 import { runMeasureQuery } from '../../api/measureApi.js';
@@ -79,7 +49,7 @@ import {
   stepExportOptions,
 } from '../../api/interopApi.js';
 import { stepAssemblyFromItems } from '../../interop/stepTree.js';
-import { useItemsStore } from '../shell-ui/items.js';
+import { useItemsStore } from '../../foundation/commands/items.js';
 import {
   ProjectFormatError,
   loadProjectFile,
@@ -147,29 +117,6 @@ import type {
 } from '../../foundation/sketch-solver/types.js';
 
 export type { SessionHost, StoreApi } from '../../foundation/commands/api/contract.js';
-
-/**
- * Host services of the print methods (moves to the print module with them):
- * app only, the print worker and the Printability panel's settings.
- */
-declare module '../../foundation/commands/api/contract.js' {
-  interface SessionHostExtensions {
-    /**
-     * App only: runs printability jobs off the UI thread (the print worker).
-     * Without it (headless) they run in-process.
-     */
-    printability?: {
-      analyze(bodies: PrintBodyInput[], settings: PrintSettings): Promise<PrintReport>;
-      orient(
-        mesh: OrientationMesh,
-        thresholdDeg: number,
-        faceLabels: string[],
-      ): Promise<OrientationCandidate[]>;
-    };
-    /** App only: the user's print settings (Printability panel), the defaults for agent queries. */
-    printSettings?: () => PrintSettings;
-  }
-}
 
 export const HEADLESS_CAPABILITIES: ReadonlySet<Capability> = new Set<Capability>([
   'document.read',
@@ -370,16 +317,6 @@ export class AgentSession {
       case 'export.step':
       case 'export.iges':
         return this.exportBodies(method, p);
-      case 'export.meshStats':
-        return this.meshStats(p);
-      case 'print.analyze':
-        return this.printAnalyze(p);
-      case 'print.orientations':
-        return this.printOrientations(p);
-      case 'print.placeOnPlate':
-        return this.write('print.placeOnPlate', (f, e) => this.placeOnPlate(p, f, e));
-      case 'print.orient':
-        return this.write('print.orient', (f, e) => this.printOrient(p, f, e));
       case 'import.step':
         return importStepCommand(this.interop(), p);
       case 'import.iges':
@@ -1232,164 +1169,6 @@ export class AgentSession {
     }
   }
 
-  private async meshStats(p: Json): Promise<Json> {
-    const evaluation = await this.readEvaluation(p);
-    const ids = Array.isArray(p.bodyIds) ? (p.bodyIds as string[]) : null;
-    for (const id of ids ?? []) findBody(evaluation, id);
-    const bodyIds = ids ?? evaluation.bodies.map((b) => b.id);
-    if (bodyIds.length === 0) {
-      throw new ApiError('invalidParams', 'There are no bodies', {
-        hint: 'Create a body first (e.g. a sketch and an extrude).',
-      });
-    }
-    const meshes = await this.exportMeshes(p, bodyIds);
-    const counts = meshes.map((m) => ({
-      id: m.id,
-      name: evaluation.bodies.find((b) => b.id === m.id)?.name ?? m.name,
-      triangles: m.mesh.indices.length / 3,
-    }));
-    const triangles = counts.reduce((s, c) => s + c.triangles, 0);
-    return {
-      resolution: (p.resolution as string | undefined) ?? 'current',
-      bodies: counts,
-      triangles,
-      stlBinaryBytes: 84 + triangles * 50,
-      stlAsciiBytes: stlAsciiForMeshes(meshes.map((m) => ({ name: m.name, mesh: m.mesh })))
-        .byteLength,
-    };
-  }
-
-  private printSettings(input: unknown): PrintSettings {
-    const base = this.host.printSettings?.() ?? DEFAULT_PRINT_SETTINGS;
-    return sanitizePrintSettings({
-      ...base,
-      ...(isRecord(input) ? input : {}),
-      ...(isRecord(input) && typeof input.material === 'string' && input.density === undefined
-        ? {
-            density: MATERIAL_PRESETS.find((m) => m.id === input.material)?.density,
-            costPerKg:
-              input.costPerKg ?? MATERIAL_PRESETS.find((m) => m.id === input.material)?.costPerKg,
-          }
-        : {}),
-    });
-  }
-
-  private async printAnalyze(p: Json): Promise<Json> {
-    const evaluation = await this.readEvaluation(p);
-    const ids = Array.isArray(p.bodyIds) ? (p.bodyIds as string[]) : null;
-    for (const id of ids ?? []) findBody(evaluation, id);
-    const bodies = (ids ? evaluation.bodies.filter((b) => ids.includes(b.id)) : evaluation.bodies)
-      .filter((b) => referenceMeshIdOf(b.id) === null)
-      .map(bodyToPrintInput);
-    const settings = this.printSettings(p.settings);
-    const report = this.host.printability
-      ? await this.host.printability.analyze(bodies, settings)
-      : analyzePrintability(bodies, settings);
-    return printReportJson(report);
-  }
-
-  private async rankedOrientations(
-    p: Json,
-    evaluation: EvaluationResult,
-    features: readonly Feature[],
-  ): Promise<OrientationCandidate[]> {
-    const bodyId = String(p.bodyId);
-    findBody(evaluation, bodyId);
-    const threshold =
-      typeof p.overhangAngleDeg === 'number'
-        ? p.overhangAngleDeg
-        : this.printSettings(undefined).overhangAngleDeg;
-    const input = orientationInput(evaluation, features, bodyId);
-    return this.host.printability
-      ? this.host.printability.orient(input.mesh, threshold, input.faceLabels)
-      : rankOrientations(input.mesh, threshold, {
-          faceLabel: (_key, index) => input.faceLabels[index] ?? `Face ${index + 1} down`,
-        });
-  }
-
-  private async printOrientations(p: Json): Promise<Json[]> {
-    const evaluation = await this.readEvaluation(p);
-    const candidates = await this.rankedOrientations(p, evaluation, this.readFeatures(p));
-    const limit = typeof p.limit === 'number' ? p.limit : 3;
-    return candidates.slice(0, limit).map(candidateJson);
-  }
-
-  private placeOnPlate(p: Json, features: Feature[], evaluation: EvaluationResult): WriteOutcome {
-    const [face] = resolveFaceInput(p.face, evaluation, features, 'face', { single: true });
-    if (!face) throw new ApiError('invalidParams', 'face: no face given');
-    const id = this.store.getState().allocateFeatureId('transform', this.reservedIds());
-    let feature: TransformFeature;
-    try {
-      feature = placeOnPlateFeature(evaluation, features, face.bodyId, face.key, id);
-    } catch (error) {
-      if (error instanceof PlacementError) {
-        throw new ApiError('invalidParams', error.message, {
-          hint: 'Use a planar face ("%PLANE" selector, or faces.list with surface "plane").',
-        });
-      }
-      throw error;
-    }
-    if (typeof p.name === 'string') feature = { ...feature, name: p.name };
-    return {
-      features: [...features, feature],
-      touched: [id],
-      selection: [{ kind: 'body', bodyId: face.bodyId }],
-      result: { featureId: id, bodyId: face.bodyId, transform: paramsOf(feature) },
-    };
-  }
-
-  private async printOrient(
-    p: Json,
-    features: Feature[],
-    evaluation: EvaluationResult,
-  ): Promise<WriteOutcome> {
-    const bodyId = String(p.bodyId);
-    const body = findBody(evaluation, bodyId);
-    if (referenceMeshIdOf(bodyId) !== null) {
-      throw new ApiError('invalidParams', 'Reference meshes cannot be oriented');
-    }
-    let transform: PlacementTransform;
-    let candidate: OrientationCandidate | null = null;
-    if (typeof p.rank === 'number') {
-      const candidates = await this.rankedOrientations(p, evaluation, features);
-      candidate = candidates[p.rank - 1] ?? null;
-      if (!candidate) {
-        throw new ApiError(
-          'invalidParams',
-          `rank ${p.rank}: there are ${candidates.length} candidates`,
-        );
-      }
-      transform = candidate.transform;
-    } else {
-      const down = p.down as [number, number, number];
-      if (Math.hypot(down[0], down[1], down[2]) < 1e-9) {
-        throw new ApiError('invalidParams', 'down: must not be the zero vector');
-      }
-      transform = placementFor(
-        { positions: body.mesh.positions, min: body.min, max: body.max },
-        rotationToDown(down),
-      );
-    }
-    const id = this.store.getState().allocateFeatureId('transform', this.reservedIds());
-    const feature = placementFeature(
-      bodyId,
-      transform,
-      id,
-      typeof p.name === 'string' ? p.name : orientFeatureName(features),
-    );
-    return {
-      features: [...features, feature],
-      touched: [id],
-      selection: [{ kind: 'body', bodyId }],
-      result: {
-        featureId: id,
-        bodyId,
-        transform: paramsOf(feature),
-        ...(candidate ? { candidate: candidateJson(candidate) } : {}),
-      },
-    };
-  }
-
   /** The session services every registered method handler runs on (`api/contract.ts`). */
   private context(): ApiContext {
     return {
@@ -1413,6 +1192,7 @@ export class AgentSession {
       assertNoFeatureErrors: (touched, evaluation) =>
         this.assertNoFeatureErrors(touched, evaluation),
       evaluationSummary: (evaluation) => this.evaluationSummary(evaluation),
+      exportMeshes: (p, bodyIds) => this.exportMeshes(p, bodyIds),
       deliver: (bytes, mediaType, path) => this.deliver(bytes, mediaType, path),
       readFile: async (p, fallbackName) => {
         if (typeof p.path === 'string') {

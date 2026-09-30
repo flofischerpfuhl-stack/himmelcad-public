@@ -16,6 +16,7 @@
  * {@link resolveAdaptive} and {@link searchCommands}. This file holds no
  * domain command; only Undo/Redo belong to the gate itself.
  */
+import { notify } from './notices.js';
 import { canStartPickSession, nextStep, PICK_PLANS, sessionSelection } from './pickSession.js';
 import {
   setPickFinisher,
@@ -109,17 +110,10 @@ export function kernelNotReady(ctx: CommandContext): CommandAvailability | null 
 
 /** Whether a modal editing session (a sketch) owns the keyboard and the selection. */
 let modalSessionActive: () => boolean = () => false;
-/** Shows a short notice to the user (the shell's toast). */
-let notify: (message: string) => void = () => undefined;
 
 /** Sketching installs its session probe: pick sessions never start inside a sketch. */
 export function setModalSessionProbe(probe: () => boolean): void {
   modalSessionActive = probe;
-}
-
-/** The shell installs its notice toast (a pick session whose command cannot start says why). */
-export function setCommandNotifier(show: (message: string) => void): void {
-  notify = show;
 }
 
 // ---- the gate's own commands ---------------------------------------------------------------
@@ -162,6 +156,7 @@ export const COMMAND_ORDER = {
   view: 800,
   workspace: 900,
   print: 1000,
+  printers: 1010,
   display: 1100,
   section: 1200,
   measure: 1250,
@@ -299,7 +294,7 @@ function finishPickSession(): void {
   if (!command) return;
   const availability = command.availability(ctx);
   if (!availability.enabled) {
-    notify(availability.reason ?? 'The tool cannot start.');
+    notify(availability.reason ?? 'The tool cannot start.', 'warning');
     return;
   }
   command.run(ctx);

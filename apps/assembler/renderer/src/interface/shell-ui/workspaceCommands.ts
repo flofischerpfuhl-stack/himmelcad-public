@@ -19,7 +19,13 @@ import {
   nearestOrthoDirection,
   useWorkspaceStore,
 } from './workspace.js';
-import { bodyRowKey, datumRowKey, meshRowKey, sketchRowKey, useItemsStore } from './items.js';
+import {
+  bodyRowKey,
+  datumRowKey,
+  meshRowKey,
+  sketchRowKey,
+  useItemsStore,
+} from '../../foundation/commands/items.js';
 import type { Command, CommandAvailability } from '../../foundation/commands/registry.js';
 
 const enabled: CommandAvailability = { enabled: true };

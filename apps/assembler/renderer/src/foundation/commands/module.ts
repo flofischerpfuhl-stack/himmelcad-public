@@ -11,16 +11,15 @@
  *   slice, runtime wiring. Feature kinds register themselves from the
  *   module's `kinds` file (document registry) and `kernel.ts` (evaluator
  *   registry, `geometry-kernel/features/registry.ts`).
- * - {@link defineModuleUi} (`module.ui.ts`): panels, viewport overlays and
- *   History cards, installed only by the desktop renderer.
- *
- * Contract types only reference foundation types; UI components are typed
- * structurally ({@link UiComponent}) so this file needs no React.
+ * - `defineModuleUi` (`module.ui.ts`, `platform/widgets/moduleUi.ts`):
+ *   panels, mode buttons, viewport overlays, installed only by the desktop
+ *   renderer. It lives in the platform layer because it names React
+ *   components and viewport types; foundation stays UI-free.
  */
 import type { KernelAdapter } from '../geometry-kernel/adapter.js';
 import { registerApiContribution, type ApiContribution } from './api/registry.js';
 import { registerCommands, type Command } from './registry.js';
-import { installStoreSlice, type AssemblerState, type StoreSliceCreator } from './store.js';
+import { installStoreSlice, type StoreSliceCreator } from './store.js';
 
 /** A block of commands; blocks of all modules are ordered by `order` (the adaptive-toolbar and search tie-break). */
 export interface CommandBlock {
@@ -31,9 +30,9 @@ export interface CommandBlock {
 /** Services the product hands to a module's {@link AssemblerModule.install}. */
 export interface ModuleHost {
   /** The main-thread kernel adapter (a worker in the app, in-process headless). */
-  kernel?: KernelAdapter;
-  /** Creates a module worker by entry name (`new Worker(new URL(...))` lives in the product). */
-  createWorker?: (name: string) => Worker;
+  kernel: KernelAdapter;
+  /** Whether modules may start Web Workers (desktop and web renderer; not Node). */
+  workers: boolean;
 }
 
 export interface AssemblerModule {
@@ -54,39 +53,8 @@ export interface AssemblerModule {
   install?: (host: ModuleHost) => void;
 }
 
-/** A React-compatible component, typed structurally (foundation stays React-free). */
-export type UiComponent<P> = (props: P) => unknown;
-
-export interface PanelProps {
-  state: AssemblerState;
-  onContextMenu: (x: number, y: number) => void;
-}
-
-/**
- * A panel of the shell: `rightStack` panels stack below the right dock in
- * `order` (Parameters above History); `overlay` panels float over the
- * viewport and decide their own visibility.
- */
-export interface PanelRegistration {
-  id: string;
-  slot: 'rightStack' | 'overlay';
-  order: number;
-  /** Whether the panel is shown (rightStack panels); overlays render always. */
-  isOpen?: (state: AssemblerState) => boolean;
-  component: UiComponent<PanelProps>;
-}
-
-export interface ModuleUi {
-  id: string;
-  panels?: readonly PanelRegistration[];
-}
-
 export function defineAssemblerModule(module: AssemblerModule): AssemblerModule {
   return module;
-}
-
-export function defineModuleUi(ui: ModuleUi): ModuleUi {
-  return ui;
 }
 
 const installed = new Set<string>();
@@ -116,22 +84,4 @@ export function startModules(modules: readonly AssemblerModule[], host: ModuleHo
     started.add(module.id);
     module.install(host);
   }
-}
-
-const panels: PanelRegistration[] = [];
-const installedUi = new Set<string>();
-
-/** Registers the modules' UI parts (desktop renderer only). */
-export function installModuleUis(uis: readonly ModuleUi[]): void {
-  for (const ui of uis) {
-    if (installedUi.has(ui.id)) continue;
-    installedUi.add(ui.id);
-    panels.push(...(ui.panels ?? []));
-  }
-  panels.sort((a, b) => a.order - b.order);
-}
-
-/** Registered panels of one slot, in `order`. */
-export function registeredPanels(slot: PanelRegistration['slot']): readonly PanelRegistration[] {
-  return panels.filter((panel) => panel.slot === slot);
 }

@@ -5,7 +5,7 @@ import { type SetAppearanceFeature } from '../../renderer/src/foundation/documen
 import { createDemoDocument } from '../../renderer/src/foundation/commands/demoDocument.js';
 import { applyBodyColour, applyBodyMaterial } from '../../renderer/src/model/appearance.js';
 import { moveFeature } from '../../renderer/src/interface/shell-ui/historyTools.js';
-import { usePrintStore } from '../../renderer/src/print/printStore.js';
+import { usePrintStore } from '../../renderer/src/modules/print/printStore.js';
 import { useAssemblerStore } from '../../renderer/src/foundation/commands/store.js';
 import { createEvaluator } from '../../renderer/src/foundation/geometry-kernel/evaluator.js';
 import type { EvaluationResult } from '../../renderer/src/foundation/geometry-kernel/types.js';

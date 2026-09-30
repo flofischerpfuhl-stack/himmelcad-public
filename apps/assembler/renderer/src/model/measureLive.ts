@@ -7,7 +7,7 @@
 import { useMemo } from 'react';
 
 import { bodyMaterials } from '../platform/viewport/displayModes.js';
-import { displayBodyName, useItemsStore } from '../interface/shell-ui/items.js';
+import { displayBodyName, useItemsStore } from '../foundation/commands/items.js';
 import {
   currentRefs,
   measure,

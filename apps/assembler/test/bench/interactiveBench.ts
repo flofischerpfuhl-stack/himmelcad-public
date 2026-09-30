@@ -42,8 +42,11 @@ import { createDemoDocument } from '../../renderer/src/foundation/commands/demoD
 import { acceptPick, draftBadges } from '../../renderer/src/model/featureTools.js';
 import { useProjectStore } from '../../renderer/src/interface/shell-ui/project/projectStore.js';
 import { isPreviewTool, useAssemblerStore } from '../../renderer/src/foundation/commands/store.js';
-import { analyzePrintability, bodyToPrintInput } from '../../renderer/src/print/analysis.js';
-import { DEFAULT_PRINT_SETTINGS } from '../../renderer/src/print/settings.js';
+import {
+  analyzePrintability,
+  bodyToPrintInput,
+} from '../../renderer/src/modules/print/analysis.js';
+import { DEFAULT_PRINT_SETTINGS } from '../../renderer/src/modules/print/settings.js';
 import { hitTest, infer } from '../../renderer/src/sketch/inference.js';
 import { detectRegions } from '../../renderer/src/foundation/sketch-solver/regions.js';
 import { useSketchStore } from '../../renderer/src/sketch/session.js';

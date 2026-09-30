@@ -28,8 +28,8 @@ import type {
   KernelFormatCapabilities,
 } from '../foundation/geometry-kernel/types.js';
 import type { Feature, SketchPlaneRef } from '../foundation/document/document.js';
-import { meshRowKey } from '../interface/shell-ui/items.js';
-import { referenceMeshBodyId, referenceMeshIdOf } from '../model/referenceMesh.js';
+import { meshRowKey } from '../foundation/commands/items.js';
+import { referenceMeshBodyId, referenceMeshIdOf } from '../foundation/commands/referenceMesh.js';
 import type { AssemblerState, SelectionItem } from '../foundation/commands/store.js';
 import { detectRegions } from '../foundation/sketch-solver/regions.js';
 import { ApiError } from '../foundation/commands/api/errors.js';

@@ -60,16 +60,16 @@
       "paths": ["renderer/src/platform/input/"]
     },
     {
-      "id": "widgets",
-      "layer": "platform",
-      "summary": "The shell's building blocks module UIs use: panel chrome styles, expression fields with name completion, anchored menus.",
-      "paths": ["renderer/src/platform/widgets/"]
-    },
-    {
       "id": "viewport",
       "layer": "platform",
       "summary": "WebGL2 viewport: scene, camera, picking, selection boxes, grid, display-mode rendering, overlay host.",
       "paths": ["renderer/src/platform/viewport/"]
+    },
+    {
+      "id": "widgets",
+      "layer": "platform",
+      "summary": "The shell's building blocks module UIs use: panel chrome styles, expression fields with name completion, anchored menus.",
+      "paths": ["renderer/src/platform/widgets/"]
     },
     {
       "id": "sketching",
@@ -176,11 +176,7 @@
       "paths": [
         "renderer/src/modules/interop/",
         "renderer/src/interop/",
-        "renderer/src/model/referenceMesh.ts",
-        "renderer/src/kernel/stlExport.ts",
         "renderer/src/kernel/stlImport.ts",
-        "renderer/src/kernel/threeMf.ts",
-        "renderer/src/kernel/zipWriter.ts",
         "renderer/src/api/interopApi.ts"
       ]
     },
@@ -194,11 +190,7 @@
       "id": "print",
       "layer": "domain",
       "summary": "3D printing: printability analysis, orientation and placement, print exports, Print mode panel and overlays, print API.",
-      "paths": [
-        "renderer/src/modules/print/",
-        "renderer/src/print/",
-        "renderer/src/api/printApi.ts"
-      ]
+      "paths": ["renderer/src/modules/print/"]
     },
     {
       "id": "printers",
@@ -206,7 +198,6 @@
       "summary": "Printer side: registered slicers (renderer view and desktop discovery), later printer profiles, build volumes, direct send.",
       "paths": [
         "renderer/src/modules/printers/",
-        "renderer/src/print/slicerStore.ts",
         "electron/slicerIpc.ts",
         "electron/slicerPaths.ts"
       ]

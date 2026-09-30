@@ -20,7 +20,7 @@ import {
   REFERENCE_MESH_ID_PREFIX,
   referenceMeshIdOf,
   referenceMeshToBody,
-} from '../../model/referenceMesh.js';
+} from '../../foundation/commands/referenceMesh.js';
 import {
   findFace,
   isPlanarFace,
@@ -75,9 +75,8 @@ import {
   useWorkspaceStore,
   type CameraCommand,
 } from '../../interface/shell-ui/workspace.js';
-import { displayBodyName, useItemsStore } from '../../interface/shell-ui/items.js';
-import { printOverlayBatches } from '../../print/overlay.js';
-import { usePrintStore } from '../../print/printStore.js';
+import { displayBodyName, useItemsStore } from '../../foundation/commands/items.js';
+import { subscribeViewportOverlays, viewportOverlayBatches } from './overlays.js';
 import { DimensionLabel } from './DimensionLabel.js';
 import { ViewportRenderer } from './gl.js';
 import {
@@ -637,10 +636,10 @@ export function Viewport(props: ViewportProps): JSX.Element {
   useEffect(() => {
     dirtyRef.current = true;
   }, [state]);
-  // Print mode overlays (overhangs, thin walls, build volume) redraw on their own changes.
+  // The modules' overlays (Print mode: overhangs, thin walls, build volume) redraw on their own changes.
   useEffect(
     () =>
-      usePrintStore.subscribe(() => {
+      subscribeViewportOverlays(() => {
         dirtyRef.current = true;
       }),
     [],
@@ -929,14 +928,14 @@ export function Viewport(props: ViewportProps): JSX.Element {
           hovered: handleHover?.kind === 'toolHandle' && handleHover.handle === h.handle,
         }),
       );
-      const printOverlays = printOverlayBatches(
-        scene.bodies,
-        current.hiddenBodyIds,
-        current.isolatedBodyIds,
-      );
+      const moduleOverlays = viewportOverlayBatches({
+        bodies: scene.bodies,
+        hiddenBodyIds: current.hiddenBodyIds,
+        isolatedBodyIds: current.isolatedBodyIds,
+      });
       return {
-        extraOverlays: printOverlays.surface,
-        extraOverlaysLast: printOverlays.last,
+        extraOverlays: moduleOverlays.surface,
+        extraOverlaysLast: moduleOverlays.last,
         errorHighlight: errorHighlightOf(current),
         colors,
         pose: poseRef.current,

@@ -18,7 +18,7 @@ import {
   assemblyFilingPending,
   fileImportedAssemblies,
 } from '../../renderer/src/interop/importFolders.js';
-import { EMPTY_ITEMS_META, useItemsStore } from '../../renderer/src/interface/shell-ui/items.js';
+import { EMPTY_ITEMS_META, useItemsStore } from '../../renderer/src/foundation/commands/items.js';
 import { useAssemblerStore } from '../../renderer/src/foundation/commands/store.js';
 import { parseStepStructure } from '../../renderer/src/foundation/geometry-kernel/step/stepStructure.js';
 import { parseDxf } from '../../renderer/src/interop/dxf.js';

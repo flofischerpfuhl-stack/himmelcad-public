@@ -10,7 +10,7 @@ import {
   opsAffine,
   transformOps,
   type Affine,
-} from '../foundation/geometry-kernel/features/rigid.js';
+} from '../../foundation/geometry-kernel/features/rigid.js';
 import { overhangAngleDeg, PLATE_EPSILON_MM } from './analysis.js';
 import type { Vec3 } from './meshTools.js';
 

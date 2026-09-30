@@ -21,11 +21,11 @@ import {
   resolveAdaptive,
   searchCommands,
 } from '../../foundation/commands/registry.js';
-import { useItemsStore } from '../../interface/shell-ui/items.js';
+import { useItemsStore } from '../../foundation/commands/items.js';
 import { usePreferences } from '../../interface/shell-ui/preferences.js';
 import { isPreviewTool, useAssemblerStore } from '../../foundation/commands/store.js';
 import { currentCameraPose, useWorkspaceStore } from '../../interface/shell-ui/workspace.js';
-import { usePrintStore } from '../../print/printStore.js';
+import { usePrintStore } from '../../modules/print/printStore.js';
 import type { CameraPose } from '../../platform/viewport/camera.js';
 import {
   getViewportProbe,

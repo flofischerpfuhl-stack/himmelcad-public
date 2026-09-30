@@ -1,19 +1,18 @@
 /**
  * 3D-printing commands (registered into `registry.ts`'s `COMMANDS`): the
- * Printability mode (`P`), Place on Plate, Auto Orient, Export STL… and
- * Open in Slicer / Slicers…. Same availability for the toolbar, command
- * search, context menu and keyboard.
+ * Printability mode (`P`), Place on Plate, Auto Orient and Export STL….
+ * Same availability for the toolbar, command search, context menu and
+ * keyboard. Open in Slicer / Slicers… belong to the printers module.
  */
 import type {
   Command,
   CommandAvailability,
   CommandContext,
-} from '../foundation/commands/registry.js';
-import { referenceMeshIdOf } from '../model/referenceMesh.js';
-import { isPlanarFace } from '../foundation/commands/store.js';
-import { useWorkspaceStore } from '../interface/shell-ui/workspace.js';
+} from '../../foundation/commands/registry.js';
+import { referenceMeshIdOf } from '../../foundation/commands/referenceMesh.js';
+import { isPlanarFace } from '../../foundation/commands/store.js';
+import { notify } from '../../foundation/commands/notices.js';
 import { usePrintStore } from './printStore.js';
-import { useSlicerStore } from './slicerStore.js';
 
 const enabled: CommandAvailability = { enabled: true };
 
@@ -94,7 +93,7 @@ export const PRINT_COMMANDS: readonly Command[] = [
       const print = usePrintStore.getState();
       if (face) {
         const problem = print.placeOnPlate(face.bodyId, face.faceKey);
-        if (problem) useWorkspaceStore.getState().notify(problem, 'warning');
+        if (problem) notify(problem, 'warning');
         return;
       }
       const body = selectedBody(ctx);
@@ -130,37 +129,5 @@ export const PRINT_COMMANDS: readonly Command[] = [
         ? enabled
         : { enabled: false, reason: 'No bodies to export.' },
     run: () => usePrintStore.getState().setStlDialogOpen(true),
-  },
-  {
-    id: 'file.openInSlicer',
-    label: 'Open in Slicer',
-    group: 'file',
-    keywords: ['print', 'slicer', 'bambu', 'orca', 'prusa', 'cura', '3mf', 'send'],
-    adaptive: false,
-    availability: (ctx) =>
-      ctx.evaluation.bodies.length > 0
-        ? enabled
-        : { enabled: false, reason: 'No bodies to print.' },
-    run: () => {
-      const slicers = useSlicerStore.getState();
-      if (!slicers.available) {
-        void slicers.open();
-        return;
-      }
-      void slicers.refresh().then(() => {
-        const current = useSlicerStore.getState();
-        if (current.defaultId) void current.open();
-        else usePrintStore.getState().setSlicerDialogOpen(true);
-      });
-    },
-  },
-  {
-    id: 'file.slicers',
-    label: 'Slicers…',
-    group: 'file',
-    keywords: ['print', 'slicer', 'settings', 'bambu', 'orca', 'prusa', 'cura'],
-    adaptive: false,
-    availability: () => enabled,
-    run: () => usePrintStore.getState().setSlicerDialogOpen(true),
   },
 ];

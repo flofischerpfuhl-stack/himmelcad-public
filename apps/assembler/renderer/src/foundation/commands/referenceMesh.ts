@@ -5,8 +5,7 @@
  * the undo-tracked feature history — importing, hiding or moving one is a
  * document-level edit, not a modelling step.
  */
-import type { Body } from '../foundation/geometry-kernel/types.js';
-import type { ParsedStl } from '../kernel/stlImport.js';
+import type { Body } from '../geometry-kernel/types.js';
 
 export interface ReferenceMeshTransform {
   dx: number;
@@ -55,7 +54,8 @@ export function referenceMeshFromParsedStl(input: {
   id: string;
   name: string;
   fileName: string;
-  parsed: ParsedStl;
+  /** A parsed mesh (e.g. `stlImport.ts` `ParsedStl`). */
+  parsed: Pick<ReferenceMesh, 'positions' | 'normals' | 'indices' | 'min' | 'max'>;
 }): ReferenceMesh {
   return {
     id: input.id,

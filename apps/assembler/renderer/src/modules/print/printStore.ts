@@ -11,10 +11,11 @@
  */
 import { create } from 'zustand';
 
-import type { Body, EvaluationResult } from '../foundation/geometry-kernel/types.js';
-import { withDisplayNames, useItemsStore } from '../interface/shell-ui/items.js';
-import { useAssemblerStore, type SelectionItem } from '../foundation/commands/store.js';
-import { useWorkspaceStore } from '../interface/shell-ui/workspace.js';
+import type { Body, EvaluationResult } from '../../foundation/geometry-kernel/types.js';
+import { withDisplayNames, useItemsStore } from '../../foundation/commands/items.js';
+import { useAssemblerStore, type SelectionItem } from '../../foundation/commands/store.js';
+import { notify } from '../../foundation/commands/notices.js';
+import { sendCamera } from '../../platform/viewport/cameraChannel.js';
 import { bodyToPrintInput, type PrintFinding, type PrintReport } from './analysis.js';
 import type { OrientationCandidate } from './orientation.js';
 import {
@@ -103,8 +104,6 @@ export interface PrintState {
 
   stlDialogOpen: boolean;
   setStlDialogOpen: (open: boolean) => void;
-  slicerDialogOpen: boolean;
-  setSlicerDialogOpen: (open: boolean) => void;
 }
 
 let runner = new PrintabilityRunner(null);
@@ -288,7 +287,7 @@ export const usePrintStore = create<PrintState>((set, get) => {
           ? finding.faceKeys.map((faceKey) => ({ kind: 'face', bodyId: finding.bodyId, faceKey }))
           : [{ kind: 'body', bodyId: finding.bodyId }];
       doc.setSelection(items);
-      useWorkspaceStore.getState().sendCamera({ kind: 'fitSelection' });
+      sendCamera({ kind: 'fitSelection' });
     },
 
     placePicking: null,
@@ -311,7 +310,7 @@ export const usePrintStore = create<PrintState>((set, get) => {
         set({ placePicking: null });
         // Already lying on that face: no History step that moves nothing.
         if (isIdentityPlacement(feature)) {
-          useWorkspaceStore.getState().notify('The body already lies on that face.');
+          notify('The body already lies on that face.');
           return null;
         }
         doc.addFeature(feature, [{ kind: 'body', bodyId }]);
@@ -330,9 +329,7 @@ export const usePrintStore = create<PrintState>((set, get) => {
       try {
         input = orientationInput(doc.evaluation, doc.features, bodyId);
       } catch (error) {
-        useWorkspaceStore
-          .getState()
-          .notify(error instanceof Error ? error.message : String(error), 'warning');
+        notify(error instanceof Error ? error.message : String(error), 'warning');
         return;
       }
       if (!get().enabled) get().setEnabled(true);
@@ -378,12 +375,12 @@ export const usePrintStore = create<PrintState>((set, get) => {
       if (!orient || !candidate) return;
       const doc = useAssemblerStore.getState();
       if (doc.activeTool) {
-        useWorkspaceStore.getState().notify('Finish or cancel the active tool first.', 'warning');
+        notify('Finish or cancel the active tool first.', 'warning');
         return;
       }
       if (isIdentityPlacement(candidate.transform)) {
         // "As modelled" won: nothing to move, so no History step.
-        useWorkspaceStore.getState().notify('The body is already in this orientation.');
+        notify('The body is already in this orientation.');
         set({ orient: null });
         return;
       }
@@ -404,8 +401,6 @@ export const usePrintStore = create<PrintState>((set, get) => {
 
     stlDialogOpen: false,
     setStlDialogOpen: (open) => set({ stlDialogOpen: open }),
-    slicerDialogOpen: false,
-    setSlicerDialogOpen: (open) => set({ slicerDialogOpen: open }),
   };
 
   /**
@@ -442,11 +437,11 @@ export const usePrintStore = create<PrintState>((set, get) => {
         const face = state.selection.length === 1 ? state.selection[0] : null;
         if (face?.kind !== 'face') return;
         if (face.bodyId !== picking) {
-          useWorkspaceStore.getState().notify('Pick a face of the body being placed.', 'warning');
+          notify('Pick a face of the body being placed.', 'warning');
           return;
         }
         const problem = get().placeOnPlate(face.bodyId, face.faceKey);
-        if (problem) useWorkspaceStore.getState().notify(problem, 'warning');
+        if (problem) notify(problem, 'warning');
       }
     });
   }

@@ -2,7 +2,9 @@
  * The shell's own registrations (assembler/MODULES.md): view presets,
  * workspace and File commands, and the notice toast the command gate uses.
  */
-import { COMMAND_ORDER, setCommandNotifier } from '../../foundation/commands/registry.js';
+import { setNoticeSink } from '../../foundation/commands/notices.js';
+import { COMMAND_ORDER } from '../../foundation/commands/registry.js';
+import { setCameraSink } from '../../platform/viewport/cameraChannel.js';
 import { defineAssemblerModule } from '../../foundation/commands/module.js';
 import { FILE_COMMANDS, VIEW_COMMANDS } from './shellCommands.js';
 import { useWorkspaceStore } from './workspace.js';
@@ -15,6 +17,8 @@ export const shellUiModule = defineAssemblerModule({
     { order: COMMAND_ORDER.workspace, commands: WORKSPACE_COMMANDS },
     { order: COMMAND_ORDER.file, commands: FILE_COMMANDS },
   ],
-  onInstall: () =>
-    setCommandNotifier((message) => useWorkspaceStore.getState().notify(message, 'warning')),
+  onInstall: () => {
+    setNoticeSink((text, tone) => useWorkspaceStore.getState().notify(text, tone));
+    setCameraSink((command) => useWorkspaceStore.getState().sendCamera(command));
+  },
 });

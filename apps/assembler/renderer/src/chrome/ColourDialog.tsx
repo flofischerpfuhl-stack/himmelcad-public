@@ -17,7 +17,7 @@ import {
 } from '../model/appearance.js';
 import { MATERIALS, bodyMaterials, type MaterialId } from '../platform/viewport/displayModes.js';
 import { useAssemblerStore } from '../foundation/commands/store.js';
-import { displayBodyName, useItemsStore } from '../interface/shell-ui/items.js';
+import { displayBodyName, useItemsStore } from '../foundation/commands/items.js';
 import { useWorkspaceStore } from '../interface/shell-ui/workspace.js';
 import styles from './ColourDialog.module.css';
 

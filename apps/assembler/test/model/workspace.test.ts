@@ -27,7 +27,7 @@ import {
   useItemsStore,
   visibleLeafOrder,
   withDisplayNames,
-} from '../../renderer/src/interface/shell-ui/items.js';
+} from '../../renderer/src/foundation/commands/items.js';
 import {
   DEFAULT_PREFERENCES,
   formatLength,

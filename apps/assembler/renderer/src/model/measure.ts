@@ -19,8 +19,8 @@ import {
   materialPreset,
   type MaterialId,
 } from '../platform/viewport/displayModes.js';
-import type { ReferenceMesh } from './referenceMesh.js';
-import { referenceMeshToBody } from './referenceMesh.js';
+import type { ReferenceMesh } from '../foundation/commands/referenceMesh.js';
+import { referenceMeshToBody } from '../foundation/commands/referenceMesh.js';
 import type { SelectionItem } from '../foundation/commands/store.js';
 
 export type Vec3 = [number, number, number];

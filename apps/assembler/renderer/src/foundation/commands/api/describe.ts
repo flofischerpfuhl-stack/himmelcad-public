@@ -276,3 +276,12 @@ export function selectEdges(body: Body, text: string): EdgeInfo[] {
     text,
   );
 }
+
+/** The stored fields of a feature that the API exposes as `params` (everything but id, name, kind, suppressed). */
+export function paramsOf(feature: Feature): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(feature)) {
+    if (!['id', 'name', 'kind', 'suppressed'].includes(key)) out[key] = value;
+  }
+  return out;
+}

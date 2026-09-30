@@ -18,9 +18,9 @@ import { useEffect, useState } from 'react';
 
 import { Button, Checkbox, ProgressBar, Select, Tooltip } from '@himmelcad/ui';
 
-import { ExpressionField } from '../../platform/widgets/ExpressionField.js';
-import { findCommand } from '../../foundation/commands/registry.js';
-import { useAssemblerStore } from '../../foundation/commands/store.js';
+import { ExpressionField } from '../../../platform/widgets/ExpressionField.js';
+import { findCommand } from '../../../foundation/commands/registry.js';
+import { useAssemblerStore } from '../../../foundation/commands/store.js';
 import type { FindingSeverity, PrintFinding } from '../analysis.js';
 import {
   BUILD_VOLUME_COLOR,

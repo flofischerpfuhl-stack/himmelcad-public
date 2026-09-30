@@ -9,9 +9,8 @@
 import { create } from 'zustand';
 
 import type { CameraPose } from '../../platform/viewport/camera.js';
+import type { CameraCommand } from '../../platform/viewport/cameraChannel.js';
 import { usePreferences } from './preferences.js';
-import type { Vec3 } from '../../platform/viewport/math.js';
-import type { SelectionItem } from '../../foundation/commands/store.js';
 
 export const MAX_SAVED_VIEWS = 8;
 
@@ -46,21 +45,7 @@ export function setSectionAccess(access: typeof sectionAccess): void {
   sectionAccess = access;
 }
 
-/** One-shot camera instruction for the viewport (applied once per `nonce`). */
-export type CameraCommand =
-  | { kind: 'home' }
-  | { kind: 'fitAll' }
-  /** Frames the selection (or everything when nothing is selected). */
-  | { kind: 'fitSelection' }
-  /** Frames these items without selecting them (History card "Zoom to"). */
-  | { kind: 'fitItems'; items: SelectionItem[] }
-  | { kind: 'direction'; direction: Vec3 }
-  | { kind: 'roll'; degrees: number }
-  | { kind: 'pose'; pose: CameraPose }
-  /** Looks straight at a face and frames it (Space over a face). */
-  | { kind: 'lookAtFace'; bodyId: string; faceKey: string }
-  /** Looks along `-direction` (eye on the `direction` side) and frames the visible model (Look at section). */
-  | { kind: 'lookAlong'; direction: Vec3 };
+export type { CameraCommand } from '../../platform/viewport/cameraChannel.js';
 
 /** Reads the viewport's live camera (registered by the mounted viewport). */
 type PoseProbe = () => CameraPose | null;
