@@ -3,8 +3,12 @@
  *
  * - **Planar face**: the profile (its sketch must be parallel to the face)
  *   is moved onto the face plane along the normal and extruded outwards by
- *   the depth (emboss, joined) or inwards (engrave, cut). Tools overlap the
- *   body by a small lead so no coplanar faces are left for the boolean.
+ *   the depth (emboss, joined) or inwards (engrave, cut), starting exactly
+ *   on the face plane — like an extrude from a sketch on a face. (Until
+ *   2026-09-30 the tool overlapped the body by a small lead; that made
+ *   OCCT intersect every glyph side face with the face plane, ~30 % of the
+ *   feature's time, and added a lead-thick skirt under profile parts that
+ *   hang over the face's edge. Names and volumes on the face are the same.)
  * - **Cylindrical face (outside of a round boss)**: the profile is
  *   **wrapped** — surface lengths are kept: a sketch point at distance `s`
  *   (along the sketch, perpendicular to the axis) from the wrap centre goes
@@ -48,24 +52,23 @@ export function applyEmboss(feature: EmbossFeature, ctx: ReplayContextLike, kit:
   }
   const body = bodyOrFail(kit, ctx, feature.face.bodyId);
   const { geom } = kit.resolveFace(body, feature.face, ctx.warn);
-  const diagonal = kit.diagonalOf(body.shape);
-  const lead = Math.max(0.02, Math.min(0.2, diagonal * 2e-4));
   let tools: Tool[];
   if (geom.surface === 'plane' && geom.normal) {
-    tools = planarTools(kit, ctx, feature, geom, lead);
+    tools = planarTools(kit, ctx, feature, geom);
   } else if (geom.id.type === 'cylinder') {
     if (!geom.id.convex) {
       kit.fail('Emboss wraps onto the outside of a round face; this face is the inside of a hole');
     }
+    // The wrapped tool overlaps the cylinder radially by a small lead.
+    const diagonal = kit.diagonalOf(body.shape);
+    const lead = Math.max(0.02, Math.min(0.2, diagonal * 2e-4));
     tools = wrappedTools(kit, ctx, feature, geom.id, lead);
   } else {
     kit.fail(
       'Emboss works on planar and cylindrical faces; wrapping onto cones or free-form faces is not supported',
     );
   }
-  const holder = { id: '', name: '', color: '', createdBy: '', ...tools[0]! };
-  for (const next of tools.slice(1))
-    kit.combine(holder, next, 'join', feature.id, ctx.featureOrder);
+  const holder = batchTools(kit, ctx, feature.id, tools);
   try {
     kit.combine(
       body,
@@ -81,6 +84,67 @@ export function applyEmboss(feature: EmbossFeature, ctx: ReplayContextLike, kit:
   ctx.touch(body.id);
 }
 
+/**
+ * One tool for all profiles, applied to the body in a single boolean.
+ * Profiles whose tools cannot touch (bounding boxes apart by more than a
+ * small margin — the letters of a label, the dot of an "i") are gathered
+ * in a compound: no boolean at all. Only tools whose boxes overlap are
+ * fused first, in profile order, as before. A fuse of disjoint solids
+ * returns their faces unchanged, so the compound names the result's faces
+ * exactly like the fuse did; it only avoids one boolean per extra profile
+ * (each over the growing union: ~1 s for an 11-glyph label).
+ */
+function batchTools(
+  kit: FeatureKit,
+  ctx: ReplayContextLike,
+  featureId: string,
+  tools: Tool[],
+): {
+  id: string;
+  name: string;
+  color: string;
+  createdBy: string;
+  shape: Shape3D;
+  faces: KeyedFace[];
+} {
+  const holderOf = (tool: Tool) => ({ id: '', name: '', color: '', createdBy: '', ...tool });
+  if (tools.length === 1) return holderOf(tools[0]!);
+  const boxes = tools.map((t) => kit.boundsOf(t.shape));
+  const size = Math.max(
+    ...boxes.flatMap(([min, max]) => [max[0] - min[0], max[1] - min[1], max[2] - min[2]]),
+  );
+  const margin = Math.max(0.01, size * 1e-3);
+  const overlap = (a: number, b: number) =>
+    [0, 1, 2].every(
+      (k) =>
+        boxes[a]![0][k]! <= boxes[b]![1][k]! + margin &&
+        boxes[b]![0][k]! <= boxes[a]![1][k]! + margin,
+    );
+  // Groups of possibly touching tools (union-find), each keyed by its first profile.
+  const parent = tools.map((_, i) => i);
+  const find = (i: number): number => (parent[i] === i ? i : (parent[i] = find(parent[i]!)));
+  for (let a = 0; a < tools.length; a += 1) {
+    for (let b = a + 1; b < tools.length; b += 1) {
+      if (overlap(a, b)) parent[Math.max(find(a), find(b))] = Math.min(find(a), find(b));
+    }
+  }
+  const groups = new Map<number, number[]>();
+  tools.forEach((_, i) => groups.set(find(i), [...(groups.get(find(i)) ?? []), i]));
+  const fused = [...groups.values()].map((members) => {
+    const holder = holderOf(tools[members[0]!]!);
+    for (const next of members.slice(1))
+      kit.combine(holder, tools[next]!, 'join', featureId, ctx.featureOrder);
+    return holder;
+  });
+  if (fused.length === 1) return fused[0]!;
+  // replicad's makeCompound deletes its inputs: hand it clones (same B-rep, new wrappers).
+  return {
+    ...fused[0]!,
+    shape: R.makeCompound(fused.map((t) => t.shape.clone())) as Shape3D,
+    faces: fused.flatMap((t) => t.faces),
+  };
+}
+
 // ---- planar -----------------------------------------------------------------------------
 
 function planarTools(
@@ -88,7 +152,6 @@ function planarTools(
   ctx: ReplayContextLike,
   feature: EmbossFeature,
   geom: KeyedFace,
-  lead: number,
 ): Tool[] {
   const n = geom.normal!;
   const offset = dot(n, geom.centroid);
@@ -97,12 +160,9 @@ function planarTools(
     if (Math.abs(Math.abs(dot(section.normal, n)) - 1) > 1e-6) {
       kit.fail('Emboss on a planar face needs a sketch parallel to the face');
     }
-    // Onto the face plane, then `lead` into the material so the tool overlaps the body.
-    const onPlane = offset - dot(n, section.center);
-    const start = depth > 0 ? onPlane - lead : onPlane + lead;
-    const length = depth > 0 ? depth + lead : depth - lead;
-    const face = section.face.translate(scale(n, start));
-    const vector = new R.Vector(scale(n, length));
+    // Onto the face plane, then `depth` out of (or into) the material from there.
+    const face = section.face.translate(scale(n, offset - dot(n, section.center)));
+    const vector = new R.Vector(scale(n, depth));
     let shape: Shape3D;
     try {
       shape = R.basicFaceExtrusion(face, vector);
