@@ -121,7 +121,14 @@ hole/fillet/chamfer patches. Shell with per-wall thicknesses uses one
 `MakeThickSolid` with `SetOffsetOnFace`, else the old shell + slabs. Names
 come from OCCT's history as before; the offset face itself is not reported
 as modified by `BRepOffset_MakeOffset`, so it is found on its offset surface
-and keeps its key (like push/pull).
+and keeps its key (like push/pull). Move Face (Move/Rotate on a face) and the
+Offset Face modes Radius / Diameter / Total (DIR-01, `faceOps.ts#modeOffset`:
+the target is converted to an offset on the face as evaluated) are the same
+step, so they take the same route: on this build a face between inclined
+neighbours moves without a step (trapezoid top +2 mm: 1 680 mm³, 6 faces), on
+replicad the slab fallback (1 700 mm³). Moving an edge still needs a face
+replacement algorithm that neither build binds; the command stays disabled
+with that reason.
 
 The whole assembler suite passes on both modules (see "Verification").
 
@@ -297,3 +304,22 @@ interop + OCCT-build merges, module 8.0.1-hc.2 from the cache):
 | Python `test_assembler`              | 22/22                                      | 22/22 (incl. IGES round trip)                  |
 | license check                        | pass (236 packages)                        |                                                |
 | `dev:web` smoke (`shots/k7-*.png`)   |                                            | Offset Face, Delete Face, XCAF STEP, IGES pass |
+
+Integration run 2 (2026-09-30, after merging `asm/latency-20260930` and
+`asm/parity2-20260930` incl. `asm/gaps-20260930`; `DEFAULT_OCCT_MODULE` still
+`replicad`; host 13–35 % busy):
+
+| Check                                                     | replicad (default)                         | HimmelCAD                                             |
+| --------------------------------------------------------- | ------------------------------------------ | ----------------------------------------------------- |
+| typecheck, `build`, eslint (`--max-warnings 0`), prettier | pass                                       | pass                                                  |
+| `test`                                                    | 589: 578 pass, 11 skipped (HimmelCAD-only) | 589: 587 pass, 2 skipped (default-module-only)        |
+| `test:electron` / `test:acceptance`                       | 7/7, 14/14                                 | 7/7, 14/14                                            |
+| Python `test_assembler*` + `test_printing`                | 31/31                                      | 31/31                                                 |
+| license check                                             | pass (236 packages)                        |                                                       |
+| `bench:kernel` demo / features / plate, full (ms)         | 168 / 106 / 2 889                          | 177 / 116 / 2 728                                     |
+| `bench:kernel` last-feature edit (ms)                     | 25.1 / 26.2 / 51.6                         | 21.0 / 27.2 / 51.7                                    |
+| `bench:interactive` (Node) engrave "HC" commit / hole M4  | 216 / 33.5 ms                              | 217 / 33.2 ms                                         |
+| `dev:web` smoke (`shots/k8-*.png`, `k8-smoke.mjs`)        |                                            | plane → sketch → To Object, Move Face, Radius, Fix, … |
+
+The emboss label face-name pins (`embossText.test.ts`) are per module; hc.2
+names the batched label's split faces exactly like replicad 1.1.0.
