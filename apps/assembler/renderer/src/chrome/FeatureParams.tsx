@@ -233,6 +233,32 @@ export function ModelingFeatureParams({
           </div>
         </div>
       );
+    case 'rotateAxis':
+      return (
+        <div className={styles.params}>
+          <ExpressionField
+            label="Angle"
+            value={feature.angle}
+            unit="°"
+            onCommit={(v) => edit({ angle: v })}
+          />
+          <div>
+            <span className={styles.paramLabel}>Result</span>
+            <Select
+              aria-label={`${feature.name} copy`}
+              value={feature.copy ? 'copy' : 'move'}
+              options={[
+                { value: 'move', label: 'Rotate' },
+                { value: 'copy', label: 'Copy' },
+              ]}
+              onChange={(event) => edit({ copy: event.currentTarget.value === 'copy' })}
+            />
+          </div>
+          <span className={styles.paramNote}>
+            {plural(feature.bodyIds.length, 'body', 'bodies')} about the {axisText(feature.axis)}
+          </span>
+        </div>
+      );
     case 'align':
       return (
         <div className={styles.params}>

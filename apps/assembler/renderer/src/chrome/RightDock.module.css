@@ -104,3 +104,35 @@
     transition: none;
   }
 }
+
+/* Grid resolution read-out: follows the zoom (open lock) or is locked. */
+.gridReadout {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-sm);
+  background: var(--hc-bg-input);
+  color: var(--hc-fg-default);
+  font-family: var(--hc-font-ui);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.gridReadout:hover {
+  background: var(--hc-hover-bg);
+}
+
+.gridReadout:focus-visible,
+.snapButton:focus-visible {
+  outline: 2px solid var(--hc-focus-ring);
+  outline-offset: 1px;
+}
+
+.gridValue {
+  font-variant-numeric: tabular-nums;
+}

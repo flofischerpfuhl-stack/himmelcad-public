@@ -7,6 +7,7 @@
  */
 import { create } from 'zustand';
 
+import { DEFAULT_SKETCH_SNAPS, type SketchSnapToggles } from '../sketch/inference.js';
 import { NAVIGATION_PRESETS, type NavigationPresetId } from '../viewport/navigation.js';
 
 export type LengthUnit = 'mm' | 'in';
@@ -40,6 +41,17 @@ export interface Preferences {
   measurePanelPosition: { x: number; y: number } | null;
   /** Show the Home screen (recent projects, templates) when the app starts without a file. */
   showHomeOnStartup: boolean;
+  /** Sketch snap switches (Snap popover); grid snapping is the project's `snapToGrid`. */
+  snaps: SketchSnapToggles;
+  /** Text hints ("Midpoint", "Horizontal" …) next to the cursor while drawing. */
+  snapHints: boolean;
+  /**
+   * Shortcut overrides, command id → shortcut in the registry's display form
+   * (`'Shift+E'`, `'Ctrl+Alt+K'`); `''` removes a command's shortcut.
+   */
+  shortcuts: Record<string, string>;
+  /** Every click in the viewport adds to the selection (Shapr3D "Selection Extension"). */
+  selectionExtension: boolean;
 }
 
 export type RenderQuality = 'high' | 'standard';
@@ -97,7 +109,31 @@ export const DEFAULT_PREFERENCES: Preferences = {
   imageExport: DEFAULT_IMAGE_EXPORT,
   measurePanelPosition: null,
   showHomeOnStartup: true,
+  snaps: { ...DEFAULT_SKETCH_SNAPS },
+  snapHints: true,
+  shortcuts: {},
+  selectionExtension: false,
 };
+
+function parseSnaps(raw: unknown): SketchSnapToggles {
+  const out = { ...DEFAULT_SKETCH_SNAPS };
+  if (typeof raw !== 'object' || raw === null) return out;
+  const r = raw as Record<string, unknown>;
+  for (const key of Object.keys(out) as (keyof SketchSnapToggles)[]) {
+    if (typeof r[key] === 'boolean') out[key] = r[key] as boolean;
+  }
+  return out;
+}
+
+/** Shortcut overrides: string → string entries only (validated again against the registry when applied). */
+function parseShortcuts(raw: unknown): Record<string, string> {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return {};
+  const out: Record<string, string> = {};
+  for (const [id, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof value === 'string' && value.length <= 40 && id.length <= 80) out[id] = value;
+  }
+  return out;
+}
 
 function parsePanelPosition(raw: unknown): { x: number; y: number } | null {
   if (typeof raw !== 'object' || raw === null) return null;
@@ -150,6 +186,10 @@ export function parsePreferences(text: string | null): Preferences {
     imageExport: parseImageExport(r.imageExport),
     measurePanelPosition: parsePanelPosition(r.measurePanelPosition),
     showHomeOnStartup: pick('showHomeOnStartup', bool),
+    snaps: parseSnaps(r.snaps),
+    snapHints: pick('snapHints', bool),
+    shortcuts: parseShortcuts(r.shortcuts),
+    selectionExtension: pick('selectionExtension', bool),
   };
 }
 
@@ -178,7 +218,7 @@ export const usePreferences = create<PreferencesState>((set, get) => ({
     persist(snapshot(get()));
   },
   resetPreferences: () => {
-    set({ ...DEFAULT_PREFERENCES });
+    set({ ...DEFAULT_PREFERENCES, snaps: { ...DEFAULT_SKETCH_SNAPS }, shortcuts: {} });
     persist(snapshot(get()));
   },
 }));

@@ -20,7 +20,7 @@ import {
 } from '@himmelcad/ui';
 
 import { onCloseRequested, onOpenRequested } from '../model/project/persistence.js';
-import { useWorkspaceStore } from '../model/workspace.js';
+import { MAX_SAVED_VIEWS, useWorkspaceStore } from '../model/workspace.js';
 import { useProjectStore } from '../model/project/projectStore.js';
 import { CommandGroupMenu } from './CommandGroupMenu.js';
 import { DisplayMenuItems } from './DisplayMenu.js';
@@ -246,12 +246,17 @@ function SavedViewItems(): JSX.Element | null {
   return (
     <>
       <MenuSeparator />
+      <MenuItem disabled>
+        Saved views ({views.length}/{MAX_SAVED_VIEWS})
+      </MenuItem>
       {views.map((view, index) => (
         <MenuItem
           key={`${view.name}:${index}`}
+          {...(view.section?.enabled ? { title: 'Restores the camera and the section' } : {})}
           onSelect={() => useWorkspaceStore.getState().restoreView(index)}
         >
           {view.name}
+          {view.section?.enabled ? ' · section' : ''}
         </MenuItem>
       ))}
       <MenuSubmenu label="Delete saved view" ariaLabel="Delete saved view">

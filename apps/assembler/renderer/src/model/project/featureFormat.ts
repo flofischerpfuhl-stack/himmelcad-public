@@ -165,6 +165,12 @@ export function validateModelingFeature(r: Rec, path: string, h: FormatHelpers):
       if (!isVec3(r.pivot)) h.fail(`${path}.pivot`, 'expected a Vec3');
       bool('copy');
       break;
+    case 'rotateAxis':
+      stringList('bodyIds');
+      axis(r.axis, `${path}.axis`);
+      num('angle');
+      bool('copy');
+      break;
     case 'align':
       str('bodyId');
       h.faceRef(r.face, `${path}.face`);

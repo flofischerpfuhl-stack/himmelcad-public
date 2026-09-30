@@ -21,6 +21,7 @@ import {
   type ToolSession as ToolSessionState,
 } from '../model/store.js';
 import { draftBadges, draftMeta } from '../model/featureTools.js';
+import { emptyClickFinishes } from '../model/toolFinish.js';
 import styles from './ToolSession.module.css';
 
 interface ToolMeta {
@@ -390,6 +391,15 @@ export function ToolSession({ state }: { state: AssemblerState }): JSX.Element |
         <span className={styles.divider} aria-hidden />
         <span className={styles.prompt}>{meta.prompt}</span>
         <ToolBadge state={state} tool={tool} />
+        {emptyClickFinishes(tool) ? (
+          // Empty-space click = Done competes with "deselect": say so (interaction research §4).
+          <span
+            className={styles.finishHint}
+            title="A click on empty space finishes this tool, like Done (Enter). Esc cancels."
+          >
+            Click empty space to finish
+          </span>
+        ) : null}
         {preview?.previewPending ? (
           <span className={styles.busy} aria-label="Computing preview">
             <LoaderCircle size={13} />

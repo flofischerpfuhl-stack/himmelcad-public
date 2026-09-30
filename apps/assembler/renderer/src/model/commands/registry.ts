@@ -612,18 +612,44 @@ function toResultAvailability(availability: CommandAvailability): CommandAvailab
 }
 
 /**
+ * Whether the selection changes what `command` offers: it is disabled, or
+ * differently recommended, without a selection. Commands that behave the
+ * same with and without a selection (New, Open, view presets, Measure …)
+ * are not actions _for the selection_ and stay out of the adaptive bar and
+ * its "More" list (Shapr3D: "More" lists further valid actions for the
+ * selection — interaction research §2).
+ */
+function selectionScoped(
+  command: Command,
+  availability: CommandAvailability,
+  ctx: CommandContext,
+): boolean {
+  if (ctx.selection.length === 0) return true;
+  const without = command.availability({ ...ctx, selection: [] });
+  if (!without.enabled) return true;
+  return (
+    (without.recommended ?? false) !== (availability.recommended ?? false) ||
+    (without.priority ?? 0) !== (availability.priority ?? 0)
+  );
+}
+
+/**
  * Ordered list of enabled commands for the current selection, recommended
- * command first (face/sketch profile -> Extrude, body -> Move/Rotate),
- * then by descending `priority`, then by declaration order in
- * {@link COMMANDS}. Availability only ever reads `ctx.selection` and
- * other document/view state — never `ctx.hover` — so this ordering is
+ * command first (face -> Offset Face, sketch profile -> Extrude, body ->
+ * Move/Rotate, …), then by descending `priority`, then by declaration order
+ * in {@link COMMANDS}. Only selection-scoped commands are listed (see
+ * {@link selectionScoped}). Availability only ever reads `ctx.selection`
+ * and other document/view state — never `ctx.hover` — so this ordering is
  * stable across hover changes, as required by the interaction research
  * (§2): the adaptive toolbar must not reflow on mouse-over.
  */
 export function resolveAdaptive(ctx: CommandContext): Command[] {
   return COMMANDS.filter((command) => command.adaptive !== false)
     .map((command) => ({ command, availability: command.availability(ctx) }))
-    .filter((entry) => entry.availability.enabled)
+    .filter(
+      (entry) =>
+        entry.availability.enabled && selectionScoped(entry.command, entry.availability, ctx),
+    )
     .sort((a, b) => {
       const aRecommended = a.availability.recommended ? 1 : 0;
       const bRecommended = b.availability.recommended ? 1 : 0;
@@ -643,8 +669,57 @@ export interface CommandSearchResult {
   score: number;
 }
 
-function subsequenceScore(query: string, text: string): number | null {
-  const haystack = text.toLowerCase();
+/** Match quality tiers of {@link matchScore}; a higher tier always ranks first. */
+export const MATCH_TIER = {
+  /** The whole text, or the command's shortcut ("e" -> Extrude). */
+  exact: 5,
+  /** The text starts with the query ("ext" -> Extrude). */
+  prefix: 4,
+  /** A later word starts with the query ("rot" -> Move/Rotate). */
+  wordPrefix: 3,
+  /** Consecutive prefixes of words in order ("p3" -> Pattern 3D, "nsxy" -> New Sketch on XY). */
+  abbreviation: 2,
+  /** Letters in order anywhere ("mv" -> Move). */
+  subsequence: 1,
+} as const;
+
+function words(text: string): string[] {
+  return text
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((w) => w.length > 0);
+}
+
+/**
+ * Whether `query` splits into non-empty prefixes of `ws[i..]` taken in order
+ * (words may be skipped). Returns the number of skipped words (lower is
+ * better) or `null`.
+ */
+function abbreviationSkips(query: string, ws: readonly string[]): number | null {
+  const memo = new Map<string, number | null>();
+  const go = (q: number, w: number): number | null => {
+    if (q === query.length) return 0;
+    if (w >= ws.length) return null;
+    const key = `${q}:${w}`;
+    if (memo.has(key)) return memo.get(key)!;
+    let best: number | null = null;
+    const word = ws[w]!;
+    // Use a prefix of this word …
+    for (let len = Math.min(word.length, query.length - q); len >= 1; len -= 1) {
+      if (word.slice(0, len) !== query.slice(q, q + len)) continue;
+      const rest = go(q + len, w + 1);
+      if (rest !== null && (best === null || rest < best)) best = rest;
+    }
+    // … or skip it.
+    const skipped = go(q, w + 1);
+    if (skipped !== null && (best === null || skipped + 1 < best)) best = skipped + 1;
+    memo.set(key, best);
+    return best;
+  };
+  return go(0, 0);
+}
+
+function subsequenceScore(query: string, haystack: string): number | null {
   let cursor = 0;
   let firstMatchIndex = -1;
   let lastMatchIndex = -1;
@@ -657,19 +732,47 @@ function subsequenceScore(query: string, text: string): number | null {
   }
   const span = lastMatchIndex - firstMatchIndex + 1;
   const density = query.length / Math.max(span, query.length);
-  const prefixBonus = haystack.startsWith(query) ? 50 : 0;
-  return 100 * density + prefixBonus - firstMatchIndex;
+  return 100 * density - firstMatchIndex;
+}
+
+/**
+ * Score of `query` (lower-case, trimmed) against one text: `tier * 1000 +
+ * within-tier score`, or `null` for no match. Tiers per {@link MATCH_TIER}.
+ * Shapr3D's command search accepts shortened fuzzy input such as "p3" or
+ * "snu" (interaction research §6); word-initial abbreviations cover these,
+ * plain subsequences are the weakest fallback.
+ */
+export function matchScore(query: string, text: string): number | null {
+  const haystack = text.toLowerCase();
+  if (!query || !haystack) return null;
+  if (haystack === query) return MATCH_TIER.exact * 1000;
+  if (haystack.startsWith(query)) return MATCH_TIER.prefix * 1000 + 100 - haystack.length;
+  const ws = words(haystack);
+  const wordIndex = ws.findIndex((w, i) => i > 0 && w.startsWith(query));
+  if (wordIndex > 0) return MATCH_TIER.wordPrefix * 1000 + 100 - wordIndex * 10 - haystack.length;
+  const compact = query.replace(/[^a-z0-9]+/g, '');
+  const skips = compact ? abbreviationSkips(compact, ws) : null;
+  if (skips !== null) return MATCH_TIER.abbreviation * 1000 + 100 - skips * 10 - ws.length;
+  const sub = subsequenceScore(query, haystack);
+  return sub === null ? null : MATCH_TIER.subsequence * 1000 + sub;
 }
 
 function fuzzyScore(query: string, command: Command): number | null {
-  const fields = [command.label, ...(command.keywords ?? []), command.shortcut ?? ''];
   let best: number | null = null;
-  for (const field of fields) {
-    if (!field) continue;
-    let score = subsequenceScore(query, field);
-    // The command's own name beats an equally good keyword of another command ("hole" -> Hole, not Circle).
-    if (score !== null && field === command.label) score += 0.5;
+  const consider = (score: number | null) => {
     if (score !== null && (best === null || score > best)) best = score;
+  };
+  // The command's own name beats an equally good keyword ("hole" -> Hole, not Circle).
+  consider(
+    matchScore(query, command.label) === null ? null : matchScore(query, command.label)! + 1,
+  );
+  for (const keyword of command.keywords ?? []) {
+    const score = matchScore(query, keyword);
+    // A keyword never reaches the exact tier of a label.
+    consider(score === null ? null : Math.min(score, MATCH_TIER.prefix * 1000 + 99) - 50);
+  }
+  if (command.shortcut && command.shortcut.toLowerCase() === query) {
+    consider(MATCH_TIER.exact * 1000 - 10);
   }
   return best;
 }
@@ -689,11 +792,17 @@ function toSearchResult(
 }
 
 /**
- * Fuzzy subsequence search over label/keywords/shortcut ("ext" -> Extrude,
- * "mv" -> Move/Rotate). Empty query returns `ctx.recentCommandIds` first
- * (in recency order), then the remaining commands in declaration order.
- * Disabled commands are included, always ranked after enabled commands
- * for a non-empty query, each with its `reason`.
+ * Fuzzy search over label/keywords/shortcut ("ext" -> Extrude, "mv" ->
+ * Move/Rotate, "p3" -> Pattern 3D). Empty query returns
+ * `ctx.recentCommandIds` first (in recency order), then the remaining
+ * commands in declaration order.
+ *
+ * Ranking: match tier first ({@link MATCH_TIER}: a typed name always beats a
+ * scattered-letter match), then enabled before disabled, then score. With a
+ * selection the list is filtered to the actions valid for it, as in
+ * Shapr3D (interaction research §6); a disabled command stays listed —
+ * with its reason — only when its name matches strongly (prefix or word),
+ * so typing a tool's name still explains what it needs.
  */
 export function searchCommands(query: string, ctx: CommandContext): CommandSearchResult[] {
   const trimmed = query.trim().toLowerCase();
@@ -710,12 +819,23 @@ export function searchCommands(query: string, ctx: CommandContext): CommandSearc
     );
   }
 
+  const hasSelection = ctx.selection.length > 0;
   const scored = COMMANDS.map((command) => ({
     command,
     score: fuzzyScore(trimmed, command),
-  })).filter((entry): entry is { command: Command; score: number } => entry.score !== null);
+  }))
+    .filter((entry): entry is { command: Command; score: number } => entry.score !== null)
+    .filter(
+      (entry) =>
+        !hasSelection ||
+        availabilityByCommandId.get(entry.command.id)!.enabled ||
+        entry.score >= MATCH_TIER.wordPrefix * 1000 - 50,
+    );
 
+  const tierOf = (score: number) => Math.floor((score + 50) / 1000);
   scored.sort((a, b) => {
+    const tier = tierOf(b.score) - tierOf(a.score);
+    if (tier !== 0) return tier;
     const aEnabled = availabilityByCommandId.get(a.command.id)!.enabled;
     const bEnabled = availabilityByCommandId.get(b.command.id)!.enabled;
     if (aEnabled !== bEnabled) return aEnabled ? -1 : 1;

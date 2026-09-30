@@ -21,6 +21,7 @@ import {
   type AlignFeature,
   type MirrorFeature,
   type PatternFeature,
+  type RotateAxisFeature,
   type SplitFeature,
   type TransformFeature,
 } from '../../model/features.js';
@@ -265,6 +266,38 @@ export function applyTransform(
   } else if (ops.length > 0) {
     moveBody(kit, ctx, feature.id, body, ops);
   }
+}
+
+// ---- Rotate Around Axis ----------------------------------------------------------------
+
+export function applyRotateAxis(
+  feature: RotateAxisFeature,
+  ctx: ReplayContextLike,
+  kit: FeatureKit,
+): void {
+  if (!Number.isFinite(feature.angle) || Math.abs(feature.angle) > 360) {
+    kit.fail('Rotation angle must be between -360° and 360°');
+  }
+  const bodies = bodiesOf(kit, ctx, feature.bodyIds);
+  const axis = resolveAxis(kit, ctx, feature.axis);
+  const ops: RigidOp[] =
+    feature.angle === 0
+      ? []
+      : [
+          {
+            kind: 'rotate',
+            point: axis.point,
+            axis: axis.dir,
+            angle: (feature.angle * Math.PI) / 180,
+          },
+        ];
+  bodies.forEach((body, i) => {
+    if (feature.copy) {
+      addCopy(kit, ctx, feature.id, body, ops, extraBodyId(feature.id, i), `${body.name} (copy)`);
+    } else if (ops.length > 0) {
+      moveBody(kit, ctx, feature.id, body, ops);
+    }
+  });
 }
 
 // ---- Align ----------------------------------------------------------------------------

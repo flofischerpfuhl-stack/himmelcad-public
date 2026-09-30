@@ -45,7 +45,37 @@ export interface InferContext {
   gridStep?: number | null;
   /** Point ids never snapped to (e.g. the points being dragged). */
   exclude?: ReadonlySet<string>;
+  /** Which snaps are on (Snap popover; absent = on). Grid snapping is `gridStep`. */
+  snaps?: Partial<SketchSnapToggles>;
 }
+
+/**
+ * Separate snap switches, like Shapr3D's Snapping Options (interaction
+ * research §5): snaps are suggestions — each kind can be turned off.
+ */
+export interface SketchSnapToggles {
+  /** End points, centres and the origin (coincident connections). */
+  points: boolean;
+  /** Line midpoints (midpoint connections). */
+  midpoints: boolean;
+  /** Guidelines: horizontal/vertical/perpendicular/parallel directions and alignment with other points. */
+  guidelines: boolean;
+  /** Points on curves (point-on-curve connections). */
+  curves: boolean;
+  /**
+   * Auto-constraining: inferred horizontal/vertical/perpendicular/parallel
+   * constraints. Off keeps point connections (coincident, midpoint, on curve).
+   */
+  autoConstrain: boolean;
+}
+
+export const DEFAULT_SKETCH_SNAPS: SketchSnapToggles = {
+  points: true,
+  midpoints: true,
+  guidelines: true,
+  curves: true,
+  autoConstrain: true,
+};
 
 const POINT_PX = 10;
 const MIDPOINT_PX = 8;
@@ -84,9 +114,10 @@ export function infer(sketch: SketchData, raw: Vec2, ctx: InferContext): Inferen
   const exclude = ctx.exclude ?? new Set<string>();
   const px = ctx.mmPerPx;
   const from = ctx.from;
+  const snaps: SketchSnapToggles = { ...DEFAULT_SKETCH_SNAPS, ...ctx.snaps };
 
   const withSegment = (base: Inference): Inference => {
-    if (!from || dist(from.pos, base.pos) < 1e-9) return base;
+    if (!snaps.autoConstrain || !from || dist(from.pos, base.pos) < 1e-9) return base;
     const { horizontal, vertical } = segmentAngles(from.pos, base.pos);
     const out = { ...base };
     if (horizontal) out.horizontal = true;
@@ -102,8 +133,10 @@ export function infer(sketch: SketchData, raw: Vec2, ctx: InferContext): Inferen
     if (d <= POINT_PX * px && (!bestPoint || d < bestPoint.d)) bestPoint = { id, pos, d };
   };
   // Sketch points first: at equal distance a real point wins over the origin.
-  for (const e of sketch.entities) if (e.kind === 'point') consider(e.id, [e.x, e.y]);
-  consider(ORIGIN_ID, [0, 0]);
+  if (snaps.points) {
+    for (const e of sketch.entities) if (e.kind === 'point') consider(e.id, [e.x, e.y]);
+    consider(ORIGIN_ID, [0, 0]);
+  }
   if (bestPoint) {
     const p = bestPoint as { id: string; pos: Vec2 };
     return withSegment({ pos: p.pos, pointId: p.id, hints: [roleOf(sketch, p.id)], guides: [] });
@@ -111,7 +144,7 @@ export function infer(sketch: SketchData, raw: Vec2, ctx: InferContext): Inferen
 
   // 2. Line midpoints. (Text glyphs are no snap/constraint targets.)
   const curves = sketchCurves(sketch, { includeConstruction: true, includeText: false });
-  for (const { id, entity, curve } of curves) {
+  for (const { id, entity, curve } of snaps.midpoints ? curves : []) {
     if (curve.kind !== 'line' || entity.kind !== 'line') continue;
     if (exclude.has(entity.a) || exclude.has(entity.b)) continue;
     const mid: Vec2 = [(curve.a[0] + curve.b[0]) / 2, (curve.a[1] + curve.b[1]) / 2];
@@ -127,18 +160,19 @@ export function infer(sketch: SketchData, raw: Vec2, ctx: InferContext): Inferen
   let lockY = false;
   const result: Inference = { pos, hints, guides };
 
-  // 3. Direction relative to the segment start.
-  if (from && dist(from.pos, raw) > 4 * px) {
+  // 3. Direction relative to the segment start (a guideline; a constraint only with auto-constraining).
+  const constrain = snaps.autoConstrain;
+  if (snaps.guidelines && from && dist(from.pos, raw) > 4 * px) {
     const { horizontal, vertical } = segmentAngles(from.pos, raw);
     if (horizontal) {
       pos = [raw[0], from.pos[1]];
       lockY = true;
-      result.horizontal = true;
+      if (constrain) result.horizontal = true;
       hints.push('horizontal');
     } else if (vertical) {
       pos = [from.pos[0], raw[1]];
       lockX = true;
-      result.vertical = true;
+      if (constrain) result.vertical = true;
       hints.push('vertical');
     } else if (from.lineId) {
       const prev = map.get(from.lineId);
@@ -155,13 +189,13 @@ export function infer(sketch: SketchData, raw: Vec2, ctx: InferContext): Inferen
             const s = dot(sub(raw, from.pos), n) >= 0 ? 1 : -1;
             pos = [from.pos[0] + n[0] * length * s, from.pos[1] + n[1] * length * s];
             lockX = lockY = true;
-            result.perpendicularTo = from.lineId;
+            if (constrain) result.perpendicularTo = from.lineId;
             hints.push('perpendicular');
           } else if (Math.abs(cos) > Math.cos(ANGLE_TOL)) {
             const s = cos >= 0 ? 1 : -1;
             pos = [from.pos[0] + dPrev[0] * length * s, from.pos[1] + dPrev[1] * length * s];
             lockX = lockY = true;
-            result.parallelTo = from.lineId;
+            if (constrain) result.parallelTo = from.lineId;
             hints.push('parallel');
           }
         }
@@ -170,7 +204,7 @@ export function infer(sketch: SketchData, raw: Vec2, ctx: InferContext): Inferen
   }
 
   // 4. Alignment guides with other points (no constraint, like Shapr3D's guidelines).
-  if (!lockX || !lockY) {
+  if (snaps.guidelines && (!lockX || !lockY)) {
     let bestX: { pos: Vec2; d: number } | null = null;
     let bestY: { pos: Vec2; d: number } | null = null;
     const points: [string, Vec2][] = [[ORIGIN_ID, [0, 0]]];
@@ -195,10 +229,12 @@ export function infer(sketch: SketchData, raw: Vec2, ctx: InferContext): Inferen
     if (bestX) guides.push([(bestX as { pos: Vec2 }).pos, pos]);
     if (bestY) guides.push([(bestY as { pos: Vec2 }).pos, pos]);
   }
-  if (from && (result.horizontal || result.vertical)) guides.push([from.pos, pos]);
+  if (from && (hints.includes('horizontal') || hints.includes('vertical'))) {
+    guides.push([from.pos, pos]);
+  }
 
   // 5. On a curve (only when the position is not otherwise locked).
-  if (!lockX && !lockY) {
+  if (snaps.curves && !lockX && !lockY) {
     let best: { id: string; point: Vec2; d: number } | null = null;
     for (const { id, entity, curve } of curves) {
       // Splines take no point-on-curve constraint (their end points snap as points).

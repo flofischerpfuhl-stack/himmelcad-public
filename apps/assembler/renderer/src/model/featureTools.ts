@@ -1,6 +1,7 @@
 /**
  * Interactive tools for the modelling features of `features.ts` — Revolve,
- * Sweep, Loft, Mirror, Pattern, Split, Align, Offset Face, Delete Face —
+ * Sweep, Loft, Mirror, Pattern, Split, Rotate Around Axis, Align, Offset
+ * Face, Delete Face —
  * as pure data + functions, so the store keeps a single generic
  * `feature` tool session (`store.ts`) and the viewport/chrome render what
  * this module describes:
@@ -81,6 +82,8 @@ export type FeatureDraft =
   | { kind: 'mirror'; bodyIds: string[]; plane: PlaneRef; keepOriginal: boolean }
   | { kind: 'pattern'; bodyIds: string[]; pattern: PatternDefinition }
   | { kind: 'split'; bodyId: string; plane: PlaneRef }
+  /** Rotate Around Axis: bodies, an axis (edge / sketch line / world), degrees, copy. */
+  | { kind: 'rotateAxis'; bodyIds: string[]; axis: AxisRef; angle: number; copy: boolean }
   | {
       kind: 'align';
       bodyId: string;
@@ -114,6 +117,7 @@ export const DEFAULT_REVOLVE_ANGLE = 360;
 export const DEFAULT_PATTERN_COUNT = 3;
 export const DEFAULT_OFFSET_MM = 1;
 export const DEFAULT_SWEEP_LENGTH_MM = 20;
+export const DEFAULT_ROTATE_ANGLE = 90;
 
 // ---- reference helpers ------------------------------------------------------------------
 
@@ -522,6 +526,34 @@ export function createDraft(kind: FeatureDraftKind, ctx: DraftContext): DraftSta
         },
       };
     }
+    case 'rotateAxis': {
+      // Shapr3D: a line plus a face suggests Rotate Around Axis — the face stands for its body.
+      const edges = selectedEdges(ctx);
+      const faceBodies = selected(ctx.selection, 'face').map((f) => f.bodyId);
+      let bodyIds = selected(ctx.selection, 'body').map((b) => b.bodyId);
+      if (bodyIds.length === 0 && edges.length === 1) bodyIds = [...new Set(faceBodies)];
+      if (bodyIds.length === 0 || edges.length > 1) {
+        return {
+          ok: false,
+          reason:
+            'Select the bodies to rotate (or a face of one) and optionally an edge as the axis.',
+        };
+      }
+      const edge = edges[0];
+      let axis: AxisRef;
+      if (edge && (edge.signature.curve === 'line' || edge.signature.curve === 'circle')) {
+        axis = { kind: 'edge', edge };
+      } else if (edge) {
+        return { ok: false, reason: 'The axis must be a straight or circular edge.' };
+      } else {
+        const centre = bodyCentre(ctx.evaluation, bodyIds);
+        axis = { kind: 'world', axis: 'Z', ...(centre ? { origin: centre } : {}) };
+      }
+      return {
+        ok: true,
+        draft: { kind: 'rotateAxis', bodyIds, axis, angle: DEFAULT_ROTATE_ANGLE, copy: false },
+      };
+    }
     case 'align': {
       const faces = selectedFaceRefs(ctx);
       if (faces.length !== 2 || ctx.selection.length !== 2) {
@@ -692,6 +724,16 @@ export function acceptPick(
     case 'split':
       if (faceRef && isPlanar(faceRef)) return { ...draft, plane: { kind: 'face', face: faceRef } };
       return draft;
+    case 'rotateAxis':
+      // An edge or sketch line is the axis; a body (or its face) is added or removed.
+      if (edgeRef && (edgeRef.signature.curve === 'line' || edgeRef.signature.curve === 'circle')) {
+        return { ...draft, axis: { kind: 'edge', edge: edgeRef } };
+      }
+      if (lineAxis) return { ...draft, axis: lineAxis };
+      if (pickedBody && pick.kind !== 'edge') {
+        return { ...draft, bodyIds: toggle(draft.bodyIds, pickedBody, (a, b) => a === b) };
+      }
+      return draft;
     case 'align':
       if (faceRef && isPlanar(faceRef)) {
         if (faceRef.bodyId === draft.bodyId) return { ...draft, face: faceRef };
@@ -793,6 +835,16 @@ export function draftToFeature(
       return { ...common, kind: 'pattern', bodyIds: draft.bodyIds, pattern: draft.pattern };
     case 'split':
       return { ...common, kind: 'split', bodyId: draft.bodyId, plane: draft.plane };
+    case 'rotateAxis':
+      if (draft.bodyIds.length === 0) return null;
+      return {
+        ...common,
+        kind: 'rotateAxis',
+        bodyIds: draft.bodyIds,
+        axis: draft.axis,
+        angle: draft.angle,
+        copy: draft.copy,
+      };
     case 'align':
       return {
         ...common,
@@ -871,6 +923,12 @@ export function draftMeta(draft: FeatureDraft): DraftMeta {
         label: 'Split Body',
         shortcut: '',
         prompt: 'Drag the plane or type its offset; click a planar face to split along it.',
+      };
+    case 'rotateAxis':
+      return {
+        label: 'Rotate Around Axis',
+        shortcut: '',
+        prompt: `${plural(draft.bodyIds.length, 'body', 'bodies')}. Drag the arc or type an angle; click an edge or sketch line for the axis, bodies to add or remove.`,
       };
     case 'align':
       return {
@@ -1051,6 +1109,42 @@ export function draftBadges(draft: FeatureDraft): DraftBadge[] {
       ];
     case 'split':
       return [planeBadge(draft.plane, 'Split plane')];
+    case 'rotateAxis':
+      return [
+        {
+          ariaLabel: 'Rotate or copy',
+          value: draft.copy ? 'copy' : 'move',
+          options: [
+            { value: 'move', label: 'Rotate' },
+            { value: 'copy', label: 'Copy' },
+          ],
+          apply: (d, value) => (d.kind === 'rotateAxis' ? { ...d, copy: value === 'copy' } : d),
+        },
+        {
+          ariaLabel: 'Rotation axis',
+          value: draft.axis.kind === 'world' ? draft.axis.axis : 'edge',
+          options: [
+            { value: 'X', label: 'X' },
+            { value: 'Y', label: 'Y' },
+            { value: 'Z', label: 'Z' },
+            ...(draft.axis.kind === 'edge' ? [{ value: 'edge', label: 'Edge' }] : []),
+            ...(draft.axis.kind === 'sketchLine' ? [{ value: 'edge', label: 'Sketch line' }] : []),
+          ],
+          apply: (d, value, evaluation) => {
+            if (d.kind !== 'rotateAxis' || value === 'edge') return d;
+            // A world axis through the bodies' centre.
+            const centre = bodyCentre(evaluation, d.bodyIds);
+            return {
+              ...d,
+              axis: {
+                kind: 'world',
+                axis: value as WorldAxis,
+                ...(centre ? { origin: centre } : {}),
+              },
+            };
+          },
+        },
+      ];
     case 'align':
       return [
         {
@@ -1397,6 +1491,32 @@ export function draftHandles(
         { ...count, kind: 'chip', at: add(onAxis, scale(ref, r * 1.25)) },
       ];
     }
+    case 'rotateAxis': {
+      const centre = bodyCentre(evaluation, draft.bodyIds);
+      const line = axisLine(evaluation, draft.axis, features);
+      if (!centre || !line) return [];
+      const k = dot(sub(centre, line.point), line.dir);
+      const onAxis = add(line.point, scale(line.dir, k));
+      const radial = sub(centre, onAxis);
+      const radius = Math.hypot(...radial);
+      return [
+        {
+          kind: 'angle',
+          id: 'angle',
+          label: 'Rotation angle',
+          unit: 'deg',
+          value: draft.angle,
+          center: onAxis,
+          axis: line.dir,
+          ref: radius > 1e-6 ? normalize(radial) : perpendicular(line.dir),
+          radius: Math.max(radius, 10),
+          apply: (d, value) =>
+            d.kind === 'rotateAxis'
+              ? { ...d, angle: Math.max(-360, Math.min(360, Number.isFinite(value) ? value : 0)) }
+              : d,
+        },
+      ];
+    }
     case 'align': {
       const target = planeOf(evaluation, { kind: 'face', face: draft.target });
       if (!target) return [];
@@ -1470,6 +1590,9 @@ export function draftGuides(
   } else if (draft.kind === 'pattern' && draft.pattern.kind === 'circular') {
     const centre = bodyCentre(evaluation, draft.bodyIds);
     axisSegment(draft.pattern.axis, centre, 40);
+  } else if (draft.kind === 'rotateAxis') {
+    const centre = bodyCentre(evaluation, draft.bodyIds);
+    axisSegment(draft.axis, centre, 40);
   } else if (draft.kind === 'mirror' || draft.kind === 'split') {
     const plane = planeOf(evaluation, draft.plane);
     const bounds = unionBounds(
@@ -1500,6 +1623,8 @@ export function draftModifiedBodyIds(draft: FeatureDraft): string[] {
       return draft.operation !== 'new' && draft.targetBodyId ? [draft.targetBodyId] : [];
     case 'mirror':
       return draft.keepOriginal ? [] : draft.bodyIds;
+    case 'rotateAxis':
+      return draft.copy ? [] : draft.bodyIds;
     case 'split':
     case 'align':
       return [draft.bodyId];

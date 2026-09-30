@@ -2,9 +2,12 @@
  * History panel (right): feature cards in document order. Expanding a
  * card shows its editable parameters (`ExpressionField`s, committing via
  * `editFeatureParams` — one undo step per edit, the signature parametric
- * demo). Card menu: Rename, Suppress/Unsuppress, Roll back to here, Move
- * up/down, Delete. Suppressed cards are dimmed; cards with an
- * `evaluation.errors` entry show a warning style and the message.
+ * demo). Card menu (Shapr3D card settings, interaction research §3): Rename,
+ * Suppress/Unsuppress, Breakpoint after this step / Remove breakpoint (the
+ * rollback marker), Zoom to, Duplicate, Move up/down, Delete. A focused
+ * card: Del suppresses, Shift+Del deletes, Enter expands, F2 renames. The
+ * header expands/collapses all cards. Suppressed cards are dimmed; cards
+ * with an `evaluation.errors` entry show a warning style and the message.
  *
  * The header filter shows only the steps relevant to the selection. The
  * rollback marker (drag it, or "Roll back to here") excludes the steps
@@ -16,6 +19,8 @@ import {
   AlertTriangle,
   ChevronDown,
   ChevronRight,
+  ChevronsDownUp,
+  ChevronsUpDown,
   GripHorizontal,
   ListFilter,
   MoreHorizontal,
@@ -40,7 +45,15 @@ import { ParamExpressionField } from './ParamExpressionField.js';
 import { ModelingFeatureParams } from './FeatureParams.js';
 import { BlendParams, BooleanParams, ShellParams } from './PrintFeatureParams.js';
 import { isModelingFeature } from '../model/features.js';
-import { checkMove, moveFeature, relevantFeatureIds } from '../model/historyTools.js';
+import {
+  checkMove,
+  duplicateStep,
+  featureZoomTargets,
+  moveFeature,
+  relevantFeatureIds,
+  stepNamePrefix,
+} from '../model/historyTools.js';
+import { nextFeatureName } from '../model/store.js';
 import { resolveParameterValues } from '../model/parameters.js';
 import { useWorkspaceStore } from '../model/workspace.js';
 import type { AssemblerState, FeaturePatch } from '../model/store.js';
@@ -73,6 +86,27 @@ function tryMoveStep(state: AssemblerState, from: number, to: number): void {
   if (!moved) useWorkspaceStore.getState().notify('Finish the running tool first.', 'warning');
 }
 
+/** History card "Duplicate": a copy right after the step, as one undo step. */
+function duplicateHistoryStep(state: AssemblerState, feature: Feature): void {
+  const id = state.allocateFeatureId(feature.kind);
+  const name = nextFeatureName(stepNamePrefix(feature.name), state.features);
+  const done = state.commitDocumentChange(duplicateStep(state.features, feature.id, id, name), {
+    keepRollback: true,
+    selection: [{ kind: 'feature', featureId: id }],
+  });
+  if (!done) useWorkspaceStore.getState().notify('Finish the running tool first.', 'warning');
+}
+
+/** History card "Zoom to": frames the step's geometry without changing the selection. */
+function zoomToStep(state: AssemblerState, feature: Feature): void {
+  const items = featureZoomTargets(feature, state.features, state.evaluation);
+  if (items.length === 0) {
+    useWorkspaceStore.getState().notify(`"${feature.name}" has no geometry to zoom to.`);
+    return;
+  }
+  useWorkspaceStore.getState().sendCamera({ kind: 'fitItems', items });
+}
+
 export function HistoryPanel({ state, onContextMenu }: HistoryPanelProps): JSX.Element {
   const [expandedIds, setExpandedIds] = useState<ReadonlySet<string>>(new Set());
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
@@ -102,6 +136,7 @@ export function HistoryPanel({ state, onContextMenu }: HistoryPanelProps): JSX.E
     [filterToSelection, features, state.evaluation, state.selection],
   );
   const shown = features.filter((f) => !relevant || relevant.has(f.id));
+  const allExpanded = shown.length > 0 && shown.every((f) => expandedIds.has(f.id));
 
   /** Gap index (before feature `index`, or after it for the lower half). */
   const gapFromEvent = (event: React.DragEvent, index: number): number => {
@@ -154,6 +189,19 @@ export function HistoryPanel({ state, onContextMenu }: HistoryPanelProps): JSX.E
           {features.length === 1 ? 'step' : 'steps'}
         </span>
         <span className={panelStyles.headerSpacer} />
+        <Tooltip content={allExpanded ? 'Collapse all steps' : 'Expand all steps'}>
+          <button
+            type="button"
+            className={panelStyles.headerButton}
+            aria-label={allExpanded ? 'Collapse all steps' : 'Expand all steps'}
+            disabled={features.length === 0}
+            onClick={() =>
+              setExpandedIds(allExpanded ? new Set() : new Set(shown.map((f) => f.id)))
+            }
+          >
+            {allExpanded ? <ChevronsDownUp size={14} /> : <ChevronsUpDown size={14} />}
+          </button>
+        </Tooltip>
         <Tooltip
           content={
             state.selection.length === 0
@@ -201,6 +249,7 @@ export function HistoryPanel({ state, onContextMenu }: HistoryPanelProps): JSX.E
                   index={index}
                   state={state}
                   rolledBack={markerIndex >= 0 && index >= markerIndex}
+                  breakpointAfter={markerIndex === index + 1}
                   expanded={expandedIds.has(feature.id)}
                   onToggleExpanded={() => toggleExpanded(feature.id)}
                   menuOpen={menuOpenId === feature.id}
@@ -291,6 +340,8 @@ interface HistoryCardProps {
   index: number;
   /** Below the rollback marker: not evaluated, greyed. */
   rolledBack: boolean;
+  /** The rollback marker (Shapr3D "breakpoint") sits right after this step. */
+  breakpointAfter: boolean;
   state: AssemblerState;
   expanded: boolean;
   onToggleExpanded: () => void;
@@ -305,6 +356,7 @@ function HistoryCard({
   feature,
   index,
   rolledBack,
+  breakpointAfter,
   state,
   expanded,
   onToggleExpanded,
@@ -343,6 +395,24 @@ function HistoryCard({
     >
       <div
         className={styles.cardHeader}
+        tabIndex={renaming ? -1 : 0}
+        aria-label={`${feature.name}${feature.suppressed ? ' (suppressed)' : ''}`}
+        onKeyDown={(event) => {
+          if (renaming || event.target !== event.currentTarget) return;
+          // Shapr3D History: Delete/Backspace suppresses the step, Shift+Delete deletes it.
+          if (event.key === 'Delete' || event.key === 'Backspace') {
+            event.preventDefault();
+            if (event.shiftKey) state.deleteFeature(feature.id);
+            else state.setSuppressed(feature.id, !feature.suppressed);
+          } else if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            state.select({ kind: 'feature', featureId: feature.id });
+            onToggleExpanded();
+          } else if (event.key === 'F2') {
+            event.preventDefault();
+            onRenamingChange(true);
+          }
+        }}
         draggable={!renaming}
         onDragStart={(event) => {
           event.dataTransfer.setData(DRAG_STEP, feature.id);
@@ -419,13 +489,33 @@ function HistoryCard({
                 Rename
               </MenuItem>
               <MenuItem onSelect={() => state.setSuppressed(feature.id, !feature.suppressed)}>
-                {feature.suppressed ? 'Unsuppress' : 'Suppress'}
+                <span className={styles.menuRow}>
+                  {feature.suppressed ? 'Unsuppress' : 'Suppress'}
+                  <span className={styles.menuShortcut}>Del</span>
+                </span>
               </MenuItem>
               <MenuItem
-                disabled={state.activeTool !== null}
-                onSelect={() => state.setRollback(state.features[index + 1]?.id ?? null)}
+                disabled={
+                  state.activeTool !== null ||
+                  (!breakpointAfter && index === state.features.length - 1)
+                }
+                {...(!breakpointAfter && index === state.features.length - 1
+                  ? { title: 'This is the last step; nothing comes after it.' }
+                  : {})}
+                onSelect={() =>
+                  state.setRollback(
+                    breakpointAfter ? null : (state.features[index + 1]?.id ?? null),
+                  )
+                }
               >
-                {rolledBack ? 'Roll forward to here' : 'Roll back to here'}
+                {breakpointAfter ? 'Remove breakpoint' : 'Breakpoint after this step'}
+              </MenuItem>
+              <MenuItem onSelect={() => zoomToStep(state, feature)}>Zoom to</MenuItem>
+              <MenuItem
+                disabled={state.activeTool !== null}
+                onSelect={() => duplicateHistoryStep(state, feature)}
+              >
+                Duplicate
               </MenuItem>
               <MenuSeparator />
               <MenuItem
@@ -441,7 +531,12 @@ function HistoryCard({
                 Move down
               </MenuItem>
               <MenuSeparator />
-              <MenuItem onSelect={() => state.deleteFeature(feature.id)}>Delete</MenuItem>
+              <MenuItem onSelect={() => state.deleteFeature(feature.id)}>
+                <span className={styles.menuRow}>
+                  Delete
+                  <span className={styles.menuShortcut}>Shift+Del</span>
+                </span>
+              </MenuItem>
             </Menu>
           ) : null}
         </div>

@@ -47,11 +47,22 @@ export interface ViewportUiState {
   /** Section > Face: the next click on a planar face sets the section plane. */
   sectionFacePick: boolean;
   setSectionFacePick: (on: boolean) => void;
+  /**
+   * The zoom-dependent grid resolution the viewport currently draws (mm),
+   * `null` before the first frame. Read-out and sketch snapping use it while
+   * the grid is not locked (`model/gridResolution.ts`).
+   */
+  liveGridStep: number | null;
+  setLiveGridStep: (step: number) => void;
 }
 
-export const useViewportUi = create<ViewportUiState>((set) => ({
+export const useViewportUi = create<ViewportUiState>((set, get) => ({
   exportImageOpen: false,
   setExportImageOpen: (open) => set({ exportImageOpen: open }),
   sectionFacePick: false,
   setSectionFacePick: (on) => set({ sectionFacePick: on }),
+  liveGridStep: null,
+  setLiveGridStep: (step) => {
+    if (get().liveGridStep !== step) set({ liveGridStep: step });
+  },
 }));

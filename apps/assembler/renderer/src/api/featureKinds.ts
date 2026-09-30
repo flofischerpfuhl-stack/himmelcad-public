@@ -155,6 +155,9 @@ function normalise(
       if (out.profile !== undefined) out.profile = profileRef(out.profile, 'params.profile');
       if (out.axis !== undefined) out.axis = axisRef(out.axis, 'params.axis');
       return out;
+    case 'rotateAxis':
+      if (out.axis !== undefined) out.axis = axisRef(out.axis, 'params.axis');
+      return out;
     case 'sweep': {
       if (out.profile !== undefined) out.profile = profileRef(out.profile, 'params.profile');
       const path = out.path as Json | undefined;
@@ -350,6 +353,8 @@ function defaults(kind: string, params: Json): Json {
       return { keepOriginal: true };
     case 'transform':
       return { dx: 0, dy: 0, dz: 0, rx: 0, ry: 0, rz: 0, pivot: [0, 0, 0], copy: false };
+    case 'rotateAxis':
+      return { copy: false };
     case 'align':
       return { flip: false, center: true, offset: 0 };
     case 'move':

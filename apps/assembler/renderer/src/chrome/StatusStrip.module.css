@@ -44,3 +44,8 @@
     transition: none;
   }
 }
+
+/* Quick measurement after the selection summary. */
+.quick {
+  color: var(--hc-fg-muted);
+}

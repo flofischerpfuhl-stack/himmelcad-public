@@ -18,6 +18,23 @@ function count(ctx: AssemblerState, kind: SelectionItem['kind']): number {
   return ctx.selection.filter((s) => s.kind === kind).length;
 }
 
+/** Every selected item is a face (at least one). */
+function onlyFaces(ctx: AssemblerState): boolean {
+  return ctx.selection.length > 0 && ctx.selection.every((s) => s.kind === 'face');
+}
+
+/** Exactly two faces, on two different bodies (Shapr3D: Align / Replace Face). */
+function twoFacesOfTwoBodies(ctx: AssemblerState): boolean {
+  const faces = ctx.selection.filter((s) => s.kind === 'face');
+  return (
+    faces.length === 2 &&
+    ctx.selection.length === 2 &&
+    faces[0]!.kind === 'face' &&
+    faces[1]!.kind === 'face' &&
+    faces[0]!.bodyId !== faces[1]!.bodyId
+  );
+}
+
 function nonPlanarFaceSelected(ctx: AssemblerState): boolean {
   return ctx.selection.some((s) => {
     if (s.kind !== 'face') return false;
@@ -73,7 +90,9 @@ const SPECS: readonly FeatureCommandSpec[] = [
     group: 'tools',
     kind: 'offsetFace',
     keywords: ['push', 'pull', 'hole size', 'enlarge', 'thicken', 'direct edit'],
-    recommend: (ctx) => (nonPlanarFaceSelected(ctx) ? 95 : null),
+    // Shapr3D (interaction research §2): selecting a face activates Offset Face.
+    // Two faces of two bodies are an Align case instead.
+    recommend: (ctx) => (onlyFaces(ctx) && !twoFacesOfTwoBodies(ctx) ? 120 : null),
   },
   {
     id: 'tools.deleteFace',
@@ -108,7 +127,10 @@ const SPECS: readonly FeatureCommandSpec[] = [
       'press fit',
       'M3',
     ],
-    recommend: (ctx) => (count(ctx, 'face') === 1 && !nonPlanarFaceSelected(ctx) ? 70 : null),
+    recommend: (ctx) =>
+      ctx.selection.length === 1 && count(ctx, 'face') === 1 && !nonPlanarFaceSelected(ctx)
+        ? 70
+        : null,
   },
   {
     id: 'tools.emboss',
@@ -152,7 +174,18 @@ const SPECS: readonly FeatureCommandSpec[] = [
     label: 'Pattern',
     group: 'transform',
     kind: 'pattern',
-    keywords: ['array', 'repeat', 'copies', 'circular', 'linear'],
+    // "Pattern (3D)" in Shapr3D's manual; lets "p3" find it.
+    keywords: ['pattern 3d', 'array', 'repeat', 'copies', 'circular', 'linear'],
+  },
+  {
+    id: 'transform.rotateAxis',
+    label: 'Rotate Around Axis',
+    group: 'transform',
+    kind: 'rotateAxis',
+    keywords: ['rotate', 'axis', 'hinge', 'pivot', 'turn body', 'spin', 'swing'],
+    // Shapr3D (interaction research §2): a line plus a face suggests Rotate Around Axis.
+    recommend: (ctx) =>
+      count(ctx, 'edge') === 1 && (count(ctx, 'face') >= 1 || count(ctx, 'body') >= 1) ? 112 : null,
   },
   {
     id: 'transform.align',
@@ -160,7 +193,8 @@ const SPECS: readonly FeatureCommandSpec[] = [
     group: 'transform',
     kind: 'align',
     keywords: ['mate', 'snap faces', 'place', 'coplanar'],
-    recommend: () => 80,
+    // Shapr3D: two faces of different bodies suggest Align (and Replace Face).
+    recommend: (ctx) => (twoFacesOfTwoBodies(ctx) ? 115 : null),
   },
 ];
 

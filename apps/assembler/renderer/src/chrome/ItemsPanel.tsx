@@ -23,6 +23,7 @@ import {
   MoreHorizontal,
   PenSquare,
   Target,
+  ZoomIn,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
@@ -58,7 +59,28 @@ import { anchoredMenuStyle } from './anchoredMenu.js';
 import panelStyles from './Panel.module.css';
 import styles from './ItemsPanel.module.css';
 
-type TypeFilter = 'all' | 'bodies' | 'sketches';
+type TypeFilter = 'all' | 'bodies' | 'sketches' | 'meshes';
+
+/** Whether a row passes the Items type filter ("Bodies" lists solids and reference meshes). */
+function passesFilter(filter: TypeFilter, kind: RowInfo['kind']): boolean {
+  switch (filter) {
+    case 'all':
+      return true;
+    case 'bodies':
+      return kind === 'body' || kind === 'mesh';
+    case 'sketches':
+      return kind === 'sketch';
+    case 'meshes':
+      return kind === 'mesh';
+  }
+}
+
+const FILTER_LABEL: Record<TypeFilter, string> = {
+  all: 'All',
+  bodies: 'Bodies',
+  sketches: 'Sketches',
+  meshes: 'Meshes',
+};
 
 const DRAG_MIME = 'application/x-hcasm-items';
 
@@ -129,9 +151,9 @@ export function ItemsPanel({ state, onContextMenu }: ItemsPanelProps): JSX.Eleme
     return map;
   }, [state.evaluation, state.features, state.referenceMeshes, meta]);
 
-  // "Bodies" lists solids and reference meshes; "Sketches" only sketches.
+  // "Bodies" lists solids and reference meshes; "Sketches" only sketches; "Meshes" only meshes.
   const leaves: LeafRow[] = [...rows.values()]
-    .filter((r) => filter === 'all' || (filter === 'sketches') === (r.kind === 'sketch'))
+    .filter((r) => passesFilter(filter, r.kind))
     .map((r) => ({ key: r.key, kind: r.kind }));
   let tree = buildItemTree(leaves, meta);
   if (filter !== 'all') tree = pruneEmptyFolders(tree);
@@ -434,18 +456,21 @@ export function ItemsPanel({ state, onContextMenu }: ItemsPanelProps): JSX.Eleme
         </div>
       </div>
       <div className={styles.filters} role="radiogroup" aria-label="Show item types">
-        {(['all', 'bodies', 'sketches'] as const).map((f) => (
-          <button
-            key={f}
-            type="button"
-            role="radio"
-            aria-checked={filter === f}
-            className={`${styles.filter} ${filter === f ? styles.filterActive : ''}`}
-            onClick={() => setFilter(f)}
-          >
-            {f === 'all' ? 'All' : f === 'bodies' ? 'Bodies' : 'Sketches'}
-          </button>
-        ))}
+        {(['all', 'bodies', 'sketches', 'meshes'] as const)
+          // "Meshes" only once the project has a reference mesh (or it is the active filter).
+          .filter((f) => f !== 'meshes' || meshCount > 0 || filter === 'meshes')
+          .map((f) => (
+            <button
+              key={f}
+              type="button"
+              role="radio"
+              aria-checked={filter === f}
+              className={`${styles.filter} ${filter === f ? styles.filterActive : ''}`}
+              onClick={() => setFilter(f)}
+            >
+              {FILTER_LABEL[f]}
+            </button>
+          ))}
       </div>
       <div
         ref={bodyRef}
@@ -679,6 +704,21 @@ function LeafRowView(props: LeafRowProps): JSX.Element {
         </span>
       )}
       <NameField name={row.name} editing={props.renaming} onDone={props.onRenameDone} />
+      {row.kind !== 'mesh' ? (
+        <button
+          type="button"
+          className={styles.rowButton}
+          aria-label={`Zoom to ${row.name}`}
+          title="Zoom to"
+          onClick={(event) => {
+            event.stopPropagation();
+            // Shapr3D Items "zoom to": frames the item without changing the selection.
+            useWorkspaceStore.getState().sendCamera({ kind: 'fitItems', items: [row.item] });
+          }}
+        >
+          <ZoomIn size={12} />
+        </button>
+      ) : null}
       {bodyId ? (
         <button
           type="button"

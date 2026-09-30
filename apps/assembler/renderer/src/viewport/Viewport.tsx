@@ -51,6 +51,7 @@ import {
   rollBy,
   viewProjectionMatrix,
   withFov,
+  worldPerPixel as cameraWorldPerPixel,
   zoomTowards,
   type CameraPose,
   type CameraPresetName,
@@ -110,6 +111,23 @@ import {
   type ToolHandleSet,
 } from './toolHandles.js';
 import { acceptPick } from '../model/featureTools.js';
+import { emptyClickFinishes } from '../model/toolFinish.js';
+import { adaptiveGridStep } from '../model/gridResolution.js';
+
+/**
+ * The grid step to draw: the zoom-dependent resolution at the camera target
+ * (published as `viewportUi.liveGridStep` for the read-out and sketch
+ * snapping) unless the grid is locked (`viewState.gridAuto` off).
+ */
+function gridStepFor(
+  view: { gridAuto: boolean; gridStep: number },
+  pose: CameraPose,
+  cssHeight: number,
+): number {
+  const live = adaptiveGridStep(cameraWorldPerPixel(pose, pose.distance, cssHeight));
+  useViewportUi.getState().setLiveGridStep(live);
+  return view.gridAuto ? live : view.gridStep;
+}
 import { errorHighlightOf } from './errorHighlight.js';
 import type { AngleHandleState } from './scene.js';
 import styles from './Viewport.module.css';
@@ -630,6 +648,12 @@ export function Viewport(props: ViewportProps): JSX.Element {
           next = fitPose(bounds.length > 0 ? bounds : visibleBodies(), current, aspect);
           break;
         }
+        case 'fitItems': {
+          const bounds = cameraTargetBounds(sceneModel(s), command.items);
+          if (bounds.length === 0) return;
+          next = fitPose(bounds, current, aspect);
+          break;
+        }
         case 'direction':
           next = poseFromDirection(command.direction, current);
           break;
@@ -797,7 +821,7 @@ export function Viewport(props: ViewportProps): JSX.Element {
         materials: bodyMaterials(current.features, activeFeatureCount(current)),
         highQuality: usePreferences.getState().renderQuality === 'high',
         gridVisible: current.viewState.gridVisible,
-        gridStep: current.viewState.gridStep,
+        gridStep: gridStepFor(current.viewState, poseRef.current, height),
         selection: current.selection,
         hover: current.hover,
         movePreview,
@@ -816,6 +840,7 @@ export function Viewport(props: ViewportProps): JSX.Element {
         pickSketchLines:
           currentTool?.kind === 'feature' &&
           (currentTool.draft.kind === 'revolve' ||
+            currentTool.draft.kind === 'rotateAxis' ||
             currentTool.draft.kind === 'pattern' ||
             currentTool.draft.kind === 'rib'),
         previewNewBodyIds: scene.previewNewBodyIds,
@@ -1195,9 +1220,11 @@ export function Viewport(props: ViewportProps): JSX.Element {
         return;
       }
       if (tool?.kind === 'edgeBlend' || tool?.kind === 'shell' || tool?.kind === 'boolean') {
-        // Adaptive tools: clicking empty space finishes (Shapr3D); edges add/remove.
-        if (!pick) store.commit();
-        else if (pick.kind === 'edge' && tool.kind === 'edgeBlend') {
+        // Adaptive tools: clicking empty space finishes (Shapr3D; `emptyClickFinishes`,
+        // shown in the tool pill); edges add/remove.
+        if (!pick) {
+          if (emptyClickFinishes(tool)) store.commit();
+        } else if (pick.kind === 'edge' && tool.kind === 'edgeBlend') {
           store.toggleBlendEdge(pick.bodyId, pick.edgeKey);
         } else if (pick.kind === 'face' && tool.kind === 'shell') {
           // Faces to open can be added/removed while the shell tool runs.
@@ -1237,7 +1264,7 @@ export function Viewport(props: ViewportProps): JSX.Element {
             const after = useAssemblerStore.getState().activeTool;
             if (after?.kind === 'feature' && after.draft !== before) return;
           }
-          store.commit();
+          if (emptyClickFinishes(tool)) store.commit();
           return;
         }
         if (pick.kind === 'sketchLine') {
@@ -1710,7 +1737,13 @@ export function Viewport(props: ViewportProps): JSX.Element {
       if (gesture.button !== 0) return;
       if (gesture.mode.kind !== 'none' && gesture.mode.kind !== 'box') return; // a handle click
 
-      handleClick(event.clientX, event.clientY, event.shiftKey, false);
+      // Settings › Selection extension: every click adds, like touch taps (Shapr3D, macOS).
+      handleClick(
+        event.clientX,
+        event.clientY,
+        event.shiftKey || usePreferences.getState().selectionExtension,
+        false,
+      );
     },
     [contextMenuAt, finishBox, handleClick, onTouchUp],
   );

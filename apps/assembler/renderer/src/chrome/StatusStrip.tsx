@@ -72,9 +72,19 @@ export function StatusStrip({ state }: { state: AssemblerState }): JSX.Element |
 
   const summary = selectionSummary(state.selection);
   if (!summary) return null;
+  // Shapr3D shows quick measurement data for the selection at the bottom even
+  // without the Measure panel (interaction research §5).
+  const quick =
+    measureMeshSelection(state, units) ??
+    measureSelection(
+      { ...state.evaluation, bodies: withDisplayNames(state.evaluation.bodies, meta) },
+      state.selection,
+      units,
+    );
   return (
     <div className={styles.root} role="status">
       {summary}
+      {quick ? <span className={styles.quick}> · {quick}</span> : null}
     </div>
   );
 }

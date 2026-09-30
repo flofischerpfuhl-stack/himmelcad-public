@@ -164,3 +164,15 @@
     animation: none;
   }
 }
+
+/* "Click empty space to finish": a quiet chip, so the Done-on-empty-click rule is visible. */
+.finishHint {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border: 1px dashed var(--hc-border-default);
+  border-radius: var(--hc-radius-sm);
+  font-family: var(--hc-font-ui);
+  font-size: 10px;
+  color: var(--hc-fg-subtle);
+  white-space: nowrap;
+}

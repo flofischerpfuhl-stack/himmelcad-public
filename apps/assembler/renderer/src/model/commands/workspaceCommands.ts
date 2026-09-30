@@ -12,7 +12,13 @@ import {
   type SelectionItem,
 } from '../store.js';
 import { usePreferences } from '../preferences.js';
-import { MAX_SAVED_VIEWS, useWorkspaceStore } from '../workspace.js';
+import { viewDirection } from '../../viewport/camera.js';
+import {
+  MAX_SAVED_VIEWS,
+  currentCameraPose,
+  nearestOrthoDirection,
+  useWorkspaceStore,
+} from '../workspace.js';
 import { bodyRowKey, meshRowKey, sketchRowKey, useItemsStore } from '../items.js';
 import type { Command, CommandAvailability } from './registry.js';
 
@@ -188,6 +194,22 @@ export const WORKSPACE_COMMANDS: readonly Command[] = [
     },
   },
   {
+    id: 'view.nearestOrtho',
+    label: 'Nearest ortho view',
+    group: 'view',
+    keywords: ['orthogonal', 'snap view', 'closest view', 'align view', 'square'],
+    adaptive: false,
+    availability: () =>
+      currentCameraPose() ? enabled : { enabled: false, reason: 'The 3D view is not available.' },
+    run: () => {
+      const pose = currentCameraPose();
+      if (!pose) return;
+      useWorkspaceStore
+        .getState()
+        .sendCamera({ kind: 'direction', direction: nearestOrthoDirection(viewDirection(pose)) });
+    },
+  },
+  {
     id: 'view.projection',
     // Names the projection it switches to (menus show no toggle state).
     get label() {
@@ -212,7 +234,10 @@ export const WORKSPACE_COMMANDS: readonly Command[] = [
   },
   {
     id: 'view.saveView',
-    label: 'Save view',
+    // Shows how many of the 8 slots are used; a saved view also keeps the section state.
+    get label() {
+      return `Save view (${useWorkspaceStore.getState().savedViews.length}/${MAX_SAVED_VIEWS})`;
+    },
     group: 'view',
     keywords: ['camera', 'bookmark', 'saved views', 'store view'],
     adaptive: false,

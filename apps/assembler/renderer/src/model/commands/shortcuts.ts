@@ -54,15 +54,28 @@ function normalizeCombo(event: KeyEvent): string {
   return parts.join('+');
 }
 
-/** Every command per shortcut (several only in disjoint `shortcutScope`s, see `shortcutSheet.ts`). */
-const SHORTCUT_MAP: ReadonlyMap<string, readonly Command[]> = (() => {
+/**
+ * Every command per shortcut (several only in disjoint `shortcutScope`s, see
+ * `shortcutSheet.ts`). Rebuilt after custom shortcuts change
+ * (`shortcutOverrides.ts` → {@link invalidateShortcutMap}).
+ */
+let shortcutMap: ReadonlyMap<string, readonly Command[]> | null = null;
+
+function currentShortcutMap(): ReadonlyMap<string, readonly Command[]> {
+  if (shortcutMap) return shortcutMap;
   const map = new Map<string, Command[]>();
   for (const c of COMMANDS) {
     if (c.shortcut === undefined) continue;
     map.set(c.shortcut, [...(map.get(c.shortcut) ?? []), c]);
   }
+  shortcutMap = map;
   return map;
-})();
+}
+
+/** Drops the cached key → command map (the commands' shortcuts changed). */
+export function invalidateShortcutMap(): void {
+  shortcutMap = null;
+}
 
 /**
  * Resolves a key event to the command it should trigger, or `null` if
@@ -88,7 +101,7 @@ export function resolveShortcut(
   const hasModifier = event.ctrlKey || event.metaKey || event.altKey;
   if (!hasModifier && ctx.activeTool?.phase === 'numericEditing') return null;
   const combo = normalizeCombo(event);
-  const candidates = SHORTCUT_MAP.get(combo) ?? [];
+  const candidates = currentShortcutMap().get(combo) ?? [];
   return candidates.find((c) => c.shortcutScope === undefined || c.shortcutScope === scope) ?? null;
 }
 

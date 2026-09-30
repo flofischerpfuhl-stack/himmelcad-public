@@ -62,8 +62,10 @@ function drawingTool(
     keywords: ['sketch', 'draw', ...keywords],
     availability: (ctx) => {
       if (session()) return { enabled: true, recommended: session()!.tool.kind === tool };
+      // On a selected planar face the tools start a sketch there: listed for the
+      // face, but not "recommended" — New Sketch is the one sketch suggestion.
       const face = selectedPlanarFace(ctx);
-      return { enabled: true, recommended: face !== null, priority: face ? 65 : 0 };
+      return { enabled: true, priority: face ? 30 : 0 };
     },
     run: (ctx) => {
       if (session()) useSketchStore.getState().setTool(tool);

@@ -9,7 +9,7 @@ import test from 'node:test';
 
 import type { KernelAdapter } from '../../renderer/src/kernel/adapter.js';
 import type { EvaluationRequest } from '../../renderer/src/kernel/types.js';
-import { findCommand } from '../../renderer/src/model/commands/registry.js';
+import { findCommand, resolveAdaptive } from '../../renderer/src/model/commands/registry.js';
 import {
   createDemoDocument,
   type ExtrudeFeature,
@@ -419,13 +419,16 @@ void test('boolean tool: first selected body is the target; operation switch; Do
   assert.equal(store.getState().evaluation.bodies.length, 2);
 });
 
-void test('commands: Circle is recommended on a planar face; section axis/flip need Section View on', async () => {
+void test('commands: Circle is offered on a planar face (New Sketch is the recommended one); section axis/flip need Section View on', async () => {
   await load(box('a', 0, 0, 40, 30, 10));
   const circle = findCommand('sketch.circle')!;
   assert.equal(circle.availability(store.getState()).enabled, true);
-  assert.equal(circle.availability(store.getState()).recommended, false);
+  assert.equal(circle.availability(store.getState()).priority ?? 0, 0);
   store.getState().select({ kind: 'face', ...topFace() });
-  assert.equal(circle.availability(store.getState()).recommended, true);
+  assert.ok((circle.availability(store.getState()).priority ?? 0) > 0);
+  assert.equal(circle.availability(store.getState()).recommended ?? false, false);
+  assert.equal(findCommand('sketch.new')!.availability(store.getState()).recommended, true);
+  assert.ok(resolveAdaptive(store.getState()).some((c) => c.id === 'sketch.circle'));
   const flip = findCommand('modes.sectionFlip')!;
   assert.equal(flip.availability(store.getState()).enabled, false);
   store.getState().setSectionEnabled(true);

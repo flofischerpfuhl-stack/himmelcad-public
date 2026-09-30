@@ -681,6 +681,20 @@ export const FEATURE_KIND_SCHEMAS: Record<string, FeatureKindSpec> = {
       'Missing components default to 0, the pivot to the world origin.',
     ),
   },
+  rotateAxis: {
+    label: 'Rotate',
+    summary:
+      'Rotates bodies by `angle` degrees about an axis (a straight or circular edge, a sketch line or a world axis) — "Rotate Around Axis"; `copy` keeps the originals and adds rotated copies.',
+    params: obj(
+      {
+        bodyIds: { type: 'array', items: str, minItems: 1 },
+        axis: ref('AxisRef'),
+        angle: num,
+        copy: { type: 'boolean', default: false },
+      },
+      ['bodyIds', 'axis', 'angle'],
+    ),
+  },
   align: {
     label: 'Align',
     summary:

@@ -71,6 +71,8 @@ export interface ProjectViewState {
     visible?: boolean;
     snap?: boolean;
     step?: number;
+    /** Zoom-dependent resolution; absent in older files, which then reopen locked at `step`. */
+    auto?: boolean;
   };
   panels?: {
     items?: boolean;

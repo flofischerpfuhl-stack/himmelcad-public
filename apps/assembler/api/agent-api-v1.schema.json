@@ -1764,6 +1764,35 @@
         "description": "Missing components default to 0, the pivot to the world origin."
       }
     },
+    "rotateAxis": {
+      "label": "Rotate",
+      "summary": "Rotates bodies by `angle` degrees about an axis (a straight or circular edge, a sketch line or a world axis) — \"Rotate Around Axis\"; `copy` keeps the originals and adds rotated copies.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "bodyIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
+          },
+          "axis": {
+            "$ref": "#/$defs/AxisRef"
+          },
+          "angle": {
+            "type": "number"
+          },
+          "copy": {
+            "type": "boolean",
+            "default": false
+          }
+        },
+        "required": ["bodyIds", "axis", "angle"],
+        "additionalProperties": false
+      }
+    },
     "align": {
       "label": "Align",
       "summary": "Moves a body so its planar `face` lies on the plane of `target` (a planar face of another body): face to face by default, same direction with flip; `offset` leaves a gap; `center` slides the face centres together.",

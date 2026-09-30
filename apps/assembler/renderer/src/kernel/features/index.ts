@@ -4,7 +4,14 @@
  */
 import type { Feature } from '../../model/document.js';
 import { isModelingFeature } from '../../model/features.js';
-import { applyAlign, applyMirror, applyPattern, applySplit, applyTransform } from './bodyOps.js';
+import {
+  applyAlign,
+  applyMirror,
+  applyPattern,
+  applyRotateAxis,
+  applySplit,
+  applyTransform,
+} from './bodyOps.js';
 import { applyDeleteFace, applyOffsetFace } from './faceOps.js';
 import { applyDraft } from './draft.js';
 import { applyEmboss } from './emboss.js';
@@ -36,6 +43,8 @@ export function applyModelingFeature(
       return applySplit(feature, ctx, kit);
     case 'transform':
       return applyTransform(feature, ctx, kit);
+    case 'rotateAxis':
+      return applyRotateAxis(feature, ctx, kit);
     case 'align':
       return applyAlign(feature, ctx, kit);
     case 'offsetFace':

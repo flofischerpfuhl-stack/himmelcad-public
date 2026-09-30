@@ -138,6 +138,20 @@ export interface TransformFeature extends FeatureBase {
 }
 
 /**
+ * Rotates bodies by `angle` degrees about an axis — a straight edge, the
+ * axis of a circular edge, a sketch line or a world axis (Shapr3D "Rotate
+ * Around Axis"). With `copy` the rotated bodies are new bodies and the
+ * originals stay.
+ */
+export interface RotateAxisFeature extends FeatureBase {
+  kind: 'rotateAxis';
+  bodyIds: string[];
+  axis: AxisRef;
+  angle: number;
+  copy: boolean;
+}
+
+/**
  * Moves body `bodyId` so its planar `face` lies on the plane of `target`
  * (a planar face of another body): opposed (touching) by default,
  * facing the same way with `flip`; `offset` leaves a gap along the target
@@ -178,6 +192,7 @@ export type ModelingFeature =
   | PatternFeature
   | SplitFeature
   | TransformFeature
+  | RotateAxisFeature
   | AlignFeature
   | OffsetFaceFeature
   | DeleteFaceFeature
@@ -192,6 +207,7 @@ export const MODELING_FEATURE_KINDS: readonly ModelingFeature['kind'][] = [
   'pattern',
   'split',
   'transform',
+  'rotateAxis',
   'align',
   'offsetFace',
   'deleteFace',
@@ -211,6 +227,7 @@ export const MODELING_FEATURE_LABEL: Record<ModelingFeature['kind'], string> = {
   pattern: 'Pattern',
   split: 'Split',
   transform: 'Move/Rotate',
+  rotateAxis: 'Rotate',
   align: 'Align',
   offsetFace: 'Offset Face',
   deleteFace: 'Delete Face',

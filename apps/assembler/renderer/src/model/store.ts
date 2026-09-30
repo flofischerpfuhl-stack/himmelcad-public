@@ -36,6 +36,7 @@ import { baseEdgeKey, baseFaceKey, edgeSignatureOf, faceSignatureOf } from '../k
 import type { ProjectViewState } from './project/format.js';
 import type { ReferenceMesh, ReferenceMeshTransform } from './referenceMesh.js';
 import { viewDisplayFromProject } from './viewDisplay.js';
+import { setSectionAccess } from './workspace.js';
 import {
   EMPTY_EVALUATION,
   type Body,
@@ -278,7 +279,10 @@ export interface ViewState {
   measureEnabled: boolean;
   gridVisible: boolean;
   snapToGrid: boolean;
+  /** Locked grid resolution, mm (used while `gridAuto` is off). */
   gridStep: number;
+  /** The grid follows the zoom (Shapr3D default); off = locked at `gridStep` (`model/gridResolution.ts`). */
+  gridAuto: boolean;
   /** Bumping `nonce` is the signal to (re-)apply `preset`. */
   cameraRequest: { preset: CameraPreset; nonce: number } | null;
   /** B-rep edge lines on shaded bodies ("Shaded with edges"). */
@@ -552,6 +556,8 @@ export interface AssemblerState {
   setGridVisible: (visible: boolean) => void;
   setSnapToGrid: (enabled: boolean) => void;
   setGridStep: (step: number) => void;
+  /** Grid resolution follows the zoom (`true`) or is locked at `gridStep`. */
+  setGridAuto: (auto: boolean) => void;
   requestCamera: (preset: CameraPreset) => void;
 
   panels: PanelsState;
@@ -2037,6 +2043,7 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
       gridVisible: true,
       snapToGrid: true,
       gridStep: 5,
+      gridAuto: true,
       cameraRequest: null,
       edgesVisible: true,
       hiddenEdgesVisible: false,
@@ -2090,6 +2097,7 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
     setSnapToGrid: (enabled) =>
       set((s) => ({ viewState: { ...s.viewState, snapToGrid: enabled } })),
     setGridStep: (step) => set((s) => ({ viewState: { ...s.viewState, gridStep: step } })),
+    setGridAuto: (auto) => set((s) => ({ viewState: { ...s.viewState, gridAuto: auto } })),
     requestCamera: (preset) =>
       set((s) => ({
         viewState: {
@@ -2129,6 +2137,12 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
           ...(view.grid?.visible !== undefined ? { gridVisible: view.grid.visible } : {}),
           ...(view.grid?.snap !== undefined ? { snapToGrid: view.grid.snap } : {}),
           ...(typeof view.grid?.step === 'number' ? { gridStep: view.grid.step } : {}),
+          // Projects written before the zoom-dependent grid kept a fixed step: they reopen locked.
+          ...(typeof view.grid?.auto === 'boolean'
+            ? { gridAuto: view.grid.auto }
+            : typeof view.grid?.step === 'number'
+              ? { gridAuto: false }
+              : {}),
           ...viewDisplayFromProject(view),
         };
         const preset = view.camera?.preset;
@@ -2202,6 +2216,33 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
       return id;
     },
   };
+});
+
+// Saved views carry the section state (`workspace.ts` `SavedSection`).
+setSectionAccess({
+  read: () => {
+    const v = useAssemblerStore.getState().viewState;
+    return {
+      enabled: v.sectionEnabled,
+      axis: v.sectionAxis,
+      offset: v.sectionOffset,
+      flipped: v.sectionFlipped,
+      plane: v.sectionPlane,
+      sectionOnly: v.sectionOnly,
+    };
+  },
+  apply: (section) =>
+    useAssemblerStore.setState((s) => ({
+      viewState: {
+        ...s.viewState,
+        sectionEnabled: section.enabled,
+        sectionAxis: section.axis,
+        sectionOffset: section.offset,
+        sectionFlipped: section.flipped,
+        sectionPlane: section.plane,
+        sectionOnly: section.enabled && section.sectionOnly,
+      },
+    })),
 });
 
 export type { Body, EvaluationResult, ExtrudeProfileRef, Feature, Plane };
