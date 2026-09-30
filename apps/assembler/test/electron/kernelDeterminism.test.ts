@@ -22,7 +22,7 @@ import {
   describeBody,
   describeEdge,
   describeFace,
-} from '../../renderer/src/interface/agent-api/describe.js';
+} from '../../renderer/src/foundation/commands/api/describe.js';
 import { loadProjectFile, saveProjectFile } from '../../renderer/src/foundation/document/format.js';
 import { BENCH_PARTS, sixtyPartBench } from '../bench/parts.js';
 import { loadNodeKernel } from '../kernel/nodeKernel.js';

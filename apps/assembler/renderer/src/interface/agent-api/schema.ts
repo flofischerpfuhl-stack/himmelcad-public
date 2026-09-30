@@ -39,31 +39,27 @@ import {
   PRINT_DEFS,
   PRINT_FEATURE_KIND_SCHEMAS,
 } from '../../api/printSchema.js';
+import type { FeatureKindSpec, MethodSpec } from '../../foundation/commands/api/contract.js';
+import {
+  API_DEFS,
+  API_FEATURE_KINDS,
+  API_METHODS,
+  API_ORDER,
+  registerApiContribution,
+  type ApiMethod,
+} from '../../foundation/commands/api/registry.js';
 import type { JsonSchema } from '../../foundation/commands/api/validate.js';
 import { OFFSET_FACE_MODES } from '../../model/features.js';
 
 export const API_ID = 'hcasm.agent-api';
 export const API_VERSION = 1;
 
-export type Capability =
-  | 'document.read'
-  | 'document.write'
-  | 'view.write'
-  | 'filesystem.read'
-  | 'filesystem.write';
-
-export type MethodKind = 'meta' | 'query' | 'command';
-
-export interface MethodSpec {
-  kind: MethodKind;
-  capability: Capability;
-  summary: string;
-  params: JsonSchema;
-  /** Prose description of the result shape. */
-  result: string;
-  /** `true` if the command is staged when a transaction is open. */
-  transactional?: boolean;
-}
+export type {
+  Capability,
+  FeatureKindSpec,
+  MethodKind,
+  MethodSpec,
+} from '../../foundation/commands/api/contract.js';
 
 const str: JsonSchema = { type: 'string', minLength: 1 };
 const num: JsonSchema = { type: 'number' };
@@ -91,7 +87,7 @@ function obj(
 
 const ref = (name: string): JsonSchema => ({ $ref: `#/$defs/${name}` });
 
-export const DEFS: Record<string, JsonSchema> = {
+const DEFS_HEAD: Record<string, JsonSchema> = {
   Vec3: { type: 'array', items: num, minItems: 3, maxItems: 3 },
   FaceSignature: obj(
     {
@@ -135,7 +131,9 @@ export const DEFS: Record<string, JsonSchema> = {
     ['bodyId', 'select'],
   ),
   FaceInput: { oneOf: [ref('FaceRef'), ref('Selector')] },
-  PrintSettings: PRINT_SETTINGS_SCHEMA,
+};
+
+const DEFS_MID: Record<string, JsonSchema> = {
   EdgeInput: { oneOf: [ref('EdgeRef'), ref('Selector')] },
   MeasureTarget: {
     description:
@@ -316,6 +314,10 @@ export const DEFS: Record<string, JsonSchema> = {
     ['id', 'name', 'kind', 'refs', 'value'],
     'Driving dimension (mm, angle in degrees); `driven: true` makes it a reference dimension that only measures (sketch.setReference). `offset`/`along` place the label. refs: distance 1 line / 2 points / point + line / 2 parallel lines; horizontal/verticalDistance 1 line or 2 points; radius/diameter 1 circle/arc; angle 2 lines. `expression` (e.g. "d1 / 2 + 3") uses names of other driving dimensions of the sketch, or of a document parameter (`parameter.list`); editing a parameter re-solves every sketch that uses it.',
   ),
+};
+
+/** Moves to the parameters module with its methods. */
+const DEFS_PARAMETER: Record<string, JsonSchema> = {
   Parameter: obj(
     {
       id: str,
@@ -327,6 +329,9 @@ export const DEFS: Record<string, JsonSchema> = {
     ['id', 'name', 'unit', 'value'],
     'Document parameter ("variable"): `value` is always the last resolved value; `expression` (e.g. "wall * 2") is the source formula when the value is computed from other parameters. Usable from sketch dimension expressions and the numeric fields of extrude (distance), fillet (radius, radius2), chamfer (distance, distance2), shell/rib/thicken (thickness), hole (diameter) and draft (angle) via `<field>Expression`.',
   ),
+};
+
+const DEFS_TAIL: Record<string, JsonSchema> = {
   SketchPlane: {
     oneOf: [
       obj({ kind: { const: 'plane' }, plane: { enum: ['XY', 'XZ', 'YZ'] }, offset: num }, [
@@ -494,7 +499,6 @@ export const DEFS: Record<string, JsonSchema> = {
       obj({ kind: { const: 'feature' }, featureId: str }, ['kind', 'featureId']),
     ],
   },
-  ...PRINT_DEFS,
 };
 
 const operation: JsonSchema = {
@@ -504,20 +508,12 @@ const operation: JsonSchema = {
     'New body, or join into / cut from / intersect with `targetBodyId` (default: the most recently changed body).',
 };
 
-export interface FeatureKindSpec {
-  /** History-card name prefix ("Extrude" → "Extrude 2"). */
-  label: string;
-  summary: string;
-  /** Schema of `params` (the stored fields of this kind). */
-  params: JsonSchema;
-}
-
 /**
  * Parameter schemas of the feature kinds this build knows. A feature kind
  * added to `model/document.ts` should get an entry here; until it does, the
  * API still accepts it generically (validated by the project format).
  */
-export const FEATURE_KIND_SCHEMAS: Record<string, FeatureKindSpec> = {
+const CORE_FEATURE_KIND_SCHEMAS: Record<string, FeatureKindSpec> = {
   sketch: {
     label: 'Sketch',
     summary:
@@ -922,7 +918,6 @@ export const FEATURE_KIND_SCHEMAS: Record<string, FeatureKindSpec> = {
     summary: 'Removes faces (holes, fillets, chamfers) of one body and heals it.',
     params: obj({ faces: { type: 'array', items: ref('FaceInput'), minItems: 1 } }, ['faces']),
   },
-  ...PRINT_FEATURE_KIND_SCHEMAS,
 };
 
 const scope: JsonSchema = {
@@ -950,7 +945,7 @@ const meshExportParams = (extra: Record<string, JsonSchema>) =>
 const RESULT_PARAMETER_EDIT =
   '{parameter: Parameter, revision, committed, resolvedSketchIds (sketches re-solved), changedFeatureIds, errors, warnings, bodies}';
 
-export const METHODS: Record<string, MethodSpec> = {
+const METHODS_HEAD: Record<string, MethodSpec> = {
   'api.hello': {
     kind: 'meta',
     capability: 'document.read',
@@ -1052,6 +1047,10 @@ export const METHODS: Record<string, MethodSpec> = {
     params: obj({ items: { type: 'array', items: ref('SelectionItem') } }, ['items']),
     result: '{selection}',
   },
+};
+
+/** Moves to the parameters module with its handlers. */
+const METHODS_PARAMETERS: Record<string, MethodSpec> = {
   'parameters.list': {
     kind: 'query',
     capability: 'document.read',
@@ -1102,6 +1101,9 @@ export const METHODS: Record<string, MethodSpec> = {
     params: obj({ parameterId: str, expectedRevision: revision }, ['parameterId']),
     result: '{parameterId, revision, committed, errors, warnings, bodies}',
   },
+};
+
+const METHODS_TAIL: Record<string, MethodSpec> = {
   'measure.get': {
     kind: 'query',
     capability: 'document.read',
@@ -1674,9 +1676,45 @@ export const METHODS: Record<string, MethodSpec> = {
     }),
     result: '{text?, path?, byteLength}',
   },
-  ...PRINT_METHODS,
-  ...INTEROP_METHODS,
 };
+
+const spec = (methods: Record<string, MethodSpec>): Record<string, ApiMethod> =>
+  Object.fromEntries(Object.entries(methods).map(([name, s]) => [name, { spec: s }]));
+
+// The agent-api module's own part of the contract, plus the parts of the
+// modules that do not register theirs yet (phase B moves each to its module).
+registerApiContribution('agent-api', {
+  defs: [
+    { order: API_ORDER.defs.coreHead, defs: DEFS_HEAD },
+    { order: API_ORDER.defs.printSettings, defs: { PrintSettings: PRINT_SETTINGS_SCHEMA } },
+    { order: API_ORDER.defs.coreMid, defs: DEFS_MID },
+    { order: API_ORDER.defs.parameter, defs: DEFS_PARAMETER },
+    { order: API_ORDER.defs.coreTail, defs: DEFS_TAIL },
+    { order: API_ORDER.defs.printFeatures, defs: PRINT_DEFS },
+  ],
+  featureKinds: [
+    { order: API_ORDER.featureKinds.core, kinds: CORE_FEATURE_KIND_SCHEMAS },
+    { order: API_ORDER.featureKinds.printFeatures, kinds: PRINT_FEATURE_KIND_SCHEMAS },
+  ],
+  methods: [
+    { order: API_ORDER.methods.coreHead, methods: spec(METHODS_HEAD) },
+    { order: API_ORDER.methods.parameters, methods: spec(METHODS_PARAMETERS) },
+    { order: API_ORDER.methods.coreTail, methods: spec(METHODS_TAIL) },
+    { order: API_ORDER.methods.print, methods: spec(PRINT_METHODS) },
+    { order: API_ORDER.methods.interop, methods: spec(INTEROP_METHODS) },
+  ],
+});
+
+/** Every `$defs` entry of this build (live, composed from the modules' registrations). */
+export const DEFS: Record<string, JsonSchema> = API_DEFS;
+/**
+ * Parameter schemas of the feature kinds this build knows (live). A feature
+ * kind's module registers its entry; until it does, the API still accepts
+ * the kind generically (validated by the project format).
+ */
+export const FEATURE_KIND_SCHEMAS: Record<string, FeatureKindSpec> = API_FEATURE_KINDS;
+/** Every method of this build (live). */
+export const METHODS: Record<string, MethodSpec> = API_METHODS;
 
 /** The full contract document returned by `api.describe` and checked in as JSON. */
 export const AGENT_API_SCHEMA = {

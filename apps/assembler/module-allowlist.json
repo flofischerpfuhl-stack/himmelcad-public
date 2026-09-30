@@ -14,15 +14,6 @@
     },
     {
       "from": "commands",
-      "to": "agent-api",
-      "rule": "upward",
-      "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
-      "edges": [
-        "renderer/src/foundation/commands/api/references.ts -> renderer/src/interface/agent-api/describe.ts"
-      ]
-    },
-    {
-      "from": "commands",
       "to": "display",
       "rule": "upward",
       "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
@@ -127,13 +118,6 @@
     },
     {
       "from": "interop",
-      "to": "agent-api",
-      "rule": "upward",
-      "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
-      "edges": ["renderer/src/api/interopApi.ts -> renderer/src/interface/agent-api/schema.ts"]
-    },
-    {
-      "from": "interop",
       "to": "print",
       "rule": "cross-domain",
       "reason": "Known at the start of the ADR 0032 restructure (phase A): domain modules talk through foundation contracts and registrations, not directly.",
@@ -153,13 +137,6 @@
         "renderer/src/interop/stepTree.ts -> renderer/src/interface/shell-ui/items.ts",
         "renderer/src/interop/ui/InteropChrome.tsx -> renderer/src/interface/shell-ui/workspace.ts"
       ]
-    },
-    {
-      "from": "measure",
-      "to": "agent-api",
-      "rule": "upward",
-      "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
-      "edges": ["renderer/src/api/measureApi.ts -> renderer/src/interface/agent-api/describe.ts"]
     },
     {
       "from": "measure",
@@ -241,13 +218,6 @@
         "renderer/src/chrome/ParametersPanel.tsx -> renderer/src/interface/shell-ui/Panel.module.css",
         "renderer/src/chrome/ParametersPanel.tsx -> renderer/src/interface/shell-ui/expressionSuggest.ts"
       ]
-    },
-    {
-      "from": "print",
-      "to": "agent-api",
-      "rule": "upward",
-      "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
-      "edges": ["renderer/src/api/printApi.ts -> renderer/src/interface/agent-api/schema.ts"]
     },
     {
       "from": "print",

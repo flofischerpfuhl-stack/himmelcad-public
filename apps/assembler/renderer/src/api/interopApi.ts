@@ -34,7 +34,8 @@ import type { AssemblerState, SelectionItem } from '../foundation/commands/store
 import { detectRegions } from '../foundation/sketch-solver/regions.js';
 import { ApiError } from '../foundation/commands/api/errors.js';
 import { resolveFaceInput } from '../foundation/commands/api/references.js';
-import type { MethodSpec } from '../interface/agent-api/schema.js';
+
+import type { MethodSpec } from '../foundation/commands/api/contract.js';
 import type { JsonSchema } from '../foundation/commands/api/validate.js';
 
 type Json = Record<string, unknown>;

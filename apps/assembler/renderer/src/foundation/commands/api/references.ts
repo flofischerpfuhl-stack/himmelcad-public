@@ -16,7 +16,7 @@ import {
   findBody,
   selectEdges,
   selectFaces,
-} from '../../../interface/agent-api/describe.js';
+} from './describe.js';
 import { ApiError } from './errors.js';
 
 type Json = Record<string, unknown>;

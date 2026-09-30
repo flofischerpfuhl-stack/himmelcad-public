@@ -78,7 +78,6 @@ import {
   interopFormats,
   meshToSolid,
   stepExportOptions,
-  type InteropContext,
 } from '../../api/interopApi.js';
 import { stepAssemblyFromItems } from '../../interop/stepTree.js';
 import { useItemsStore } from '../shell-ui/items.js';
@@ -87,7 +86,7 @@ import {
   loadProjectFile,
   saveProjectFile,
 } from '../../foundation/document/format.js';
-import type { AssemblerState, SelectionItem } from '../../foundation/commands/store.js';
+import type { SelectionItem } from '../../foundation/commands/store.js';
 import { rememberRegions } from '../../foundation/sketch-solver/regionMemory.js';
 import { ADVANCED_SKETCH_METHODS, advancedSketchEdit } from '../../api/sketchAdvancedApi.js';
 import {
@@ -97,7 +96,7 @@ import {
   findBody,
   selectEdges,
   selectFaces,
-} from './describe.js';
+} from '../../foundation/commands/api/describe.js';
 import { ApiError } from '../../foundation/commands/api/errors.js';
 import {
   addArcShape,
@@ -130,9 +129,17 @@ import {
   DEFS,
   FEATURE_KIND_SCHEMAS,
   METHODS,
-  type Capability,
 } from './schema.js';
 import { validateSchema, type JsonSchema } from '../../foundation/commands/api/validate.js';
+import type {
+  ApiContext,
+  Json,
+  SessionHost,
+  StoreApi,
+  WriteOutcome,
+  Capability,
+} from '../../foundation/commands/api/contract.js';
+import { apiMethodHandler } from '../../foundation/commands/api/registry.js';
 import type {
   SketchConstraintKind,
   SketchData,
@@ -140,49 +147,29 @@ import type {
   Vec2,
 } from '../../foundation/sketch-solver/types.js';
 
-type Json = Record<string, unknown>;
+export type { SessionHost, StoreApi } from '../../foundation/commands/api/contract.js';
 
-/** The part of the zustand store API the session needs. */
-export interface StoreApi {
-  getState(): AssemblerState;
-  subscribe(listener: (state: AssemblerState, previous: AssemblerState) => void): () => void;
-}
-
-/** What the embedding process allows and provides. */
-export interface SessionHost {
-  server: 'headless' | 'app';
-  capabilities: ReadonlySet<Capability>;
-  readFile?: (path: string) => Promise<Uint8Array>;
-  writeFile?: (path: string, bytes: Uint8Array) => Promise<string>;
-  /** App only: `true` if replacing the document would discard unsaved user work. */
-  hasUnsavedChanges?: () => boolean;
-  /**
-   * App only: the app's own project handling, so an agent's open/new/save
-   * behave like File > Open/New/Save (Items names and folders, saved views,
-   * view state and reference meshes are restored or written, the unsaved
-   * state is reset). Without them the session works on the features alone.
-   */
-  project?: {
-    /** Opens an already validated project text; throws with the app's message on failure. */
-    open(text: string): Promise<void>;
-    newProject(name: string): void;
-    /** The text File > Save would write (optionally under another project name). */
-    text(projectName?: string): Promise<string>;
-  };
-  /**
-   * App only: runs printability jobs off the UI thread (the print worker).
-   * Without it (headless) they run in-process.
-   */
-  printability?: {
-    analyze(bodies: PrintBodyInput[], settings: PrintSettings): Promise<PrintReport>;
-    orient(
-      mesh: OrientationMesh,
-      thresholdDeg: number,
-      faceLabels: string[],
-    ): Promise<OrientationCandidate[]>;
-  };
-  /** App only: the user's print settings (Printability panel), the defaults for agent queries. */
-  printSettings?: () => PrintSettings;
+/**
+ * Host services of the print methods (moves to the print module with them):
+ * app only, the print worker and the Printability panel's settings.
+ */
+declare module '../../foundation/commands/api/contract.js' {
+  interface SessionHostExtensions {
+    /**
+     * App only: runs printability jobs off the UI thread (the print worker).
+     * Without it (headless) they run in-process.
+     */
+    printability?: {
+      analyze(bodies: PrintBodyInput[], settings: PrintSettings): Promise<PrintReport>;
+      orient(
+        mesh: OrientationMesh,
+        thresholdDeg: number,
+        faceLabels: string[],
+      ): Promise<OrientationCandidate[]>;
+    };
+    /** App only: the user's print settings (Printability panel), the defaults for agent queries. */
+    printSettings?: () => PrintSettings;
+  }
 }
 
 export const HEADLESS_CAPABILITIES: ReadonlySet<Capability> = new Set<Capability>([
@@ -214,13 +201,6 @@ interface Transaction {
   evaluation: EvaluationResult | null;
   commands: string[];
   touched: Set<string>;
-}
-
-interface WriteOutcome {
-  features: Feature[];
-  touched: string[];
-  selection?: SelectionItem[];
-  result: Json;
 }
 
 function isRecord(value: unknown): value is Json {
@@ -319,6 +299,9 @@ export class AgentSession {
     if (spec.kind === 'command' && spec.capability === 'document.write') {
       if (method !== 'transaction.begin') this.checkRevision(p);
     }
+    // Methods a module registered with a handler (`foundation/commands/api/registry.ts`).
+    const handler = apiMethodHandler(method);
+    if (handler) return handler(this.context(), p, method);
     switch (method) {
       case 'api.hello':
         return this.hello();
@@ -1539,10 +1522,30 @@ export class AgentSession {
     };
   }
 
-  /** The session helpers the import/export handlers (`interopApi.ts`) run on. */
-  private interop(): InteropContext {
+  /** The session services every registered method handler runs on (`api/contract.ts`). */
+  private context(): ApiContext {
     return {
+      store: this.store,
+      kernel: this.kernel,
+      host: this.host,
+      revision: () => this.revision,
+      transactionOpen: () => this.tx !== null,
       state: () => this.store.getState(),
+      ensureWritable: () => this.ensureWritable(),
+      ensureNoTx: (what) => this.ensureNoTx(what),
+      requireCapability: (capability, what) => this.requireCapability(capability, what),
+      kernelReady: () => this.kernelReady(),
+      capabilities: () => this.kernel.status.capabilities ?? null,
+      evaluate: (features, commitCheck) => this.evaluate(features, commitCheck),
+      committedEvaluation: () => this.committedEvaluation(),
+      readEvaluation: (p) => this.readEvaluation(p),
+      readFeatures: (p) => this.readFeatures(p),
+      activeFeatures: (p) => this.activeFeatures(p),
+      write: (method, mutate) => this.write(method, mutate),
+      assertNoFeatureErrors: (touched, evaluation) =>
+        this.assertNoFeatureErrors(touched, evaluation),
+      evaluationSummary: (evaluation) => this.evaluationSummary(evaluation),
+      deliver: (bytes, mediaType, path) => this.deliver(bytes, mediaType, path),
       readFile: async (p, fallbackName) => {
         if (typeof p.path === 'string') {
           this.requireCapability('filesystem.read', 'Reading a file');
@@ -1558,17 +1561,15 @@ export class AgentSession {
         for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
         return { bytes, fileName: String(p.fileName) };
       },
-      write: (method, mutate) => this.write(method, mutate),
-      deliver: (bytes, mediaType, path) => this.deliver(bytes, mediaType, path),
-      readEvaluation: (p) => this.readEvaluation(p),
-      readFeatures: (p) => this.readFeatures(p),
       allocateFeatureId: (kind) =>
         this.store.getState().allocateFeatureId(kind, this.reservedIds()),
       nextFeatureName: (prefix, features) => nextFeatureName(prefix, features),
-      ensureWritable: () => this.ensureWritable(),
-      capabilities: () => this.kernel.status.capabilities ?? null,
-      kernelReady: () => this.kernelReady(),
     };
+  }
+
+  /** The import/export handlers (`interopApi.ts`) run on the general session services. */
+  private interop(): ApiContext {
+    return this.context();
   }
 
   private ensureNoTx(what: string): void {
