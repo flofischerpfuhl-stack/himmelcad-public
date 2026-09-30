@@ -30,6 +30,7 @@ import {
   type StepProductNode,
   type StepStructure,
 } from '../interop/step/stepStructure.js';
+import type { KernelFormatCapabilities } from './types.js';
 
 type OpenCascade = ReturnType<typeof R.getOC>;
 type RawShape = R.Shape3D['wrapped'];
@@ -53,6 +54,20 @@ export interface StepImportResult {
 }
 
 export class StepImportError extends Error {}
+
+/** Exchange classes present in the loaded OCCT build (`KernelFormatCapabilities`). */
+export function occtFormatCapabilities(oc: OpenCascade): KernelFormatCapabilities {
+  const has = (name: string) =>
+    typeof (oc as unknown as Record<string, unknown>)[name] === 'function';
+  return {
+    stepRead: has('STEPControl_Reader'),
+    stepWrite: has('STEPControl_Writer'),
+    stepXcafWrite: has('STEPCAFControl_Writer'),
+    stepXcafRead: has('STEPCAFControl_Reader'),
+    igesRead: has('IGESControl_Reader'),
+    igesWrite: has('IGESControl_Writer'),
+  };
+}
 
 /** Called between transferred components (done/total instances). Throwing aborts the import. */
 export type StepImportProgress = (done: number, total: number, label: string) => void;

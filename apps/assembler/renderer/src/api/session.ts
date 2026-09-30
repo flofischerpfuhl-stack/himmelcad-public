@@ -64,6 +64,18 @@ import { consumedSketchIds } from '../model/modeling.js';
 import { resolveParameterValues } from '../model/parameters.js';
 import type { ParameterChange } from '../model/parameterEdits.js';
 import { runMeasureQuery } from './measureApi.js';
+import {
+  exportDxf,
+  importDxf,
+  importMesh,
+  importStep as importStepCommand,
+  interopFormats,
+  meshToSolid,
+  stepExportOptions,
+  type InteropContext,
+} from './interopApi.js';
+import { stepAssemblyFromItems } from '../interop/stepTree.js';
+import { useItemsStore } from '../model/items.js';
 import { ProjectFormatError, loadProjectFile, saveProjectFile } from '../model/project/format.js';
 import type { AssemblerState, SelectionItem } from '../model/store.js';
 import { rememberRegions } from '../sketch/regionMemory.js';
@@ -398,7 +410,17 @@ export class AgentSession {
       case 'print.orient':
         return this.write('print.orient', (f, e) => this.printOrient(p, f, e));
       case 'import.step':
-        return this.importStep(p);
+        return importStepCommand(this.interop(), p);
+      case 'interop.formats':
+        return interopFormats(this.interop());
+      case 'import.mesh':
+        return importMesh(this.interop(), p);
+      case 'import.dxf':
+        return importDxf(this.interop(), p);
+      case 'export.dxf':
+        return exportDxf(this.interop(), p);
+      case 'mesh.toSolid':
+        return meshToSolid(this.interop(), p);
       case 'project.new':
         return this.newProject(p);
       case 'project.open':
@@ -1180,8 +1202,12 @@ export class AgentSession {
 
   private async exportBodies(method: string, p: Json): Promise<Json> {
     const evaluation = await this.readEvaluation(p);
-    const ids = Array.isArray(p.bodyIds) ? (p.bodyIds as string[]) : null;
+    let ids = Array.isArray(p.bodyIds) ? (p.bodyIds as string[]) : null;
     for (const id of ids ?? []) findBody(evaluation, id);
+    if (method === 'export.step' && p.visibleOnly === true) {
+      const hidden = new Set(this.store.getState().hiddenBodyIds);
+      ids = (ids ?? evaluation.bodies.map((b) => b.id)).filter((id) => !hidden.has(id));
+    }
     const bodies = ids ? evaluation.bodies.filter((b) => ids.includes(b.id)) : evaluation.bodies;
     if (bodies.length === 0) {
       throw new ApiError('invalidParams', 'There are no bodies to export', {
@@ -1212,7 +1238,27 @@ export class AgentSession {
       }
     } else {
       await this.kernelReady();
-      bytes = await this.kernel.exportStep(this.readFeatures(p), ids ?? undefined);
+      const items = useItemsStore.getState();
+      const assembly =
+        p.structure === 'folders'
+          ? stepAssemblyFromItems(
+              this.store.getState().projectName,
+              bodies.map((b) => b.id),
+              items,
+            )
+          : undefined;
+      try {
+        bytes = await this.kernel.exportStep(
+          this.readFeatures(p),
+          bodies.map((b) => b.id),
+          stepExportOptions(p, items.names, assembly),
+        );
+      } catch (error) {
+        throw new ApiError(
+          'internal',
+          `STEP export failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
       mediaType = 'model/step';
     }
     return {
@@ -1411,29 +1457,34 @@ export class AgentSession {
     };
   }
 
-  private async importStep(p: Json): Promise<Json> {
-    let data: string;
-    let fileName: string;
-    if (typeof p.path === 'string') {
-      this.requireCapability('filesystem.read', 'Reading a file');
-      const bytes = await this.host.readFile!(p.path);
-      data = toBase64(bytes);
-      fileName =
-        typeof p.fileName === 'string'
-          ? p.fileName
-          : (p.path.split(/[\\/]/).pop() ?? 'import.step');
-    } else {
-      data = String(p.data);
-      fileName = String(p.fileName);
-    }
-    const result = await this.write('import.step', (features, evaluation) =>
-      this.createFeature({ kind: 'importStep', params: { data, fileName } }, features, evaluation),
-    );
-    const featureId = result.featureId as string;
-    const bodies = (result.bodies as { id: string; createdBy: string }[]) ?? [];
+  /** The session helpers the import/export handlers (`interopApi.ts`) run on. */
+  private interop(): InteropContext {
     return {
-      ...result,
-      createdBodyIds: bodies.filter((b) => b.createdBy === featureId).map((b) => b.id),
+      state: () => this.store.getState(),
+      readFile: async (p, fallbackName) => {
+        if (typeof p.path === 'string') {
+          this.requireCapability('filesystem.read', 'Reading a file');
+          const bytes = await this.host.readFile!(p.path);
+          const fileName =
+            typeof p.fileName === 'string'
+              ? p.fileName
+              : (p.path.split(/[\\/]/).pop() ?? fallbackName);
+          return { bytes, fileName };
+        }
+        const binary = atob(String(p.data));
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+        return { bytes, fileName: String(p.fileName) };
+      },
+      write: (method, mutate) => this.write(method, mutate),
+      deliver: (bytes, mediaType, path) => this.deliver(bytes, mediaType, path),
+      readEvaluation: (p) => this.readEvaluation(p),
+      readFeatures: (p) => this.readFeatures(p),
+      allocateFeatureId: (kind) =>
+        this.store.getState().allocateFeatureId(kind, this.reservedIds()),
+      nextFeatureName: (prefix, features) => nextFeatureName(prefix, features),
+      ensureWritable: () => this.ensureWritable(),
+      capabilities: () => this.kernel.status.capabilities ?? null,
     };
   }
 

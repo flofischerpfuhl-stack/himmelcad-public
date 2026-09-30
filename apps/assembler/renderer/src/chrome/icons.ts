@@ -104,6 +104,13 @@ export const COMMAND_ICON: Partial<Record<string, LucideIcon>> = {
   'file.open': FolderOpen,
   'file.save': Save,
   'file.export3mf': FileOutput,
+  'file.import': FileInput,
+  'file.importStep': FileInput,
+  'file.importStl': FileInput,
+  'file.importDxf': FileInput,
+  'file.exportStep': FileOutput,
+  'file.exportDxf': FileOutput,
+  'tools.meshToSolid': Box,
   ...MODELING_COMMAND_ICON,
   ...PRINT_COMMAND_ICONS,
 };

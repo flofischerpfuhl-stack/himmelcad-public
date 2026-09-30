@@ -537,6 +537,44 @@ class HeadlessIntegrationTests(unittest.TestCase):
             self.assertEqual(panel["title"], "Parallel faces")
             self.assertAlmostEqual(panel["values"][0]["value"], 6.0, places=9)
 
+    def test_interop_step_assembly_mesh_solid_dxf(self) -> None:
+        """Import/export helpers (one canonical command each) against the interop fixtures."""
+        import math
+
+        fixtures = REPOSITORY_ROOT / "apps/assembler/test/fixtures/interop"
+        with Document(AssemblerClient(StdioTransport())) as doc, tempfile.TemporaryDirectory() as tmp:
+            formats = doc.formats()
+            iges = next(f for f in formats["import"] if f["format"] == "iges")
+            self.assertFalse(iges["available"])
+            parts = doc.import_step(fixtures / "robot-assembly.step")
+            self.assertEqual([p.name for p in parts], ["Base plate", "Link", "Pin", "Link", "Pin"])
+            self.assertEqual(parts[4].item_path, ("Robot", "Arm (2)"))
+            self.assertEqual(len(doc.features()), 1)
+            out = doc.export_step(Path(tmp) / "robot-ap214.step", schema="AP214", unit="in")
+            self.assertIn(b"AUTOMOTIVE_DESIGN", out.read_bytes())
+            self.assertIn(b"CONVERSION_BASED_UNIT('INCH'", out.read_bytes())
+
+            meshes = doc.import_mesh(fixtures / "parts.3mf")
+            self.assertEqual([(m.name, m.color, m.folder) for m in meshes], [("Cube", "#FF0000", ("parts",)), ("Pair", "#FF0000", ("parts",)), ("Wedge", "#33AA55", ("parts",))])
+            bracket = doc.import_mesh(fixtures / "l-bracket.stl")[0]
+            solid = doc.mesh_to_solid(bracket)
+            self.assertEqual(len(solid.faces()), 8)
+            self.assertAlmostEqual(solid.volume, 6000.0, places=6)
+            doc.fillet(solid.edges("|Z").max("x").min("y"), 3)
+            self.assertAlmostEqual(solid.volume, 6000 - (9 - math.pi * 9 / 4) * 10, places=3)
+            open_box = doc.import_mesh(fixtures / "open-box.stl")[0]
+            with self.assertRaises(HimmelcadError) as caught:
+                doc.mesh_to_solid(open_box)
+            self.assertIn("open edges", str(caught.exception))
+
+            sketch = doc.import_dxf(fixtures / "plate.dxf", plane="XZ", offset=5)
+            self.assertEqual(sketch.import_report["connected"], 7)
+            self.assertGreaterEqual(len(sketch.regions()), 5)
+            dxf = doc.export_dxf(Path(tmp) / "plate-r12.dxf", sketch=sketch, version="R12")
+            self.assertIn(b"AC1009", dxf.read_bytes())
+            face_dxf = doc.export_dxf(Path(tmp) / "top.dxf", face=solid.face(">Z"))
+            self.assertIn(b"ARC", face_dxf.read_bytes())
+
 
 if __name__ == "__main__":
     unittest.main()

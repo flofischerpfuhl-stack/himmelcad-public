@@ -62,7 +62,12 @@ void test('DXF reader: entities, units, blocks, mirrored OCS arc, skipped text',
 void test('DXF → sketch: connected outline with a fillet arc, profiles, exact spline, units', () => {
   const drawing = parseDxf(plateText);
   const units = dxfUnits(drawing);
-  assert.deepEqual(units, { scale: 1, source: 'file', label: 'millimetres (from the file)' });
+  assert.deepEqual(units, {
+    scale: 1,
+    source: 'file',
+    label: 'millimetres (from the file)',
+    fileUnit: 'millimetres',
+  });
   const { feature, stats } = dxfSketchFeature({
     id: 'sk1',
     name: 'Sketch 1',

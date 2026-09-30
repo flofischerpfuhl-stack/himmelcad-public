@@ -45,7 +45,7 @@ import { edgeRuleBodyId, edgeRuleLabel } from '../model/blendOptions.js';
 import { extraBodyId } from '../model/features.js';
 import { decodeMeshSolidPayload } from '../interop/meshSolid.js';
 import { buildMeshSolid } from './meshSolid.js';
-import { readStepAssembly, type StepImportResult } from './stepImport.js';
+import { occtFormatCapabilities, readStepAssembly, type StepImportResult } from './stepImport.js';
 import { exportStepDocument, type StepExportOptions } from './stepExport.js';
 import { projectedEntities, refreshProjections, type EdgeSample } from '../sketch/projection.js';
 import type { SketchRegion } from '../sketch/regions.js';
@@ -107,6 +107,7 @@ import type {
   EvaluationResult,
   FaceInfo,
   FeatureErrorRefs,
+  KernelFormatCapabilities,
   TessellationQuality,
 } from './types.js';
 import {
@@ -246,6 +247,8 @@ export interface KernelEvaluator {
   ): Promise<DistanceMeasurement>;
   /** Sizes of the incremental-evaluation caches and of the wasm heap. */
   cacheInfo(): KernelCacheInfo;
+  /** Exchange formats the loaded OCCT build supports. Optional for test doubles. */
+  formatCapabilities?(): KernelFormatCapabilities;
   /** Drops every cached checkpoint and mesh (frees their OCCT shapes). */
   clearCache(): void;
 }
@@ -1911,6 +1914,10 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
           releaseTransient(replay);
         }
       });
+    },
+
+    formatCapabilities() {
+      return occtFormatCapabilities(oc);
     },
 
     cacheInfo() {

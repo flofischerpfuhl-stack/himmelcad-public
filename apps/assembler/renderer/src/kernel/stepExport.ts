@@ -85,8 +85,25 @@ export function exportStepDocument(
     const byId = new Map(bodies.map((b) => [b.id, b]));
     const nameOf = (body: StepExportBody) => options.names?.[body.id]?.trim() || body.name;
 
+    /**
+     * The body's shape without a `TopLoc_Location`: XCAF turns a located shape
+     * into an assembly referencing an unnamed part ("Open CASCADE STEP
+     * translator …"), which other readers show as an extra level. Imported
+     * STEP parts are located (shared geometry per instance), so their
+     * placement is baked into a copy here.
+     */
+    const unlocated = (body: StepExportBody) => {
+      const raw = body.shape.wrapped as unknown as InstanceType<OpenCascade['TopoDS_Shape']>;
+      const location = own(raw.Location());
+      if (location.IsIdentity()) return raw;
+      const bare = own(raw.Located(own(new oc.TopLoc_Location()), false));
+      const move = own(
+        new oc.BRepBuilderAPI_Transform(bare, own(location.Transformation()), true, false),
+      );
+      return own(move.Shape());
+    };
     const addPart = (body: StepExportBody) => {
-      const label = own(tool.AddShape(body.shape.wrapped as never, false, false));
+      const label = own(tool.AddShape(unlocated(body) as never, false, false));
       oc.TDataStd_Name.Set(label, text(nameOf(body)));
       colors.SetColor(label, own(rgba(oc, body.color)), surf);
       return label;

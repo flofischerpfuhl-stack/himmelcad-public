@@ -16,7 +16,7 @@
  *   assembler-headless --version
  *
  * Trust boundary: the process runs with the invoking user's rights; it has
- * no network listener. File paths in `export.*`, `import.step`,
+ * no network listener. File paths in `export.*`, `import.*`,
  * `project.open/save` are resolved against the working directory.
  */
 import { promises as fs } from 'node:fs';

@@ -389,6 +389,7 @@ export class InProcessKernelAdapter extends QueuedKernelAdapter {
           progress: null,
           loadMs: null,
           ...(notice ? { notice } : {}),
+          ...(evaluator.formatCapabilities ? { capabilities: evaluator.formatCapabilities() } : {}),
         });
       },
       (error: unknown) => {

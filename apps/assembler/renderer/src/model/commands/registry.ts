@@ -9,6 +9,8 @@
  * whether a command is enabled.
  */
 import { useAutomationStore } from '../../api/app/automationStore.js';
+import { INTEROP_COMMANDS } from '../../interop/interopCommands.js';
+import { useInteropStore } from '../../interop/interopStore.js';
 import { PRINT_COMMANDS } from '../../print/printCommands.js';
 import { DISPLAY_COMMANDS } from './displayCommands.js';
 import { useProjectStore } from '../project/projectStore.js';
@@ -551,9 +553,9 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     id: 'file.exportStep',
-    label: 'Export STEP',
+    label: 'Export STEP…',
     group: 'file',
-    keywords: ['export', 'step', 'cad'],
+    keywords: ['export', 'step', 'cad', 'assembly', 'ap214', 'ap242'],
     requiresKernel: true,
     availability: (ctx) => {
       const notReady = kernelNotReady(ctx);
@@ -562,16 +564,18 @@ export const COMMANDS: readonly Command[] = [
         ? alwaysEnabled
         : { enabled: false, reason: 'No bodies to export.' };
     },
-    run: () => void useProjectStore.getState().exportStep(),
+    // Options dialog (assembly/flat/per body, AP214/AP242, units, visible only): `interop/`.
+    run: () => useInteropStore.getState().setStepExportOpen(true),
   },
   {
     id: 'file.importStep',
     label: 'Import STEP…',
     group: 'file',
-    keywords: ['import', 'step', 'cad'],
+    keywords: ['import', 'step', 'cad', 'assembly'],
     requiresKernel: true,
     availability: (ctx) => kernelNotReady(ctx) ?? alwaysEnabled,
-    run: () => void useProjectStore.getState().importStep(),
+    // Keeps the product structure (Items folders, names, colours): `interop/interopStore.ts`.
+    run: () => void useInteropStore.getState().openImport('step'),
   },
   {
     id: 'file.importStl',
@@ -582,8 +586,9 @@ export const COMMANDS: readonly Command[] = [
     // reference mesh is stored and rendered outside OCCT entirely, so this
     // works even while the kernel is still loading or unavailable.
     availability: () => alwaysEnabled,
-    run: () => void useProjectStore.getState().importStl(),
+    run: () => void useInteropStore.getState().openImport('stl'),
   },
+  ...INTEROP_COMMANDS,
   {
     id: 'file.agentAccess',
     label: 'Agent Access (Local)',

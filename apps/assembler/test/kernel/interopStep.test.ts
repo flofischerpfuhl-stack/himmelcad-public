@@ -225,6 +225,58 @@ void test('STEP export as an assembly: folders become sub-assemblies with names 
   assert.ok(near(reimported.bodies[1]!.volume, Math.PI * 25 * 4, 1e-4));
 });
 
+void test('imported (located) parts re-export flat and as an assembly without extra levels', async () => {
+  const { evaluator } = await loadNodeKernel();
+  const source = [importFeature(robot, 'robot-assembly.step')];
+  const imported = await evaluator.evaluate(source);
+  const ids = imported.bodies.map((b) => b.id);
+  const boxes = (bodies: readonly Body[]) =>
+    bodies.map(
+      (b) =>
+        `${b.name} ${b.min.map((v) => v.toFixed(3)).join(',')}..${b.max.map((v) => v.toFixed(3)).join(',')}`,
+    );
+
+  const flat = await evaluator.exportStep(source, ids, { schema: 'AP214' });
+  const flatStructure = parseStepStructure(new TextDecoder().decode(flat));
+  assert.deepEqual(
+    flatStructure.roots.map((r) => [r.name, r.children.length]),
+    [
+      ['Base plate', 0],
+      ['Link', 0],
+      ['Pin', 0],
+      ['Link', 0],
+      ['Pin', 0],
+    ],
+    'flat: every body is a top-level part (no wrapper assemblies)',
+  );
+  const flatBack = await evaluator.evaluate([importFeature(flat, 'flat.step', 'feature-import-7')]);
+  // Same geometry and placements; equal names in one folder get "(2)" (Items names are unique per folder).
+  assert.deepEqual(
+    flatBack.bodies.map((b) => b.name),
+    ['Base plate', 'Link', 'Pin', 'Link (2)', 'Pin (2)'],
+  );
+  const geometry = (bodies: readonly Body[]) =>
+    boxes(bodies).map((s) => s.replace(/^.* (?=[-\d])/, ''));
+  assert.deepEqual(geometry(flatBack.bodies), geometry(imported.bodies));
+  assert.ok(flatBack.bodies.every((b) => b.itemPath === undefined));
+
+  const tree = {
+    name: 'Robot',
+    children: [
+      { bodyId: ids[0]! },
+      { name: 'Arm', children: [{ bodyId: ids[1]! }, { bodyId: ids[2]! }] },
+      { name: 'Arm (2)', children: [{ bodyId: ids[3]! }, { bodyId: ids[4]! }] },
+    ],
+  };
+  const nested = await evaluator.exportStep(source, ids, { assembly: tree });
+  const back = await evaluator.evaluate([importFeature(nested, 'nested.step', 'feature-import-8')]);
+  assert.deepEqual(boxes(back.bodies), boxes(imported.bodies));
+  assert.deepEqual(
+    back.bodies.map((b) => `${(b.itemPath ?? []).join('/')}/${b.name} ${b.color}`),
+    imported.bodies.map((b) => `${(b.itemPath ?? []).join('/')}/${b.name} ${b.color}`),
+  );
+});
+
 void test('STEP export options: AP214 and inch units round-trip to the same millimetre geometry', async () => {
   const { evaluator } = await loadNodeKernel();
   const bytes = await evaluator.exportStep(twoBodyDocument(), ['body:e1'], {

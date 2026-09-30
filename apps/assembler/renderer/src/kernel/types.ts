@@ -22,6 +22,24 @@ export interface KernelStatusInfo {
    * restarted ("… Your document is unchanged."). Absent normally.
    */
   notice?: string;
+  /** Exchange formats the loaded OCCT build supports (reported once ready). */
+  capabilities?: KernelFormatCapabilities;
+}
+
+/**
+ * Which OCCT exchange classes the WebAssembly build exposes. The app's
+ * `replicad-opencascadejs` 1.1.0 has STEP read/write and the XCAF STEP
+ * writer, but no IGES and no XCAF STEP reader; a custom build may add them.
+ */
+export interface KernelFormatCapabilities {
+  stepRead: boolean;
+  stepWrite: boolean;
+  /** `STEPCAFControl_Writer`: names, colours and assemblies on export. */
+  stepXcafWrite: boolean;
+  /** `STEPCAFControl_Reader` (unused while absent: the importer reads the structure itself). */
+  stepXcafRead: boolean;
+  igesRead: boolean;
+  igesWrite: boolean;
 }
 
 /** One B-rep face after evaluation, with its stable naming key. */

@@ -267,8 +267,23 @@ export function regionFace(frame: SketchFrame, region: SketchRegion): R.Face {
   other.delete();
   if (deviation < 0.5 * holeArea) return best;
   best.delete();
+  // Holes may disagree with each other (a circle wire and a wire assembled from an arc and a
+  // line need not run the same way): orient every hole on its own against the outer loop.
+  const perHole = holes.map((hole) => {
+    const asIs = R.makeFace(outer, [hole]);
+    const flipped = reversedWire(hole);
+    const turned = R.makeFace(outer, [flipped]);
+    const keep = preciseArea(asIs) <= preciseArea(turned);
+    asIs.delete();
+    turned.delete();
+    return keep ? hole : flipped;
+  });
+  const oriented = R.makeFace(outer, perHole);
+  const third = Math.abs(preciseArea(oriented) - expected);
+  if (third < 0.5 * holeArea && third <= 1e-6 * Math.max(1, expected) + deviation) return oriented;
+  oriented.delete();
   throw new Error(
-    `the face with holes is off by ${deviation.toFixed(3)} mm² (holes ${holeArea.toFixed(3)} mm²)`,
+    `the face with holes is off by ${Math.min(deviation, third).toFixed(3)} mm² (holes ${holeArea.toFixed(3)} mm²)`,
   );
 }
 

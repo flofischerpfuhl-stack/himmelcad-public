@@ -94,6 +94,8 @@ export interface DxfUnits {
   source: 'file' | 'unitless' | 'override';
   /** Human-readable, e.g. "inches (from the file)". */
   label: string;
+  /** The file's own unit name (`inches`), `null` when it states none. */
+  fileUnit: string | null;
 }
 
 /**
@@ -104,18 +106,22 @@ export function dxfUnits(
   drawing: Pick<DxfDrawing, 'insunits'>,
   override?: number | null,
 ): DxfUnits {
-  if (override !== undefined && override !== null) {
-    return { scale: override, source: 'override', label: `×${override} to mm (chosen)` };
-  }
   const fromFile = insunitsToMm(drawing.insunits);
+  const fileUnit =
+    fromFile !== null
+      ? (INSUNITS_NAME[drawing.insunits ?? -1] ?? `unit code ${drawing.insunits}`)
+      : null;
+  if (override !== undefined && override !== null) {
+    return { scale: override, source: 'override', label: `×${override} to mm (chosen)`, fileUnit };
+  }
   if (fromFile !== null) {
-    const name = INSUNITS_NAME[drawing.insunits ?? -1] ?? `unit code ${drawing.insunits}`;
-    return { scale: fromFile, source: 'file', label: `${name} (from the file)` };
+    return { scale: fromFile, source: 'file', label: `${fileUnit} (from the file)`, fileUnit };
   }
   return {
     scale: 1,
     source: 'unitless',
     label: 'no unit in the file: read as millimetres',
+    fileUnit: null,
   };
 }
 
