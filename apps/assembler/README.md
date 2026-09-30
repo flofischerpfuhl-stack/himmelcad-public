@@ -5,7 +5,7 @@ Electron + TypeScript + React on `@himmelcad/theme` and `@himmelcad/ui`,
 with a WebGL2 viewport and — since the Phase 1 kernel spike — a real B-rep
 CAD kernel: OCCT 8.0.1 compiled to WebAssembly (`replicad-opencascadejs`),
 driven through `replicad`, running in a Web Worker behind the app-owned
-`KernelAdapter` (`renderer/src/kernel/`). Decision, measurements, the
+`KernelAdapter` (`renderer/src/foundation/geometry-kernel/`). Decision, measurements, the
 stable-reference scheme and open risks: `assembler/KERNEL-SPIKE.md`.
 The default OCCT module (since Block 6, 2026-09-30) is the HimmelCAD build with
 more OCCT classes (`vendor/occt-wasm`, `assembler/OCCT-BUILD-SPIKE.md`), read
@@ -17,15 +17,24 @@ overrides); a missing or wrong module fails loudly. `HIMMELCAD_OCCT=replicad`
 
 ## Layout
 
-- `renderer/src/model/` — feature document (`document.ts`), store with
-  async evaluation, undo/redo, tools and selection (`store.ts`), command
-  registry.
-- `renderer/src/kernel/` — kernel adapter contract, OCCT evaluator,
-  naming/reference resolution, worker.
-- `renderer/src/viewport/` — WebGL2 scene, picking by face/edge naming key.
-- `renderer/src/sketch/` — constrained sketches and sketch mode: data model,
-  region (profile) detection, planeGCS solver worker, drawing tools,
-  inference, session store and overlay UI (`assembler/SKETCHING.md`).
+Modules per ADR 0032 (`assembler/MODULES.md`; the map is `modules.json`,
+checked by `pnpm check:assembler-modules`):
+
+- `renderer/src/foundation/` — `document` (feature kinds, core kinds,
+  references, parameters, `.hcasm` format), `sketch-solver`,
+  `geometry-kernel` (the only OCCT code: adapter, worker runtime, evaluator,
+  naming, tessellation, exchange), `commands` (store core with slices,
+  command and API registries, the module contract), `jobs`.
+- `renderer/src/platform/` — `input` (navigation, preferences), `viewport`
+  (WebGL2 scene, picking by face/edge naming key, overlay host), `widgets`
+  (shared panel building blocks, the UI contract).
+- `renderer/src/modules/` — domain modules; `parameters`, `print` and
+  `printers` are migrated, the others are descriptors over files still in
+  `model/`, `chrome/`, `sketch/`, `interop/`, `kernel/features/`,
+  `viewport/`, `api/` (phase B moves them).
+- `renderer/src/interface/` — `agent-api` (the canonical command layer) and
+  `shell-ui` (the application shell).
+- `renderer/src/app/` — compositions: modules, UI parts, kernel worker entry.
 - `renderer/public/licenses/` — third-party notices and license texts
   shipped with the app (OCCT is LGPL-2.1 with the Open CASCADE exception; see
   `LICENSES/THIRD_PARTY.md`).
@@ -231,7 +240,7 @@ coarse/standard/fine re-tessellation with a triangle preview), 3MF (welded
 manifold objects, names, colours, item transforms) and Open in Slicer
 (detected or added Bambu Studio / OrcaSlicer / PrusaSlicer / Cura, temp 3MF,
 `spawn` without a shell; the browser build downloads). Code in
-`renderer/src/print/`, `electron/slicer*.ts`; methods, thresholds and limits:
+`renderer/src/modules/print/`, `renderer/src/modules/printers/`, `electron/slicer*.ts`; methods, thresholds and limits:
 `assembler/PRINTING.md`.
 
 ## Display, Measure, Section View and image export
@@ -358,7 +367,7 @@ manifold objects, names, colours, item transforms) and Open in Slicer
 
 ## Agent API (UI, Python and agents share one command layer)
 
-`renderer/src/api/` implements the canonical command/query contract
+`renderer/src/interface/agent-api/` implements the canonical command/query contract
 `hcasm.agent-api@1` (schema: `api/agent-api-v1.schema.json`). Two
 transports run it: `assembler-headless` (JSON-RPC over stdio with the
 in-process kernel — `pnpm build:headless`, then
@@ -369,15 +378,18 @@ Benchmark: `bench/run_bench.py`. Design, trust boundary, evidence and
 limits: `assembler/AGENT-API.md`.
 
 - `pnpm api:schema` — regenerate the checked-in contract after changing
-  `renderer/src/api/schema.ts` (a test fails while they differ).
-- New feature kinds: add an entry to `FEATURE_KIND_SCHEMAS`
-  (`renderer/src/api/schema.ts`); until then they are accepted generically.
+  the modules' API registrations (composed in
+  `renderer/src/interface/agent-api/schema.ts`; a test fails while they
+  differ).
+- New feature kinds: register the kind's schema with its module's
+  `api.featureKinds` (`assembler/MODULES.md` §3); until then the kind is
+  accepted generically.
 
 ## Dev automation hook (DEV only)
 
 `pnpm dev:web` / `pnpm dev` builds expose `window.__assembler` for cheap,
 calibration-free screen recordings and UI smoke scripts (Playwright). It is
-installed from `renderer/src/devtools/automationHook.ts` behind
+installed from `renderer/src/app/devtools/automationHook.ts` behind
 `import.meta.env.DEV`, is absent from production builds and is **not part
 of the product contract** (agents use the agent API above). Screen positions are CSS pixels relative to the page
 viewport, directly usable with `page.mouse`.

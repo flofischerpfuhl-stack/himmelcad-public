@@ -66,7 +66,7 @@ flowchart TD
 | AI assistant         | Chat surface, harness adapters, trust grants. Acts only through scripting.                                                                                                                                             | Own capabilities beyond the protocol.                                                    | `@himmelcad/agent`, `@himmelcad/console`                                                                                                       |
 | Updates              | Download, verify, install; warnings for incompatible changes. Project compatibility itself is the document's migrations.                                                                                               | —                                                                                        | ADR 0029, app `electron`                                                                                                                       |
 
-`himmelcad-core` remains as a compatibility crate (protocol DTOs and re-exports of moved paths); new code imports the owning crate directly. `pnpm check:modules` enforces the layer map in `scripts/module-layers.json`.
+`himmelcad-core` remains as a compatibility crate (protocol DTOs and re-exports of moved paths); new code imports the owning crate directly. `pnpm check:modules` enforces the layer map in `scripts/module-layers.json`. Assembler (ADR 0033) keeps its modules as folders inside `apps/assembler` under the same direction rules, checked per file by `pnpm check:assembler-modules`; its module map, registration contracts and phase-B work list are in `assembler/MODULES.md`.
 
 ## Runtime tiers
 
