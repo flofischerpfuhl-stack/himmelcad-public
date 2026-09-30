@@ -311,7 +311,7 @@ export const DEFS: Record<string, JsonSchema> = {
       expression: str,
     },
     ['id', 'name', 'unit', 'value'],
-    'Document parameter ("variable"): `value` is always the last resolved value; `expression` (e.g. "wall * 2") is the source formula when the value is computed from other parameters. Usable from sketch dimension expressions and the distance/radius/thickness fields of extrude/fillet/chamfer/shell (`<field>Expression`).',
+    'Document parameter ("variable"): `value` is always the last resolved value; `expression` (e.g. "wall * 2") is the source formula when the value is computed from other parameters. Usable from sketch dimension expressions and the numeric fields of extrude (distance), fillet (radius, radius2), chamfer (distance, distance2), shell/rib/thicken (thickness), hole (diameter) and draft (angle) via `<field>Expression`.',
   ),
   SketchPlane: {
     oneOf: [

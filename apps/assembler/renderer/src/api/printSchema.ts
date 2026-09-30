@@ -25,6 +25,12 @@ function obj(
   };
 }
 
+const expression = (field: string): JsonSchema => ({
+  type: 'string',
+  minLength: 1,
+  description: `Formula over document parameters (\`parameters.list\`), e.g. "wall * 2"; resolved into \`${field}\`.`,
+});
+
 const operation: JsonSchema = {
   enum: ['new', 'join', 'cut'],
   default: 'new',
@@ -93,6 +99,7 @@ export const BLEND_OPTION_PARAMS: Record<
       description:
         'Variable radius: `radius` at the start of each edge chain, `radius2` at its end.',
     },
+    radius2Expression: expression('radius2'),
     rules: { type: 'array', items: ref('EdgeRule') },
   },
   chamfer: {
@@ -103,6 +110,7 @@ export const BLEND_OPTION_PARAMS: Record<
         '`twoDistances`: `distance` and `distance2`; `distanceAngle`: `distance` and `angle`.',
     },
     distance2: positive,
+    distance2Expression: expression('distance2'),
     angle: { type: 'number', exclusiveMinimum: 0, maximum: 90, description: 'Degrees.' },
     flip: {
       type: 'boolean',
@@ -141,6 +149,7 @@ export const PRINT_FEATURE_KIND_SCHEMAS: Record<
         placements: { type: 'array', items: ref('HolePlacement'), minItems: 1, maxItems: 200 },
         holeType: { enum: ['simple', 'counterbore', 'countersink'], default: 'simple' },
         diameter: positive,
+        diameterExpression: expression('diameter'),
         extent: ref('HoleExtent'),
         counterboreDiameter: positive,
         counterboreDepth: positive,
@@ -149,8 +158,8 @@ export const PRINT_FEATURE_KIND_SCHEMAS: Record<
         thread: { type: 'string', description: 'Cosmetic thread label, e.g. "M3".' },
         preset: { type: 'string', description: 'Display name of the preset the size came from.' },
       },
-      ['face', 'placements', 'diameter'],
-      'Default extent: through all.',
+      ['face', 'placements'],
+      'Default extent: through all. One of `diameter` / `diameterExpression` is required.',
     ),
   },
   emboss: {
@@ -172,9 +181,11 @@ export const PRINT_FEATURE_KIND_SCHEMAS: Record<
         faces: { type: 'array', items: ref('FaceInput'), minItems: 1 },
         neutral: ref('SketchPlane'),
         angle: { type: 'number', minimum: -45, maximum: 45 },
+        angleExpression: expression('angle'),
         flip: { type: 'boolean', default: false },
       },
-      ['faces', 'neutral', 'angle'],
+      ['faces', 'neutral'],
+      'One of `angle` / `angleExpression` is required.',
     ),
   },
   rib: {
@@ -186,10 +197,12 @@ export const PRINT_FEATURE_KIND_SCHEMAS: Record<
         sketchId: str,
         entityIds: { type: 'array', items: str, minItems: 1 },
         thickness: positive,
+        thicknessExpression: expression('thickness'),
         flip: { type: 'boolean', default: false },
         targetBodyId: str,
       },
-      ['sketchId', 'entityIds', 'thickness'],
+      ['sketchId', 'entityIds'],
+      'One of `thickness` / `thicknessExpression` is required.',
     ),
   },
   thicken: {
@@ -200,12 +213,14 @@ export const PRINT_FEATURE_KIND_SCHEMAS: Record<
       {
         source: ref('ThickenSource'),
         thickness: positive,
+        thicknessExpression: expression('thickness'),
         direction: { enum: ['outside', 'inside', 'both'], default: 'outside' },
         operation,
         targetBodyId: str,
         resultBodyName: str,
       },
-      ['source', 'thickness'],
+      ['source'],
+      'One of `thickness` / `thicknessExpression` is required.',
     ),
   },
 };

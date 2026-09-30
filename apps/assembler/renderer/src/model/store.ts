@@ -78,10 +78,10 @@ import {
   type SketchContact,
 } from './modeling.js';
 import {
-  FEATURE_EXPRESSION_FIELDS,
+  expressionFieldsOf,
   findParameterDependents,
   findParameterUsages,
-  resolveFeatureExpression,
+  resolveFieldExpression,
   resolveParameterValues,
   type Parameter,
   type ParameterUnit,
@@ -1006,6 +1006,55 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
     return slice;
   }
 
+  /** Revisions of {@link checkParameterPlan}'s kernel checks (their own sequence on the preview channel). */
+  let planCheckRevision = 0;
+
+  /**
+   * Evaluates a parameter plan before it is committed and refuses it when a
+   * feature that evaluates cleanly now would fail with the new values — the
+   * same rule as the agent API's `parameter.edit` (`featureFailed`). Only the
+   * steps above the History rollback bar are checked (what the viewport
+   * shows); the returned evaluation is reusable only without a rollback.
+   */
+  async function checkParameterPlan(
+    plan: Extract<ParameterPlan, { ok: true }>,
+  ): Promise<{ ok: true; evaluation: EvaluationResult | null } | { ok: false; message: string }> {
+    if (!kernel) return { ok: true, evaluation: null };
+    await get().whenSettled();
+    const state = get();
+    const before = state.evaluation;
+    const marker = state.rollbackBefore
+      ? plan.features.findIndex((f) => f.id === state.rollbackBefore)
+      : -1;
+    const active = marker >= 0 ? plan.features.slice(0, marker) : plan.features;
+    let result: EvaluationResult | null = null;
+    for (let attempt = 0; attempt < 20 && !result; attempt += 1) {
+      planCheckRevision += 1;
+      const outcome = await kernel.evaluate({
+        channel: 'preview',
+        revision: planCheckRevision,
+        features: active,
+      }).outcome;
+      if (outcome.kind === 'done') result = outcome.result;
+      else if (outcome.kind === 'failed') {
+        return { ok: false, message: `The CAD kernel failed: ${outcome.message}` };
+      }
+      // superseded by a tool preview: try again.
+    }
+    if (!result) return { ok: false, message: 'The CAD kernel is busy; try again.' };
+    const evaluated = result;
+    const failing = active.filter((f) => evaluated.errors[f.id] && !before.errors[f.id]);
+    if (failing.length > 0) {
+      const first = failing[0]!;
+      const more = failing.length > 1 ? ` (and ${failing.length - 1} more)` : '';
+      return {
+        ok: false,
+        message: `${first.name} would fail: ${evaluated.errors[first.id]}${more}. Nothing was changed.`,
+      };
+    }
+    return { ok: true, evaluation: marker >= 0 ? null : evaluated };
+  }
+
   /** Requests evaluation of the current `features`. Stale results (older revisions) are dropped. */
   function evaluateDocument(): void {
     documentRevision += 1;
@@ -1881,13 +1930,13 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
         let merged = { ...f, ...patch } as Feature;
         // A field's own `*Expression` in this patch is resolved immediately
         // (the History card's expression input), like a sketch dimension.
-        const field = FEATURE_EXPRESSION_FIELDS[merged.kind];
-        const exprField = field ? `${field}Expression` : null;
-        if (exprField && exprField in patch) {
+        for (const field of expressionFieldsOf(merged.kind)) {
+          const exprField = `${field}Expression`;
+          if (!(exprField in patch)) continue;
           const expression = (patch as unknown as Record<string, unknown>)[exprField];
           if (typeof expression === 'string') {
-            const resolved = resolveFeatureExpression(expression, values);
-            if (resolved.ok) merged = { ...merged, [field!]: resolved.value } as Feature;
+            const resolved = resolveFieldExpression(merged.kind, field, expression, values);
+            if (resolved.ok) merged = { ...merged, [field]: resolved.value } as Feature;
           } else if (expression === undefined) {
             const { [exprField]: _drop, ...rest } = merged as unknown as Record<string, unknown>;
             merged = rest as unknown as Feature;
@@ -1957,7 +2006,13 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
       for (let attempt = 0; attempt < 3; attempt += 1) {
         const plan = await get().planParameterChange(change);
         if (!plan.ok) return plan;
-        const applied = get().applyParameterPlan(plan);
+        // Like `parameter.edit` in the agent API: a feature that newly fails refuses the edit.
+        const check = await checkParameterPlan(plan);
+        if (!check.ok) return check;
+        const applied = get().applyParameterPlan(
+          plan,
+          check.evaluation ? { evaluation: check.evaluation } : undefined,
+        );
         if (applied.ok || !/changed meanwhile/.test(applied.message)) return applied;
       }
       return { ok: false, message: 'The document keeps changing; try again.' };

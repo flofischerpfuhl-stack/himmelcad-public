@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import type { Feature, ShellFeature, SketchFeature } from '../../renderer/src/model/document.js';
-import { makeFaceRef, useAssemblerStore } from '../../renderer/src/model/store.js';
+import { makeEdgeRef, makeFaceRef, useAssemblerStore } from '../../renderer/src/model/store.js';
 import { addRectangle } from '../../renderer/src/sketch/builders.js';
 import { setSketchDimension } from '../../renderer/src/sketch/featureOps.js';
 import { rememberRegions } from '../../renderer/src/sketch/regionMemory.js';
@@ -158,6 +158,101 @@ void test('a value a dependent sketch cannot satisfy refuses the whole edit (not
   assert.strictEqual(after.parameters, before.parameters);
   assert.equal(after.history.canUndo, before.history.canUndo);
   assert.deepEqual(size(), [30, 30, 10]);
+});
+
+void test('a value that makes a feature fail in the kernel is refused with the reason (like the API)', async () => {
+  const { wallId } = await plateWithWallParameter();
+  // A round of radius `wall` along a top edge of the 10 mm tall plate.
+  const edge = body().edges.find(
+    (e) => e.curve === 'line' && Math.abs(e.direction?.[0] ?? 0) > 0.99 && e.midpoint[2] > 9.99,
+  )!;
+  store.getState().addFeature({
+    id: 'f1',
+    name: 'Fillet 1',
+    suppressed: false,
+    kind: 'fillet',
+    edges: [makeEdgeRef(store.getState().evaluation, 'body:e1', edge.key)!],
+    radius: 3,
+    radiusExpression: 'wall',
+  });
+  await settled();
+  assert.deepEqual(store.getState().evaluation.errors, {});
+  const before = store.getState();
+  // wall = 12: the sketch solves (120 mm wide), a 12 mm round on a 10 mm tall plate cannot.
+  const outcome = await store.getState().editParameter({ id: wallId, value: 12 });
+  assert.equal(outcome.ok, false, 'refused');
+  assert.match(
+    !outcome.ok ? outcome.message : '',
+    /^Fillet 1 would fail: .*Nothing was changed\.$/,
+  );
+  const after = await settled();
+  assert.strictEqual(after.features, before.features, 'features unchanged');
+  assert.strictEqual(after.parameters, before.parameters, 'parameters unchanged');
+  assert.deepEqual(after.evaluation.errors, {});
+});
+
+void test('hole diameter, fillet end radius and chamfer second distance take parameter names', async () => {
+  await plateWithWallParameter();
+  const hd = await store.getState().upsertParameter({ name: 'hole_d', unit: 'mm', value: 5 });
+  assert.ok(hd.ok);
+  const s = store.getState();
+  const top = body().faces.find((f) => f.normal?.[2] === 1)!;
+  const hole: Feature = {
+    id: 'h1',
+    name: 'Hole 1',
+    suppressed: false,
+    kind: 'hole',
+    face: makeFaceRef(s.evaluation, 'body:e1', top.key)!,
+    placements: [{ kind: 'point', u: 15, v: 15 }],
+    holeType: 'simple',
+    diameter: 1,
+    extent: { kind: 'through' },
+  };
+  s.addFeature(hole);
+  await settled();
+  // The History card's field commits the formula; the store resolves it immediately.
+  store.getState().editFeatureParams('h1', { diameterExpression: 'hole_d' } as never);
+  await settled();
+  const volume = (d: number) => 30 * 30 * 10 - Math.PI * (d / 2) ** 2 * 10;
+  assert.ok(Math.abs(body().volume - volume(5)) < 1e-3, `Ø5 hole (${body().volume})`);
+  const outcome = await store.getState().editParameter({ id: 'hole_d', value: 8 });
+  assert.ok(outcome.ok, outcome.ok ? '' : outcome.message);
+  assert.deepEqual(outcome.ok && outcome.changedFeatureIds, ['h1']);
+  await settled();
+  assert.ok(Math.abs(body().volume - volume(8)) < 1e-3, `Ø8 hole (${body().volume})`);
+
+  // Deleting the parameter is refused while the hole reads it.
+  const refused = await store.getState().deleteParameter(hd.ok ? hd.id : '');
+  assert.equal(refused.ok, false);
+  assert.deepEqual(!refused.ok && refused.usages?.map((u) => `${u.featureId}.${u.field}`), [
+    'h1.diameterExpression',
+  ]);
+
+  // Fillet `radius2` and chamfer `distance2` resolve through the same path.
+  const edgeKey = body().edges.find(
+    (e) => e.curve === 'line' && Math.abs(e.direction?.[2] ?? 0) > 0.99,
+  )!.key;
+  store.getState().addFeature({
+    id: 'f1',
+    name: 'Fillet 1',
+    suppressed: false,
+    kind: 'fillet',
+    edges: [makeEdgeRef(store.getState().evaluation, 'body:e1', edgeKey)!],
+    radius: 1,
+    radius2: 1,
+  });
+  await settled();
+  store.getState().editFeatureParams('f1', { radius2Expression: 'hole_d / 4' } as never);
+  await settled();
+  const fillet = () =>
+    store.getState().features.find((f) => f.id === 'f1') as Feature & {
+      radius2: number;
+    };
+  assert.equal(fillet().radius2, 2);
+  assert.ok((await store.getState().editParameter({ id: 'hole_d', value: 10 })).ok);
+  await settled();
+  assert.equal(fillet().radius2, 2.5);
+  assert.deepEqual(store.getState().evaluation.errors, {});
 });
 
 void test('a plan made against an older document is not committed; editParameter re-plans', async () => {

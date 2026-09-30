@@ -112,10 +112,14 @@ export type FeatureExpressionResult = { ok: true; value: number } | { ok: false;
 export function resolveFeatureExpression(
   expression: string,
   paramValues: ReadonlyMap<string, number>,
+  options: { signed?: boolean } = {},
 ): FeatureExpressionResult {
+  // Signed fields (a draft angle) accept any finite value; the feature's own validation bounds it.
+  const accept = (value: number) => (options.signed ? Number.isFinite(value) : value > 0);
+  const rule = options.signed ? 'must be a finite number' : 'must be positive';
   if (isPlainNumber(expression)) {
     const value = Number(expression.replace(/\s*(mm|°|deg)\s*$/i, '').replace(',', '.'));
-    if (!(value > 0)) return { ok: false, message: `must be positive` };
+    if (!accept(value)) return { ok: false, message: rule };
     return { ok: true, value };
   }
   const parsed = parseDimensionExpression(expression);
@@ -131,7 +135,7 @@ export function resolveFeatureExpression(
   });
   if (unknown) return { ok: false, message: `unknown name "${unknown}"` };
   if (value === null) return { ok: false, message: `cannot evaluate "${expression}"` };
-  if (!(value > 0)) return { ok: false, message: `must be positive` };
+  if (!accept(value)) return { ok: false, message: rule };
   return { ok: true, value };
 }
 
@@ -169,13 +173,42 @@ export function findParameterDependents(
     }));
 }
 
-/** A feature's `*Expression` fields, by their resolved-value counterpart. */
-export const FEATURE_EXPRESSION_FIELDS: Record<string, string> = {
-  extrude: 'distance',
-  fillet: 'radius',
-  chamfer: 'distance',
-  shell: 'thickness',
+/**
+ * A feature's numeric fields that accept a formula, by kind: the plain field
+ * holds the last resolved value (what the kernel reads), `<field>Expression`
+ * the formula. All are positive lengths except the signed ones in
+ * {@link SIGNED_EXPRESSION_FIELDS}.
+ */
+export const FEATURE_EXPRESSION_FIELDS: Record<string, readonly string[]> = {
+  extrude: ['distance'],
+  fillet: ['radius', 'radius2'],
+  chamfer: ['distance', 'distance2'],
+  shell: ['thickness'],
+  hole: ['diameter'],
+  draft: ['angle'],
+  rib: ['thickness'],
+  thicken: ['thickness'],
 };
+
+/** `kind.field` of expression fields that may be negative (a draft angle). */
+export const SIGNED_EXPRESSION_FIELDS: ReadonlySet<string> = new Set(['draft.angle']);
+
+/** The expression fields of `kind` (empty for kinds without any). */
+export function expressionFieldsOf(kind: string): readonly string[] {
+  return FEATURE_EXPRESSION_FIELDS[kind] ?? [];
+}
+
+/** Resolves `kind.field`'s formula with that field's sign rule. */
+export function resolveFieldExpression(
+  kind: string,
+  field: string,
+  expression: string,
+  paramValues: ReadonlyMap<string, number>,
+): FeatureExpressionResult {
+  return resolveFeatureExpression(expression, paramValues, {
+    signed: SIGNED_EXPRESSION_FIELDS.has(`${kind}.${field}`),
+  });
+}
 
 interface UsageScanFeature {
   id: string;
@@ -203,10 +236,12 @@ export function findParameterUsages(
         }
       }
     }
-    const exprField = `${FEATURE_EXPRESSION_FIELDS[f.kind] ?? ''}Expression`;
-    const exprValue = record[exprField];
-    if (typeof exprValue === 'string' && expressionReferences(exprValue).includes(paramName)) {
-      usages.push({ kind: 'feature', featureId: f.id, featureName: f.name, field: exprField });
+    for (const field of expressionFieldsOf(f.kind)) {
+      const exprField = `${field}Expression`;
+      const exprValue = record[exprField];
+      if (typeof exprValue === 'string' && expressionReferences(exprValue).includes(paramName)) {
+        usages.push({ kind: 'feature', featureId: f.id, featureName: f.name, field: exprField });
+      }
     }
   }
   return usages;

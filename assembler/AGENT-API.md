@@ -36,12 +36,27 @@ chips take arithmetic only (`2 * 3`), no names, so they have no list.
   a second lookup; `sketch/solverProvider.ts` injects the document's current
   parameter values into every solve request (UI tool, headless, agent API)
   from one place, so live dragging, one-shot edits and agent writes never
-  diverge. The size field of `extrude` (`distance`), `fillet` (`radius`),
-  `chamfer` (`distance`) and `shell` (`thickness`) additionally accepts a
-  sibling `<field>Expression` string (`distanceExpression`, …); the plain
-  field always holds the last resolved value (kernel input unchanged), the
-  `Expression` field is the formula, exactly mirroring `SketchDimension`'s
-  `value`/`expression` split.
+  diverge. The numeric fields of `extrude` (`distance`), `fillet` (`radius`,
+  `radius2`), `chamfer` (`distance`, `distance2`), `shell`, `rib` and
+  `thicken` (`thickness`), `hole` (`diameter`) and `draft` (`angle`)
+  additionally accept a sibling `<field>Expression` string
+  (`distanceExpression`, `diameterExpression`, …; the table is
+  `model/parameters.ts` `FEATURE_EXPRESSION_FIELDS`); the plain field always
+  holds the last resolved value (kernel input unchanged), the `Expression`
+  field is the formula, exactly mirroring `SketchDimension`'s
+  `value`/`expression` split. Every such formula must resolve to a positive
+  length, except the draft angle (signed, bounded by the feature's own
+  range). Not (yet) parameter-aware: nested values such as a hole's blind
+  depth or counterbore/countersink sizes and a shell's per-wall thicknesses.
+  In the History card every one of these fields is a parameter-aware field
+  with name completion (`chrome/PrintFeatureParams.tsx` `ParamField`).
+  Python: `doc.create("hole", …, diameterExpression="bolt + 0.2")`.
+- **UI refusal equals API refusal.** A Parameters-panel edit is evaluated by
+  the kernel before it is committed (`model/store.ts` `checkParameterPlan`);
+  when a feature that evaluates cleanly now would fail with the new values,
+  the edit is refused with "<feature> would fail: <kernel message>. Nothing
+  was changed." — the panel shows the message, exactly like
+  `parameter.edit`'s `featureFailed`.
 - **Rename cascades.** Renaming a parameter (`parameter.edit {name}` /
   `Parameter.rename` / the panel's name field) rewrites every sketch
   dimension expression and every feature `*Expression` field that names it

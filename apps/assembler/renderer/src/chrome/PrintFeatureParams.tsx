@@ -51,6 +51,45 @@ function useEdit(state: AssemblerState, featureId: string) {
     state.editFeatureParams(featureId, patch as FeaturePatch);
 }
 
+/**
+ * A numeric feature field that also accepts document parameter names
+ * (`<field>Expression`, `model/parameters.ts` `FEATURE_EXPRESSION_FIELDS`):
+ * a typed number clears the formula, a formula is stored and re-resolved on
+ * every parameter change.
+ */
+function ParamField({
+  feature,
+  field,
+  label,
+  unit,
+  state,
+  signed = false,
+}: {
+  feature: { id: string };
+  field: string;
+  label: string;
+  unit: string;
+  state: AssemblerState;
+  signed?: boolean;
+}): JSX.Element {
+  const edit = useEdit(state, feature.id);
+  const record = feature as unknown as Record<string, unknown>;
+  const exprField = `${field}Expression`;
+  return (
+    <ParamExpressionField
+      label={label}
+      value={record[field] as number}
+      expression={record[exprField] as string | undefined}
+      unit={unit}
+      parameters={state.parameters}
+      paramValues={paramValuesOf(state)}
+      signed={signed}
+      onCommitValue={(v) => edit({ [field]: v, [exprField]: undefined })}
+      onCommitExpression={(expr) => edit({ [exprField]: expr })}
+    />
+  );
+}
+
 /** A removable reference row (edge, rule, face thickness). */
 function RefRow({
   label,
@@ -125,12 +164,7 @@ function HoleParams({
           <span className={styles.paramNote}>Preset: {feature.preset}</span>
         </span>
       ) : null}
-      <ExpressionField
-        label="Diameter"
-        value={feature.diameter}
-        unit="mm"
-        onCommit={(v) => edit({ diameter: v })}
-      />
+      <ParamField feature={feature} field="diameter" label="Diameter" unit="mm" state={state} />
       {feature.extent.kind === 'blind' ? (
         <ExpressionField
           label="Depth"
@@ -252,12 +286,7 @@ export function PrintFeatureParams({
     case 'draft':
       return (
         <div className={styles.params}>
-          <ExpressionField
-            label="Angle"
-            value={feature.angle}
-            unit="°"
-            onCommit={(v) => edit({ angle: v })}
-          />
+          <ParamField feature={feature} field="angle" label="Angle" unit="°" state={state} signed />
           <div>
             <span className={styles.paramLabel}>Pull direction</span>
             <Select
@@ -281,11 +310,12 @@ export function PrintFeatureParams({
     case 'rib':
       return (
         <div className={styles.params}>
-          <ExpressionField
+          <ParamField
+            feature={feature}
+            field="thickness"
             label="Thickness"
-            value={feature.thickness}
             unit="mm"
-            onCommit={(v) => edit({ thickness: v })}
+            state={state}
           />
           <div>
             <span className={styles.paramLabel}>Side</span>
@@ -307,11 +337,12 @@ export function PrintFeatureParams({
     case 'thicken':
       return (
         <div className={styles.params}>
-          <ExpressionField
+          <ParamField
+            feature={feature}
+            field="thickness"
             label="Thickness"
-            value={feature.thickness}
             unit="mm"
-            onCommit={(v) => edit({ thickness: v })}
+            state={state}
           />
           <div>
             <span className={styles.paramLabel}>Direction</span>
@@ -372,11 +403,12 @@ export function BlendParams({
             onCommitExpression={(expr) => edit({ radiusExpression: expr })}
           />
           {feature.radius2 !== undefined ? (
-            <ExpressionField
+            <ParamField
+              feature={feature}
+              field="radius2"
               label="End radius"
-              value={feature.radius2}
               unit="mm"
-              onCommit={(v) => edit({ radius2: v })}
+              state={state}
             />
           ) : null}
           <div>
@@ -392,6 +424,7 @@ export function BlendParams({
                 edit({
                   radius2:
                     event.currentTarget.value === 'variable' ? feature.radius * 2 : undefined,
+                  radius2Expression: undefined,
                 })
               }
             />
@@ -410,11 +443,14 @@ export function BlendParams({
             onCommitExpression={(expr) => edit({ distanceExpression: expr })}
           />
           {feature.mode === 'twoDistances' ? (
-            <ExpressionField
+            <ParamField
+              feature={
+                { ...feature, distance2: feature.distance2 ?? feature.distance } as ChamferFeature
+              }
+              field="distance2"
               label="Distance 2"
-              value={feature.distance2 ?? feature.distance}
               unit="mm"
-              onCommit={(v) => edit({ distance2: v })}
+              state={state}
             />
           ) : null}
           {feature.mode === 'distanceAngle' ? (
@@ -443,6 +479,7 @@ export function BlendParams({
                     mode === 'twoDistances'
                       ? (feature.distance2 ?? feature.distance * 2)
                       : undefined,
+                  ...(mode === 'twoDistances' ? {} : { distance2Expression: undefined }),
                   angle: mode === 'distanceAngle' ? (feature.angle ?? 45) : undefined,
                 });
               }}

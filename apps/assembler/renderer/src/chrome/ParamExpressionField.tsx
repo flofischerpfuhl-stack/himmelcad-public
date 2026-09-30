@@ -2,7 +2,7 @@
  * Editable numeric field for a feature's size (extrude distance, fillet
  * radius, chamfer distance, shell thickness) that additionally accepts an
  * expression over document parameters (`model/parameters.ts`, the
- * Parameters panel) — `"wall * 2"`, not just `"3 + 2"`. A plain number
+ * Parameters panel) â€” `"wall * 2"`, not just `"3 + 2"`. A plain number
  * commits `value` (and clears any stored expression, like typing over a
  * sketch dimension's formula); a name-referencing expression commits the
  * formula itself, which the store resolves and keeps re-resolving whenever
@@ -40,6 +40,8 @@ export interface ParamExpressionFieldProps {
   onCommitValue: (value: number) => void;
   onCommitExpression: (expression: string) => void;
   precision?: number;
+  /** Accept zero and negative results (a draft angle); size fields must stay positive. */
+  signed?: boolean;
 }
 
 export function ParamExpressionField({
@@ -52,6 +54,7 @@ export function ParamExpressionField({
   onCommitValue,
   onCommitExpression,
   precision = 3,
+  signed = false,
 }: ParamExpressionFieldProps): JSX.Element {
   const initial = expression ?? formatExpressionValue(value, precision);
   const [draft, setDraft] = useState(initial);
@@ -87,7 +90,7 @@ export function ParamExpressionField({
       return;
     }
     if (isPlainNumber(text)) {
-      const parsed = Number(text.replace(/\s*(mm|°|deg)\s*$/i, '').replace(',', '.'));
+      const parsed = Number(text.replace(/\s*(mm|Â°|deg)\s*$/i, '').replace(',', '.'));
       setInvalid(false);
       const formatted = formatExpressionValue(parsed, precision);
       setCommittedText(formatted);
@@ -95,7 +98,7 @@ export function ParamExpressionField({
       if (parsed !== value || expression !== undefined) onCommitValue(parsed);
       return;
     }
-    const resolved = resolveFeatureExpression(text, paramValues);
+    const resolved = resolveFeatureExpression(text, paramValues, { signed });
     if (!resolved.ok) {
       setInvalid(true);
       return;

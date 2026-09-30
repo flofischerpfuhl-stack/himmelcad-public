@@ -285,3 +285,53 @@ void test('agent API: emboss, draft, rib and thicken', async () => {
   });
   assert.ok(Math.abs((await volume(bodyId)) - (before + 0.5 * 15 * 15 * 2)) < 1e-3, 'gusset');
 });
+
+void test('agent API: hole diameter, draft angle and thicken thickness accept parameter formulas', async () => {
+  const bodyId = await plate();
+  await call('parameter.create', { name: 'bolt', unit: 'mm', value: 3.4 });
+  const hole = await call<{ featureId: string }>('feature.create', {
+    kind: 'hole',
+    params: {
+      face: { bodyId, select: '>Z' },
+      placements: [{ kind: 'point', u: 20, v: 15 }],
+      diameterExpression: 'bolt + 0.2',
+    },
+  });
+  const stored = await call<{ params: Json }>('feature.get', { featureId: hole.featureId });
+  assert.equal(stored.params.diameter, 3.6);
+  assert.equal(stored.params.diameterExpression, 'bolt + 0.2');
+  const hollow = (d: number) => 40 * 30 * 10 - Math.PI * (d / 2) ** 2 * 10;
+  assert.ok(Math.abs((await volume(bodyId)) - hollow(3.6)) < 1e-3);
+
+  // A parameter edit re-resolves the formula (one undo step) ...
+  const edited = await call<{ changedFeatureIds: string[] }>('parameter.edit', {
+    parameterId: 'bolt',
+    value: 5.3,
+  });
+  assert.deepEqual(edited.changedFeatureIds, [hole.featureId]);
+  assert.ok(Math.abs((await volume(bodyId)) - hollow(5.5)) < 1e-3);
+  // ... and a formula that no longer gives a positive diameter is refused, nothing changes.
+  await fails(call('parameter.edit', { parameterId: 'bolt', value: -1 }), 'invalidParams');
+  assert.ok(Math.abs((await volume(bodyId)) - hollow(5.5)) < 1e-3);
+
+  // Signed formulas (draft angle) and the schema's "one of" rule.
+  await call('parameter.create', { name: 'tilt', unit: 'deg', value: 3 });
+  const draft = await call<{ featureId: string }>('feature.create', {
+    kind: 'draft',
+    params: {
+      faces: [{ bodyId, select: '-Y' }],
+      neutral: { kind: 'plane', plane: 'XY', offset: 0 },
+      angleExpression: '0 - tilt',
+    },
+  });
+  const draftParams = (await call<{ params: Json }>('feature.get', { featureId: draft.featureId }))
+    .params;
+  assert.equal(draftParams.angle, -3);
+  await fails(
+    call('feature.create', {
+      kind: 'thicken',
+      params: { source: { kind: 'faces', faces: [{ bodyId, select: '>X' }] } },
+    }),
+    'invalidParams',
+  );
+});

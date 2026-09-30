@@ -12,7 +12,7 @@ import {
   ProjectFormatError,
   migrateAndValidate,
 } from '../model/project/format.js';
-import { FEATURE_EXPRESSION_FIELDS, resolveFeatureExpression } from '../model/parameters.js';
+import { expressionFieldsOf, resolveFieldExpression } from '../model/parameters.js';
 import { ApiError } from './errors.js';
 import { addShape, type ShapeResult, type SketchShape } from './sketchApi.js';
 import { resolveEdgeInput, resolveFaceInput, fillSignatures } from './references.js';
@@ -307,18 +307,20 @@ function resolveExpressionField(
   params: Json,
   paramValues: ReadonlyMap<string, number>,
 ): Json {
-  const field = FEATURE_EXPRESSION_FIELDS[kind];
-  if (!field) return params;
-  const exprField = `${field}Expression`;
-  const expression = params[exprField];
-  if (typeof expression !== 'string') return params;
-  const resolved = resolveFeatureExpression(expression, paramValues);
-  if (!resolved.ok) {
-    throw new ApiError('invalidParams', `params.${exprField}: ${resolved.message}`, {
-      hint: 'parameters.list returns every document parameter name and value.',
-    });
+  let out = params;
+  for (const field of expressionFieldsOf(kind)) {
+    const exprField = `${field}Expression`;
+    const expression = params[exprField];
+    if (typeof expression !== 'string') continue;
+    const resolved = resolveFieldExpression(kind, field, expression, paramValues);
+    if (!resolved.ok) {
+      throw new ApiError('invalidParams', `params.${exprField}: ${resolved.message}`, {
+        hint: 'parameters.list returns every document parameter name and value.',
+      });
+    }
+    out = { ...out, [field]: resolved.value };
   }
-  return { ...params, [field]: resolved.value };
+  return out;
 }
 
 function dedupeByKey(params: Json, field: string): void {

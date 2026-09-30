@@ -732,7 +732,7 @@
       },
       "required": ["id", "name", "unit", "value"],
       "additionalProperties": false,
-      "description": "Document parameter (\"variable\"): `value` is always the last resolved value; `expression` (e.g. \"wall * 2\") is the source formula when the value is computed from other parameters. Usable from sketch dimension expressions and the distance/radius/thickness fields of extrude/fillet/chamfer/shell (`<field>Expression`)."
+      "description": "Document parameter (\"variable\"): `value` is always the last resolved value; `expression` (e.g. \"wall * 2\") is the source formula when the value is computed from other parameters. Usable from sketch dimension expressions and the numeric fields of extrude (distance), fillet (radius, radius2), chamfer (distance, distance2), shell/rib/thicken (thickness), hole (diameter) and draft (angle) via `<field>Expression`."
     },
     "SketchPlane": {
       "oneOf": [
@@ -1339,6 +1339,11 @@
             "exclusiveMinimum": 0,
             "description": "Variable radius: `radius` at the start of each edge chain, `radius2` at its end."
           },
+          "radius2Expression": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Formula over document parameters (`parameters.list`), e.g. \"wall * 2\"; resolved into `radius2`."
+          },
           "rules": {
             "type": "array",
             "items": {
@@ -1380,6 +1385,11 @@
           "distance2": {
             "type": "number",
             "exclusiveMinimum": 0
+          },
+          "distance2Expression": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Formula over document parameters (`parameters.list`), e.g. \"wall * 2\"; resolved into `distance2`."
           },
           "angle": {
             "type": "number",
@@ -1851,6 +1861,11 @@
             "type": "number",
             "exclusiveMinimum": 0
           },
+          "diameterExpression": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Formula over document parameters (`parameters.list`), e.g. \"wall * 2\"; resolved into `diameter`."
+          },
           "extent": {
             "$ref": "#/$defs/HoleExtent"
           },
@@ -1881,9 +1896,9 @@
             "description": "Display name of the preset the size came from."
           }
         },
-        "required": ["face", "placements", "diameter"],
+        "required": ["face", "placements"],
         "additionalProperties": false,
-        "description": "Default extent: through all."
+        "description": "Default extent: through all. One of `diameter` / `diameterExpression` is required."
       }
     },
     "emboss": {
@@ -1927,13 +1942,19 @@
             "minimum": -45,
             "maximum": 45
           },
+          "angleExpression": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Formula over document parameters (`parameters.list`), e.g. \"wall * 2\"; resolved into `angle`."
+          },
           "flip": {
             "type": "boolean",
             "default": false
           }
         },
-        "required": ["faces", "neutral", "angle"],
-        "additionalProperties": false
+        "required": ["faces", "neutral"],
+        "additionalProperties": false,
+        "description": "One of `angle` / `angleExpression` is required."
       }
     },
     "rib": {
@@ -1958,6 +1979,11 @@
             "type": "number",
             "exclusiveMinimum": 0
           },
+          "thicknessExpression": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Formula over document parameters (`parameters.list`), e.g. \"wall * 2\"; resolved into `thickness`."
+          },
           "flip": {
             "type": "boolean",
             "default": false
@@ -1967,8 +1993,9 @@
             "minLength": 1
           }
         },
-        "required": ["sketchId", "entityIds", "thickness"],
-        "additionalProperties": false
+        "required": ["sketchId", "entityIds"],
+        "additionalProperties": false,
+        "description": "One of `thickness` / `thicknessExpression` is required."
       }
     },
     "thicken": {
@@ -1983,6 +2010,11 @@
           "thickness": {
             "type": "number",
             "exclusiveMinimum": 0
+          },
+          "thicknessExpression": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Formula over document parameters (`parameters.list`), e.g. \"wall * 2\"; resolved into `thickness`."
           },
           "direction": {
             "enum": ["outside", "inside", "both"],
@@ -2002,8 +2034,9 @@
             "minLength": 1
           }
         },
-        "required": ["source", "thickness"],
-        "additionalProperties": false
+        "required": ["source"],
+        "additionalProperties": false,
+        "description": "One of `thickness` / `thicknessExpression` is required."
       }
     }
   },

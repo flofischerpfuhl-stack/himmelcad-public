@@ -151,6 +151,8 @@ export interface FilletFeature extends FeatureBase {
   rules?: EdgeRule[];
   /** Source formula for `radius`, see {@link ExtrudeFeature.distanceExpression}. */
   radiusExpression?: string | undefined;
+  /** Source formula for `radius2`. */
+  radius2Expression?: string | undefined;
 }
 
 export interface ChamferFeature extends FeatureBase {
@@ -168,6 +170,8 @@ export interface ChamferFeature extends FeatureBase {
   rules?: EdgeRule[];
   /** Source formula for `distance`, see {@link ExtrudeFeature.distanceExpression}. */
   distanceExpression?: string | undefined;
+  /** Source formula for `distance2`. */
+  distance2Expression?: string | undefined;
 }
 
 /** Hollows a body, opening the given faces, keeping walls of `thickness`. */

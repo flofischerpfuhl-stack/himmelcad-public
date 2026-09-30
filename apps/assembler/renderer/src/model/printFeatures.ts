@@ -40,6 +40,8 @@ export interface HoleFeature extends FeatureBase {
   placements: HolePlacement[];
   holeType: HoleType;
   diameter: Millimeters;
+  /** Source formula for `diameter` over document parameters (`model/parameters.ts`). */
+  diameterExpression?: string | undefined;
   extent: HoleExtent;
   /** Counterbore diameter and depth (counterbore holes). */
   counterboreDiameter?: Millimeters;
@@ -250,6 +252,8 @@ export interface DraftFeature extends FeatureBase {
   /** Neutral plane: a planar face (usually the bottom or top) or a construction plane. */
   neutral: PlaneRef;
   angle: number;
+  /** Source formula for `angle` (may resolve negative). */
+  angleExpression?: string | undefined;
   flip: boolean;
 }
 
@@ -267,6 +271,8 @@ export interface RibFeature extends FeatureBase {
   sketchId: string;
   entityIds: string[];
   thickness: Millimeters;
+  /** Source formula for `thickness`. */
+  thicknessExpression?: string | undefined;
   flip: boolean;
   targetBodyId?: string;
 }
@@ -288,6 +294,8 @@ export interface ThickenFeature extends FeatureBase {
   kind: 'thicken';
   source: ThickenSource;
   thickness: Millimeters;
+  /** Source formula for `thickness`. */
+  thicknessExpression?: string | undefined;
   direction: ThickenDirection;
   operation: ExtrudeOperation;
   targetBodyId?: string;

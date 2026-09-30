@@ -17,13 +17,13 @@
  */
 import type { Feature, SketchFeature } from './document.js';
 import {
-  FEATURE_EXPRESSION_FIELDS,
+  expressionFieldsOf,
   expressionReferences,
   findParameterDependents,
   findParameterUsages,
   isValidParameterName,
   renameInExpression,
-  resolveFeatureExpression,
+  resolveFieldExpression,
   resolveParameterValues,
   type Parameter,
   type ParameterUnit,
@@ -127,8 +127,7 @@ function renameEverywhere(
         };
       }
     }
-    const field = FEATURE_EXPRESSION_FIELDS[f.kind];
-    if (field) {
+    for (const field of expressionFieldsOf(f.kind)) {
       const key = `${field}Expression`;
       const expression = (changed as unknown as Record<string, unknown>)[key];
       if (typeof expression === 'string' && expressionReferences(expression).includes(from)) {
@@ -281,22 +280,22 @@ export async function planParameterChange(
 
   // Re-resolve feature size expressions; one that no longer gives a positive length refuses the edit.
   for (let i = 0; i < features.length; i += 1) {
-    const feature = features[i]!;
-    const field = FEATURE_EXPRESSION_FIELDS[feature.kind];
-    if (!field) continue;
-    const expression = (feature as unknown as Record<string, unknown>)[`${field}Expression`];
-    if (typeof expression !== 'string') continue;
-    const value = resolveFeatureExpression(expression, resolved.values);
-    if (!value.ok) {
-      if (expressionReferences(expression).some((name) => changedNames.has(name))) {
-        return fail(
-          `${feature.name}: ${field} "${expression}" ${value.message}. Nothing was changed.`,
-        );
+    for (const field of expressionFieldsOf(features[i]!.kind)) {
+      const feature = features[i]!;
+      const expression = (feature as unknown as Record<string, unknown>)[`${field}Expression`];
+      if (typeof expression !== 'string') continue;
+      const value = resolveFieldExpression(feature.kind, field, expression, resolved.values);
+      if (!value.ok) {
+        if (expressionReferences(expression).some((name) => changedNames.has(name))) {
+          return fail(
+            `${feature.name}: ${field} "${expression}" ${value.message}. Nothing was changed.`,
+          );
+        }
+        continue;
       }
-      continue;
-    }
-    if ((feature as unknown as Record<string, unknown>)[field] !== value.value) {
-      features[i] = { ...feature, [field]: value.value } as Feature;
+      if ((feature as unknown as Record<string, unknown>)[field] !== value.value) {
+        features[i] = { ...feature, [field]: value.value } as Feature;
+      }
     }
   }
 

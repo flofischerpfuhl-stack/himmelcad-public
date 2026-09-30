@@ -107,6 +107,7 @@ export function validatePrintFeature(r: Rec, path: string, h: FormatHelpers): Fe
       });
       c.oneOf('holeType', ['simple', 'counterbore', 'countersink']);
       c.num('diameter');
+      c.optionalStr('diameterExpression');
       const extent = r.extent;
       if (!isRecord(extent)) h.fail(`${path}.extent`, 'expected an object');
       if (extent.kind === 'blind') {
@@ -135,6 +136,7 @@ export function validatePrintFeature(r: Rec, path: string, h: FormatHelpers): Fe
       c.faceList('faces');
       plane(r.neutral, `${path}.neutral`, h);
       c.num('angle');
+      c.optionalStr('angleExpression');
       c.bool('flip');
       break;
     case 'rib':
@@ -143,6 +145,7 @@ export function validatePrintFeature(r: Rec, path: string, h: FormatHelpers): Fe
         h.fail(`${path}.entityIds`, 'expected a non-empty array of strings');
       }
       c.num('thickness');
+      c.optionalStr('thicknessExpression');
       c.bool('flip');
       c.optionalStr('targetBodyId');
       break;
@@ -160,6 +163,7 @@ export function validatePrintFeature(r: Rec, path: string, h: FormatHelpers): Fe
         h.fail(`${path}.source.kind`, 'expected "faces" or "profile"');
       }
       c.num('thickness');
+      c.optionalStr('thicknessExpression');
       c.oneOf('direction', ['outside', 'inside', 'both']);
       c.oneOf('operation', ['new', 'join', 'cut']);
       c.optionalStr('targetBodyId');
@@ -181,10 +185,14 @@ export function validateBlendOptions(r: Rec, path: string, h: FormatHelpers): bo
   switch (r.kind) {
     case 'fillet':
     case 'chamfer': {
-      if (r.kind === 'fillet') c.optionalNum('radius2');
+      if (r.kind === 'fillet') {
+        c.optionalNum('radius2');
+        c.optionalStr('radius2Expression');
+      }
       if (r.kind === 'chamfer') {
         if (r.mode !== undefined) c.oneOf('mode', ['equal', 'twoDistances', 'distanceAngle']);
         c.optionalNum('distance2');
+        c.optionalStr('distance2Expression');
         c.optionalNum('angle');
         c.optionalBool('flip');
       }
