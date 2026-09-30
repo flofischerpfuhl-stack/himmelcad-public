@@ -635,3 +635,27 @@ void test('round trip preserves an extrude distanceExpression alongside its reso
   assert.equal(extrude.kind === 'extrude' && extrude.distanceExpression, 'wall * 2');
   assert.equal(extrude.kind === 'extrude' && extrude.distance, 4);
 });
+
+void test('thumbnail: a PNG data URL is saved right after the project name and kept on load; a bad one is dropped', () => {
+  const png =
+    'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+  const text = saveProjectFile({
+    projectName: 'Box',
+    features: createDemoDocument(),
+    appVersion: 'test',
+    thumbnail: png,
+    createdAt: '2026-01-01T00:00:00.000Z',
+  });
+  const keys = Object.keys(JSON.parse(text) as object);
+  assert.equal(keys.indexOf('thumbnail'), keys.indexOf('projectName') + 1);
+  assert.equal(loadProjectFile(text).thumbnail, png);
+  const bad = JSON.parse(text) as Record<string, unknown>;
+  bad.thumbnail = 'data:text/html;base64,PGgxPg==';
+  const loaded = loadProjectFile(JSON.stringify(bad));
+  assert.equal(
+    loaded.thumbnail,
+    undefined,
+    'an invalid thumbnail is dropped, the project still loads',
+  );
+  assert.equal(loaded.features.length, createDemoDocument().length);
+});

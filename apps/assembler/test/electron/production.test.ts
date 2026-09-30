@@ -22,6 +22,7 @@ import test from 'node:test';
 import { _electron as electron } from 'playwright-core';
 
 import { closeApp } from './closeApp.js';
+import { dismissHome } from './home.js';
 
 // Run via `pnpm --filter @himmelcad/assembler test:electron` (cwd =
 // `apps/assembler`, where `dist/electron/main.js` and `package.json`'s
@@ -128,6 +129,8 @@ void test('production build: kernel reaches ready, the demo part renders, Save/R
   await window.waitForFunction(() => !document.body.innerText.includes('No items yet'), {
     timeout: 20_000,
   });
+  // Started without a file: the Home screen is up; Escape returns to the start document.
+  await dismissHome(window);
 
   mkdirSync(SHOTS_DIR, { recursive: true });
   await window.screenshot({ path: join(SHOTS_DIR, 'f-electron-production-ready.png') });

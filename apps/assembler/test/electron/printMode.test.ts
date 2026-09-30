@@ -13,6 +13,7 @@ import test from 'node:test';
 import { _electron as electron } from 'playwright-core';
 
 import { closeApp } from './closeApp.js';
+import { dismissHome } from './home.js';
 
 const APP_DIR = process.cwd();
 const SHOTS_DIR =
@@ -34,6 +35,7 @@ void test('production build: Print mode analyses in its worker; the slicer IPC a
   await page.waitForFunction(() => !document.body.innerText.includes('No items yet'), null, {
     timeout: 60_000,
   });
+  await dismissHome(page);
 
   await page.mouse.move(900, 500);
   await page.keyboard.press('p');

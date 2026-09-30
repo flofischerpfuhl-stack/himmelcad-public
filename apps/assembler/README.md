@@ -217,6 +217,36 @@ manifold objects, names, colours, item transforms) and Open in Slicer
 - File > Open Recent (Electron): up to 8 files, missing ones greyed with
   Locate…/Remove (`electron/recentFiles.ts`, stored in `userData`). The main
   process only opens paths that are on that list.
+- **Home screen** (`chrome/HomeScreen.tsx`): shown when the app starts without
+  a file (Settings › Home at start) and via File › Home (Ctrl+Shift+H).
+  New project, Open…, templates, recent projects with thumbnails, a crash
+  recovery offer (instead of the dialog while Home is up) and a "Getting
+  started" card whose five keys are read from the command registry. A modal
+  layer: Escape/close returns to the current document; only File shortcuts
+  work while it is open; everything is a real button (Tab order: New, Open,
+  templates, recent projects). Unsaved changes are asked about by the same
+  dialog as New/Open (`projectStore` pending action `template`).
+- **Templates** (`templates/projectTemplates.ts`): Blank, Enclosure with lid
+  (parametric: `width`, `depth`, `height`, `wall`, `clearance`,
+  `screw_clear`), Bracket, Cable clip. Each is a script of canonical
+  agent-API commands run by an `AgentSession` on the live document
+  (`projectStore.newFromTemplate`), so it is a real, editable History; the
+  result becomes the baseline (undo cleared, not dirty, no recovery copy).
+  The same builders run headless in the acceptance suite, which checks their
+  volumes against hand calculations.
+- **Thumbnails — decision: inside the `.hcasm`.** Save renders a 320 × 200
+  PNG of the current view through the image-export path
+  (`model/project/thumbnail.ts` → `renderViewportImage`, transparent, no
+  grid) and stores it as `thumbnail` (`data:image/png;base64,…`, ≤ 400 kB)
+  right after `projectName`. The main process reads only the first 512 kB of
+  each recent file to find it (`recentFiles.ts` `extractThumbnail`, PNG data
+  URLs only), so a large model is never parsed for the Home screen. Chosen
+  over a sidecar file or a `userData` cache because the preview then travels
+  with the project (copy, sync, e-mail), needs no invalidation and cannot go
+  stale or orphaned; cost ~50–150 kB per file. Optional and additive (no
+  schema bump; an invalid thumbnail is dropped on load, never a reason to
+  reject the project). Recovery copies and agent `project.save` texts carry
+  none.
 - Windows installer (`pnpm package:win`): NSIS, per-user install into
   `%LOCALAPPDATA%\Programs\HimmelCAD Assembler`, `.hcasm` file association
   (a double-click or a command-line path opens the project; a second launch
@@ -279,6 +309,7 @@ viewport, directly usable with `page.mouse`.
 | `viewportStats(finish?)`          | Renderer counters: frames drawn (idle check), last frame CPU ms, uploads, draw calls, AO/shadow state; `finish` syncs the GPU after each frame.                                                                                      |
 | `viewportBenchmark(frames)`       | Mean ms per frame over `frames` back-to-back renders while orbiting (scene build + GPU, no vsync).                                                                                                                                   |
 | `measureStore`                    | Measure panel state: pins, picked points, Points tool.                                                                                                                                                                               |
+| `projectStore`                    | Project file state: `newFromTemplate(id)`, `requestTemplate`, `checkRecovery`/`restoreRecovery`, `dirty`, `busyMessage`; Home is `workspaceStore.setHomeOpen` (`D:\AgentWork\HimmelCAD-Assembler\shots\h-shots.mjs`).                |
 
 The view cube's cells carry `data-cell="<face>:<i>:<j>"` (e.g. `front:1:1` =
 the Front-Right-Top corner) for DOM-anchored clicks. Example (see

@@ -284,6 +284,12 @@ export interface RecentFileInfo {
   path: string;
   name: string;
   missing: boolean;
+  /** Last opened/saved in the app (ISO 8601). */
+  openedAt?: string;
+  /** File modification time (ISO 8601), `null` when missing. */
+  modifiedAt?: string | null;
+  /** Home screen preview from the file (`data:image/png;base64,…`). */
+  thumbnail?: string | null;
 }
 
 export interface RecentOpenResult {

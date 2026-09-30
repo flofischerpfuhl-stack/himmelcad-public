@@ -21,6 +21,7 @@ import test from 'node:test';
 import { _electron as electron } from 'playwright-core';
 
 import { closeApp } from './closeApp.js';
+import { dismissHome } from './home.js';
 
 const APP_DIR = process.cwd();
 const BENCH_DIR = process.env.ASSEMBLER_BENCH_DIR ?? join(APP_DIR, 'test', 'fixtures');
@@ -65,6 +66,7 @@ void test('agent access: off by default, UI toggle + indicator, bench projects o
   await window.waitForFunction(() => !document.body.innerText.includes('No items yet'), {
     timeout: 60_000,
   });
+  await dismissHome(window);
 
   const getStatus = () =>
     window.evaluate(() =>

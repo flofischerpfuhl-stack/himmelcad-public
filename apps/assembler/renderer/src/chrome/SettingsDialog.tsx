@@ -88,6 +88,13 @@ export function SettingsDialog(): JSX.Element {
             onChange={(e) => set('labels', e.currentTarget.value as ToolbarLabels)}
           />
         </Row>
+        <Row label="Home at start" hint="Recent projects and templates when the app opens">
+          <Checkbox
+            aria-label="Show Home at start"
+            checked={prefs.showHomeOnStartup}
+            onChange={(e) => set('showHomeOnStartup', e.currentTarget.checked)}
+          />
+        </Row>
         <Row label="Display units" hint="Read-outs only; models are stored in millimetres">
           <Select
             aria-label="Display units"

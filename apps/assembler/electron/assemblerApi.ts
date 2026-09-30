@@ -59,6 +59,12 @@ export interface RecentFileInfo {
   name: string;
   /** `true` if the file no longer exists at this path — render greyed out with Locate…/Remove. */
   missing: boolean;
+  /** When it was last opened or saved in the app (ISO 8601). */
+  openedAt?: string;
+  /** The file's modification time (ISO 8601); `null` when missing. */
+  modifiedAt?: string | null;
+  /** Home screen preview stored in the file (`data:image/png;base64,…`), if any. */
+  thumbnail?: string | null;
 }
 
 /**

@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   addRecentFile,
   emptyRecentFilesState,
+  extractThumbnail,
   MAX_RECENT_FILES,
   parseRecentFilesState,
   relocateRecentFile,
@@ -103,4 +104,15 @@ void test('a saved-then-parsed state round trips', () => {
   state = addRecentFile(state, 'C:/a.hcasm', '2020-01-01T00:00:00.000Z');
   const parsed = parseRecentFilesState(JSON.parse(JSON.stringify(state)));
   assert.deepEqual(parsed, state);
+});
+
+void test('extractThumbnail finds the PNG data URL near the start of a .hcasm, nothing else', () => {
+  const png =
+    'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+  const head = `{\n  "format": "himmelcad-assembler",\n  "projectName": "Box",\n  "thumbnail": "${png}",\n  "features": [`;
+  assert.equal(extractThumbnail(head), png);
+  assert.equal(extractThumbnail('{"projectName": "Old file", "features": []}'), null);
+  // Only a PNG data URL of the base64 alphabet is accepted (it goes straight into an <img>).
+  assert.equal(extractThumbnail('{"thumbnail": "javascript:alert(1)"}'), null);
+  assert.equal(extractThumbnail('{"thumbnail": "data:image/svg+xml;base64,PHN2Zz4="}'), null);
 });

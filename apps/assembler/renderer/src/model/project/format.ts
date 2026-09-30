@@ -119,6 +119,15 @@ export interface ProjectFileV1 {
   /** Always `"mm"` for Phase 1 — the app has no other unit. */
   units: 'mm';
   projectName: string;
+  /**
+   * Preview image for the Home screen's recent projects: a small PNG of the
+   * view at the last Save, as a `data:image/png;base64,…` URL (at most
+   * {@link MAX_THUMBNAIL_CHARS}). Optional and additive (no schema bump):
+   * written right after `projectName` so the Home screen reads it from the
+   * start of the file without parsing the model; an invalid one is dropped
+   * on load, never a reason to reject the project.
+   */
+  thumbnail?: string;
   features: Feature[];
   /** Document parameters ("variables"), schema v3+. Always present once loaded (defaults to `[]`). */
   parameters: Parameter[];
@@ -130,6 +139,20 @@ export interface ProjectFileV1 {
 }
 
 export type ProjectFile = ProjectFileV1;
+
+/** Upper bound of a stored thumbnail data URL (a 320 × 200 PNG is typically 20–120 kB). */
+export const MAX_THUMBNAIL_CHARS = 400_000;
+const THUMBNAIL_PREFIX = 'data:image/png;base64,';
+
+/** `true` for a PNG data URL of acceptable size (base64 alphabet only). */
+export function isValidThumbnail(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    value.length <= MAX_THUMBNAIL_CHARS &&
+    value.startsWith(THUMBNAIL_PREFIX) &&
+    /^[A-Za-z0-9+/]+={0,2}$/.test(value.slice(THUMBNAIL_PREFIX.length))
+  );
+}
 
 export class ProjectFormatError extends Error {}
 
@@ -459,6 +482,7 @@ function validateV1Body(raw: Record<string, unknown>): ProjectFileV1 {
     appVersion: raw.appVersion,
     units: 'mm',
     projectName: raw.projectName,
+    ...(isValidThumbnail(raw.thumbnail) ? { thumbnail: raw.thumbnail } : {}),
     features,
     parameters,
     ...(referenceMeshes !== undefined ? { referenceMeshes } : {}),
@@ -582,6 +606,8 @@ export function saveProjectFile(input: {
   referenceMeshes?: ReferenceMeshRecordV1[];
   viewState?: ProjectViewState;
   items?: ProjectItems;
+  /** Home screen preview (`data:image/png;base64,…`); dropped when invalid or too large. */
+  thumbnail?: string | null;
   createdAt: string;
   modifiedAt?: string;
 }): string {
@@ -591,6 +617,8 @@ export function saveProjectFile(input: {
     appVersion: input.appVersion,
     units: 'mm',
     projectName: input.projectName,
+    // Early in the file: the Home screen reads it from the first bytes (`electron/recentFiles.ts`).
+    ...(isValidThumbnail(input.thumbnail) ? { thumbnail: input.thumbnail } : {}),
     features: input.features,
     parameters: input.parameters ?? [],
     ...(input.referenceMeshes && input.referenceMeshes.length > 0

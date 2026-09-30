@@ -18,6 +18,7 @@ import { usePrintStore } from '../print/printStore.js';
 import type { CameraPose } from '../viewport/camera.js';
 import { getViewportProbe, type ScreenPoint, type ViewportProbe } from '../viewport/automation.js';
 import { useMeasureStore } from '../model/measureStore.js';
+import { useProjectStore } from '../model/project/projectStore.js';
 import type { ToolHandleKind } from '../viewport/picking.js';
 import { sketchAutomation, type SketchAutomation } from './sketchAutomation.js';
 
@@ -80,6 +81,8 @@ export interface AssemblerAutomation {
   viewportBenchmark(frames: number): number | null;
   /** Measure panel state (pins, points, Point tool). */
   measureStore: typeof useMeasureStore;
+  /** Project file state: New/Open/Save, templates (`newFromTemplate`), crash recovery offer. */
+  projectStore: typeof useProjectStore;
 }
 
 declare global {
@@ -209,6 +212,7 @@ export function installAutomationHook(store: typeof useAssemblerStore): void {
     viewportStats: (finish) => getViewportProbe()?.stats?.(finish) ?? null,
     viewportBenchmark: (frames) => getViewportProbe()?.benchmark?.(frames) ?? null,
     measureStore: useMeasureStore,
+    projectStore: useProjectStore,
     waitForKernelIdle: async () => {
       await store.getState().whenSettled();
       // Let React commit and the viewport draw (and pick-render) the settled state.

@@ -9,6 +9,7 @@
 import { create } from 'zustand';
 
 import type { CameraPose } from '../viewport/camera.js';
+import { usePreferences } from './preferences.js';
 import type { Vec3 } from '../viewport/math.js';
 
 export const MAX_SAVED_VIEWS = 8;
@@ -74,6 +75,12 @@ export interface WorkspaceState {
   /** Keyboard shortcut overlay (hold Ctrl or press ?). */
   shortcutOverlay: boolean;
   setShortcutOverlay: (open: boolean) => void;
+  /**
+   * The Home screen (recent projects, templates, getting started, recovery):
+   * shown at start unless turned off in Settings, and via File › Home.
+   */
+  homeOpen: boolean;
+  setHomeOpen: (open: boolean) => void;
   settingsOpen: boolean;
   setSettingsOpen: (open: boolean) => void;
 
@@ -141,6 +148,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   shortcutOverlay: false,
   setShortcutOverlay: (open) => set({ shortcutOverlay: open }),
+  homeOpen: usePreferences.getState().showHomeOnStartup,
+  setHomeOpen: (open) => set({ homeOpen: open }),
   settingsOpen: false,
   setSettingsOpen: (open) => set({ settingsOpen: open }),
 

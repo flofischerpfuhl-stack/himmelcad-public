@@ -8,6 +8,7 @@ import { ColourDialog } from './chrome/ColourDialog.js';
 import { CommandContextMenu } from './chrome/ContextMenu.js';
 import { CommandSearch } from './chrome/CommandSearch.js';
 import { HistoryPanel } from './chrome/HistoryPanel.js';
+import { HomeScreen } from './chrome/HomeScreen.js';
 import { ItemsPanel } from './chrome/ItemsPanel.js';
 import { KernelActivity } from './chrome/KernelActivity.js';
 import { LeftDock } from './chrome/LeftDock.js';
@@ -99,6 +100,7 @@ export function App(): JSX.Element {
       <StatusStrip state={state} />
       <KernelActivity state={state} />
       <AgentAccessIndicator />
+      <HomeScreen />
       <NoticeToast />
 
       {commandSearch ? (

@@ -13,8 +13,10 @@ import { isAbsolute } from 'node:path';
 import { type BrowserWindow, app, dialog, ipcMain } from 'electron';
 
 import {
+  THUMBNAIL_SCAN_BYTES,
   addRecentFile,
   emptyRecentFilesState,
+  extractThumbnail,
   parseRecentFilesState,
   relocateRecentFile,
   removeRecentFile as removeRecentFileEntry,
@@ -113,6 +115,31 @@ async function writeRecentFilesState(state: RecentFilesStateV1): Promise<void> {
   }
 }
 
+/**
+ * Home screen details of a recent file: its modification time and the
+ * thumbnail from the first {@link THUMBNAIL_SCAN_BYTES} of the file (never
+ * the whole model). `null` if the file is gone or unreadable.
+ */
+async function readRecentDetails(
+  path: string,
+): Promise<{ modifiedAt: string; thumbnail: string | null } | null> {
+  let handle: fs.FileHandle | null = null;
+  try {
+    handle = await fs.open(path, 'r');
+    const stat = await handle.stat();
+    const buffer = Buffer.alloc(Math.min(THUMBNAIL_SCAN_BYTES, stat.size));
+    await handle.read(buffer, 0, buffer.length, 0);
+    return {
+      modifiedAt: stat.mtime.toISOString(),
+      thumbnail: extractThumbnail(buffer.toString('utf8')),
+    };
+  } catch {
+    return null;
+  } finally {
+    await handle?.close().catch(() => undefined);
+  }
+}
+
 async function rememberRecentFile(path: string): Promise<void> {
   await writeRecentFilesState(addRecentFile(await readRecentFilesState(), path));
 }
@@ -173,11 +200,17 @@ export function registerFileApi(getWindow: () => BrowserWindow | null): void {
   ipcMain.handle('assembler:recentFiles:list', async () => {
     const state = await readRecentFilesState();
     return Promise.all(
-      state.entries.map(async (entry) => ({
-        path: entry.path,
-        name: entry.name,
-        missing: !(await pathExists(entry.path)),
-      })),
+      state.entries.map(async (entry) => {
+        const details = await readRecentDetails(entry.path);
+        return {
+          path: entry.path,
+          name: entry.name,
+          missing: details === null,
+          openedAt: entry.openedAt,
+          modifiedAt: details?.modifiedAt ?? null,
+          thumbnail: details?.thumbnail ?? null,
+        };
+      }),
     );
   });
 

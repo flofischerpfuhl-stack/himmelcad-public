@@ -462,6 +462,19 @@ export const COMMANDS: readonly Command[] = [
     },
   },
   {
+    id: 'file.home',
+    label: 'Home',
+    group: 'file',
+    shortcut: 'Ctrl+Shift+H',
+    keywords: ['start', 'dashboard', 'recent', 'templates', 'welcome', 'projects'],
+    adaptive: false,
+    availability: () => alwaysEnabled,
+    run: () => {
+      const workspace = useWorkspaceStore.getState();
+      workspace.setHomeOpen(!workspace.homeOpen);
+    },
+  },
+  {
     id: 'file.new',
     label: 'New',
     group: 'file',

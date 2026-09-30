@@ -9,6 +9,7 @@
  */
 import { create } from 'zustand';
 
+import { APP_CAPABILITIES, AgentSession } from '../../api/session.js';
 import type { KernelAdapter } from '../../kernel/adapter.js';
 import { parseStl, suggestStlUnitHint, type StlUnitHint } from '../../kernel/stlImport.js';
 import { exportBodyStl, stlBufferForMeshes } from '../../kernel/stlExport.js';
@@ -41,6 +42,8 @@ import {
 } from './format.js';
 import { decodeMeshPayload, encodeMeshPayload, MeshPayloadTooLargeError } from './meshCodec.js';
 import * as io from './persistence.js';
+import { renderProjectThumbnail } from './thumbnail.js';
+import { projectTemplate, type ProjectTemplateId } from '../../templates/projectTemplates.js';
 
 /** Bumped by hand alongside `package.json` `version`; written into saved files for diagnostics only (never read back for behaviour). */
 const APP_VERSION = '0.1.0-phase1';
@@ -49,10 +52,12 @@ const AUTOSAVE_INTERVAL_MS = 60_000;
 const RECOVERY_DEBOUNCE_MS = 2_000;
 
 /** `openFile`: open a specific file (Open Recent, file association, second instance). */
-export type PendingAction = 'new' | 'open' | 'openFile' | 'close' | null;
+export type PendingAction = 'new' | 'open' | 'openFile' | 'template' | 'close' | null;
 
 /** The file an `openFile` pending action opens (read lazily for Open Recent). */
 let pendingOpen: (() => Promise<io.OpenResult | null>) | null = null;
+/** The template a `template` pending action creates. */
+let pendingTemplate: ProjectTemplateId | null = null;
 
 function sanitizeFileName(name: string): string {
   const cleaned = name.trim().replace(/[\\/:*?"<>|]+/g, '_');
@@ -91,6 +96,15 @@ export interface ProjectFileState {
    * as New/Open. `load` reads the file; `null` = nothing to open.
    */
   requestOpenFile: (load: () => Promise<io.OpenResult | null>) => void;
+  /** Home screen template card: asks about unsaved changes first, then {@link newFromTemplate}. */
+  requestTemplate: (id: ProjectTemplateId) => void;
+  /**
+   * A new project built by a template's agent-API script
+   * (`templates/projectTemplates.ts`): a real, editable history. The result
+   * becomes the project's baseline (undo history cleared, not dirty), like
+   * an opened file. Resolves `false` (and sets `loadError`) if it failed.
+   */
+  newFromTemplate: (id: ProjectTemplateId) => Promise<boolean>;
   /** Called by the Electron main process (via `onCloseRequested`) when the window is about to close. */
   requestCloseWindow: () => void;
   /** Discards unsaved changes and proceeds with `pendingAction`. */
@@ -101,7 +115,7 @@ export interface ProjectFileState {
   saveThenProceed: () => Promise<void>;
 
   /** Replaces the document with a blank project (`name` defaults to `Untitled`). */
-  newProject: (name?: string) => void;
+  newProject: (name?: string, options?: { keepHome?: boolean }) => void;
   openProject: () => Promise<void>;
   /**
    * Applies an already-read `.hcasm` (path + text) as the current document —
@@ -245,7 +259,7 @@ export async function currentProjectText(projectName?: string): Promise<string> 
   return JSON.stringify(file, null, 2);
 }
 
-async function currentProjectPayload(): Promise<string> {
+async function currentProjectPayload(options: { thumbnail?: string | null } = {}): Promise<string> {
   const doc = useAssemblerStore.getState();
   const project = useProjectStore.getState();
   const items = itemsMetaSnapshot(useItemsStore.getState());
@@ -253,6 +267,7 @@ async function currentProjectPayload(): Promise<string> {
   const referenceMeshes = await encodeReferenceMeshes(doc.referenceMeshes);
   return saveProjectFile({
     projectName: doc.projectName,
+    ...(options.thumbnail ? { thumbnail: options.thumbnail } : {}),
     features: doc.features,
     appVersion: APP_VERSION,
     parameters: doc.parameters,
@@ -274,6 +289,22 @@ function applyProjectExtras(project: ProjectFileV1 | null): void {
 /** Node's `Timeout` (unlike the browser's numeric handle) exposes `unref()` so it never keeps a test process alive. */
 function unref(handle: unknown): void {
   (handle as { unref?: () => void }).unref?.();
+}
+
+/** Drops a pending recovery write (the document was just replaced or saved). */
+function cancelRecoveryWrite(): void {
+  if (recoveryDebounce) clearTimeout(recoveryDebounce);
+  recoveryDebounce = null;
+}
+
+/** The Home screen preview written with a Save (the current view; none without geometry). */
+function thumbnailOf(doc: {
+  evaluation: { bodies: readonly unknown[] };
+  referenceMeshes: readonly { hidden: boolean }[];
+}): Promise<string | null> {
+  return renderProjectThumbnail(
+    doc.evaluation.bodies.length > 0 || doc.referenceMeshes.some((m) => !m.hidden),
+  );
 }
 
 function writeRecoverySoon(): void {
@@ -383,6 +414,67 @@ export const useProjectStore = create<ProjectFileState>((set, get) => ({
     pendingOpen = load;
     set({ pendingAction: 'openFile' });
   },
+  requestTemplate: (id) => {
+    ensureSubscription();
+    if (!get().dirty) {
+      void get().newFromTemplate(id);
+      return;
+    }
+    pendingTemplate = id;
+    set({ pendingAction: 'template' });
+  },
+  newFromTemplate: async (id) => {
+    const template = projectTemplate(id);
+    if (template.id === 'blank') {
+      get().newProject(template.name);
+      return true;
+    }
+    // Home stays up (with its progress line) until the part is built.
+    get().newProject(template.name, { keepHome: true });
+    if (!kernelAdapter) {
+      set({ loadError: 'The CAD kernel is not available; templates need it.' });
+      return false;
+    }
+    set({ busyMessage: `Creating “${template.name}”…` });
+    // The template runs the canonical agent commands on this document (one
+    // command layer for UI, agents and templates), then becomes the baseline.
+    const session = new AgentSession({
+      store: useAssemblerStore,
+      kernel: kernelAdapter,
+      host: { server: 'app', capabilities: APP_CAPABILITIES },
+    });
+    try {
+      await template.build((method, params) => session.handle(method, params ?? {}));
+      await useAssemblerStore.getState().whenSettled();
+      const doc = useAssemblerStore.getState();
+      const features = doc.features;
+      baselineFeatures = features;
+      extrasDirty = false;
+      loadWithoutDirty(() =>
+        useAssemblerStore.getState().loadDocument(features, {
+          projectName: template.name,
+          parameters: doc.parameters,
+        }),
+      );
+      set({ dirty: false, loadError: null });
+      // Building it scheduled recovery copies; an untouched template needs none.
+      cancelRecoveryWrite();
+      void io.clearRecovery();
+      useAssemblerStore.getState().clearSelection();
+      useWorkspaceStore.getState().sendCamera({ kind: 'fitAll' });
+      useWorkspaceStore.getState().setHomeOpen(false);
+      return true;
+    } catch (error) {
+      get().newProject(template.name, { keepHome: true });
+      set({
+        loadError: `Could not create “${template.name}”: ${error instanceof Error ? error.message : String(error)}`,
+      });
+      return false;
+    } finally {
+      session.dispose();
+      set({ busyMessage: null });
+    }
+  },
   requestCloseWindow: () => {
     ensureSubscription();
     if (!get().dirty) {
@@ -397,10 +489,12 @@ export const useProjectStore = create<ProjectFileState>((set, get) => ({
     if (action === 'new') get().newProject();
     else if (action === 'open') void get().openProject();
     else if (action === 'openFile') void openPendingFile();
+    else if (action === 'template') void createPendingTemplate();
     else if (action === 'close') void io.respondClose(true);
   },
   cancelPending: () => {
     pendingOpen = null;
+    pendingTemplate = null;
     set({ pendingAction: null });
   },
   saveThenProceed: async () => {
@@ -411,10 +505,11 @@ export const useProjectStore = create<ProjectFileState>((set, get) => ({
     if (action === 'new') get().newProject();
     else if (action === 'open') void get().openProject();
     else if (action === 'openFile') void openPendingFile();
+    else if (action === 'template') void createPendingTemplate();
     else if (action === 'close') void io.respondClose(true);
   },
 
-  newProject: (name) => {
+  newProject: (name, options) => {
     ensureSubscription();
     const features: Feature[] = []; // a blank document, not the demo.
     baselineFeatures = features;
@@ -430,7 +525,9 @@ export const useProjectStore = create<ProjectFileState>((set, get) => ({
       lastSavedAt: null,
       loadError: null,
     });
+    cancelRecoveryWrite();
     void io.clearRecovery();
+    if (!options?.keepHome) useWorkspaceStore.getState().setHomeOpen(false);
   },
 
   openProject: async () => {
@@ -463,7 +560,9 @@ export const useProjectStore = create<ProjectFileState>((set, get) => ({
         lastSavedAt: project.modifiedAt,
         loadError: null,
       });
+      cancelRecoveryWrite();
       void io.clearRecovery();
+      useWorkspaceStore.getState().setHomeOpen(false);
       return true;
     } catch (error) {
       set({
@@ -481,7 +580,7 @@ export const useProjectStore = create<ProjectFileState>((set, get) => ({
     const doc = useAssemblerStore.getState();
     set({ saving: true, busyMessage: 'Saving…' });
     try {
-      const text = await currentProjectPayload();
+      const text = await currentProjectPayload({ thumbnail: await thumbnailOf(doc) });
       const result = await io.saveProjectText(text, {
         path: get().filePath,
         suggestedName: `${sanitizeFileName(doc.projectName)}.hcasm`,
@@ -504,7 +603,7 @@ export const useProjectStore = create<ProjectFileState>((set, get) => ({
     const doc = useAssemblerStore.getState();
     set({ saving: true, busyMessage: 'Saving…' });
     try {
-      const text = await currentProjectPayload();
+      const text = await currentProjectPayload({ thumbnail: await thumbnailOf(doc) });
       const result = await io.saveProjectText(text, {
         suggestedName: `${sanitizeFileName(doc.projectName)}.hcasm`,
         forceDialog: true,
@@ -705,6 +804,7 @@ export const useProjectStore = create<ProjectFileState>((set, get) => ({
           createdAt: project.createdAt,
           lastSavedAt: null,
         });
+        useWorkspaceStore.getState().setHomeOpen(false);
       } catch (error) {
         set({
           recoveryOffer: null,
@@ -732,6 +832,12 @@ export const useProjectStore = create<ProjectFileState>((set, get) => ({
 ensureSubscription();
 
 export { CURRENT_SCHEMA_VERSION };
+
+async function createPendingTemplate(): Promise<void> {
+  const id = pendingTemplate;
+  pendingTemplate = null;
+  if (id) await useProjectStore.getState().newFromTemplate(id);
+}
 
 async function openPendingFile(): Promise<void> {
   const load = pendingOpen;

@@ -120,6 +120,28 @@ export function useGlobalKeyboard(
       const singleKeys = usePreferences.getState().singleKeyHotkeys;
       const plain = !event.ctrlKey && !event.metaKey && !event.altKey;
 
+      // The Home screen covers the model: only File shortcuts (New, Open, Home …) apply.
+      if (useWorkspaceStore.getState().homeOpen) {
+        if (targetIsTextInput) return;
+        const command = resolveShortcut(
+          {
+            key: event.key,
+            ctrlKey: event.ctrlKey,
+            metaKey: event.metaKey,
+            shiftKey: event.shiftKey,
+            altKey: event.altKey,
+            targetIsTextInput,
+          },
+          state,
+          'model',
+        );
+        if (command?.group === 'file' && command.availability(state).enabled) {
+          event.preventDefault();
+          command.run(state);
+        }
+        return;
+      }
+
       if (!targetIsTextInput && (event.ctrlKey || event.metaKey) && event.altKey) {
         const key = event.key.toLowerCase();
         if (key === 's' && !event.shiftKey) {

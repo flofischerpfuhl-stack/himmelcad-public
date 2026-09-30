@@ -28,8 +28,9 @@ import { RecentFilesMenu } from './RecentFilesMenu.js';
 import type { AssemblerState } from '../model/store.js';
 import styles from './TopBar.module.css';
 
-const PENDING_ACTION_LABEL: Record<'new' | 'open' | 'openFile' | 'close', string> = {
+const PENDING_ACTION_LABEL: Record<'new' | 'open' | 'openFile' | 'template' | 'close', string> = {
   new: 'starting a new project',
+  template: 'starting a new project',
   open: 'opening another project',
   openFile: 'opening another project',
   close: 'closing',
@@ -39,6 +40,8 @@ export function TopBar({ state }: { state: AssemblerState }): JSX.Element {
   const [renaming, setRenaming] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const project = useProjectStore();
+  // The Home screen shows the recovery offer itself while it is open.
+  const homeOpen = useWorkspaceStore((s) => s.homeOpen);
 
   useEffect(() => {
     if (!renaming) return;
@@ -213,7 +216,7 @@ export function TopBar({ state }: { state: AssemblerState }): JSX.Element {
       </Dialog>
 
       <Dialog
-        open={project.recoveryOffer !== null}
+        open={project.recoveryOffer !== null && !homeOpen}
         onClose={() => useProjectStore.getState().dismissRecovery()}
         title="Recover unsaved changes?"
       >

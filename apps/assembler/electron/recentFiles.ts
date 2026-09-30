@@ -98,6 +98,22 @@ export interface RecentFileInfo {
   missing: boolean;
 }
 
+/** Bytes read from the start of a `.hcasm` to find its thumbnail (it is written right after `projectName`). */
+export const THUMBNAIL_SCAN_BYTES = 512 * 1024;
+const THUMBNAIL_PATTERN = /"thumbnail"\s*:\s*"(data:image\/png;base64,[A-Za-z0-9+/]+={0,2})"/;
+
+/**
+ * The project's Home-screen thumbnail (a PNG data URL) from the first bytes
+ * of its `.hcasm` text, without parsing the (possibly large) model. `null`
+ * when there is none — older files, web downloads, or a file saved while no
+ * 3D view was available. Only a well-formed PNG data URL is ever returned,
+ * so the renderer can put it straight into an `<img>`.
+ */
+export function extractThumbnail(head: string): string | null {
+  const match = THUMBNAIL_PATTERN.exec(head);
+  return match ? match[1]! : null;
+}
+
 /**
  * Persists a {@link RecentFilesStateV1} as JSON at `filePath` (typically
  * under `app.getPath('userData')`) and layers filesystem existence checks

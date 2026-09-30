@@ -16,6 +16,7 @@ import test from 'node:test';
 import { _electron as electron } from 'playwright-core';
 
 import { closeApp } from './closeApp.js';
+import { dismissHome } from './home.js';
 
 import { describeBody, describeEdge, describeFace } from '../../renderer/src/api/describe.js';
 import { loadProjectFile, saveProjectFile } from '../../renderer/src/model/project/format.js';
@@ -61,6 +62,7 @@ void test('the app (browser worker) and Node name every body, face and edge iden
   await window.waitForFunction(() => !document.body.innerText.includes('No items yet'), {
     timeout: 60_000,
   });
+  await dismissHome(window);
 
   // Agent access on, the way a user turns it on.
   await window.keyboard.press('Control+f');
