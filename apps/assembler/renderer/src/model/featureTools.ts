@@ -43,19 +43,18 @@ import {
   type WorldAxis,
 } from '../foundation/document/document.js';
 import { MAX_PATTERN_COUNT, type OffsetFaceMode, type PatternDefinition } from './features.js';
-import { constructionAxisLine, datumRef, planeRefPlane } from './construction.js';
 import {
-  acceptConstructionPick,
-  constructionDraftBadges,
-  constructionDraftGuides,
-  constructionDraftHandles,
-  constructionDraftMeta,
-  constructionDraftToFeature,
-  createConstructionDraft,
-  isConstructionDraftKind,
+  constructionAxisLine,
+  datumRef,
+  planeRefPlane,
   referencedDatumIds,
-  type ConstructionDraft,
-} from './constructionTools.js';
+} from '../foundation/geometry-kernel/datums.js';
+import {
+  draftToolFor,
+  isRegisteredDraft,
+  isRegisteredDraftKind,
+  type RegisteredDraft,
+} from '../foundation/commands/draftTools.js';
 import { findSketchContact, pointInsideBody } from './modeling.js';
 import {
   OFFSET_FACE_MODE_LABEL,
@@ -144,13 +143,16 @@ export type FeatureDraft =
   | { kind: 'deleteFace'; faces: FaceRef[] }
   // Hole, Emboss, Draft, Rib, Thicken (`printFeatureTools.ts`).
   | PrintDraft
-  // Construction planes and axes (`constructionTools.ts`).
-  | ConstructionDraft;
+  // Drafts of tools other modules register (construction planes/axes, `draftTools.ts`).
+  | RegisteredDraft;
 
 export type FeatureDraftKind = FeatureDraft['kind'];
 
-function isConstructionDraft(draft: FeatureDraft): draft is ConstructionDraft {
-  return isConstructionDraftKind(draft.kind);
+/** The registered tool of a module-owned draft (`foundation/commands/draftTools.ts`). */
+function registeredTool(draft: RegisteredDraft) {
+  const tool = draftToolFor(draft.kind);
+  if (!tool) throw new Error(`No draft tool is registered for "${draft.kind}"`);
+  return tool;
 }
 
 /** Construction planes/axes a draft references (highlighted while the tool runs). */
@@ -460,17 +462,7 @@ function round(value: number): number {
 /** Starts `kind` from the selection, or explains what is missing (the command's disabled reason). */
 export function createDraft(kind: FeatureDraftKind, ctx: DraftContext): DraftStart {
   if (isPrintDraftKind(kind)) return createPrintDraft(kind, ctx);
-  if (kind === 'constructionPlane' || kind === 'constructionAxis') {
-    return {
-      ok: true,
-      draft: createConstructionDraft(
-        kind,
-        kind === 'constructionPlane' ? 'offset' : 'edge',
-        ctx.selection,
-        ctx.evaluation,
-      ),
-    };
-  }
+  if (isRegisteredDraftKind(kind)) return draftToolFor(kind)!.createDraft(kind, ctx);
   switch (kind) {
     case 'revolve': {
       const profiles = selectedProfiles(ctx);
@@ -767,7 +759,9 @@ export function acceptPick(
   evaluation: EvaluationResult,
   features: readonly Feature[] = [],
 ): FeatureDraft {
-  if (isConstructionDraft(draft)) return acceptConstructionPick(draft, pick, evaluation);
+  if (isRegisteredDraft(draft)) {
+    return registeredTool(draft).acceptPick(draft, pick, evaluation, features);
+  }
   if (pick.kind === 'datum') return acceptDatumPick(draft, pick.featureId, evaluation);
   if (isPrintDraft(draft)) return acceptPrintPick(draft, pick, evaluation, features);
   const faceRef = pick.kind === 'face' ? faceRefOf(evaluation, pick.bodyId, pick.faceKey) : null;
@@ -1013,7 +1007,7 @@ export function draftToFeature(
   draft: FeatureDraft,
   base: { id: string; name: string },
 ): Feature | null {
-  if (isConstructionDraft(draft)) return constructionDraftToFeature(draft, base);
+  if (isRegisteredDraft(draft)) return registeredTool(draft).toFeature(draft, base);
   if (isPrintDraft(draft)) return printDraftToFeature(draft, base);
   const common = { id: base.id, name: base.name, suppressed: false };
   const op = (d: ProfileOperation) => ({
@@ -1119,7 +1113,7 @@ export interface DraftMeta {
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
 export function draftMeta(draft: FeatureDraft): DraftMeta {
-  if (isConstructionDraft(draft)) return constructionDraftMeta(draft);
+  if (isRegisteredDraft(draft)) return registeredTool(draft).meta(draft);
   if (isPrintDraft(draft)) return printDraftMeta(draft);
   switch (draft.kind) {
     case 'revolve':
@@ -1303,11 +1297,12 @@ export function setOffsetFaceMode(
  * Face modes); without it those badges are left out.
  */
 export function draftBadges(draft: FeatureDraft, evaluation?: EvaluationResult): DraftBadge[] {
-  if (isConstructionDraft(draft)) {
-    return constructionDraftBadges(draft).map((badge) => ({
+  if (isRegisteredDraft(draft)) {
+    const tool = registeredTool(draft);
+    return (tool.badges?.(draft, evaluation) ?? []).map((badge) => ({
       ...badge,
       apply: (d, value, evaluation) =>
-        isConstructionDraft(d) ? badge.apply(d, value, evaluation) : d,
+        isRegisteredDraft(d) && d.kind === draft.kind ? badge.apply(d, value, evaluation) : d,
     }));
   }
   if (isPrintDraft(draft)) {
@@ -1696,10 +1691,12 @@ export function draftHandles(
   evaluation: EvaluationResult,
   features: readonly Feature[] = [],
 ): DraftHandle[] {
-  if (isConstructionDraft(draft)) {
-    return constructionDraftHandles(draft, evaluation).map((h) => ({
+  if (isRegisteredDraft(draft)) {
+    const tool = registeredTool(draft);
+    return (tool.handles?.(draft, evaluation, features) ?? []).map((h) => ({
       ...h,
-      apply: (d: FeatureDraft, value: number) => (isConstructionDraft(d) ? h.apply(d, value) : d),
+      apply: (d: FeatureDraft, value: number) =>
+        isRegisteredDraft(d) && d.kind === draft.kind ? h.apply(d, value) : d,
     }));
   }
   if (isPrintDraft(draft)) {
@@ -1947,7 +1944,9 @@ export function draftGuides(
   evaluation: EvaluationResult,
   features: readonly Feature[] = [],
 ): DraftGuides {
-  if (isConstructionDraft(draft)) return constructionDraftGuides(draft, evaluation);
+  if (isRegisteredDraft(draft)) {
+    return registeredTool(draft).guides?.(draft, evaluation, features) ?? { lines: [], planes: [] };
+  }
   if (isPrintDraft(draft)) return printDraftGuides(draft, evaluation, features);
   const out: DraftGuides = { lines: [], planes: [] };
   const axisSegment = (ref: AxisRef | null, around: Vec3 | null, reach: number) => {
@@ -1994,7 +1993,7 @@ export function draftGuides(
 
 /** Bodies the running tool modifies in place (shown with the preview accent). */
 export function draftModifiedBodyIds(draft: FeatureDraft): string[] {
-  if (isConstructionDraft(draft)) return [];
+  if (isRegisteredDraft(draft)) return registeredTool(draft).modifiedBodyIds?.(draft) ?? [];
   if (isPrintDraft(draft)) return printDraftModifiedBodyIds(draft);
   switch (draft.kind) {
     case 'revolve':

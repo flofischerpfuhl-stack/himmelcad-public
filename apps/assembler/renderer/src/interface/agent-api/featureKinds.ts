@@ -12,7 +12,8 @@ import {
   ProjectFormatError,
   migrateAndValidate,
 } from '../../foundation/document/format.js';
-import { datumRef } from '../../model/construction.js';
+
+import { datumRef } from '../../foundation/geometry-kernel/datums.js';
 import {
   expressionFieldsOf,
   resolveFieldExpression,

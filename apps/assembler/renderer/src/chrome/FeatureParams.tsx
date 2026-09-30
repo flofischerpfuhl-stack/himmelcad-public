@@ -5,11 +5,6 @@
  */
 import { Select } from '@himmelcad/ui';
 
-import {
-  AXIS_DEF_LABEL,
-  PLANE_DEF_LABEL,
-  type ConstructionFeature,
-} from '../model/construction.js';
 import type { ExtrudeOperation, Plane, AxisRef } from '../foundation/document/document.js';
 import type { ModelingFeature } from '../model/features.js';
 import { OFFSET_FACE_MODE_LABEL } from '../model/offsetFaceModes.js';
@@ -35,54 +30,6 @@ function axisText(axis: AxisRef): string {
 
 function plural(n: number, one: string, many = `${one}s`): string {
   return `${n} ${n === 1 ? one : many}`;
-}
-
-/** History card of a construction plane/axis: its definition and numeric values, Flip. */
-function ConstructionParams({
-  feature,
-  edit,
-}: {
-  feature: ConstructionFeature;
-  edit: (patch: Record<string, unknown>) => void;
-}): JSX.Element {
-  const def = feature.definition;
-  const label =
-    feature.kind === 'constructionPlane'
-      ? PLANE_DEF_LABEL[feature.definition.kind]
-      : AXIS_DEF_LABEL[feature.definition.kind];
-  return (
-    <div className={styles.params}>
-      <span className={styles.paramNote}>{label}</span>
-      {def.kind === 'offset' ? (
-        <ExpressionField
-          label="Offset"
-          value={def.distance}
-          unit="mm"
-          onCommit={(v) => edit({ definition: { ...def, distance: v } })}
-        />
-      ) : null}
-      {def.kind === 'angle' || def.kind === 'tangent' ? (
-        <ExpressionField
-          label="Angle"
-          value={def.angle}
-          unit="°"
-          onCommit={(v) => edit({ definition: { ...def, angle: v } })}
-        />
-      ) : null}
-      <div>
-        <span className={styles.paramLabel}>Direction</span>
-        <Select
-          aria-label={`${feature.name} direction`}
-          value={feature.flip ? 'flipped' : 'normal'}
-          options={[
-            { value: 'normal', label: 'Normal' },
-            { value: 'flipped', label: 'Flipped' },
-          ]}
-          onChange={(event) => edit({ flip: event.currentTarget.value === 'flipped' })}
-        />
-      </div>
-    </div>
-  );
 }
 
 export function ModelingFeatureParams({
@@ -230,9 +177,6 @@ export function ModelingFeatureParams({
           </span>
         </div>
       );
-    case 'constructionPlane':
-    case 'constructionAxis':
-      return <ConstructionParams feature={feature} edit={edit} />;
     case 'pattern': {
       const p = feature.pattern;
       return (

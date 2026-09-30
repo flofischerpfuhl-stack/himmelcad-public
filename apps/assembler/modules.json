@@ -120,14 +120,7 @@
       "id": "construction",
       "layer": "domain",
       "summary": "Construction planes and axes: definitions, tools, commands, evaluation.",
-      "paths": [
-        "renderer/src/modules/construction/",
-        "renderer/src/model/construction.ts",
-        "renderer/src/model/constructionTools.ts",
-        "renderer/src/model/commands/constructCommands.ts",
-        "renderer/src/kernel/features/construction.ts",
-        "renderer/src/kernel/features/constructionKernel.ts"
-      ]
+      "paths": ["renderer/src/modules/construction/"]
     },
     {
       "id": "parameters",

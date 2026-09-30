@@ -80,19 +80,6 @@ export function validateModelingFeature(r: Rec, path: string, h: FormatHelpers):
     }
   };
   const plane = (v: unknown, p: string) => validatePlaneRef(v, p, h);
-  const point = (v: unknown, p: string) => {
-    if (!isRecord(v)) h.fail(p, 'expected an object');
-    if (v.kind === 'point') {
-      if (!isVec3(v.point)) h.fail(`${p}.point`, 'expected a Vec3');
-    } else if (v.kind === 'edgeEnd') {
-      h.edgeRef(v.edge, `${p}.edge`);
-      if (!isVec3(v.near)) h.fail(`${p}.near`, 'expected a Vec3');
-    } else if (v.kind === 'edgeMid' || v.kind === 'circleCenter') {
-      h.edgeRef(v.edge, `${p}.edge`);
-    } else {
-      h.fail(`${p}.kind`, 'expected "point", "edgeEnd", "edgeMid" or "circleCenter"');
-    }
-  };
   const stringList = (field: string) => {
     const v = r[field];
     if (!Array.isArray(v) || v.length === 0 || !v.every(isString)) {
@@ -163,52 +150,6 @@ export function validateModelingFeature(r: Rec, path: string, h: FormatHelpers):
         (Array.isArray(r.sketchIds) ? r.sketchIds.length : 0) +
         (Array.isArray(r.faces) ? r.faces.length : 0);
       if (targets === 0) h.fail(`${path}.bodyIds`, 'expected at least one body, sketch or face');
-      break;
-    }
-    case 'constructionPlane': {
-      const d = r.definition;
-      const p = `${path}.definition`;
-      if (!isRecord(d)) h.fail(p, 'expected an object');
-      if (d.kind === 'offset') {
-        plane(d.base, `${p}.base`);
-        if (!isNumber(d.distance)) h.fail(`${p}.distance`, 'expected a number');
-      } else if (d.kind === 'angle') {
-        plane(d.base, `${p}.base`);
-        axis(d.axis, `${p}.axis`);
-        if (!isNumber(d.angle)) h.fail(`${p}.angle`, 'expected a number');
-      } else if (d.kind === 'threePoints') {
-        if (!Array.isArray(d.points) || d.points.length !== 3) {
-          h.fail(`${p}.points`, 'expected three points');
-        }
-        d.points.forEach((q, i) => point(q, `${p}.points[${i}]`));
-      } else if (d.kind === 'midplane') {
-        plane(d.a, `${p}.a`);
-        plane(d.b, `${p}.b`);
-      } else if (d.kind === 'tangent') {
-        h.faceRef(d.face, `${p}.face`);
-        if (!isNumber(d.angle)) h.fail(`${p}.angle`, 'expected a number');
-      } else {
-        h.fail(`${p}.kind`, 'expected "offset", "angle", "threePoints", "midplane" or "tangent"');
-      }
-      if (r.flip !== undefined) bool('flip');
-      break;
-    }
-    case 'constructionAxis': {
-      const d = r.definition;
-      const p = `${path}.definition`;
-      if (!isRecord(d)) h.fail(p, 'expected an object');
-      if (d.kind === 'edge') h.edgeRef(d.edge, `${p}.edge`);
-      else if (d.kind === 'twoPoints') {
-        point(d.a, `${p}.a`);
-        point(d.b, `${p}.b`);
-      } else if (d.kind === 'cylinder') h.faceRef(d.face, `${p}.face`);
-      else if (d.kind === 'planes') {
-        plane(d.a, `${p}.a`);
-        plane(d.b, `${p}.b`);
-      } else {
-        h.fail(`${p}.kind`, 'expected "edge", "twoPoints", "cylinder" or "planes"');
-      }
-      if (r.flip !== undefined) bool('flip');
       break;
     }
     case 'pattern': {

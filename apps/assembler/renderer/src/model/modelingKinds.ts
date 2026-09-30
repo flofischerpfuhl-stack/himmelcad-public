@@ -1,8 +1,6 @@
 /**
  * Registers the modelling feature kinds (`features.ts`, `printFeatures.ts`)
- * and, until the construction module has its own validators, the
- * construction kinds (`construction.ts`) with the document's feature-kind
- * registry: History label, `.hcasm` validator, consumed sketches, formula
+ * with the document's feature-kind registry: History label, `.hcasm` validator, consumed sketches, formula
  * fields and the boolean-result rule. Loaded by the product composition and
  * the kernel-worker composition (`renderer/src/app/`).
  */
@@ -31,11 +29,9 @@ const EXPRESSION_FIELDS: Partial<Record<ModelingFeature['kind'], readonly string
 const BOOLEAN_RESULT_KINDS: ReadonlySet<string> = new Set(['hole', 'emboss', 'rib']);
 
 for (const kind of MODELING_FEATURE_KINDS) {
-  // Construction planes/axes are validated here until the construction module registers them.
-  const construction = kind === 'constructionPlane' || kind === 'constructionAxis';
   const definition: FeatureKindDefinition = {
     kind,
-    module: construction ? 'construction' : 'modeling',
+    module: 'modeling',
     label: MODELING_FEATURE_LABEL[kind],
     validate: (record, path, helpers) => {
       validateModelingFeature(record, path, helpers);

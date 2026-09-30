@@ -115,19 +115,6 @@
     },
     {
       "from": "modeling",
-      "to": "construction",
-      "rule": "cross-domain",
-      "reason": "Known at the start of the ADR 0032 restructure (phase A): domain modules talk through foundation contracts and registrations, not directly.",
-      "edges": [
-        "renderer/src/chrome/FeatureParams.tsx -> renderer/src/model/construction.ts",
-        "renderer/src/model/featureTools.ts -> renderer/src/model/construction.ts",
-        "renderer/src/model/featureTools.ts -> renderer/src/model/constructionTools.ts",
-        "renderer/src/model/features.ts -> renderer/src/model/construction.ts",
-        "renderer/src/model/printFeatureTools.ts -> renderer/src/model/construction.ts"
-      ]
-    },
-    {
-      "from": "modeling",
       "to": "direct-edit",
       "rule": "cross-domain",
       "reason": "Known at the start of the ADR 0032 restructure (phase A): domain modules talk through foundation contracts and registrations, not directly.",

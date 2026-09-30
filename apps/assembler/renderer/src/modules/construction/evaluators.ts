@@ -1,5 +1,5 @@
 /**
- * Construction planes and axes (`model/construction.ts`): evaluated into
+ * Construction planes and axes (`construction.ts`): evaluated into
  * datums (`EvaluatedDatum`) other steps reference by feature id. No body is
  * created or changed. Every reference fails with a readable
  * `Missing reference: …` when it no longer resolves (History "Fix…").
@@ -9,7 +9,7 @@ import type {
   ConstructionAxisFeature,
   ConstructionPlaneFeature,
   PointRef,
-} from '../../model/construction.js';
+} from './construction.js';
 import { edgePointAt } from '../../foundation/geometry-kernel/occt.js';
 import type { EvaluatedDatum } from '../../foundation/geometry-kernel/types.js';
 import type {

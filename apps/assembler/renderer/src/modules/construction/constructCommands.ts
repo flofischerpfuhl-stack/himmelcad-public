@@ -6,8 +6,8 @@
  * selection). Plus the commands a selected plane/axis offers: sketch on
  * it (in `sketchCommands.ts`), cut the Section View along it.
  */
-import { createConstructionDraft, type AxisMode, type PlaneMode } from '../constructionTools.js';
-import { PLANE_DEF_LABEL, AXIS_DEF_LABEL } from '../construction.js';
+import { createConstructionDraft, type AxisMode, type PlaneMode } from './constructionTools.js';
+import { PLANE_DEF_LABEL, AXIS_DEF_LABEL } from './construction.js';
 import type { AssemblerState } from '../../foundation/commands/store.js';
 import type { Command, CommandAvailability } from '../../foundation/commands/registry.js';
 

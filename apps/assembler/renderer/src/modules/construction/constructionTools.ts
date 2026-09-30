@@ -11,19 +11,21 @@ import {
   baseFaceKey,
   edgeSignatureOf,
   faceSignatureOf,
-} from '../foundation/geometry-kernel/naming.js';
-import type { Body, EvaluationResult } from '../foundation/geometry-kernel/types.js';
+} from '../../foundation/geometry-kernel/naming.js';
+import type { Body, EvaluationResult } from '../../foundation/geometry-kernel/types.js';
 import {
   AXIS_DEF_LABEL,
   PLANE_DEF_LABEL,
-  constructionAxisLine,
-  datumRef,
-  planeRefFrame,
-  planeRefPlane,
   type ConstructionAxisDef,
   type ConstructionPlaneDef,
   type PointRef,
 } from './construction.js';
+import {
+  constructionAxisLine,
+  datumRef,
+  planeRefFrame,
+  planeRefPlane,
+} from '../../foundation/geometry-kernel/datums.js';
 import {
   frameForFace,
   frameForPlane,
@@ -36,9 +38,10 @@ import {
   type AxisRef,
   type PlaneRef,
   type WorldAxis,
-} from '../foundation/document/document.js';
+} from '../../foundation/document/document.js';
 
-import type { SelectionItem } from '../foundation/commands/store.js';
+import { defineDraftTool } from '../../foundation/commands/draftTools.js';
+import type { SelectionItem } from '../../foundation/commands/store.js';
 
 export type PlaneMode = ConstructionPlaneDef['kind'];
 export type AxisMode = ConstructionAxisDef['kind'];
@@ -806,21 +809,6 @@ function pointPosition(evaluation: EvaluationResult, ref: PointRef): Vec3 | null
   );
 }
 
-/** Feature ids of construction planes/axes a draft (any feature tool) references. */
-export function referencedDatumIds(value: unknown): string[] {
-  const out: string[] = [];
-  const visit = (v: unknown): void => {
-    if (Array.isArray(v)) v.forEach(visit);
-    else if (v && typeof v === 'object') {
-      const r = v as Record<string, unknown>;
-      if (r.kind === 'construction' && typeof r.featureId === 'string') out.push(r.featureId);
-      for (const child of Object.values(r)) visit(child);
-    }
-  };
-  visit(value);
-  return out;
-}
-
 // ---- vectors -------------------------------------------------------------------------------
 
 function dot(a: Vec3, b: Vec3): number {
@@ -854,3 +842,39 @@ function circleCenter(a: Vec3, b: Vec3, c: Vec3): Vec3 | null {
 
 /** Frame of a world plane (re-exported for tests). */
 export const worldPlaneFrame = frameForPlane;
+
+// ---- registration -------------------------------------------------------------------------
+
+declare module '../../foundation/commands/draftTools.js' {
+  interface DraftToolMap {
+    constructionPlane: Extract<ConstructionDraft, { kind: 'constructionPlane' }>;
+    constructionAxis: Extract<ConstructionDraft, { kind: 'constructionAxis' }>;
+  }
+}
+
+/**
+ * The Construct tool as the generic feature tool sees it
+ * (`foundation/commands/draftTools.ts`); the Construct commands start it in
+ * a chosen mode, the generic start (a History "edit" or `createDraft`) in
+ * the first mode of each kind.
+ */
+export const CONSTRUCTION_DRAFT_TOOL = defineDraftTool<ConstructionDraft>({
+  module: 'construction',
+  kinds: ['constructionPlane', 'constructionAxis'],
+  createDraft: (kind, ctx) => ({
+    ok: true,
+    draft: createConstructionDraft(
+      kind,
+      kind === 'constructionPlane' ? 'offset' : 'edge',
+      ctx.selection,
+      ctx.evaluation,
+    ),
+  }),
+  acceptPick: (draft, pick, evaluation) => acceptConstructionPick(draft, pick, evaluation),
+  toFeature: constructionDraftToFeature,
+  meta: constructionDraftMeta,
+  badges: (draft) => constructionDraftBadges(draft),
+  handles: (draft, evaluation) => constructionDraftHandles(draft, evaluation),
+  guides: (draft, evaluation) => constructionDraftGuides(draft, evaluation),
+  modifiedBodyIds: () => [],
+});

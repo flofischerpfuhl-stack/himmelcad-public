@@ -6,4 +6,4 @@
  */
 import '../foundation/sketch-solver/sketchFeature.js';
 import '../kernel/features/modelingKernel.js';
-import '../kernel/features/constructionKernel.js';
+import '../modules/construction/kernel.js';

@@ -22,11 +22,6 @@ import type {
   WorldAxis,
 } from '../foundation/document/document.js';
 import {
-  CONSTRUCTION_FEATURE_KINDS,
-  CONSTRUCTION_FEATURE_LABEL,
-  type ConstructionFeature,
-} from './construction.js';
-import {
   PRINT_FEATURE_KINDS,
   PRINT_FEATURE_LABEL,
   printSketchIdsUsedBy,
@@ -227,9 +222,7 @@ export type ModelingFeature =
   | OffsetFaceFeature
   | DeleteFaceFeature
   // Hole, Emboss, Draft, Rib, Thicken (`printFeatures.ts`).
-  | PrintFeature
-  // Construction planes and axes (`construction.ts`).
-  | ConstructionFeature;
+  | PrintFeature;
 
 declare module '../foundation/document/featureKinds.js' {
   interface FeatureKindMap {
@@ -260,7 +253,6 @@ export const MODELING_FEATURE_KINDS: readonly ModelingFeature['kind'][] = [
   'offsetFace',
   'deleteFace',
   ...PRINT_FEATURE_KINDS,
-  ...CONSTRUCTION_FEATURE_KINDS,
 ];
 
 export function isModelingFeature(feature: Feature): feature is ModelingFeature {
@@ -281,7 +273,6 @@ export const MODELING_FEATURE_LABEL: Record<ModelingFeature['kind'], string> = {
   offsetFace: 'Offset Face',
   deleteFace: 'Delete Face',
   ...PRINT_FEATURE_LABEL,
-  ...CONSTRUCTION_FEATURE_LABEL,
 };
 
 /** Largest pattern instance count (bounds evaluation cost). */

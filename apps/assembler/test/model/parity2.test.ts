@@ -16,8 +16,9 @@ import {
 } from '../../renderer/src/foundation/geometry-kernel/features/rigid.js';
 import { continuableSketchId } from '../../renderer/src/model/commands/sketchCommands.js';
 import { findCommand } from '../../renderer/src/foundation/commands/registry.js';
-import { datumRef, type ConstructionPlaneFeature } from '../../renderer/src/model/construction.js';
-import { createConstructionDraft } from '../../renderer/src/model/constructionTools.js';
+import { type ConstructionPlaneFeature } from '../../renderer/src/modules/construction/construction.js';
+import { datumRef } from '../../renderer/src/foundation/geometry-kernel/datums.js';
+import { createConstructionDraft } from '../../renderer/src/modules/construction/constructionTools.js';
 import {
   type ExtrudeFeature,
   type Feature,

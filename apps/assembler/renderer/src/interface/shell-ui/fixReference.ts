@@ -13,7 +13,8 @@
 import { create } from 'zustand';
 
 import type { EvaluationResult } from '../../foundation/geometry-kernel/types.js';
-import { datumRef } from '../../model/construction.js';
+
+import { datumRef } from '../../foundation/geometry-kernel/datums.js';
 import {
   frameForFace,
   type EdgeRef,

@@ -17,7 +17,7 @@ import type {
 import type {
   ConstructionAxisFeature,
   ConstructionPlaneFeature,
-} from '../../renderer/src/model/construction.js';
+} from '../../renderer/src/modules/construction/construction.js';
 import type {
   BooleanFeature,
   ExtrudeFeature,

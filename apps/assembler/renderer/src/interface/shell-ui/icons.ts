@@ -53,6 +53,10 @@ import { SKETCH_COMMAND_ICONS } from '../../sketch/ui/sketchIcons.js';
 import { MODELING_COMMAND_ICON, MODELING_FEATURE_ICON } from '../../chrome/featureIcons.js';
 import { PRINT_COMMAND_ICONS } from '../../modules/print/printIcons.js';
 import { PRINTERS_COMMAND_ICONS } from '../../modules/printers/icons.js';
+import {
+  CONSTRUCTION_COMMAND_ICONS,
+  CONSTRUCTION_FEATURE_ICON,
+} from '../../modules/construction/icons.js';
 
 export const GROUP_ICON: Record<CommandGroup, LucideIcon> = {
   sketch: PenSquare,
@@ -117,6 +121,7 @@ export const COMMAND_ICON: Partial<Record<string, LucideIcon>> = {
   ...MODELING_COMMAND_ICON,
   ...PRINT_COMMAND_ICONS,
   ...PRINTERS_COMMAND_ICONS,
+  ...CONSTRUCTION_COMMAND_ICONS,
 };
 
 /** `COMMAND_ICON[command.id]`, falling back to the command's group icon. */
@@ -145,6 +150,9 @@ export function featureKindIcon(kind: Feature['kind']): LucideIcon {
       return FileInput;
     case 'meshSolid':
       return Box;
+    case 'constructionPlane':
+    case 'constructionAxis':
+      return CONSTRUCTION_FEATURE_ICON[kind];
     default:
       return MODELING_FEATURE_ICON[kind];
   }

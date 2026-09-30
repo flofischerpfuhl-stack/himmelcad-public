@@ -1,7 +1,6 @@
 /** Icons of the modelling features/commands (`model/features.ts`, `commands/featureCommands.ts`). */
 import {
   AlignVerticalSpaceAround,
-  Axis3d,
   CircleDot,
   Eraser,
   Expand,
@@ -14,7 +13,6 @@ import {
   RotateCw,
   Route,
   Spline,
-  SquareDashed,
   SquareSlash,
   SquareSplitHorizontal,
   Stamp,
@@ -41,8 +39,6 @@ export const MODELING_FEATURE_ICON: Record<ModelingFeature['kind'], LucideIcon> 
   draft: TriangleRight,
   rib: SquareSlash,
   thicken: Layers2,
-  constructionPlane: SquareDashed,
-  constructionAxis: Axis3d,
 };
 
 export const MODELING_COMMAND_ICON: Partial<Record<string, LucideIcon>> = {
@@ -64,13 +60,4 @@ export const MODELING_COMMAND_ICON: Partial<Record<string, LucideIcon>> = {
   'tools.filletFaceEdges': Spline,
   'tools.filletConcave': Spline,
   'tools.filletConvex': Spline,
-  'construct.planeOffset': SquareDashed,
-  'construct.planeAngle': SquareDashed,
-  'construct.planeThreePoints': SquareDashed,
-  'construct.midplane': SquareDashed,
-  'construct.planeTangent': SquareDashed,
-  'construct.axisEdge': Axis3d,
-  'construct.axisTwoPoints': Axis3d,
-  'construct.axisCylinder': Axis3d,
-  'construct.axisPlanes': Axis3d,
 };
