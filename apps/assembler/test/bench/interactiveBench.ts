@@ -25,10 +25,7 @@
  * with the CAD kernel and the solver in their Web Workers
  * (`--only-browser`: that part alone); `--runs n` (default 3).
  */
-import { createRequire } from 'node:module';
-
-import init from 'replicad-opencascadejs';
-
+import { loadOcct, selectedOcctModule, type OpenCascadeModule } from '../../headless/occtModule.js';
 import { InProcessKernelAdapter } from '../../renderer/src/kernel/adapter.js';
 import { createEvaluator, type KernelEvaluator } from '../../renderer/src/kernel/evaluator.js';
 import type { EvaluationResult } from '../../renderer/src/kernel/types.js';
@@ -53,7 +50,7 @@ import { installNodeFonts } from '../sketch/nodeFont.js';
 import { loadNodeSolver } from '../sketch/nodeSolver.js';
 import { sixtyEntitySketch } from './parts.js';
 
-type OpenCascade = Awaited<ReturnType<typeof init>>;
+type OpenCascade = OpenCascadeModule;
 
 // ---- instrumentation ------------------------------------------------------------------------
 
@@ -65,14 +62,13 @@ interface KernelEntry {
 const kernelLog: KernelEntry[] = [];
 const solverLog: number[] = [];
 
-const require = createRequire(import.meta.url);
 let oc: OpenCascade | null = null;
 let kernelLoadMs = 0;
 
 async function loadKernel(): Promise<KernelEvaluator> {
-  const wasmPath = require.resolve('replicad-opencascadejs/wasm');
   const t0 = performance.now();
-  oc ??= await init({ locateFile: () => wasmPath });
+  // The module chosen by HIMMELCAD_OCCT (`headless/occtModule.ts`), like the tests and bench:kernel.
+  oc ??= await loadOcct();
   kernelLoadMs = performance.now() - t0;
   const evaluator = createEvaluator(oc);
   return {
@@ -567,7 +563,7 @@ async function main(): Promise<void> {
     const lines = onlyBrowser
       ? []
       : [
-          `Interactive bench — Node ${process.version}, in-process kernel + solver, medians of ${runs} runs (drags: of all steps)`,
+          `Interactive bench — Node ${process.version}, OCCT module ${selectedOcctModule()} (load ${Math.round(kernelLoadMs)} ms), in-process kernel + solver, medians of ${runs} runs (drags: of all steps)`,
           '',
           formatRows(rows),
         ];
