@@ -133,10 +133,10 @@ void test('a plate extruded from one region with holes is valid, watertight and 
   assert.ok(report.brepValid, 'B-rep valid');
   assert.ok(report.watertight, 'watertight');
   assert.ok(Math.abs(report.meshVolumeMm3 - expected) < 0.01 * expected);
-  assert.deepEqual(
-    report.cylinders.map((c) => `${c.kind} ${c.diameterMm.toFixed(3)}`).sort(),
-    ['hole 1.500', 'hole 6.000'],
-  );
+  assert.deepEqual(report.cylinders.map((c) => `${c.kind} ${c.diameterMm.toFixed(3)}`).sort(), [
+    'hole 1.500',
+    'hole 6.000',
+  ]);
 });
 
 void test('kernel meshes weld into watertight manifolds; a missing triangle is detected', async () => {
