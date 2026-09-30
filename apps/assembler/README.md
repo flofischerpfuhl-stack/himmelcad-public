@@ -7,9 +7,13 @@ CAD kernel: OCCT 8.0.1 compiled to WebAssembly (`replicad-opencascadejs`),
 driven through `replicad`, running in a Web Worker behind the app-owned
 `KernelAdapter` (`renderer/src/kernel/`). Decision, measurements, the
 stable-reference scheme and open risks: `assembler/KERNEL-SPIKE.md`.
-`HIMMELCAD_OCCT=himmelcad` (build, dev server, tests, `bench:kernel`) swaps in
-the HimmelCAD OCCT build with more OCCT classes (`vendor/occt-wasm`,
-`assembler/OCCT-BUILD-SPIKE.md`); the default stays `replicad-opencascadejs`.
+The default OCCT module (since Block 6, 2026-09-30) is the HimmelCAD build with
+more OCCT classes (`vendor/occt-wasm`, `assembler/OCCT-BUILD-SPIKE.md`), read
+from the SHA-256-verified local artifact cache (`D:\AgentWork\HimmelCAD-Assembler\occt-wasm`
+on Windows, `~/.cache/himmelcad/occt-wasm` elsewhere; `HIMMELCAD_OCCT_DIR`
+overrides); a missing or wrong module fails loudly. `HIMMELCAD_OCCT=replicad`
+(build, dev server, tests, benches, fuzzer) selects `replicad-opencascadejs`
+1.1.0 instead — machines without the cache (CI) set it.
 
 ## Layout
 
@@ -42,7 +46,10 @@ the HimmelCAD OCCT build with more OCCT classes (`vendor/occt-wasm`,
   Select Through, kernel worker killed mid-edit, app killed → recovery).
   Case list and results: `assembler/ACCEPTANCE.md`.
 - `pnpm test:fuzz [-- --seed N --minutes M]` — model-based fuzzer of the agent
-  API with invariant checks and delta-debugged reproducers (default 3 min);
+  API with invariant checks and delta-debugged reproducers (default 3 min, on
+  the module `HIMMELCAD_OCCT` selects; 51 operation kinds incl. sweep/loft/
+  draft/rib/thicken, sketch text, construction planes, extrude extents and
+  STEP/IGES/DXF export → import round trips);
   `pnpm test:monkey` — seeded random UI input against the production app
   (after `pnpm build`; `ASSEMBLER_MONKEY_MINUTES`, default 5). Design,
   invariants and findings: `assembler/ROBUSTNESS.md`.
@@ -295,13 +302,14 @@ manifold objects, names, colours, item transforms) and Open in Slicer
   STEP… (assembly from Items folders / flat / per body, AP242/AP214, mm/cm/m/in,
   all/visible/selected), Export DXF… (sketch or planar face outline, R2000/R12),
   STL "visible bodies" scope. IGES import/export and OCCT's XCAF STEP reader
-  need the HimmelCAD OCCT build (`HIMMELCAD_OCCT=himmelcad`,
-  `assembler/OCCT-BUILD-SPIKE.md`); with the default module the IGES entries
-  are disabled with the reason. Agent API: `import.step/iges/mesh/dxf`,
+  need the HimmelCAD OCCT build (the default; `assembler/OCCT-BUILD-SPIKE.md`);
+  with `HIMMELCAD_OCCT=replicad` the IGES entries are disabled with the reason. Agent API: `import.step/iges/mesh/dxf`,
   `export.step/iges/dxf`, `mesh.toSolid`, `interop.formats`.
 - File > Open Recent (Electron): up to 8 files, missing ones greyed with
   Locate…/Remove (`electron/recentFiles.ts`, stored in `userData`). The main
-  process only opens paths that are on that list.
+  process only opens paths that are on that list. A file is added only after
+  it opened successfully (the renderer confirms, `recentFiles.confirmOpened`);
+  a corrupt file never enters the list.
 - **Home screen** (`chrome/HomeScreen.tsx`): shown when the app starts without
   a file (Settings › Home at start) and via File › Home (Ctrl+Shift+H).
   New project, Open…, templates, recent projects with thumbnails, a crash
@@ -335,7 +343,9 @@ manifold objects, names, colours, item transforms) and Open in Slicer
 - Windows installer (`pnpm package:win`): NSIS, per-user install into
   `%LOCALAPPDATA%\Programs\HimmelCAD Assembler`, `.hcasm` file association
   (a double-click or a command-line path opens the project; a second launch
-  forwards it to the running window). The OCCT and planeGCS `.wasm` files,
+  forwards it to the running window). The installer bundles the default OCCT
+  module (the HimmelCAD build, `assets/himmelcad_occt-<hash>.{js,wasm}`; built
+  from the verified local cache). The OCCT and planeGCS `.wasm` files,
   their Emscripten loader chunks and the licence texts are unpacked next to
   `app.asar` (`resources/app.asar.unpacked/dist/renderer/`) so the LGPL
   components stay replaceable files (verified: a broken replacement of either

@@ -44,6 +44,8 @@ const api: AssemblerApi = {
     remove: (path: string) => ipcRenderer.invoke('assembler:recentFiles:remove', path),
     openPath: (path: string) => ipcRenderer.invoke('assembler:recentFiles:openPath', path),
     locate: (oldPath: string) => ipcRenderer.invoke('assembler:recentFiles:locate', oldPath),
+    confirmOpened: (path: string) =>
+      ipcRenderer.invoke('assembler:recentFiles:confirmOpened', path),
   },
   slicers: {
     list: () => ipcRenderer.invoke('assembler:slicers:list'),

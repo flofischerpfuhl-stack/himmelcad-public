@@ -19,6 +19,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { selectedOcctModule } from '../../headless/occtModule.js';
 import { FuzzHarness, type Failure } from './harness.js';
 import { generateSequence, sequenceSeed, type Op } from './ops.js';
 import { shrink } from './shrink.js';
@@ -74,7 +75,9 @@ async function main(): Promise<number> {
   let maxHeap = 0;
   let totalMarginal = 0;
   let sequence = 0;
-  print(`fuzz: seed ${seed}, ${minutes} min, ${steps} ops/sequence, reproducers → ${outDir}`);
+  print(
+    `fuzz: OCCT module ${selectedOcctModule()}, seed ${seed}, ${minutes} min, ${steps} ops/sequence, reproducers → ${outDir}`,
+  );
   for (; sequence < maxSequences && Date.now() < deadline; sequence += 1) {
     const ops = generateSequence(sequenceSeed(seed, sequence), steps);
     const result = await harness.run(ops, { deadline, ...(verbose ? { log: print } : {}) });

@@ -28,7 +28,7 @@ import {
   type ReferenceMesh,
 } from '../referenceMesh.js';
 import { parsePins, serializePins, useMeasureStore } from '../measureStore.js';
-import { useAssemblerStore } from '../store.js';
+import { shownFeatures, useAssemblerStore } from '../store.js';
 import { viewDisplayToProject } from '../viewDisplay.js';
 import { parseSavedViews, useWorkspaceStore } from '../workspace.js';
 import {
@@ -565,6 +565,8 @@ export const useProjectStore = create<ProjectFileState>((set, get) => ({
       });
       cancelRecoveryWrite();
       void io.clearRecovery();
+      // Only a project that opened goes to Open Recent (a corrupt file never does).
+      if (opened.path) void io.confirmOpenedFile(opened.path).catch(() => undefined);
       useWorkspaceStore.getState().setHomeOpen(false);
       return true;
     } catch (error) {
@@ -691,7 +693,7 @@ export const useProjectStore = create<ProjectFileState>((set, get) => ({
     if (!kernelAdapter || doc.evaluation.bodies.length === 0) return;
     set({ busyMessage: 'Exporting STEP…' });
     try {
-      const bytes = await kernelAdapter.exportStep(doc.features);
+      const bytes = await kernelAdapter.exportStep(shownFeatures(doc));
       await io.exportBinary(
         bytes,
         `${sanitizeFileName(doc.projectName)}.step`,

@@ -89,6 +89,58 @@ export const REPRODUCERS: RegressionCase[] = [
       { op: 'txCancel', r: [0.1623, 0.9559, 0.8452, 0.6591, 0.6619, 0.4179, 0.4055, 0.3347] },
     ],
   },
+  {
+    // Circle r 11 extruded 10, the same sketch cut 17.5 into it (the whole body), IGES (brep)
+    // export: the cut left an empty "valid" body. Now the cut is refused.
+    name: 'exception-s404-q32',
+    finding: 'F8',
+    invariant: 'exception',
+    ops: [
+      { op: 'sketch', r: [0.3969, 0.5435, 0.9818, 0.4011, 0.2613, 0.8956, 0.7859, 0.0037] },
+      { op: 'extrude', r: [0.0472, 0.8801, 0.6354, 0.4616, 0.5792, 0.9606, 0.8242, 0.1644] },
+      { op: 'extrude', r: [0.1717, 0.7906, 0.3854, 0.873, 0.7293, 0.4596, 0.5235, 0.7723] },
+      { op: 'exchangeIges', r: [0.7913, 0.7325, 0.7874, 0.1654, 0.2606, 0.909, 0.893, 0.7436] },
+    ],
+  },
+  {
+    // Rectangle + text "HC" on XZ, R12 DXF export → import: 7 810 polyline vertices, a
+    // 7 812-line sketch and 1.6 GB of kernel heap. Now ~340 vertices.
+    name: 'heap-s505-q110',
+    finding: 'F9',
+    invariant: 'heap',
+    ops: [
+      { op: 'sketch', r: [0.5746, 0.9324, 0.2714, 0.0611, 0.7673, 0.872, 0.7305, 0.8833] },
+      { op: 'text', r: [0.7654, 0.023, 0.6169, 0.5673, 0.499, 0.9208, 0.3493, 0.6079] },
+      { op: 'exchangeDxf', r: [0.4384, 0.5616, 0.2968, 0.6479, 0.9497, 0.1587, 0.408, 0.7423] },
+    ],
+  },
+  {
+    // Rectangle + text "Ag 1", DXF export → import: the glyph counters become regions (by
+    // design, D1); the invariant skips sketches with text.
+    name: 'roundTrip-s505-q19',
+    finding: 'D1',
+    invariant: 'roundTrip',
+    ops: [
+      { op: 'sketch', r: [0.3247, 0.4249, 0.104, 0.4818, 0.3261, 0.1564, 0.0302, 0.1726] },
+      { op: 'text', r: [0.0813, 0.5282, 0.3197, 0.3095, 0.1068, 0.956, 0.8474, 0.6518] },
+      { op: 'exchangeDxf', r: [0.1218, 0.9417, 0.8517, 0.583, 0.5924, 0.3088, 0.9365, 0.5198] },
+    ],
+  },
+  {
+    // Two boxes touching on the sketch plane, one filleted, IGES (surfaces) export → import:
+    // the sewing joined both into one inside-out shell (−267 mm³) reported as valid. Now the
+    // body is invalid (negative volume) and the import warns.
+    name: 'roundTrip-s505-q133',
+    finding: 'F10',
+    invariant: 'roundTrip',
+    ops: [
+      { op: 'sketch', r: [0.4305, 0.1742, 0.337, 0.9835, 0.5848, 0.1534, 0.4229, 0.1542] },
+      { op: 'extrude', r: [0.4088, 0.6828, 0.2668, 0.7189, 0.05, 0.6271, 0.4691, 0.5723] },
+      { op: 'extrude', r: [0.5457, 0.2149, 0.9265, 0.851, 0.364, 0.3218, 0.3974, 0.9728] },
+      { op: 'fillet', r: [0.3699, 0.4482, 0.2408, 0.3454, 0.9179, 0.3242, 0.7243, 0.4959] },
+      { op: 'exchangeIges', r: [0.3801, 0.1849, 0.3902, 0.4125, 0.4982, 0.6291, 0.5076, 0.0514] },
+    ],
+  },
 ];
 
 /**
@@ -98,6 +150,21 @@ export const REPRODUCERS: RegressionCase[] = [
  * difference is accepted only when the harness proves it heap-layout
  * dependent (`harness.ts#checkDeterminism`).
  */
+REPRODUCERS.push({
+  // A plate with a draft, History rolled back before the draft, IGES export → import: the
+  // export contained the draft (1 984 mm³) while the viewport and bodies.list showed 2 400.
+  name: 'roundTrip-s707-q24',
+  finding: 'F12',
+  invariant: 'roundTrip',
+  ops: [
+    { op: 'sketch', r: [0.9617, 0.9465, 0.5382, 0.8855, 0.1551, 0.3587, 0.8207, 0.6079] },
+    { op: 'extrude', r: [0.0343, 0.7927, 0.8172, 0.3659, 0.63, 0.7342, 0.7521, 0.1914] },
+    { op: 'draft', r: [0.5164, 0.8459, 0.5888, 0.9112, 0.3273, 0.1381, 0.8925, 0.3756] },
+    { op: 'rollback', r: [0.6617, 0.8239, 0.0923, 0.7198, 0.112, 0.1012, 0.2757, 0.4104] },
+    { op: 'exchangeIges', r: [0.2895, 0.291, 0.8597, 0.0329, 0.9856, 0.4621, 0.7349, 0.9815] },
+  ],
+});
+
 export const MARGINAL_REPRODUCERS: RegressionCase[] = [
   {
     // Disc r 7 x 4, linear pattern, shell 2.6 (open end), emboss on a copy, then a 0.7 mm
@@ -132,6 +199,59 @@ export const MARGINAL_REPRODUCERS: RegressionCase[] = [
       { op: 'suppress', r: [0.7389, 0.5664, 0.3815, 0.8546, 0.9596, 0.4488, 0.5899, 0.8689] },
       { op: 'undo', r: [0.421, 0.3493, 0.7746, 0.5317, 0.9695, 0.3315, 0.5464, 0.5447] },
       { op: 'extrude', r: [0.4082, 0.9931, 0.2881, 0.5022, 0.2382, 0.8309, 0.2567, 0.7621] },
+    ],
+  },
+  {
+    // A thicken (tube) cut by a sketch after an earlier sketch edit: evaluated on a checkpoint
+    // the (no-op) cut keeps a slit edge twice, evaluated in one replay once — closed vs open
+    // (F11). A fresh evaluator in the session's order agrees with the session.
+    name: 'determinism-s404-q42',
+    finding: 'F11',
+    invariant: 'determinism',
+    ops: [
+      { op: 'addDimension', r: [0.6548, 0.1115, 0.3262, 0.0212, 0.0528, 0.2463, 0.4112, 0.2284] },
+      { op: 'sketch', r: [0.6642, 0.7689, 0.9017, 0.7411, 0.4612, 0.998, 0.4081, 0.0043] },
+      { op: 'openPolyline', r: [0.3832, 0.4337, 0.884, 0.3002, 0.3112, 0.3967, 0.2582, 0.7647] },
+      { op: 'extrudeExtent', r: [0.2255, 0.2574, 0.5374, 0.4276, 0.7834, 0.1375, 0.6282, 0.7874] },
+      { op: 'exchangeStep', r: [0.7343, 0.0338, 0.5276, 0.231, 0.6478, 0.872, 0.5645, 0.148] },
+      { op: 'text', r: [0.2292, 0.8953, 0.8506, 0.5532, 0.1247, 0.1216, 0.2529, 0.4013] },
+      { op: 'hole', r: [0.8371, 0.9071, 0.573, 0.3679, 0.5847, 0.9344, 0.0654, 0.3165] },
+      { op: 'suppress', r: [0.8748, 0.6397, 0.8092, 0.878, 0.1835, 0.5101, 0.4529, 0.6824] },
+      {
+        op: 'setDimensionExpr',
+        r: [0.9673, 0.1355, 0.7376, 0.9273, 0.7101, 0.8724, 0.0733, 0.4879],
+      },
+      { op: 'undo', r: [0.0413, 0.4999, 0.4043, 0.7674, 0.4546, 0.861, 0.5951, 0.4587] },
+      { op: 'chamfer', r: [0.4573, 0.3663, 0.9452, 0.9316, 0.5654, 0.0797, 0.674, 0.5149] },
+      { op: 'extrude', r: [0.1576, 0.3385, 0.0289, 0.7094, 0.7367, 0.4989, 0.5212, 0.6928] },
+      { op: 'featureEdit', r: [0.909, 0.9746, 0.6974, 0.3214, 0.1329, 0.3084, 0.5194, 0.9089] },
+      { op: 'setDimension', r: [0.5743, 0.6898, 0.2983, 0.6834, 0.8027, 0.4397, 0.2459, 0.2328] },
+      { op: 'extrude', r: [0.3194, 0.5079, 0.1143, 0.4615, 0.3482, 0.0966, 0.3129, 0.2994] },
+      { op: 'revolve', r: [0.522, 0.7732, 0.1777, 0.3679, 0.735, 0.036, 0.4932, 0.9946] },
+      { op: 'sketchOnFace', r: [0.2014, 0.3428, 0.8348, 0.0849, 0.6445, 0.4738, 0.5575, 0.5381] },
+      { op: 'pattern', r: [0.8041, 0.3864, 0.3337, 0.1347, 0.5138, 0.6616, 0.7071, 0.1946] },
+      { op: 'reorder', r: [0.8476, 0.915, 0.9326, 0.5545, 0.6624, 0.8838, 0.5095, 0.8226] },
+      { op: 'addProfile', r: [0.2483, 0.1434, 0.981, 0.7045, 0.4303, 0.1226, 0.4648, 0.7695] },
+      { op: 'reorder', r: [0.5274, 0.1743, 0.0965, 0.9083, 0.8039, 0.0665, 0.6042, 0.216] },
+      { op: 'fillet', r: [0.2175, 0.1801, 0.3985, 0.1664, 0.4762, 0.5053, 0.3031, 0.9164] },
+      { op: 'rollback', r: [0.568, 0.3143, 0.623, 0.1216, 0.6986, 0.744, 0.4399, 0.6119] },
+      { op: 'addProfile', r: [0.6939, 0.6564, 0.862, 0.1652, 0.1155, 0.1671, 0.9801, 0.1715] },
+      { op: 'fillet', r: [0.5307, 0.0328, 0.7581, 0.9979, 0.7094, 0.3958, 0.693, 0.2702] },
+      { op: 'txCancel', r: [0.8601, 0.6689, 0.0031, 0.2603, 0.8954, 0.2555, 0.897, 0.6606] },
+      { op: 'paramDelete', r: [0.3302, 0.1532, 0.4246, 0.5137, 0.6685, 0.131, 0.5826, 0.8697] },
+      { op: 'featureEdit', r: [0.4434, 0.2128, 0.9418, 0.4204, 0.906, 0.6188, 0.0922, 0.6815] },
+      { op: 'suppress', r: [0.1699, 0.9193, 0.2842, 0.5825, 0.902, 0.1715, 0.4715, 0.2502] },
+      {
+        op: 'constructionPlane',
+        r: [0.9319, 0.6182, 0.3827, 0.9094, 0.8816, 0.4513, 0.7484, 0.2026],
+      },
+      { op: 'rib', r: [0.8755, 0.2377, 0.7954, 0.5238, 0.4991, 0.228, 0.5119, 0.2462] },
+      { op: 'shell', r: [0.2499, 0.1822, 0.9237, 0.0294, 0.0338, 0.5506, 0.4726, 0.3889] },
+      { op: 'extrude', r: [0.5994, 0.9154, 0.6834, 0.4725, 0.1572, 0.7353, 0.3465, 0.3331] },
+      { op: 'thicken', r: [0.1957, 0.3215, 0.5877, 0.0639, 0.847, 0.107, 0.3587, 0.9383] },
+      { op: 'extrude', r: [0.6857, 0.5244, 0.3327, 0.9858, 0.9183, 0.8633, 0.6197, 0.6824] },
+      { op: 'setDimension', r: [0.8572, 0.1791, 0.1405, 0.8022, 0.8564, 0.4254, 0.9575, 0.2435] },
+      { op: 'extrude', r: [0.1106, 0.7996, 0.9183, 0.6655, 0.9983, 0.3127, 0.7366, 0.3399] },
     ],
   },
 ];

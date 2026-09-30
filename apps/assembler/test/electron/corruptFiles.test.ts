@@ -4,7 +4,8 @@
  * File > Open (Ctrl+O) from the editor and from the command line. Each must
  * give a clear error the user sees in the editor (not only on the Home
  * screen), leave the open document untouched (no partial load) and raise no
- * uncaught renderer error; the app keeps working afterwards.
+ * uncaught renderer error; the app keeps working afterwards; a file that
+ * fails to open is not added to Open Recent.
  */
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -48,6 +49,17 @@ function watchErrors(page: Page): string[] {
   page.on('pageerror', (error) => errors.push(`pageerror: ${error.message}`));
   page.on('crash', () => errors.push('renderer crashed'));
   return errors;
+}
+
+async function recentPaths(page: Page): Promise<string[]> {
+  const list = await page.evaluate(() =>
+    (
+      window as unknown as {
+        assembler: { recentFiles: { list(): Promise<{ path: string }[]> } };
+      }
+    ).assembler.recentFiles.list(),
+  );
+  return list.map((entry) => entry.path);
 }
 
 async function historySteps(page: Page): Promise<string> {
@@ -120,6 +132,16 @@ void test('production app: corrupted project files opened from the editor show a
     await alert.first().getByRole('button', { name: 'Dismiss' }).click();
     await alert.first().waitFor({ state: 'detached', timeout: 5_000 });
   }
+  // Open Recent lists the project that opened, never a file that failed to open.
+  const recent = (await recentPaths(page)).map((p) => p.toLowerCase());
+  assert.ok(
+    recent.includes(good.toLowerCase()),
+    `the opened project is recent (${recent.join(', ')})`,
+  );
+  for (const [name] of CORRUPT) {
+    const path = join(dir, `${name.replace(/\s+/g, '-')}.hcasm`).toLowerCase();
+    assert.ok(!recent.includes(path), `${name}: not added to Open Recent`);
+  }
   assert.deepEqual(errors, [], 'no uncaught renderer errors');
 });
 
@@ -141,5 +163,9 @@ void test('production app: a corrupted .hcasm on the command line starts the app
   await page.waitForFunction(() => !document.body.innerText.includes('Loading CAD kernel'), {
     timeout: 60_000,
   });
+  assert.ok(
+    !(await recentPaths(page)).some((p) => p.toLowerCase() === path.toLowerCase()),
+    'a file that failed to open is not added to Open Recent',
+  );
   assert.deepEqual(errors, [], 'no uncaught renderer errors');
 });

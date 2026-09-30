@@ -11,7 +11,8 @@
  * line types and colours are not read (Shapr3D's DWG/DXF import has the
  * same scope: geometry only). Binary DXF is refused.
  *
- * Writer: R12 (AC1009; splines and ellipses as 2D polylines, since R12 has
+ * Writer: R12 (AC1009; splines and ellipses as 2D polylines within a chord
+ * tolerance of max(1 µm, 1e-5 × the drawing size), since R12 has
  * neither) or R2000 (AC1015; LINE, ARC, CIRCLE, ELLIPSE, SPLINE,
  * LWPOLYLINE with handles, owner links and the tables/objects AutoCAD
  * requires). Units: `$INSUNITS` 4 (millimetres).
@@ -565,6 +566,69 @@ export function sampleEntity(e: DxfEntity, segments = 64): Vec2[] {
   }
 }
 
+function distanceToSegment(p: Vec2, a: Vec2, b: Vec2): number {
+  const dx = b[0] - a[0];
+  const dy = b[1] - a[1];
+  const len2 = dx * dx + dy * dy;
+  const t =
+    len2 === 0 ? 0 : Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / len2));
+  return Math.hypot(p[0] - a[0] - t * dx, p[1] - a[1] - t * dy);
+}
+
+/**
+ * Polyline of a spline or ellipse whose chords stay within `tolerance` (mm)
+ * of the curve: every knot span (ellipse: eighth) is halved until the
+ * curve's quarter and mid points lie within `tolerance` of the chord (at
+ * most 2^10 pieces per span). The R12 writer uses it: a fixed 64 pieces per
+ * span flattened one glyph outline of sketch text into ~3 900 vertices, and
+ * importing that drawing again built a sketch of ~7 800 lines (13 s, 1.6 GB
+ * of kernel heap; fuzzer finding F9, `assembler/ROBUSTNESS.md`).
+ */
+export function flattenEntity(e: DxfEntity, tolerance: number): Vec2[] {
+  let at: (u: number) => Vec2;
+  let breaks: number[];
+  if (e.kind === 'ellipse') {
+    let end = e.end;
+    while (end <= e.start) end += 2 * Math.PI;
+    at = (u) => ellipsePoint(e, u);
+    breaks = Array.from({ length: 9 }, (_, i) => e.start + ((end - e.start) * i) / 8);
+  } else if (e.kind === 'spline') {
+    if (
+      e.controlPoints.length < e.degree + 1 ||
+      e.knots.length !== e.controlPoints.length + e.degree + 1
+    ) {
+      return e.fitPoints.length > 0 ? e.fitPoints : e.controlPoints;
+    }
+    const u0 = e.knots[e.degree]!;
+    const u1 = e.knots[e.knots.length - 1 - e.degree]!;
+    at = (u) => splinePoint(e, u);
+    breaks = [...new Set([u0, ...e.knots.filter((k) => k > u0 && k < u1), u1])];
+  } else {
+    return [];
+  }
+  const tol = Math.max(tolerance, 1e-9);
+  const out: Vec2[] = [at(breaks[0]!)];
+  const refine = (a: number, pa: Vec2, b: number, pb: Vec2, depth: number): void => {
+    const m = (a + b) / 2;
+    const pm = at(m);
+    const flat =
+      depth >= 10 ||
+      (distanceToSegment(pm, pa, pb) <= tol &&
+        distanceToSegment(at((a + m) / 2), pa, pb) <= tol &&
+        distanceToSegment(at((m + b) / 2), pa, pb) <= tol);
+    if (flat) {
+      out.push(pb);
+      return;
+    }
+    refine(a, pa, m, pm, depth + 1);
+    refine(m, pm, b, pb, depth + 1);
+  };
+  for (let i = 0; i + 1 < breaks.length; i += 1) {
+    refine(breaks[i]!, at(breaks[i]!), breaks[i + 1]!, at(breaks[i + 1]!), 0);
+  }
+  return out;
+}
+
 class Writer {
   lines: string[] = [];
   private handle = 0x20;
@@ -611,6 +675,8 @@ export function writeDxf(entities: readonly DxfEntity[], version: DxfVersion = '
   const r2000 = version === 'R2000';
   const layers = [...new Set(['0', ...entities.map((e) => e.layer ?? '0')])];
   const { min, max } = extents(entities);
+  // R12 has no SPLINE/ELLIPSE: they are written as polylines within this chord tolerance.
+  const flatTolerance = Math.max(1e-3, 1e-5 * Math.hypot(max[0] - min[0], max[1] - min[1]));
 
   // Handles that tables/blocks reference, allocated first so the header seed is known at the end.
   const h = {
@@ -727,7 +793,7 @@ export function writeDxf(entities: readonly DxfEntity[], version: DxfVersion = '
         break;
       case 'ellipse':
         if (!r2000) {
-          polyline2d(sampleEntity(e), [], false, layer);
+          polyline2d(flattenEntity(e, flatTolerance), [], false, layer);
           break;
         }
         common('ELLIPSE', layer, 'AcDbEllipse');
@@ -749,7 +815,7 @@ export function writeDxf(entities: readonly DxfEntity[], version: DxfVersion = '
           e.controlPoints.length >= e.degree + 1 &&
           e.knots.length === e.controlPoints.length + e.degree + 1;
         if (!r2000 || !valid) {
-          polyline2d(valid ? sampleEntity(e) : e.fitPoints, [], false, layer);
+          polyline2d(valid ? flattenEntity(e, flatTolerance) : e.fitPoints, [], false, layer);
           break;
         }
         common('SPLINE', layer, 'AcDbSpline');

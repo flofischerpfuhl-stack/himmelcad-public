@@ -25,6 +25,7 @@ import {
   frameForFace,
   frameForPlane,
   framePoint,
+  isBooleanResult,
   type BooleanFeature,
   type ChamferFeature,
   type EdgeRef,
@@ -86,6 +87,7 @@ import {
   surfaceSample,
   faceOrigins,
   facesOf,
+  hasFaces,
   heapBytes,
   isValidShape,
   meshShapeEdges,
@@ -182,6 +184,11 @@ interface BodyState {
   changedBy?: string;
 }
 
+/** A solid encloses material: positive volume (inside-out shells and empty shapes do not). */
+function solidVolume(volume: number): boolean {
+  return volume > 1e-9;
+}
+
 /** Tessellation settings per quality: chordal deflection relative to the body diagonal. */
 const QUALITY: Record<
   TessellationQuality,
@@ -214,6 +221,8 @@ export interface EvaluateOptions {
   onProgress?: (progress: EvaluationProgress) => void;
   /** Record per-phase timings in `stats.phases` (bench/diagnostics). */
   profile?: boolean;
+  /** Commit check (`EvaluationRequest.commitCheck`): feature ids whose boolean results must pass the full B-rep check. */
+  commitCheck?: readonly string[];
 }
 
 export interface KernelCacheInfo extends CheckpointCacheStats {
@@ -373,8 +382,7 @@ export function createEvaluator(oc: OpenCascade, options: EvaluatorOptions = {})
 
   // ---- geometry description ---------------------------------------------------------
 
-  /** Cached topology of shape; 
-euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
+  /** Cached topology of `shape`; `reuseFrom` (an operation's inputs) lends descriptions of unchanged edges. */
   function topologyOf(shape: Shape3D, reuseFrom: readonly Shape3D[] = []): Topology {
     const info = infoOf(shape);
     if (!info.topology) {
@@ -726,6 +734,14 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
     } catch (error) {
       if (isFatalKernelError(error)) throw error;
       throw new FeatureError(`Boolean failed: ${describeError(error)}`);
+    }
+    // A cut that removes the whole body left an empty shape that every check called valid
+    // (0 mm³, no faces) and IGES/printing could not use (fuzzer finding F8).
+    if (operation === 'cut' && !hasFaces(oc, built.shape.wrapped as RawShape)) {
+      built.history.delete();
+      throw new FeatureError(
+        `Cut: nothing of "${target.name}" would remain; make the cut smaller or delete the body instead`,
+      );
     }
     try {
       const faces = nameResult(
@@ -1590,6 +1606,10 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
       info.validMode = checkMode;
     }
     info.volume ??= timed('volume', () => faceProps.volume(topology));
+    // A closed shell whose faces point inwards passes BRepCheck and the closure test but
+    // has a negative volume (inside out; fuzzer finding F10: IGES surfaces of two touching
+    // bodies sewn into one shell); an empty shape has none (F8).
+    const valid = info.valid && solidVolume(info.volume);
 
     meshSerial += 1;
     return {
@@ -1603,7 +1623,7 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
         min: [min[0], min[1], min[2]],
         max: [max[0], max[1], max[2]],
         volume: info.volume,
-        valid: info.valid,
+        valid,
         mesh: {
           positions: mesh.positions,
           normals: mesh.normals,
@@ -1921,6 +1941,38 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
     };
   }
 
+  /** The commit-checked features (`EvaluateOptions.commitCheck`) with boolean results, by id → label. */
+  function commitChecked(
+    features: readonly Feature[],
+    ids: readonly string[] | undefined,
+  ): Map<string, string> {
+    const out = new Map<string, string>();
+    if (!ids || ids.length === 0) return out;
+    const wanted = new Set(ids);
+    for (const feature of features) {
+      if (!wanted.has(feature.id) || feature.suppressed || !isBooleanResult(feature)) continue;
+      const label =
+        feature.kind === 'boolean'
+          ? { union: 'Union', subtract: 'Subtract', intersect: 'Intersect' }[feature.operation]
+          : `${feature.kind[0]!.toUpperCase()}${feature.kind.slice(1)}`;
+      out.set(feature.id, label);
+    }
+    return out;
+  }
+
+  /** Full B-rep check (`BRepCheck_Analyzer` + closure + positive volume), cached per shape. */
+  function fullyValid(state: BodyState): boolean {
+    const info = infoOf(state.shape);
+    if (info.valid === undefined || info.validMode !== 'full') {
+      info.valid = timed('validity', () =>
+        inArena(() => faceProps.valid(state.shape, topologyOf(state.shape), 'full')),
+      );
+      info.validMode = 'full';
+    }
+    info.volume ??= timed('volume', () => faceProps.volume(topologyOf(state.shape)));
+    return info.valid && solidVolume(info.volume);
+  }
+
   /** Frees the shapes of a finished replay that no checkpoint holds (an uncached preview tail). */
   function releaseTransient(replay: Replay): void {
     for (const body of replay.ctx.bodies.values()) {
@@ -1973,16 +2025,41 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
         const bodies: Body[] = [];
         let triangles = 0;
         let reusedBodies = 0;
+        const checked = commitChecked(features, evaluateOptions.commitCheck);
+        // Boolean results re-evaluated now (not restored from a checkpoint): a final
+        // evaluation checks their bodies in full, so the incremental result agrees with a
+        // cold one (fuzzer finding F11: an earlier step's edit made a later Join invalid,
+        // which the per-new-face check did not see). Previews keep the cheap check.
+        const byId = new Map(features.map((f) => [f.id, f]));
+        const rebuilt = new Set(features.slice(replay.reused).map((f) => f.id));
         for (const id of creationOrder) {
           const state = ctx.bodies.get(id);
           if (!state) continue;
           try {
             const out = tessellate(state, q, cache.holds(state.shape));
+            const by = state.changedBy ?? state.createdBy;
+            const producer = byId.get(by);
+            const strict =
+              checked.has(by) ||
+              (q === 'final' &&
+                rebuilt.has(by) &&
+                producer !== undefined &&
+                isBooleanResult(producer));
+            if (strict && !errors[by]) {
+              const ok = fullyValid(state);
+              if (out.body.valid !== ok) out.body = { ...out.body, valid: ok };
+              // Commit check: a boolean result being committed that is not a valid solid is
+              // refused (OCCT returns a self-intersecting or inside-out solid instead of
+              // failing; fuzzer finding F6, `assembler/ROBUSTNESS.md`).
+              if (!ok && checked.has(by)) {
+                errors[by] =
+                  `${checked.get(by)} failed: the result is not a valid solid (self-intersecting, non-manifold, open or inside out); nothing was changed. Try other values or references`;
+              }
+            }
             bodies.push(out.body);
             // Never an invalid body silently: the step that produced it says so.
             if (!out.body.valid) {
-              const by = state.changedBy ?? state.createdBy;
-              const message = `"${state.name}" is not a valid solid after this step (self-intersecting, open or non-manifold); it may not export or print correctly`;
+              const message = `"${state.name}" is not a valid solid after this step (self-intersecting, open, non-manifold or inside out); it may not export or print correctly`;
               if (!errors[by])
                 warnings[by] = warnings[by] ? `${warnings[by]}; ${message}` : message;
             }
@@ -2028,7 +2105,14 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
         try {
           const { ctx, creationOrder, errors } = replay;
           const firstError = Object.entries(errors)[0];
-          if (firstError) throw new Error(`Cannot export: ${firstError[1]}`);
+          // A step that fails blocks exact exports; its message names steps, not internal ids.
+          if (firstError) {
+            const named = nameMissingReferences({ [firstError[0]]: firstError[1] }, features);
+            const step = features.find((f) => f.id === firstError[0])?.name ?? firstError[0];
+            throw new Error(
+              `Cannot export: "${step}" fails: ${named[firstError[0]] ?? firstError[1]}`,
+            );
+          }
           const wanted = bodyIds ? new Set(bodyIds) : null;
           const bodies = creationOrder
             .map((id) => ctx.bodies.get(id))
@@ -2056,7 +2140,14 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
         try {
           const { ctx, creationOrder, errors } = replay;
           const firstError = Object.entries(errors)[0];
-          if (firstError) throw new Error(`Cannot export: ${firstError[1]}`);
+          // A step that fails blocks exact exports; its message names steps, not internal ids.
+          if (firstError) {
+            const named = nameMissingReferences({ [firstError[0]]: firstError[1] }, features);
+            const step = features.find((f) => f.id === firstError[0])?.name ?? firstError[0];
+            throw new Error(
+              `Cannot export: "${step}" fails: ${named[firstError[0]] ?? firstError[1]}`,
+            );
+          }
           const wanted = bodyIds ? new Set(bodyIds) : null;
           const shapes = creationOrder
             .map((id) => ctx.bodies.get(id))
@@ -2079,7 +2170,14 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
         try {
           const { ctx, creationOrder, errors } = replay;
           const firstError = Object.entries(errors)[0];
-          if (firstError) throw new Error(`Cannot export: ${firstError[1]}`);
+          // A step that fails blocks exact exports; its message names steps, not internal ids.
+          if (firstError) {
+            const named = nameMissingReferences({ [firstError[0]]: firstError[1] }, features);
+            const step = features.find((f) => f.id === firstError[0])?.name ?? firstError[0];
+            throw new Error(
+              `Cannot export: "${step}" fails: ${named[firstError[0]] ?? firstError[1]}`,
+            );
+          }
           const wanted = meshOptions.bodyIds ? new Set(meshOptions.bodyIds) : null;
           const out: ExportMeshBody[] = [];
           for (const id of creationOrder) {

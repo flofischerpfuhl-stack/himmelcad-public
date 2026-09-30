@@ -7,8 +7,9 @@ Status 2026-09-30, branch `asm/interop-20260930`, integrated with the own OCCT b
 `meshSolid.ts` (OCCT), agent API `renderer/src/api/interopApi.ts`, Python
 `sdk/python/src/himmelcad/assembler/interop.py`.
 
-Two OCCT modules (`HIMMELCAD_OCCT`): the default `replicad-opencascadejs` 1.1.0, and the
-HimmelCAD build (`vendor/occt-wasm`), which adds IGES and OCCT's XCAF STEP reader. The kernel
+Two OCCT modules (`HIMMELCAD_OCCT`): the HimmelCAD build (`vendor/occt-wasm`, the default
+since 2026-09-30), which adds IGES and OCCT's XCAF STEP reader, and `replicad-opencascadejs`
+1.1.0 (`HIMMELCAD_OCCT=replicad`). The kernel
 reports what the loaded module has (`KernelStatusInfo.capabilities`); menus, `interop.formats`
 and Python follow it.
 
@@ -30,8 +31,9 @@ STEP…**, **Import STL…**, **Import DXF into Sketch…**, dropping files anyw
 DXF…** (dialog; enabled with a sketch or planar face selected), the print exports (STL…, 3MF,
 Open in Slicer). **Convert Mesh to Solid** is in the adaptive toolbar and context menu of a
 selected reference mesh. **Import IGES…** / **Export IGES…** (dialog: bodies, trimmed surfaces
-or solids, unit) are enabled with the HimmelCAD OCCT build; with the default module they stay
-disabled with the reason, and a dropped `.igs` is refused with it.
+or solids, unit) are enabled with the HimmelCAD OCCT build (the default); with
+`HIMMELCAD_OCCT=replicad` they stay disabled with the reason, and a dropped `.igs` is refused
+with it.
 
 Progress and Cancel: reading/parsing (3MF, OBJ, STL, DXF, the mesh-to-solid check) runs in
 the import worker (`import.worker.ts`) — a progress island with **Cancel**, which terminates
@@ -220,7 +222,12 @@ handles, owner links, `$HANDSEED`, CLASSES, the VPORT/LTYPE/LAYER/STYLE/VIEW/UCS
 DIMSTYLE/BLOCK_RECORD tables, `*Model_Space`/`*Paper_Space` blocks and the root dictionary);
 sketch text is written as its glyph outlines. Face outline: lines, circles/arcs (centre from
 the kernel's edge polyline, radius from the kernel), other curves as polylines, in the face's
-sketch frame.
+sketch frame. R12 has no SPLINE/ELLIPSE: they become polylines within a chord tolerance of
+max(1 µm, 1e-5 × drawing size) (was 64 pieces per knot span: one glyph outline became ~3 900
+vertices and re-importing "HC" built a 7 800-line sketch, 13 s and 1.6 GB of kernel heap —
+fuzzer finding F9, `ROBUSTNESS.md`; now 336 vertices, 0.2 s). Text through DXF is plain
+curves: on import a glyph's counter (the hole of "A", "g") is a region of its own, so the
+round trip does not keep the "counter is a hole" meaning of sketch text (finding D1).
 
 Found and fixed on the way (`kernel/sketchGeometry.ts#regionFace`): a profile with holes
 whose wires ran different ways (a circle next to an arc+line "D" hole) failed with "the face

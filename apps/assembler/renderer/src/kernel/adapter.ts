@@ -141,7 +141,7 @@ export abstract class QueuedKernelAdapter implements KernelAdapter {
   private activityListeners = new Set<(activity: KernelActivity | null) => void>();
   private currentStatus: KernelStatusInfo = {
     status: 'loading',
-    message: 'Loading CAD kernelâ€¦',
+    message: 'Loading CAD kernel…',
     progress: null,
     loadMs: null,
   };
@@ -343,7 +343,7 @@ export const CRASH_WINDOW_MS = 60_000;
 
 /**
  * wasm heap size above which the kernel is restarted when it next runs
- * idle. OCCT in this build leaks inside its own algorithms (40â€“260 KB per
+ * idle. OCCT in this build leaks inside its own algorithms (40–260 KB per
  * boolean, ~16 KB per `BRepCheck` face check, ~27 B per explored sub-shape;
  * wasm memory never shrinks), so a long session is recycled
  * before wasm32 runs out of address space. The document lives in the store;
@@ -389,7 +389,7 @@ export class InProcessKernelAdapter extends QueuedKernelAdapter {
     this.evaluator = null;
     this.setStatus({
       status: 'loading',
-      message: 'Refreshing CAD kernel memoryâ€¦',
+      message: 'Refreshing CAD kernel memory…',
       progress: null,
       loadMs: null,
     });
@@ -430,6 +430,7 @@ export class InProcessKernelAdapter extends QueuedKernelAdapter {
       try {
         const result = await evaluator.evaluate(request.features, {
           quality: request.quality ?? 'final',
+          ...(request.commitCheck ? { commitCheck: request.commitCheck } : {}),
           onProgress: (progress) => context.progress(progress),
         });
         const heap = result.stats.heapBytes ?? 0;
@@ -455,7 +456,7 @@ export class InProcessKernelAdapter extends QueuedKernelAdapter {
         }
         this.setStatus({
           status: 'loading',
-          message: 'Restarting CAD kernelâ€¦',
+          message: 'Restarting CAD kernel…',
           progress: null,
           loadMs: null,
           notice: crashNotice(detail),

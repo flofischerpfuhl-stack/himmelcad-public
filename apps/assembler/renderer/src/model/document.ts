@@ -329,6 +329,23 @@ export type Feature =
   | MeshSolidFeature
   | ModelingFeature;
 
+/**
+ * Whether a feature's result is a boolean of solids: the Boolean feature, a
+ * Join/Cut/Intersect of a profile solid (extrude, revolve, sweep, loft,
+ * thicken), and holes, emboss/engrave and ribs. OCCT can return an invalid
+ * solid for such a boolean instead of failing; committing one is refused
+ * after a full B-rep check (`EvaluationRequest.commitCheck`,
+ * `assembler/ROBUSTNESS.md`).
+ */
+export function isBooleanResult(feature: Feature): boolean {
+  if (feature.kind === 'boolean') return true;
+  if (feature.kind === 'hole' || feature.kind === 'emboss' || feature.kind === 'rib') return true;
+  // Push/pull of a body face joins outwards and cuts inwards whatever `operation` says.
+  if (feature.kind === 'extrude' && feature.profile.kind === 'face') return true;
+  const operation = (feature as { operation?: unknown }).operation;
+  return operation === 'join' || operation === 'cut' || operation === 'intersect';
+}
+
 /** Minimum size, in millimetres, of sketch dimensions and extrude distances. */
 export const MIN_FEATURE_SIZE_MM: Millimeters = 0.1;
 

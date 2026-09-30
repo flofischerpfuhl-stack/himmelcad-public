@@ -78,6 +78,12 @@ export interface AssemblerRecentFilesApi {
   openPath(path: string): Promise<{ path: string; text: string } | null>;
   /** Lets the user pick a replacement for a missing entry; relinks the list entry to the new path. */
   locate(oldPath: string): Promise<{ path: string; text: string } | null>;
+  /**
+   * Records a project the renderer opened successfully (a path from Open,
+   * Open Recent, Locate… or a launch argument). A file that fails to open is
+   * never added to the list.
+   */
+  confirmOpened(path: string): Promise<void>;
 }
 
 /** State of the opt-in local agent endpoint (`electron/automationServer.ts`). */

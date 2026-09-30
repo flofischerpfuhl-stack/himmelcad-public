@@ -14,7 +14,7 @@ import type { BodyMesh } from '../kernel/types.js';
 import { useItemsStore, withDisplayNames } from '../model/items.js';
 import * as io from '../model/project/persistence.js';
 import { referenceMeshToBody } from '../model/referenceMesh.js';
-import { useAssemblerStore } from '../model/store.js';
+import { shownFeatures, useAssemblerStore } from '../model/store.js';
 
 let kernel: KernelAdapter | null = null;
 
@@ -71,7 +71,7 @@ export async function meshesFor(
   }
   if (!kernel) throw new Error('The CAD kernel is not available.');
   const preset = MESH_RESOLUTIONS[resolution];
-  const bodies = await kernel.exportMesh(state.features, {
+  const bodies = await kernel.exportMesh(shownFeatures(state), {
     bodyIds,
     tolerance: preset.tolerance,
     angularTolerance: preset.angularTolerance,

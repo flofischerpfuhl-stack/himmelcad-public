@@ -38,7 +38,7 @@ function authorize(path: string): string {
 
 function requireAuthorized(path: unknown): string {
   if (typeof path !== 'string' || !authorizedPaths.has(path)) {
-    throw new Error('Path was not obtained from a save/export dialog');
+    throw new Error('Path was not obtained from an open/save/export dialog');
   }
   return path;
 }
@@ -148,15 +148,16 @@ async function rememberRecentFile(path: string): Promise<void> {
  * Reads a `.hcasm` at `path` (double-click file association, a CLI
  * argument, or a second app instance's forwarded argv — `main.ts`),
  * authorizing it the same way a dialog-obtained path is (so a subsequent
- * Ctrl+S onto it works) and recording it in Recent Files. `null` if the
- * path doesn't exist/isn't readable, or isn't absolute.
+ * Ctrl+S onto it works). Recent Files records it only once the renderer has
+ * opened it (`assembler:recentFiles:confirmOpened`): a file that fails to
+ * parse is never added. `null` if the path doesn't exist/isn't readable, or
+ * isn't absolute.
  */
 export async function readHcasmFile(path: string): Promise<{ path: string; text: string } | null> {
   if (!isAbsolute(path) || !path.toLowerCase().endsWith('.hcasm')) return null;
   try {
     const text = await fs.readFile(path, 'utf8');
     authorize(path);
-    await rememberRecentFile(path);
     return { path, text };
   } catch {
     return null;
@@ -173,7 +174,7 @@ export function registerFileApi(getWindow: () => BrowserWindow | null): void {
     if (result.canceled || !result.filePaths[0]) return null;
     const path = authorize(result.filePaths[0]);
     const text = await fs.readFile(path, 'utf8');
-    await rememberRecentFile(path);
+    // Recorded in Recent Files once the renderer opened it (`confirmOpened`).
     return { path, text };
   });
 
@@ -212,6 +213,15 @@ export function registerFileApi(getWindow: () => BrowserWindow | null): void {
         };
       }),
     );
+  });
+
+  /**
+   * The renderer opened `path` successfully (parsed and loaded): now it goes
+   * to the top of Recent Files. Only paths this module handed out (a dialog,
+   * a launch argument, a recent entry) are accepted.
+   */
+  ipcMain.handle('assembler:recentFiles:confirmOpened', async (_event, path: unknown) => {
+    await rememberRecentFile(requireAuthorized(path));
   });
 
   ipcMain.handle('assembler:recentFiles:remove', async (_event, path: unknown) => {

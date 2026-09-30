@@ -18,7 +18,14 @@ import type {
 } from './types.js';
 
 export type WorkerRequest =
-  | { type: 'evaluate'; jobId: number; features: Feature[]; quality?: TessellationQuality }
+  | {
+      type: 'evaluate';
+      jobId: number;
+      features: Feature[];
+      quality?: TessellationQuality;
+      /** `EvaluationRequest.commitCheck`. */
+      commitCheck?: string[];
+    }
   | {
       type: 'exportStep';
       jobId: number;

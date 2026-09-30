@@ -126,6 +126,7 @@ export function readIges(oc: OpenCascade, bytes: Uint8Array, fileName: string): 
       sewing.Perform(own(new oc.Message_ProgressRange()));
       const sewn = own(sewing.SewedShape() as RawShape);
       let open = 0;
+      let insideOut = 0;
       const shells = explore(oc, sewn, 'TopAbs_SHELL');
       for (const shell of shells) {
         const closed = (shell as unknown as { Closed(): boolean }).Closed();
@@ -139,7 +140,11 @@ export function readIges(oc: OpenCascade, bytes: Uint8Array, fileName: string): 
           }
         }
         if (made && !made.IsNull()) {
-          shapes.push(R.cast(made as never) as R.Shape3D);
+          const solid = R.cast(made as never) as R.Shape3D;
+          // Surfaces of touching or overlapping bodies can sew into one inside-out shell
+          // (fuzzer finding F10, `assembler/ROBUSTNESS.md`): keep it, but say so.
+          if (!(R.measureVolume(solid) > 0)) insideOut += 1;
+          shapes.push(solid);
           made.delete();
         } else {
           open += 1;
@@ -161,6 +166,11 @@ export function readIges(oc: OpenCascade, bytes: Uint8Array, fileName: string): 
       if (open > 0) {
         warnings.push(
           `${open} open surface ${open === 1 ? 'body' : 'bodies'}: the IGES surfaces do not close into a solid`,
+        );
+      }
+      if (insideOut > 0) {
+        warnings.push(
+          `${insideOut} imported ${insideOut === 1 ? 'solid is' : 'solids are'} not valid (inside out): surfaces of touching or overlapping bodies were sewn together; export such parts as IGES solids (MSBO) or STEP`,
         );
       }
     }

@@ -53,6 +53,7 @@ import {
 import {
   createDemoDocument,
   frameForPlane,
+  isBooleanResult,
   MIN_FEATURE_SIZE_MM,
   type BooleanFeature,
   type ChamferFeature,
@@ -1118,7 +1119,7 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
   function isSettled(): boolean {
     const state = get();
     const previewBusy = isPreviewTool(state.activeTool) && state.activeTool.previewPending;
-    return !state.evaluationPending && !previewBusy;
+    return !state.evaluationPending && !previewBusy && !commitCheckPending;
   }
 
   function notifySettled(): void {
@@ -1176,6 +1177,68 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
 
   /** Revisions of {@link checkParameterPlan}'s kernel checks (their own sequence on the preview channel). */
   let planCheckRevision = 0;
+  /** A tool's Done is being checked by the kernel ({@link commitChecked}); Done is ignored meanwhile. */
+  let commitCheckPending = false;
+
+  /**
+   * Done of a tool whose new feature is a boolean of solids (`isBooleanResult`):
+   * the document with the feature is evaluated with the commit check first (full
+   * B-rep check of the result; previews only run the cheap one). An invalid
+   * result is refused — the tool stays open with the kernel's message, nothing is
+   * committed. Otherwise the feature is committed with that evaluation, so the
+   * commit costs one evaluation as before (plus the check).
+   */
+  function commitChecked(feature: Feature, selection?: SelectionItem[]): void {
+    const next = [...get().features, feature];
+    if (!kernel || !isBooleanResult(feature)) {
+      commitFeatures(next, selection);
+      return;
+    }
+    const adapter = kernel;
+    const session = toolSession;
+    const features = [...activeFeatures(), feature];
+    commitCheckPending = true;
+    void (async () => {
+      let result: EvaluationResult | null = null;
+      try {
+        for (let attempt = 0; attempt < 20 && !result; attempt += 1) {
+          planCheckRevision += 1;
+          const outcome = await adapter.evaluate({
+            channel: 'preview',
+            revision: planCheckRevision,
+            features,
+            commitCheck: [feature.id],
+          }).outcome;
+          if (outcome.kind === 'done') result = outcome.result;
+          else if (outcome.kind === 'failed') break; // the document evaluation reports it
+          // superseded by a preview: try again.
+        }
+      } finally {
+        commitCheckPending = false;
+      }
+      const tool = get().activeTool;
+      if (session !== toolSession || !tool) {
+        notifySettled(); // the tool was cancelled meanwhile
+        return;
+      }
+      const error = result?.errors[feature.id];
+      if (error) {
+        if (isPreviewTool(tool)) {
+          set({
+            activeTool: {
+              ...tool,
+              previewError: error,
+              previewErrorRefs: result?.errorRefs?.[feature.id] ?? null,
+              previewPending: false,
+            },
+          });
+        }
+        notifySettled();
+        return;
+      }
+      commitFeatures(next, selection, undefined, result ?? undefined);
+    })();
+  }
 
   /**
    * Evaluates a parameter plan before it is committed and refuses it when a
@@ -1371,7 +1434,12 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
     );
   }
 
-  function setFeatures(nextFeatures: Feature[], extra: Partial<AssemblerState> = {}): void {
+  /** `evaluation`: already computed for the new document (its active steps); reused, not re-evaluated. */
+  function setFeatures(
+    nextFeatures: Feature[],
+    extra: Partial<AssemblerState> = {},
+    evaluation?: EvaluationResult,
+  ): void {
     const previous = get();
     let rollbackBefore = previous.rollbackBefore;
     if (rollbackBefore && !nextFeatures.some((f) => f.id === rollbackBefore)) {
@@ -1383,6 +1451,7 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
         null;
     }
     set({ features: nextFeatures, rollbackBefore, ...extra });
+    if (evaluation) resultCache.set(activeFeatures(), evaluation);
     evaluateDocument();
     notifySettled();
   }
@@ -1391,6 +1460,7 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
     nextFeatures: Feature[],
     selectionOverride?: SelectionItem[],
     nextParameters?: Parameter[],
+    evaluation?: EvaluationResult,
   ): void {
     const state = get();
     past = [...past, { features: state.features, parameters: state.parameters }];
@@ -1411,12 +1481,16 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
         ...prev.slice(markerIndex),
       ];
     }
-    setFeatures(nextFeatures, {
-      ...(selectionOverride ? { selection: selectionOverride } : {}),
-      ...(nextParameters ? { parameters: nextParameters } : {}),
-      history: { canUndo: true, canRedo: false },
-      activeTool: null,
-    });
+    setFeatures(
+      nextFeatures,
+      {
+        ...(selectionOverride ? { selection: selectionOverride } : {}),
+        ...(nextParameters ? { parameters: nextParameters } : {}),
+        history: { canUndo: true, canRedo: false },
+        activeTool: null,
+      },
+      evaluation,
+    );
   }
 
   function appendFeature(feature: Feature): void {
@@ -1985,7 +2059,7 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
     commit: () => {
       const state = get();
       const tool = state.activeTool;
-      if (!tool) return;
+      if (!tool || commitCheckPending) return;
 
       // A kernel error for the current parameters blocks Done (the tool stays open).
       if (isPreviewTool(tool) && tool.previewError !== null && !tool.previewPending) return;
@@ -2007,7 +2081,7 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
           name: nextFeatureName('Extrude', state.features),
         };
         // The consumed profile is deselected (and so hidden again), like Shapr3D.
-        commitFeatures([...state.features, feature], []);
+        commitChecked(feature, []);
         return;
       }
 
@@ -2026,7 +2100,7 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
           id: createFeatureId(provisional.kind),
           name: nextFeatureName(prefix, state.features),
         } as Feature;
-        appendFeature(feature);
+        commitChecked(feature, [{ kind: 'feature', featureId: feature.id }]);
         return;
       }
 
@@ -2037,7 +2111,7 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
           name: nextFeatureName(MODELING_FEATURE_LABEL[kind], state.features),
         });
         if (!feature) return; // references still missing: the tool stays open
-        appendFeature(feature);
+        commitChecked(feature, [{ kind: 'feature', featureId: feature.id }]);
         return;
       }
 
@@ -2531,4 +2605,19 @@ setSectionAccess({
     })),
 });
 
+/**
+ * The steps the viewport shows: above the History rollback bar when rolled back, else all.
+ * Exports use them too, so an export is what the user sees (a STEP/IGES/fine-mesh export
+ * while rolled back used to contain the rolled-back steps, the display-mesh STL did not;
+ * fuzzer finding F12, `assembler/ROBUSTNESS.md`).
+ */
+export function shownFeatures(state: {
+  features: Feature[];
+  rollbackBefore: string | null;
+}): Feature[] {
+  const index = state.rollbackBefore
+    ? state.features.findIndex((f) => f.id === state.rollbackBefore)
+    : -1;
+  return index >= 0 ? state.features.slice(0, index) : state.features;
+}
 export type { Body, EvaluationResult, ExtrudeProfileRef, Feature, Plane };

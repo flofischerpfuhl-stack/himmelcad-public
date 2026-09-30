@@ -242,10 +242,10 @@ transform survives a sketch edit, an Offset Face follows its hole when the
 hole moves — all resolved by key, no geometric re-bind.
 
 Limits (with the OCCT reason). The HimmelCAD OCCT build
-(`OCCT-BUILD-SPIKE.md`, opt-in `HIMMELCAD_OCCT=himmelcad`) lifts the first
-two: Offset Face re-extends inclined neighbours (`BRepOffset_MakeOffset`),
+(`OCCT-BUILD-SPIKE.md`; the default module since Block 6, 2026-09-30) lifts the
+first two: Offset Face re-extends inclined neighbours (`BRepOffset_MakeOffset`),
 Delete Face uses `BRepAlgoAPI_Defeaturing`; the text below describes the
-default `replicad-opencascadejs` build.
+`replicad-opencascadejs` build (`HIMMELCAD_OCCT=replicad`).
 
 - **Offset Face does not re-extend neighbours.** OCCT's per-face offset
   (`BRepOffset_MakeOffset::SetOffsetOnFace`) is excluded from this
@@ -436,7 +436,16 @@ explorer). Therefore: previews check validity by closure only, validity is
 per new face after the first full check (every mode includes the closure /
 manifold test, so full and incremental checks agree on non-manifold edges —
 `ROBUSTNESS.md` F4; an invalid body gets a warning on the step that last
-changed it), and the adapters **recycle** the
+changed it), **commits** of a boolean result (Boolean, Join/Cut/Intersect of
+extrude/revolve/sweep/loft/thicken, push/pull, hole, emboss, rib) run the full
+check on the committed body (`EvaluationRequest.commitCheck`; an invalid one is
+refused, `featureFailed` — Block 6: ~0 ms on the enclosure's engrave/hole
+commits, whose bodies were fully checked anyway, +31 ms on the 60-feature
+plate, where the incremental check had covered only the new faces), final
+evaluations also fully check bodies whose last boolean step was re-evaluated
+(demo-bracket last edit +3.4 ms), a valid solid needs a positive volume
+(inside-out/empty shapes; `ROBUSTNESS.md` F8/F10), and the
+adapters **recycle** the
 kernel when its wasm heap passes 1 GiB (restart when idle, warm up with the
 last document; not in a loop for documents that need a big heap).
 

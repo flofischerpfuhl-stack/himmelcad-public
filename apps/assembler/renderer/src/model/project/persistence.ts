@@ -312,6 +312,11 @@ export async function openRecentFile(path: string): Promise<RecentOpenResult | n
   return null;
 }
 
+/** A project at `path` opened successfully: it goes to the top of Open Recent (Electron). */
+export async function confirmOpenedFile(path: string): Promise<void> {
+  if (isElectron()) await window.assembler!.recentFiles.confirmOpened(path);
+}
+
 export async function locateRecentFile(oldPath: string): Promise<RecentOpenResult | null> {
   if (isElectron()) return window.assembler!.recentFiles.locate(oldPath);
   return null;

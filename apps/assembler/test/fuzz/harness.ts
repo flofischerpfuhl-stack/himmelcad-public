@@ -28,11 +28,15 @@
  *                       under the restart policy.
  * - `arenaOrder`        no OCCT object arena was closed out of order
  *                       (interleaved kernel users, `kernel/occtArena.ts`).
+ * - `roundTrip`         STEP/IGES export → import of valid solids keeps their
+ *                       volume; DXF export → import of a sketch keeps its
+ *                       regions' total area.
+ *
+ * The OCCT module is the one `HIMMELCAD_OCCT` selects (`headless/occtModule.ts`).
  */
-import { createRequire } from 'node:module';
-
 import * as R from 'replicad';
-import init from 'replicad-opencascadejs';
+
+import { loadOcct as loadSelectedOcct, type OpenCascadeModule } from '../../headless/occtModule.js';
 
 import { ApiError } from '../../renderer/src/api/errors.js';
 import { AgentSession, HEADLESS_CAPABILITIES } from '../../renderer/src/api/session.js';
@@ -45,11 +49,12 @@ import { checkMove, moveFeature } from '../../renderer/src/model/historyTools.js
 import { loadProjectFile } from '../../renderer/src/model/project/format.js';
 import { useAssemblerStore } from '../../renderer/src/model/store.js';
 import { setSketchSolverFactory } from '../../renderer/src/sketch/solverProvider.js';
+import { installNodeFonts } from '../sketch/nodeFont.js';
 import { loadNodeSolver } from '../sketch/nodeSolver.js';
 import { between, pick, type Op } from './ops.js';
 
 type Json = Record<string, unknown>;
-type OpenCascade = Awaited<ReturnType<typeof init>>;
+type OpenCascade = OpenCascadeModule;
 
 /** Hard bound for the kernel's wasm heap (the recycle threshold below keeps it far lower). */
 export const HEAP_LIMIT_BYTES = 1536 * 1024 * 1024;
@@ -108,13 +113,10 @@ function fail(invariant: string, message: string): never {
   throw new InvariantError(invariant, message);
 }
 
+/** A fresh instance of the OCCT module `HIMMELCAD_OCCT` selects (`headless/occtModule.ts`), quiet. */
 async function loadOcct(): Promise<OpenCascade> {
-  const require = createRequire(import.meta.url);
-  const wasmPath = require.resolve('replicad-opencascadejs/wasm');
   const quiet = () => undefined;
-  return init({ locateFile: () => wasmPath, print: quiet, printErr: quiet } as Parameters<
-    typeof init
-  >[0]);
+  return loadSelectedOcct({ print: quiet, printErr: quiet });
 }
 
 function round(v: number, digits: number): number {
@@ -183,6 +185,11 @@ interface BodySummary {
   id: string;
   valid: boolean;
 }
+interface SketchSummary {
+  featureId: string;
+  frame: { origin: number[]; u: number[]; v: number[]; normal: number[] } | null;
+  regions?: { key: string; area?: number }[];
+}
 interface FaceSummary {
   key: string;
   surface: string;
@@ -216,6 +223,8 @@ export class FuzzHarness {
     setSketchSolverFactory(() => ({
       solve: async (request) => (await loadNodeSolver()).solve(request),
     }));
+    // Sketch text (sketch.addText) reads the bundled Inter font, as the app and the headless CLI do.
+    installNodeFonts();
     this.session = new AgentSession({
       store: this.store,
       kernel: this.kernel,
@@ -295,6 +304,21 @@ export class FuzzHarness {
 
   private async bodies(): Promise<BodySummary[]> {
     return this.call<BodySummary[]>('bodies.list');
+  }
+
+  private async sketchInfo(featureId: string): Promise<SketchSummary | undefined> {
+    return (await this.call<SketchSummary[]>('sketches.list')).find(
+      (s) => s.featureId === featureId,
+    );
+  }
+
+  /** Closed regions (profiles) of a sketch with their keys and areas. */
+  private async regionsOf(featureId: string): Promise<{ key: string; area?: number }[]> {
+    return (await this.sketchInfo(featureId))?.regions ?? [];
+  }
+
+  private async frameOf(featureId: string): Promise<SketchSummary['frame']> {
+    return (await this.sketchInfo(featureId))?.frame ?? null;
   }
 
   private async planarFaces(bodyId: string): Promise<FaceSummary[]> {
@@ -800,6 +824,15 @@ export class FuzzHarness {
         else if (feature.kind === 'transform') params = { dx: between(r[2], -20, 20) };
         else if (feature.kind === 'boolean')
           params = { operation: pick(['union', 'subtract', 'intersect'], r[2]) };
+        else if (feature.kind === 'draft' && typeof p.angle === 'number')
+          params = { angle: Math.max(-45, Math.min(45, round(p.angle * scale, 6))) || 1 };
+        else if (
+          (feature.kind === 'thicken' || feature.kind === 'rib') &&
+          typeof p.thickness === 'number'
+        )
+          params = { thickness: round(p.thickness * scale, 6) };
+        else if (feature.kind === 'sweep' || feature.kind === 'loft')
+          params = { operation: pick(['new', 'join', 'cut'], r[2]) };
         if (!params) return null;
         return this.api('feature.edit', { featureId: feature.id, params });
       }
@@ -858,6 +891,375 @@ export class FuzzHarness {
             await this.settle();
           },
           undoable: true,
+        };
+      }
+      case 'sweep': {
+        const sketch = pick(await sketches(), r[0]);
+        if (!sketch) return null;
+        const regions = await this.regionsOf(sketch.id);
+        const region = pick(regions, r[1]);
+        if (!region) return null;
+        const bodies = await this.bodies();
+        const operation =
+          bodies.length === 0 ? 'new' : pick(['new', 'new', 'join', 'cut'] as const, r[2])!;
+        const target = operation === 'new' ? undefined : pick(bodies, r[3])?.id;
+        let path: Json;
+        const other = pick(
+          (await sketches()).filter((s) => s.id !== sketch.id),
+          r[4],
+        );
+        const otherRegion = other ? pick(await this.regionsOf(other.id), r[5]) : undefined;
+        if ((r[6] ?? 0) < 0.3 && other && otherRegion) {
+          path = { kind: 'sketch', featureId: other.id, region: otherRegion.key };
+        } else {
+          // A straight path from the sketch origin along its normal, tilted along u at random.
+          const frame = await this.frameOf(sketch.id);
+          if (!frame) return null;
+          const length = between(r[6], 2, 30);
+          const tilt = between(r[7], -0.6, 0.6, 0.1);
+          path = {
+            kind: 'line',
+            start: frame.origin,
+            end: frame.origin.map((v, i) =>
+              round(v + (frame.normal[i]! + tilt * frame.u[i]!) * length, 6),
+            ),
+          };
+        }
+        return this.api('feature.create', {
+          kind: 'sweep',
+          params: {
+            profile: { kind: 'sketch', featureId: sketch.id, regions: [region.key] },
+            path,
+            operation,
+            ...(target ? { targetBodyId: target } : {}),
+          },
+        });
+      }
+      case 'loft': {
+        const all = (await sketches()).filter(
+          (s) => (s.params.plane as { kind?: string } | undefined)?.kind !== 'face',
+        );
+        const a = pick(all, r[0]);
+        const b = pick(
+          all.filter((s) => s.id !== a?.id),
+          r[1],
+        );
+        if (!a || !b) return null;
+        const ra = pick(await this.regionsOf(a.id), r[2]);
+        const rb = pick(await this.regionsOf(b.id), r[3]);
+        if (!ra || !rb) return null;
+        const bodies = await this.bodies();
+        const operation =
+          bodies.length === 0 ? 'new' : pick(['new', 'new', 'join', 'cut'] as const, r[4])!;
+        const target = operation === 'new' ? undefined : pick(bodies, r[5])?.id;
+        return this.api('feature.create', {
+          kind: 'loft',
+          params: {
+            profiles: [
+              { kind: 'sketch', featureId: a.id, regions: [ra.key] },
+              { kind: 'sketch', featureId: b.id, regions: [rb.key] },
+            ],
+            ruled: (r[6] ?? 0) < 0.4,
+            operation,
+            ...(target ? { targetBodyId: target } : {}),
+          },
+        });
+      }
+      case 'draft': {
+        const body = await bodyId(r[0]);
+        if (!body) return null;
+        const faces = await this.call<FaceSummary[]>('faces.list', { bodyId: body });
+        const face = pick(
+          faces.filter((f) => f.surface === 'plane' || f.surface === 'cylinder'),
+          r[1],
+        );
+        if (!face) return null;
+        const neutralFace = pick(
+          faces.filter((f) => f.surface === 'plane' && f.key !== face.key),
+          r[2],
+        );
+        const neutral =
+          (r[3] ?? 0) < 0.5 && neutralFace
+            ? { kind: 'face', face: { bodyId: body, key: neutralFace.key } }
+            : { kind: 'plane', plane: pick(planes, r[4])!, offset: between(r[5], -10, 10) };
+        return this.api('feature.create', {
+          kind: 'draft',
+          params: {
+            faces: [{ bodyId: body, key: face.key }],
+            neutral,
+            angle: between(r[6], -20, 20, 0.5) || 3,
+            flip: (r[7] ?? 0) < 0.3,
+          },
+        });
+      }
+      case 'openPolyline': {
+        const sketch = pick(await sketches(), r[0]);
+        if (!sketch) return null;
+        const x = between(r[1], -20, 15);
+        const y = between(r[2], -20, 15);
+        const points =
+          (r[3] ?? 0) < 0.5
+            ? [
+                [x, y],
+                [x + between(r[4], -15, 15), y + between(r[5], -15, 15)],
+              ]
+            : [
+                [x, y],
+                [x + between(r[4], 2, 15), y],
+                [x + between(r[4], 2, 15), y + between(r[5], 2, 15)],
+              ];
+        return this.api('sketch.addPolyline', {
+          featureId: sketch.id,
+          points,
+          closed: false,
+          construction: (r[6] ?? 0) < 0.15,
+        });
+      }
+      case 'rib': {
+        const sketch = pick(
+          (await sketches()).filter((s) =>
+            ((s.params.entities as { kind: string }[] | undefined) ?? []).some(
+              (e) => e.kind === 'line',
+            ),
+          ),
+          r[0],
+        );
+        if (!sketch) return null;
+        const lines = (sketch.params.entities as { id: string; kind: string }[]).filter(
+          (e) => e.kind === 'line',
+        );
+        const first = pick(lines, r[1])!;
+        const second = (r[2] ?? 0) < 0.3 ? pick(lines, r[3]) : undefined;
+        const target = await bodyId(r[4]);
+        return this.api('feature.create', {
+          kind: 'rib',
+          params: {
+            sketchId: sketch.id,
+            entityIds: second && second.id !== first.id ? [first.id, second.id] : [first.id],
+            thickness: between(r[5], 0.4, 5, 0.1),
+            flip: (r[6] ?? 0) < 0.4,
+            ...(target && (r[7] ?? 0) < 0.5 ? { targetBodyId: target } : {}),
+          },
+        });
+      }
+      case 'thicken': {
+        const bodies = await this.bodies();
+        const operation =
+          bodies.length === 0 ? 'new' : pick(['new', 'new', 'join', 'cut'] as const, r[0])!;
+        const target = operation === 'new' ? undefined : pick(bodies, r[1])?.id;
+        let source: Json | null = null;
+        if ((r[2] ?? 0) < 0.6) {
+          const body = await bodyId(r[3]);
+          const face = body
+            ? pick(await this.call<FaceSummary[]>('faces.list', { bodyId: body }), r[4])
+            : undefined;
+          if (body && face) source = { kind: 'faces', faces: [{ bodyId: body, key: face.key }] };
+        } else {
+          const sketch = pick(await sketches(), r[3]);
+          if (sketch)
+            source = { kind: 'profile', profile: { kind: 'sketch', featureId: sketch.id } };
+        }
+        if (!source) return null;
+        return this.api('feature.create', {
+          kind: 'thicken',
+          params: {
+            source,
+            thickness: between(r[5], 0.3, 5, 0.1),
+            direction: pick(['outside', 'inside', 'both'] as const, r[6])!,
+            operation,
+            ...(target ? { targetBodyId: target } : {}),
+          },
+        });
+      }
+      case 'text': {
+        const sketch = pick(await sketches(), r[0]);
+        if (!sketch) return null;
+        return this.api('sketch.addText', {
+          featureId: sketch.id,
+          text: pick(['HC', 'A', '8', 'Ag 1', 'O-ring', '%'], r[1])!,
+          position: [between(r[2], -20, 10), between(r[3], -20, 10)],
+          height: between(r[4], 1, 12),
+          ...((r[5] ?? 0) < 0.3 ? { angle: between(r[6], -90, 90, 15) } : {}),
+        });
+      }
+      case 'constructionPlane': {
+        const kind = pick(['offset', 'offset', 'angle', 'midplane', 'threePoints'] as const, r[0])!;
+        const body = await bodyId(r[1]);
+        const faces = body ? await this.planarFaces(body) : [];
+        const face = pick(faces, r[2]);
+        const base =
+          face && (r[3] ?? 0) < 0.5
+            ? { kind: 'face', face: { bodyId: body, key: face.key } }
+            : { kind: 'plane', plane: pick(planes, r[4])!, offset: between(r[5], -10, 10) };
+        let definition: Json;
+        if (kind === 'offset') {
+          definition = { kind, base, distance: between(r[6], -25, 25) };
+        } else if (kind === 'angle') {
+          definition = {
+            kind,
+            base: { kind: 'plane', plane: pick(planes, r[4])!, offset: 0 },
+            axis: { kind: 'world', axis: pick(['X', 'Y', 'Z'] as const, r[6])! },
+            angle: between(r[7], -80, 80, 5),
+          };
+        } else if (kind === 'midplane') {
+          const plane = pick(planes, r[4])!;
+          definition = {
+            kind,
+            a: { kind: 'plane', plane, offset: between(r[5], -20, 0) },
+            b: { kind: 'plane', plane, offset: between(r[6], 0, 20) },
+          };
+        } else {
+          definition = {
+            kind,
+            points: [
+              { kind: 'point', point: [0, 0, between(r[5], -5, 5)] },
+              { kind: 'point', point: [between(r[6], 5, 20), 0, 0] },
+              { kind: 'point', point: [0, between(r[7], 5, 20), between(r[4], -5, 5)] },
+            ],
+          };
+        }
+        return this.api('feature.create', {
+          kind: 'constructionPlane',
+          params: { definition, flip: (r[7] ?? 0) < 0.2 },
+        });
+      }
+      case 'sketchOnConstruction': {
+        const plane = pick(
+          (await this.features()).filter((f) => f.kind === 'constructionPlane'),
+          r[0],
+        );
+        if (!plane) return null;
+        return this.api('feature.create', {
+          kind: 'sketch',
+          params: {
+            plane: { kind: 'construction', featureId: plane.id },
+            profiles: [shape(r[3], r[4], r[5])],
+          },
+        });
+      }
+      case 'extrudeExtent': {
+        const sketch = pick(await sketches(), r[0]);
+        if (!sketch) return null;
+        const bodies = await this.bodies();
+        const operation =
+          bodies.length === 0 ? 'new' : pick(['new', 'join', 'cut', 'cut'] as const, r[1])!;
+        const target = operation === 'new' ? undefined : pick(bodies, r[2])?.id;
+        const mode = pick(['throughAll', 'toObject', 'twoSides', 'startOffset'] as const, r[3])!;
+        const distance = between(r[4], 1, 20) * ((r[5] ?? 0) < 0.35 ? -1 : 1);
+        let extra: Json = {};
+        if (mode === 'throughAll') extra = { extent: { kind: 'throughAll' } };
+        else if (mode === 'toObject') {
+          const body = pick(bodies, r[6]);
+          if (!body) return null;
+          const face = (r[7] ?? 0) < 0.5 ? pick(await this.planarFaces(body.id), r[6]) : undefined;
+          extra = {
+            extent: {
+              kind: 'toObject',
+              target: face
+                ? { kind: 'face', face: { bodyId: body.id, key: face.key } }
+                : { kind: 'body', bodyId: body.id },
+            },
+          };
+        } else if (mode === 'twoSides') extra = { distance2: between(r[6], 0, 12) };
+        else extra = { startOffset: between(r[6], -8, 8) };
+        return this.api('feature.create', {
+          kind: 'extrude',
+          params: {
+            profile: { kind: 'sketch', featureId: sketch.id },
+            distance,
+            operation,
+            ...(target ? { targetBodyId: target } : {}),
+            ...extra,
+          },
+        });
+      }
+      case 'exchangeStep':
+      case 'exchangeIges': {
+        const bodies =
+          await this.call<{ id: string; valid: boolean; volume: number }[]>('bodies.list');
+        const chosen = (r[0] ?? 0) < 0.5 ? bodies : [pick(bodies, r[1])].filter((b) => b);
+        if (chosen.length === 0) return null;
+        const format = op.op === 'exchangeStep' ? 'step' : 'iges';
+        const exportParams: Json = {
+          bodyIds: chosen.map((b) => b!.id),
+          ...(format === 'iges' ? { mode: (r[2] ?? 0) < 0.5 ? 'faces' : 'brep' } : {}),
+        };
+        return {
+          label: `export.${format} ${JSON.stringify(exportParams)} → import.${format}`,
+          run: async () => {
+            const exported = await this.call<{ data: string }>(`export.${format}`, exportParams);
+            const imported = await this.call<{ createdBodyIds: string[] }>(`import.${format}`, {
+              data: exported.data,
+              fileName: `fuzz.${format === 'step' ? 'step' : 'igs'}`,
+            });
+            await this.settle();
+            // Exact B-rep round trip: the imported solids hold the exported volume.
+            if (chosen.every((b) => b!.valid)) {
+              const after =
+                await this.call<{ id: string; volume: number; valid: boolean }[]>('bodies.list');
+              const created = after.filter((b) => imported.createdBodyIds.includes(b.id));
+              // A body the import flags invalid (with a warning) is reported, not silent: IGES
+              // surfaces of touching bodies sew into one shell (F10, documented).
+              if (created.some((b) => !b.valid)) return;
+              const back = created.reduce((s, b) => s + Math.abs(b.volume), 0);
+              const sent = chosen.reduce((s, b) => s + Math.abs(b!.volume), 0);
+              if (Math.abs(back - sent) > 1e-3 * Math.max(1, sent)) {
+                fail(
+                  'roundTrip',
+                  `${format.toUpperCase()} export → import changed the volume: ${sent} → ${back} mm³`,
+                );
+              }
+            }
+          },
+          undoable: !this.session.transactionOpen,
+        };
+      }
+      case 'exchangeDxf': {
+        const sketch = pick(await sketches(), r[0]);
+        if (!sketch) return null;
+        const regions = await this.regionsOf(sketch.id);
+        const plane = pick(planes, r[1])!;
+        return {
+          label: `export.dxf ${sketch.id} → import.dxf ${plane}`,
+          run: async () => {
+            const exported = await this.call<{ data: string }>('export.dxf', {
+              sketchId: sketch.id,
+              version: (r[2] ?? 0) < 0.3 ? 'R12' : 'R2000',
+              includeConstruction: false,
+            });
+            const imported = await this.call<{ featureId: string; approximated?: number }>(
+              'import.dxf',
+              {
+                data: exported.data,
+                fileName: 'fuzz.dxf',
+                plane,
+                offset: between(r[3], -10, 10),
+              },
+            );
+            await this.settle();
+            // The drawing comes back with the same closed regions (same total area) unless
+            // curves had to be approximated, or the sketch has text: DXF carries glyph outlines as
+            // plain curves, so a glyph's counter (the hole of "A", "g") becomes a region of its
+            // own on import (by design, `assembler/ROBUSTNESS.md` finding D1).
+            if ((imported.approximated ?? 0) > 0) return;
+            if (
+              ((sketch.params.entities as { kind: string }[] | undefined) ?? []).some(
+                (e) => e.kind === 'text',
+              )
+            ) {
+              return;
+            }
+            const back = await this.regionsOf(imported.featureId);
+            const area = (list: { area?: number }[]) =>
+              list.reduce((s, x) => s + Math.abs(x.area ?? 0), 0);
+            if (Math.abs(area(back) - area(regions)) > 1e-3 * Math.max(1, area(regions))) {
+              fail(
+                'roundTrip',
+                `DXF export → import changed the regions of ${sketch.id}: ${regions.length} regions / ${area(regions)} mm² → ${back.length} / ${area(back)} mm²`,
+              );
+            }
+          },
+          undoable: !this.session.transactionOpen,
         };
       }
       case 'undo':
@@ -991,17 +1393,30 @@ export class FuzzHarness {
       this.marginal.push(`instance dependent (cold on the fuzzed instance agrees): ${d}`);
       return;
     }
+    // A fresh evaluator that reaches the document the way the session did — the last step
+    // evaluated on a checkpoint of the steps before it — gives the incremental result: the
+    // same calls in another order make OCCT build different topology (F11: a no-op cut's
+    // `SimplifyResult` kept a slit edge once instead of twice). Not a cache bug either.
+    if (active.length > 1) {
+      const staged = evaluationSignature(await this.coldEvaluateOnMain(active, true));
+      if (!firstDifference(incremental, staged)) {
+        this.marginal.push(`evaluation-order dependent (prefix, then the last step agrees): ${d}`);
+        return;
+      }
+    }
     fail('determinism', `incremental ≠ cold evaluation: ${d}`);
   }
 
   /** Cold evaluation with a fresh evaluator on the fuzzed kernel's OCCT instance (store settled). */
-  private async coldEvaluateOnMain(features: Feature[]): Promise<EvaluationResult> {
+  private async coldEvaluateOnMain(features: Feature[], staged = false): Promise<EvaluationResult> {
     await this.settle();
     await this.call('document.get');
     await this.call('bodies.list', { scope: 'committed' });
     if (!this.mainOc) throw new Error('the fuzzed kernel is not loaded');
     const evaluator = createEvaluator(this.mainOc);
     try {
+      // `staged`: the steps before the last one first, so the last one starts from a checkpoint.
+      if (staged) await evaluator.evaluate(features.slice(0, -1), { quality: 'final' });
       return await evaluator.evaluate(features, { quality: 'final' });
     } finally {
       evaluator.clearCache();

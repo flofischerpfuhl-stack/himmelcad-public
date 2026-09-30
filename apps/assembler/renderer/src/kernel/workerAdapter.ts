@@ -277,6 +277,7 @@ export class WorkerKernelAdapter extends QueuedKernelAdapter {
       jobId: pending.jobId,
       features: pending.request.features,
       ...(pending.request.quality ? { quality: pending.request.quality } : {}),
+      ...(pending.request.commitCheck ? { commitCheck: [...pending.request.commitCheck] } : {}),
     };
     this.worker!.postMessage(message);
   }

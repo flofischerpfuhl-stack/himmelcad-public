@@ -40,6 +40,16 @@ function topAbs(oc: OpenCascade, kind: SubKind | 'shape'): never {
   return e[name] as never;
 }
 
+/** Whether `shape` has at least one face (a boolean that removed everything has none). */
+export function hasFaces(oc: OpenCascade, shape: RawShape): boolean {
+  const explorer = new oc.TopExp_Explorer(shape as never, topAbs(oc, 'face'), topAbs(oc, 'shape'));
+  try {
+    return explorer.More();
+  } finally {
+    explorer.delete();
+  }
+}
+
 /**
  * Sub-shapes of one kind, deduplicated with `IsSame` (orientation ignored),
  * in `TopExp_Explorer` order — the same order as replicad's `shape.faces`.

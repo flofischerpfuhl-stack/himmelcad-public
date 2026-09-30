@@ -7,7 +7,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { parseDxf, writeDxf, type DxfEntity } from '../../renderer/src/interop/dxf.js';
+import {
+  flattenEntity,
+  parseDxf,
+  splinePoint,
+  writeDxf,
+  type DxfEntity,
+} from '../../renderer/src/interop/dxf.js';
 import { dxfToSketchData, sketchToDxfEntities } from '../../renderer/src/interop/dxfSketch.js';
 import { dxfSketchFeature, dxfUnits } from '../../renderer/src/interop/importActions.js';
 import { detectRegions } from '../../renderer/src/sketch/regions.js';
@@ -180,4 +186,68 @@ void test('writer: R2000 structure has handles, owner links, tables and objects'
     handles.every((h) => parseInt(h!, 16) < parseInt(seed, 16)),
     'HANDSEED is above every handle',
   );
+});
+
+void test('R12 flattening: chords within the tolerance, a vertex count that follows the shape', () => {
+  // An ellipse (major 20, minor 10) and a clamped cubic spline with a straight and a curved part.
+  const ellipse: DxfEntity = {
+    kind: 'ellipse',
+    center: [0, 0],
+    major: [20, 0],
+    ratio: 0.5,
+    start: 0,
+    end: 2 * Math.PI,
+  } as DxfEntity;
+  const spline = {
+    kind: 'spline',
+    degree: 3,
+    controlPoints: [
+      [0, 0],
+      [5, 0],
+      [10, 0],
+      [15, 0],
+      [20, 5],
+      [20, 10],
+      [15, 15],
+    ],
+    knots: [0, 0, 0, 0, 1, 2, 3, 4, 4, 4, 4],
+    fitPoints: [],
+    closed: false,
+  } as unknown as Extract<DxfEntity, { kind: 'spline' }>;
+  const tol = 1e-3;
+  const deviation = (pts: [number, number][], at: (i: number, f: number) => [number, number]) => {
+    let worst = 0;
+    for (let i = 0; i + 1 < pts.length; i += 1) {
+      const [a, b] = [pts[i]!, pts[i + 1]!];
+      for (let k = 1; k < 8; k += 1) {
+        const p = at(i, k / 8);
+        const dx = b[0] - a[0];
+        const dy = b[1] - a[1];
+        const t = Math.max(
+          0,
+          Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / (dx * dx + dy * dy || 1)),
+        );
+        worst = Math.max(worst, Math.hypot(p[0] - a[0] - t * dx, p[1] - a[1] - t * dy));
+      }
+    }
+    return worst;
+  };
+  const e = flattenEntity(ellipse, tol);
+  assert.ok(e.length > 16 && e.length < 400, `${e.length} ellipse vertices`);
+  // Points of the ellipse between two vertices: by angle between the vertices' angles.
+  const angle = (p: [number, number]) => Math.atan2(p[1] / 10, p[0] / 20);
+  const e2 = deviation(e as [number, number][], (i, f) => {
+    let a0 = angle(e[i] as [number, number]);
+    let a1 = angle(e[i + 1] as [number, number]);
+    if (a1 < a0) a1 += 2 * Math.PI;
+    if (a1 - a0 > Math.PI) a0 += 2 * Math.PI;
+    const a = a0 + (a1 - a0) * f;
+    return [20 * Math.cos(a), 10 * Math.sin(a)];
+  });
+  assert.ok(e2 <= tol * 1.5, `ellipse chord deviation ${e2}`);
+  const s = flattenEntity(spline, tol);
+  // The straight first spans are one piece each; the curved ones are refined.
+  assert.ok(s.length > 5 && s.length < 200, `${s.length} spline vertices`);
+  assert.deepEqual(s[0], [0, 0]);
+  assert.deepEqual(s.at(-1), splinePoint(spline, 4));
 });

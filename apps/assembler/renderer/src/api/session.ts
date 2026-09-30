@@ -485,7 +485,15 @@ export class AgentSession {
   }
 
   /** Evaluates a feature list on the kernel's preview channel (never touches the store). */
-  private async evaluate(features: Feature[]): Promise<EvaluationResult> {
+  /**
+   * Evaluates `features`. `commitCheck`: the features a write commits (created or
+   * edited) — their boolean results get the full B-rep check and an invalid one is
+   * a feature error (`featureFailed`, nothing committed).
+   */
+  private async evaluate(
+    features: Feature[],
+    commitCheck?: readonly string[],
+  ): Promise<EvaluationResult> {
     await this.kernelReady();
     for (let attempt = 0; attempt < 20; attempt += 1) {
       this.evalRevision += 1;
@@ -493,6 +501,7 @@ export class AgentSession {
         channel: 'preview',
         revision: this.evalRevision,
         features,
+        ...(commitCheck && commitCheck.length > 0 ? { commitCheck } : {}),
       });
       const outcome = await job.outcome;
       if (outcome.kind === 'done') return outcome.result;
@@ -826,7 +835,7 @@ export class AgentSession {
     if (this.tx) {
       const tx = this.tx;
       const outcome = await mutate(tx.staged, await this.stagedEvaluation());
-      const evaluation = await this.evaluate(outcome.features);
+      const evaluation = await this.evaluate(outcome.features, outcome.touched);
       this.assertNoFeatureErrors(outcome.touched, evaluation);
       tx.staged = outcome.features;
       tx.evaluation = evaluation;
@@ -842,7 +851,7 @@ export class AgentSession {
     this.ensureWritable();
     const base = this.store.getState().features;
     const outcome = await mutate(base, await this.committedEvaluation());
-    const evaluation = await this.evaluate(outcome.features);
+    const evaluation = await this.evaluate(outcome.features, outcome.touched);
     this.assertNoFeatureErrors(outcome.touched, evaluation);
     this.commit(base, outcome.features, evaluation, outcome.selection);
     await this.store.getState().whenSettled();
@@ -1294,7 +1303,7 @@ export class AgentSession {
       }
       try {
         bytes = await this.kernel.exportIges(
-          this.readFeatures(p),
+          this.activeFeatures(p),
           bodies.map((b) => b.id),
           {
             ...(p.unit === 'mm' || p.unit === 'cm' || p.unit === 'm' || p.unit === 'in'
@@ -1304,10 +1313,7 @@ export class AgentSession {
           },
         );
       } catch (error) {
-        throw new ApiError(
-          'internal',
-          `IGES export failed: ${error instanceof Error ? error.message : String(error)}`,
-        );
+        throw exportFailure('IGES export', error);
       }
       mediaType = 'model/iges';
     } else {
@@ -1323,15 +1329,12 @@ export class AgentSession {
           : undefined;
       try {
         bytes = await this.kernel.exportStep(
-          this.readFeatures(p),
+          this.activeFeatures(p),
           bodies.map((b) => b.id),
           stepExportOptions(p, items.names, assembly),
         );
       } catch (error) {
-        throw new ApiError(
-          'internal',
-          `STEP export failed: ${error instanceof Error ? error.message : String(error)}`,
-        );
+        throw exportFailure('STEP export', error);
       }
       mediaType = 'model/step';
     }
@@ -1360,16 +1363,13 @@ export class AgentSession {
     await this.kernelReady();
     const preset = MESH_RESOLUTIONS[resolution];
     try {
-      return await this.kernel.exportMesh(this.readFeatures(p), {
+      return await this.kernel.exportMesh(this.activeFeatures(p), {
         bodyIds,
         tolerance: preset.tolerance,
         angularTolerance: preset.angularTolerance,
       });
     } catch (error) {
-      throw new ApiError(
-        'internal',
-        `Tessellation failed: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      throw exportFailure('Tessellation', error);
     }
   }
 
@@ -1671,4 +1671,22 @@ function hintForKernelError(error: string): string {
   if (/too small|at least/i.test(error)) return 'Increase the dimension (minimum 0.1 mm).';
   if (/Nothing to cut/.test(error)) return 'Cut needs an existing body; use operation "new" first.';
   return 'Check the parameters against features.list / bodies.list and retry.';
+}
+
+/**
+ * An exact export (STEP, IGES, a mesh at a resolution preset) replays the whole
+ * document; a step that fails there is the document's state, not a kernel
+ * failure: `featureFailed` with the step's error (fuzzer finding F7,
+ * `assembler/ROBUSTNESS.md`). Anything else stays `internal`.
+ */
+function exportFailure(what: string, error: unknown): ApiError {
+  const message = error instanceof Error ? error.message : String(error);
+  const failing = /^Cannot export: (.*)$/s.exec(message);
+  if (failing) {
+    return new ApiError('featureFailed', `${what} needs every step to evaluate: ${failing[1]}`, {
+      hint: 'Fix, suppress or delete the failing step (features.list shows its error), then export again; export.stl/export.3mf without a resolution use the display meshes.',
+      details: { featureError: failing[1] },
+    });
+  }
+  return new ApiError('internal', `${what} failed: ${message}`);
 }

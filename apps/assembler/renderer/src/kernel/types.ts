@@ -273,6 +273,14 @@ export interface EvaluationRequest {
    * (coarser mesh, the provisional feature is not kept in the prefix cache).
    */
   quality?: TessellationQuality;
+  /**
+   * Commit check: ids of the features being committed (created or edited).
+   * A body last changed by one of them whose result is a boolean
+   * (`isBooleanResult`) gets the full B-rep check, and an invalid one is an
+   * error on that feature instead of a warning — so the commit is refused.
+   * Previews omit it and keep the cheap incremental check.
+   */
+  commitCheck?: readonly string[];
 }
 
 export type EvaluationOutcome =

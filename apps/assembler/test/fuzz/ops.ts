@@ -46,6 +46,20 @@ export const OP_KINDS = [
   'txCommit',
   'txCancel',
   'saveReopen',
+  // Coverage extension (Block 6): more feature kinds, extents and exchange round trips.
+  'sweep',
+  'loft',
+  'draft',
+  'rib',
+  'openPolyline',
+  'thicken',
+  'text',
+  'constructionPlane',
+  'sketchOnConstruction',
+  'extrudeExtent',
+  'exchangeStep',
+  'exchangeIges',
+  'exchangeDxf',
 ] as const;
 
 export type OpKind = (typeof OP_KINDS)[number];
@@ -96,6 +110,19 @@ const WEIGHTS: Record<OpKind, number> = {
   txCommit: 3,
   txCancel: 2,
   saveReopen: 1,
+  sweep: 2,
+  loft: 2,
+  draft: 2,
+  rib: 2,
+  openPolyline: 2,
+  thicken: 2,
+  text: 2,
+  constructionPlane: 2,
+  sketchOnConstruction: 2,
+  extrudeExtent: 3,
+  exchangeStep: 1,
+  exchangeIges: 1,
+  exchangeDxf: 1,
 };
 
 /** mulberry32: small, fast, seedable. */

@@ -215,6 +215,7 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
       try {
         result = await evaluator.evaluate(message.features, {
           quality: message.quality ?? 'final',
+          ...(message.commitCheck ? { commitCheck: message.commitCheck } : {}),
           onProgress: (progress) => post({ type: 'progress', jobId: message.jobId, progress }),
         });
       } catch (error) {

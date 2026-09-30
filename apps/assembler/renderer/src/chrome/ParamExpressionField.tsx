@@ -2,7 +2,7 @@
  * Editable numeric field for a feature's size (extrude distance, fillet
  * radius, chamfer distance, shell thickness) that additionally accepts an
  * expression over document parameters (`model/parameters.ts`, the
- * Parameters panel) â€” `"wall * 2"`, not just `"3 + 2"`. A plain number
+ * Parameters panel) — `"wall * 2"`, not just `"3 + 2"`. A plain number
  * commits `value` (and clears any stored expression, like typing over a
  * sketch dimension's formula); a name-referencing expression commits the
  * formula itself, which the store resolves and keeps re-resolving whenever

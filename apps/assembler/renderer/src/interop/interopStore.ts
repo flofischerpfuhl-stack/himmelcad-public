@@ -26,7 +26,12 @@ import { meshRowKey, useItemsStore, withDisplayNames } from '../model/items.js';
 import * as io from '../model/project/persistence.js';
 import { useProjectStore } from '../model/project/projectStore.js';
 import type { ReferenceMesh } from '../model/referenceMesh.js';
-import { nextFeatureName, useAssemblerStore, type SelectionItem } from '../model/store.js';
+import {
+  nextFeatureName,
+  shownFeatures,
+  useAssemblerStore,
+  type SelectionItem,
+} from '../model/store.js';
 import { useWorkspaceStore } from '../model/workspace.js';
 import { writeDxf, type DxfDrawing, type DxfVersion } from './dxf.js';
 import { faceOutlineToDxfEntities, sketchToDxfEntities } from './dxfSketch.js';
@@ -621,7 +626,7 @@ export const useInteropStore = create<InteropState>((set, get) => {
       if (settings.structure === 'each') {
         let written = 0;
         for (const body of bodies) {
-          const bytes = await kernel.exportStep(state.features, [body.id], base);
+          const bytes = await kernel.exportStep(shownFeatures(state), [body.id], base);
           const result = await io.exportBinary(
             bytes,
             `${sanitizeFileName(body.name)}.step`,
@@ -638,7 +643,7 @@ export const useInteropStore = create<InteropState>((set, get) => {
         settings.structure === 'folders'
           ? { ...base, assembly: stepAssemblyFromItems(state.projectName, ids, items) }
           : base;
-      const bytes = await kernel.exportStep(state.features, ids, options);
+      const bytes = await kernel.exportStep(shownFeatures(state), ids, options);
       const name = bodies.length === 1 ? bodies[0]!.name : state.projectName;
       const result = await io.exportBinary(
         bytes,
@@ -672,7 +677,7 @@ export const useInteropStore = create<InteropState>((set, get) => {
       );
       if (bodies.length === 0) throw new Error('No bodies to export.');
       const bytes = await kernel.exportIges(
-        state.features,
+        shownFeatures(state),
         bodies.map((b) => b.id),
         { unit: settings.unit, mode: settings.mode },
       );
