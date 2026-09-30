@@ -20,7 +20,9 @@ import { fileURLToPath } from 'node:url';
 
 import { chromium, type CDPSession, type Page } from 'playwright-core';
 
+import { createDemoDocument } from '../../renderer/src/model/document.js';
 import type { StepRow } from './interactiveBench.js';
+import { sixtyEntitySketch } from './parts.js';
 
 const DEFAULT_CHROME =
   'C:\\Users\\flori\\AppData\\Local\\ms-playwright\\chromium-1243\\chrome-win64\\chrome.exe';
@@ -61,16 +63,23 @@ function stopTree(child: ChildProcess): void {
   }
 }
 
-/* eslint-disable @typescript-eslint/no-explicit-any -- page-side code talks to the untyped DEV hook */
+/* eslint-disable @typescript-eslint/no-explicit-any -- page-side code talks to the untyped DEV hook (rest of the file) */
 type Hook = any;
 const hook = (): Hook => (window as any).__assembler;
 
-async function idle(page: Page): Promise<void> {
-  await page.evaluate(async () => {
+/** Waits until solver and kernel are idle and the frame is drawn; returns that page time. */
+async function idle(page: Page): Promise<number> {
+  return page.evaluate(async () => {
     const a = (window as any).__assembler;
     await a.waitForSketchIdle();
     await a.waitForKernelIdle();
+    return performance.now();
   });
+}
+
+/** Marks a store action driven through the DEV hook as the step's input (no DOM event). */
+function markInput(): void {
+  (window as any).__lastInput = performance.now();
 }
 
 interface Profiled {
@@ -112,21 +121,31 @@ async function measure(
   run: () => Promise<void>,
 ): Promise<StepRow> {
   // Evaluations already on screen: a step that shows one of them evaluated nothing.
-  await page.evaluate(() => {
+  const stepStart = await page.evaluate(() => {
     const s = (window as any).__assembler.store.getState();
     (window as any).__longTasks = [];
+    (window as any).__lastInput = null;
+    (window as any).__frameAfterChange = null;
     (window as any).__benchSeen = new Set([s.evaluation, s.activeTool?.previewEvaluation]);
+    return performance.now();
   });
   if (profiled.print) await profiled.cdp.send('Profiler.start');
-  const t0 = Date.now();
   try {
     await run();
   } catch (error) {
     if (process.env.ASM_SHOT) await page.screenshot({ path: process.env.ASM_SHOT });
     throw error;
   }
-  await idle(page);
-  const wallMs = Date.now() - t0;
+  const settledAt = await idle(page);
+  // Response latency: from the step's last input (key, pointer, or hook-driven action) to the
+  // animation frame after the last store change it caused (the frame that shows the result) —
+  // Playwright's own overhead and the idle-wait's extra frames excluded.
+  const marks = await page.evaluate(() => ({
+    input: (window as any).__lastInput as number | null,
+    frame: (window as any).__frameAfterChange as number | null,
+  }));
+  const from = marks.input ?? stepStart;
+  const wallMs = (marks.frame !== null && marks.frame >= from ? marks.frame : settledAt) - from;
   if (profiled.print) {
     const { profile } = (await profiled.cdp.send('Profiler.stop')) as any;
     console.log(
@@ -167,7 +186,6 @@ async function measure(
     printMs: null,
   };
 }
-/* eslint-enable @typescript-eslint/no-explicit-any */
 
 async function openApp(page: Page, url: string): Promise<void> {
   // The first load after a cold Vite start may re-optimise dependencies and reload.
@@ -183,9 +201,17 @@ async function openApp(page: Page, url: string): Promise<void> {
       await page.waitForFunction(() => hook()?.store.getState().kernelStatus === 'ready', null, {
         timeout: 120000,
       });
-      await page.evaluate(() =>
-        hook().preferences.getState().setPreference('animateCamera', false),
-      );
+      await page.evaluate(() => {
+        hook().preferences.getState().setPreference('animateCamera', false);
+        // The frame after the latest document/sketch store change: when a result is shown.
+        const onChange = () => {
+          requestAnimationFrame(() => {
+            (window as any).__frameAfterChange = performance.now();
+          });
+        };
+        hook().store.subscribe(onChange);
+        hook().sketchStore.subscribe(onChange);
+      });
       return;
     } catch (error) {
       if (attempt === 2) throw error;
@@ -213,10 +239,10 @@ async function scenarioText(page: Page, p: Profiled): Promise<StepRow[]> {
   });
   rows.push(
     await measure(page, p, s, 'select lid top face', async () => {
-      await page.evaluate(
-        ({ id, key }) => hook().store.getState().select({ kind: 'face', bodyId: id, faceKey: key }),
-        lid,
-      );
+      await page.evaluate(({ id, key }) => {
+        markInput();
+        hook().store.getState().select({ kind: 'face', bodyId: id, faceKey: key });
+      }, lid);
     }),
   );
   rows.push(
@@ -274,6 +300,7 @@ async function scenarioText(page: Page, p: Profiled): Promise<StepRow[]> {
                 y.centroid[2]! - x.centroid[2]!,
             );
           const st = a.store.getState();
+          markInput();
           st.select({ kind: 'sketchProfile', featureId: sketchId });
           st.select({ kind: 'face', bodyId: id, faceKey: faces[0].faceKey }, { additive: true });
         },
@@ -319,11 +346,10 @@ async function scenarioHole(page: Page, p: Profiled): Promise<StepRow[]> {
   await idle(page);
   rows.push(
     await measure(page, p, s, 'select floor face', async () => {
-      await page.evaluate(
-        ({ id, floor }) =>
-          hook().store.getState().select({ kind: 'face', bodyId: id, faceKey: floor }),
-        enclosure,
-      );
+      await page.evaluate(({ id, floor }) => {
+        markInput();
+        hook().store.getState().select({ kind: 'face', bodyId: id, faceKey: floor });
+      }, enclosure);
     }),
   );
   rows.push(
@@ -365,6 +391,102 @@ async function scenarioHole(page: Page, p: Profiled): Promise<StepRow[]> {
   return rows;
 }
 
+/** (c) fillet drag on the demo bracket, driven through the store (as the drag handle does). */
+async function scenarioFillet(page: Page, p: Profiled, steps: number): Promise<StepRow[]> {
+  const s = 'c fillet drag';
+  const rows: StepRow[] = [];
+  await page.evaluate((features) => {
+    const st = hook().store.getState();
+    st.cancel();
+    st.loadDocument(features);
+  }, createDemoDocument());
+  await idle(page);
+  const edge = await page.evaluate(() => {
+    const a = hook();
+    const id = a.bodies()[0].id as string;
+    const e = a
+      .edges(id)
+      .find(
+        (x: { curve: string; midpoint: number[] }) =>
+          x.curve === 'line' &&
+          Math.abs(x.midpoint[2]! - 6) < 1e-6 &&
+          Math.abs(x.midpoint[1]!) < 1e-6,
+      );
+    a.store.getState().select({ kind: 'edge', bodyId: id, edgeKey: e.edgeKey });
+    return true;
+  });
+  if (!edge) throw new Error('no plate edge on the demo bracket');
+  rows.push(
+    await measure(page, p, s, 'Fillet tool (first preview)', async () => {
+      await page.evaluate(() => {
+        markInput();
+        hook().store.getState().beginEdgeBlend('fillet');
+      });
+    }),
+  );
+  for (let i = 0; i < steps; i += 1) {
+    rows.push(
+      await measure(page, p, s, 'drag step (preview)', async () => {
+        await page.evaluate(
+          (r) => {
+            markInput();
+            hook().store.getState().setBlendSize(r);
+          },
+          1 + i * 0.137,
+        );
+      }),
+    );
+  }
+  await page.evaluate(() => hook().store.getState().cancel());
+  await idle(page);
+  return rows;
+}
+
+/** (d) dragging one point of a 60-entity sketch (solver in its worker). */
+async function scenarioSketchDrag(page: Page, p: Profiled, steps: number): Promise<StepRow[]> {
+  const s = 'd 60-entity drag';
+  const rows: StepRow[] = [];
+  const { feature, corner, start } = sixtyEntitySketch();
+  await page.evaluate((f) => {
+    const st = hook().store.getState();
+    st.cancel();
+    st.loadDocument([f]);
+  }, feature);
+  await idle(page);
+  rows.push(
+    await measure(page, p, s, 'open the sketch (analysis)', async () => {
+      await page.evaluate((id) => {
+        markInput();
+        hook().sketchStore.getState().begin({ featureId: id });
+      }, feature.id);
+    }),
+  );
+  await page.evaluate((id) => hook().sketchStore.getState().beginDrag([id]), corner);
+  for (let i = 1; i <= steps; i += 1) {
+    rows.push(
+      await measure(page, p, s, 'drag step (solve)', async () => {
+        await page.evaluate(
+          (target) => {
+            markInput();
+            hook().sketchStore.getState().drag([target]);
+          },
+          [start[0] + i * 0.31, start[1] + i * 0.17],
+        );
+      }),
+    );
+  }
+  rows.push(
+    await measure(page, p, s, 'drop (commit + analysis)', async () => {
+      await page.evaluate(() => {
+        markInput();
+        return hook().sketchStore.getState().endDrag();
+      });
+    }),
+  );
+  await page.evaluate(() => hook().sketchStore.getState().discard());
+  return rows;
+}
+
 function medianOf(values: number[]): number {
   const finite = values.filter(Number.isFinite).sort((a, b) => a - b);
   if (finite.length === 0) return NaN;
@@ -382,9 +504,21 @@ export async function runBrowserBench(options: { runs: number }): Promise<StepRo
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
     page.on('pageerror', (error) => console.error('page error:', error.message));
     await page.addInitScript(() => {
-      const w = window as unknown as { __longTasks: { ms: number }[]; hook: () => unknown };
-      // Page-side twin of `hook()` (page functions are serialized: module scope is not there).
+      const w = window as unknown as {
+        __longTasks: { ms: number }[];
+        __lastInput: number | null;
+        hook: () => unknown;
+        markInput: () => void;
+      };
+      // Page-side twins of `hook()` / `markInput()` (page functions are serialized: module
+      // scope is not there).
       w.hook = () => (window as unknown as { __assembler: unknown }).__assembler;
+      w.markInput = () => {
+        w.__lastInput = performance.now();
+      };
+      for (const type of ['keydown', 'pointerdown', 'click']) {
+        window.addEventListener(type, () => w.markInput(), { capture: true });
+      }
       w.__longTasks = [];
       new PerformanceObserver((list) => {
         for (const e of list.getEntries()) w.__longTasks.push({ ms: e.duration });
@@ -405,7 +539,7 @@ export async function runBrowserBench(options: { runs: number }): Promise<StepRo
         ...(await scenarioHole(page, i === 0 ? profiled : { cdp, print: false })),
       ]);
     }
-    return runs[0]!.map((row, index) => {
+    const perRun = runs[0]!.map((row, index) => {
       const same = runs.map((run) => run[index]!);
       const m = (pick: (r: StepRow) => number) => medianOf(same.map(pick));
       return {
@@ -418,6 +552,30 @@ export async function runBrowserBench(options: { runs: number }): Promise<StepRo
         evaluated: m((r) => r.evaluated),
       };
     });
+    // Drags: the median over all steps (one row per step label).
+    const drags = [
+      ...(await scenarioFillet(page, profiled, 10)),
+      ...(await scenarioSketchDrag(page, profiled, 30)),
+    ];
+    const byLabel = new Map<string, StepRow[]>();
+    for (const row of drags) {
+      const key = `${row.scenario}\u0000${row.step}`;
+      byLabel.set(key, [...(byLabel.get(key) ?? []), row]);
+    }
+    const dragRows = [...byLabel.values()].map((same) => {
+      const m = (pick: (r: StepRow) => number) => medianOf(same.map(pick));
+      return {
+        ...same[0]!,
+        step: same.length > 1 ? `${same[0]!.step} ×${same.length}` : same[0]!.step,
+        wallMs: m((r) => r.wallMs),
+        uiMs: m((r) => r.uiMs),
+        kernelMs: m((r) => r.kernelMs),
+        tessellateMs: m((r) => r.tessellateMs),
+        reused: m((r) => r.reused),
+        evaluated: m((r) => r.evaluated),
+      };
+    });
+    return [...perRun, ...dragRows];
   } finally {
     await browser.close();
     stopTree(vite);

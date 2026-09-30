@@ -17,9 +17,12 @@ import type {
 } from '../../renderer/src/model/document.js';
 import type { PatternFeature, RevolveFeature } from '../../renderer/src/model/features.js';
 import {
+  addCircle,
+  addRectangle,
   sketchFromLegacyProfiles,
   type LegacySketchProfile,
 } from '../../renderer/src/sketch/builders.js';
+import { EMPTY_SKETCH, type SketchData } from '../../renderer/src/sketch/types.js';
 
 const base = (id: string, name = id) => ({ id, name, suppressed: false });
 
@@ -308,3 +311,38 @@ export const sixtyPartBench: BenchPart = {
 };
 
 export const BENCH_PARTS: readonly BenchPart[] = [demoBracket, ninePartBench, sixtyPartBench];
+
+/**
+ * A sketch of 60 entities for the interactive bench's drag scenario: five
+ * rectangles (horizontal/vertical rules, free size) and ten dimensioned
+ * circles. `corner` is a free corner point of the middle rectangle.
+ */
+export function sixtyEntitySketch(): {
+  feature: SketchFeature;
+  corner: string;
+  start: [number, number];
+} {
+  let data: SketchData = EMPTY_SKETCH;
+  let corner = '';
+  for (let i = 0; i < 5; i += 1) {
+    const r = addRectangle(data, [i * 30, 0], [i * 30 + 20, 15]);
+    data = r.sketch;
+    if (i === 2) corner = r.pointIds[2]!;
+  }
+  for (let i = 0; i < 10; i += 1)
+    data = addCircle(data, [i * 15 + 5, 40], 4, { size: true }).sketch;
+  if (data.entities.length !== 60)
+    throw new Error(`expected 60 entities, got ${data.entities.length}`);
+  const point = data.entities.find((e) => e.id === corner);
+  if (point?.kind !== 'point') throw new Error('corner point');
+  return {
+    feature: {
+      ...base('bench-sketch', 'Sketch 1'),
+      kind: 'sketch',
+      plane: { kind: 'plane', plane: 'XY', offset: 0 },
+      ...data,
+    },
+    corner,
+    start: [point.x, point.y],
+  };
+}

@@ -42,15 +42,15 @@ import { useProjectStore } from '../../renderer/src/model/project/projectStore.j
 import { isPreviewTool, useAssemblerStore } from '../../renderer/src/model/store.js';
 import { analyzePrintability, bodyToPrintInput } from '../../renderer/src/print/analysis.js';
 import { DEFAULT_PRINT_SETTINGS } from '../../renderer/src/print/settings.js';
-import { addCircle, addRectangle } from '../../renderer/src/sketch/builders.js';
 import { hitTest, infer } from '../../renderer/src/sketch/inference.js';
 import { detectRegions } from '../../renderer/src/sketch/regions.js';
 import { useSketchStore } from '../../renderer/src/sketch/session.js';
 import { setSketchSolverFactory } from '../../renderer/src/sketch/solverProvider.js';
 import { segmentStart } from '../../renderer/src/sketch/tools.js';
-import { EMPTY_SKETCH, type SketchData, type Vec2 } from '../../renderer/src/sketch/types.js';
+import type { SketchData, Vec2 } from '../../renderer/src/sketch/types.js';
 import { installNodeFonts } from '../sketch/nodeFont.js';
 import { loadNodeSolver } from '../sketch/nodeSolver.js';
+import { sixtyEntitySketch } from './parts.js';
 
 type OpenCascade = Awaited<ReturnType<typeof init>>;
 
@@ -227,10 +227,13 @@ async function loadEnclosure(): Promise<void> {
   await settle();
 }
 
-/** (a) text "HC" on the lid, engraved 1 mm. */
-async function scenarioText(depth: number): Promise<StepRow[]> {
+/** (a) text "HC" on the lid, engraved 1 mm (a2: a longer label, 11 glyph profiles). */
+async function scenarioText(
+  depth: number,
+  label: { text: string; height: number; shift: number } = { text: 'HC', height: 9, shift: 0 },
+): Promise<StepRow[]> {
   const rows: StepRow[] = [];
-  const s = 'a text + engrave';
+  const s = label.text === 'HC' ? 'a text + engrave' : `a2 label "${label.text}"`;
   await loadEnclosure();
   const { body: lid, face: top } = topFace('Lid');
   const session = () => sketch.getState().session?.sketch ?? null;
@@ -246,7 +249,7 @@ async function scenarioText(depth: number): Promise<StepRow[]> {
   );
   const frame = sketch.getState().session!.frame;
   const { u, v } = frameUv(frame, top.centroid);
-  const raw: Vec2 = [u, v];
+  const raw: Vec2 = [u - label.shift, v];
   rows.push(
     await step(s, 'click the text anchor', async () => {
       const current = sketch.getState().session!;
@@ -264,9 +267,9 @@ async function scenarioText(depth: number): Promise<StepRow[]> {
   rows.push(
     await step(
       s,
-      'place text "HC" (solved)',
+      `place text "${label.text}" (solved)`,
       async () => {
-        sketch.getState().setToolOption({ text: 'HC', height: 9 });
+        sketch.getState().setToolOption({ text: label.text, height: label.height });
         if (!(await sketch.getState().commitText())) throw new Error('text not placed');
       },
       { sketchData: session },
@@ -431,28 +434,7 @@ async function scenarioFillet(steps: number): Promise<StepRow[]> {
 async function scenarioSketchDrag(steps: number): Promise<StepRow[]> {
   const s = 'd 60-entity drag';
   store.getState().cancel();
-  store.getState().loadDocument([]);
-  await settle();
-  let data: SketchData = EMPTY_SKETCH;
-  let corner = '';
-  for (let i = 0; i < 5; i += 1) {
-    const r = addRectangle(data, [i * 30, 0], [i * 30 + 20, 15]);
-    data = r.sketch;
-    if (i === 2) corner = r.pointIds[2]!;
-  }
-  for (let i = 0; i < 10; i += 1) {
-    data = addCircle(data, [i * 15 + 5, 40], 4, { size: true }).sketch;
-  }
-  if (data.entities.length !== 60)
-    throw new Error(`expected 60 entities, got ${data.entities.length}`);
-  const feature = {
-    id: 'bench-sketch',
-    name: 'Sketch 1',
-    suppressed: false,
-    kind: 'sketch' as const,
-    plane: { kind: 'plane' as const, plane: 'XY' as const, offset: 0 },
-    ...data,
-  };
+  const { feature, corner } = sixtyEntitySketch();
   store.getState().loadDocument([feature]);
   await settle();
   const rows: StepRow[] = [];
@@ -552,13 +534,17 @@ async function main(): Promise<void> {
   await scenarioHole(38);
 
   const textRuns: StepRow[][] = [];
+  const labelRuns: StepRow[][] = [];
   const holeRuns: StepRow[][] = [];
+  const label = { text: 'HIMMELCAD 26', height: 5, shift: 22 };
   for (let i = 0; i < runs; i += 1) {
     textRuns.push(await scenarioText(-1 - i * 0.01));
+    labelRuns.push(await scenarioText(-1 - i * 0.01, label));
     holeRuns.push(await scenarioHole(40 + i * 0.5));
   }
   const rows = [
     ...medianRows(textRuns),
+    ...medianRows(labelRuns).filter((r) => /place text|Emboss|Engrave/.test(r.step)),
     ...medianRows(holeRuns),
     ...medianRows([await scenarioFillet(10)]),
     ...medianRows([await scenarioSketchDrag(30)]),
