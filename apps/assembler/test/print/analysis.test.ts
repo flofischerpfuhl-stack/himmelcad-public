@@ -246,3 +246,16 @@ void test('material: mass and cost from the exact volume and the density preset'
   assert.ok(Math.abs(report.totals.massG - 1.27) < 1e-9, '1 cm³ × 1.27 g/cm³');
   assert.ok(Math.abs(report.totals.cost - 1.27 * 0.025) < 1e-9);
 });
+
+void test('a shell wall that does not fit the body fails (no unchanged or empty "shell")', async () => {
+  // The 30 � 30 � 20 box: 15 mm walls meet in the middle, 16 and 40 mm do not fit at all.
+  for (const thickness of [15, 16, 40]) {
+    await assert.rejects(
+      evaluate(await shelledBox(thickness)),
+      /Shell failed: a \d+ mm wall does not fit in this body/,
+      `${thickness} mm`,
+    );
+  }
+  const ok = await evaluate(await shelledBox(14));
+  assert.ok(ok.bodies[0]!.valid);
+});

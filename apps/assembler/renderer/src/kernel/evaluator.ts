@@ -1048,6 +1048,21 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
         `Shell failed: ${describeError(error)}. A wall of ${feature.thickness} mm may not fit here; try a thinner wall`,
       );
     }
+    // OCCT's offset builder can "succeed" when the wall does not fit the body: it returns the
+    // solid unchanged (nothing hollowed), an empty one, or an invalid one (walls meeting in
+    // the middle). None of them is a shell. (A full BRepCheck here: shells are few per part
+    // and replayed from the prefix cache, so the cost is paid on edits of the shell only.)
+    {
+      const sourceVolume = R.measureVolume(source.shape);
+      const shelledVolume = R.measureVolume(built.shape);
+      const hollowed = outward || shelledVolume < sourceVolume * (1 - 1e-9);
+      if (!(shelledVolume > 1e-6 * sourceVolume) || !hollowed || !isValidShape(oc, built.shape)) {
+        built.history.delete();
+        throw new FeatureError(
+          `Shell failed: a ${feature.thickness} mm wall does not fit in this body; try a thinner wall`,
+        );
+      }
+    }
     const t = feature.thickness;
     const role = outward ? 'outer' : 'inner';
     const topology = topologyOf(source.shape);
