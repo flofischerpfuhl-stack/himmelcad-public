@@ -10,6 +10,9 @@ import { App } from './App.js';
 import { installPreferenceEffects } from './chrome/preferenceEffects.js';
 import { installAutomationBridge } from './api/app/automationStore.js';
 import { installAutomationHook } from './devtools/automationHook.js';
+import { installAssemblyFolderSync } from './interop/importFolders.js';
+import { ImportRunner, setImportRunner } from './interop/importRunner.js';
+import { setInteropKernel } from './interop/interopStore.js';
 import { WorkerKernelAdapter } from './kernel/workerAdapter.js';
 import { useMeasureStore } from './model/measureStore.js';
 import { useProjectStore } from './model/project/projectStore.js';
@@ -47,6 +50,15 @@ const printWorker = () =>
 setPrintRunner(new PrintabilityRunner(printWorker));
 setAgentPrintRunner(new PrintabilityRunner(printWorker));
 setPrintKernel(kernelAdapter);
+// Import/export: file parsing in its own worker (Cancel = terminate); STEP export on the kernel;
+// imported STEP assemblies are filed into Items folders when their parts appear.
+setImportRunner(
+  new ImportRunner(
+    () => new Worker(new URL('./interop/import.worker.ts', import.meta.url), { type: 'module' }),
+  ),
+);
+setInteropKernel(kernelAdapter);
+installAssemblyFolderSync(useAssemblerStore);
 // The sketch solver (planeGCS, WebAssembly) gets its own worker, started on first use.
 setSketchSolverFactory(
   () =>

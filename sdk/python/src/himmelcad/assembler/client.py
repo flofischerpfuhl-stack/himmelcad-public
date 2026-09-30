@@ -33,11 +33,17 @@ METHODS = (
     "export.stl", "export.3mf", "export.step", "import.step",
     "project.new", "project.open", "project.save",
     "export.meshStats", "print.analyze", "print.orientations", "print.placeOnPlate", "print.orient",
+    "interop.formats", "import.mesh", "import.dxf", "export.dxf", "mesh.toSolid",
 )
 
 
 def _drop_none(params: Mapping[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in params.items() if value is not None}
+
+
+def _file_params(source: Path) -> dict[str, Any]:
+    """A local file as base64 ``data`` + ``fileName`` (works for both transports)."""
+    return {"data": base64.b64encode(source.read_bytes()).decode("ascii"), "fileName": source.name}
 
 
 class AssemblerClient:
@@ -242,23 +248,39 @@ class AssemblerClient:
     def redo(self) -> Mapping[str, Any]:
         return self.call("history.redo")
 
-    def export(self, fmt: str, *, body_ids: list[str] | None = None, resolution: str | None = None, stl_format: str | None = None) -> bytes:
+    def export(self, fmt: str, *, body_ids: list[str] | None = None, resolution: str | None = None, stl_format: str | None = None, **step: Any) -> bytes:
         """Returns the exported file bytes (``fmt``: ``stl``, ``3mf`` or ``step``).
 
         ``resolution`` (STL/3MF): ``current`` (display mesh), ``coarse``, ``standard`` or ``fine``;
-        ``stl_format``: ``binary`` (default) or ``ascii``.
+        ``stl_format``: ``binary`` (default) or ``ascii``. STEP options (keyword arguments):
+        ``schema`` (``AP242``/``AP214``), ``unit`` (``mm``/``cm``/``m``/``in``), ``structure``
+        (``flat``/``folders``) and ``visible_only``.
         """
-        params: dict[str, Any] = {"bodyIds": body_ids, "resolution": resolution}
+        params: dict[str, Any] = {"bodyIds": body_ids}
+        if fmt in ("stl", "3mf"):
+            params["resolution"] = resolution
         if fmt == "stl":
             params["format"] = stl_format
+        if fmt == "step":
+            unknown = set(step) - {"schema", "unit", "structure", "visible_only"}
+            if unknown:
+                raise TypeError(f"unknown STEP option(s): {', '.join(sorted(unknown))}")
+            params.update(
+                schema=step.get("schema"),
+                unit=step.get("unit"),
+                structure=step.get("structure"),
+                visibleOnly=step.get("visible_only"),
+            )
+        elif step:
+            raise TypeError(f"{', '.join(sorted(step))} only apply to STEP exports")
         result = self.call(f"export.{fmt}", params)
         return base64.b64decode(result["data"])
 
-    def export_to(self, fmt: str, path: str | Path, *, body_ids: list[str] | None = None, resolution: str | None = None, stl_format: str | None = None) -> Path:
+    def export_to(self, fmt: str, path: str | Path, *, body_ids: list[str] | None = None, resolution: str | None = None, stl_format: str | None = None, **step: Any) -> Path:
         """Writes an export locally (works for both transports; the app endpoint has no file access)."""
         target = Path(path)
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(self.export(fmt, body_ids=body_ids, resolution=resolution, stl_format=stl_format))
+        target.write_bytes(self.export(fmt, body_ids=body_ids, resolution=resolution, stl_format=stl_format, **step))
         return target
 
     # ---- 3D printing ---------------------------------------------------------------------
@@ -279,9 +301,70 @@ class AssemblerClient:
     def print_orient(self, body_id: str, *, rank: int | None = None, down: tuple[float, float, float] | None = None, overhang_angle: float | None = None, name: str | None = None) -> Mapping[str, Any]:
         return self.call("print.orient", {"bodyId": body_id, "rank": rank, "down": None if down is None else [float(v) for v in down], "overhangAngleDeg": overhang_angle, "name": name})
 
-    def import_step(self, path: str | Path) -> Mapping[str, Any]:
+    def import_step(self, path: str | Path, *, structure: str | None = None) -> Mapping[str, Any]:
+        """One Import step. ``structure``: ``assembly`` (default: one body per placed part with
+        names, colours and ``itemPath`` folders) or ``single`` (the whole file as one body)."""
         source = Path(path)
-        return self.call("import.step", {"data": base64.b64encode(source.read_bytes()).decode("ascii"), "fileName": source.name})
+        return self.call("import.step", {**_file_params(source), "structure": structure})
+
+    # ---- import/export (interop) ----------------------------------------------------------------
+    def formats(self) -> Mapping[str, Any]:
+        """Import/export formats, what each keeps and whether this kernel build supports it (IGES)."""
+        return self.call("interop.formats")
+
+    def import_mesh(self, path: str | Path) -> Mapping[str, Any]:
+        """STL, 3MF or OBJ as reference meshes (3MF: objects, transforms, unit, colours; OBJ: groups)."""
+        return self.call("import.mesh", _file_params(Path(path)))
+
+    def import_dxf(
+        self,
+        path: str | Path,
+        *,
+        plane: str | None = None,
+        offset: float | None = None,
+        face: Mapping[str, Any] | None = None,
+        connect: bool | None = None,
+        unit_scale: float | None = None,
+        name: str | None = None,
+    ) -> Mapping[str, Any]:
+        """A DXF drawing as a new sketch on ``plane`` (``XY``/``XZ``/``YZ`` + ``offset``) or a planar
+        ``face``; ``unit_scale`` (mm per drawing unit) overrides the file's ``$INSUNITS``."""
+        return self.call(
+            "import.dxf",
+            {
+                **_file_params(Path(path)),
+                "plane": plane,
+                "offset": offset,
+                "face": dict(face) if face else None,
+                "connect": connect,
+                "unitScale": unit_scale,
+                "name": name,
+            },
+        )
+
+    def export_dxf(
+        self,
+        *,
+        sketch_id: str | None = None,
+        face: Mapping[str, Any] | None = None,
+        version: str | None = None,
+        include_construction: bool | None = None,
+    ) -> bytes:
+        """DXF bytes of a sketch (``sketch_id``) or a planar face outline (``face``); ``version`` ``R2000``/``R12``."""
+        result = self.call(
+            "export.dxf",
+            {
+                "sketchId": sketch_id,
+                "face": dict(face) if face else None,
+                "version": version,
+                "includeConstruction": include_construction,
+            },
+        )
+        return base64.b64decode(result["data"])
+
+    def mesh_to_solid(self, mesh_id: str, *, name: str | None = None, hide_mesh: bool | None = None) -> Mapping[str, Any]:
+        """Converts a closed reference mesh into a solid body (one step); fails with the reason otherwise."""
+        return self.call("mesh.toSolid", {"meshId": mesh_id, "name": name, "hideMesh": hide_mesh})
 
     def new_project(self, name: str | None = None) -> Mapping[str, Any]:
         return self.call("project.new", {"name": name})

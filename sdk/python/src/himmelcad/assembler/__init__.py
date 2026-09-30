@@ -34,6 +34,7 @@ from .errors import (
 from .modeling import (
     BBox, Body, Document, Edge, EdgeSet, Face, FaceSet, Feature, Parameter, PrintReport, Sketch, SketchLine, Transaction,
 )
+from .interop import ReferenceMesh
 from .printing import METRIC_HOLE_SIZES, PRINT_FITS, hole_diameter
 from .transport import LoopbackTransport, StdioTransport, Transport, find_headless_command
 
@@ -44,5 +45,5 @@ __all__ = [
     "InvalidParamsError", "LoopbackTransport", "NotFoundError", "Parameter", "PermissionDeniedError", "PrintReport",
     "ReferenceNotFoundError", "Sketch", "SketchConflictError", "SketchLine", "StdioTransport", "Transaction", "TransactionStateError",
     "Transport", "TransportError", "find_headless_command",
-    "METRIC_HOLE_SIZES", "PRINT_FITS", "hole_diameter",
+    "METRIC_HOLE_SIZES", "PRINT_FITS", "hole_diameter", "ReferenceMesh",
 ]

@@ -36,6 +36,7 @@ import type {
 } from './types.js';
 import type { KernelEvaluator } from './evaluator.js';
 import type { ExportMeshBody, MeshExportOptions } from './meshExport.js';
+import type { StepExportOptions } from './stepExport.js';
 import { isFatalKernelError } from './fatal.js';
 
 export interface KernelJob {
@@ -76,7 +77,11 @@ export interface KernelAdapter {
    * only the given body ids). Bypasses the preview/document coalescing
    * queue: it is a user-initiated action, not a continuous evaluation.
    */
-  exportStep(features: readonly Feature[], bodyIds?: readonly string[]): Promise<Uint8Array>;
+  exportStep(
+    features: readonly Feature[],
+    bodyIds?: readonly string[],
+    options?: StepExportOptions,
+  ): Promise<Uint8Array>;
   /**
    * One-off export tessellation of the given features' bodies at a chosen
    * deflection (STL/3MF resolution presets); like {@link exportStep} it
@@ -222,7 +227,11 @@ export abstract class QueuedKernelAdapter implements KernelAdapter {
     this.activityListeners.clear();
   }
 
-  exportStep(_features: readonly Feature[], _bodyIds?: readonly string[]): Promise<Uint8Array> {
+  exportStep(
+    _features: readonly Feature[],
+    _bodyIds?: readonly string[],
+    _options?: StepExportOptions,
+  ): Promise<Uint8Array> {
     return Promise.reject(new Error('STEP export is not supported by this kernel adapter'));
   }
 
@@ -380,6 +389,7 @@ export class InProcessKernelAdapter extends QueuedKernelAdapter {
           progress: null,
           loadMs: null,
           ...(notice ? { notice } : {}),
+          ...(evaluator.formatCapabilities ? { capabilities: evaluator.formatCapabilities() } : {}),
         });
       },
       (error: unknown) => {
@@ -443,9 +453,10 @@ export class InProcessKernelAdapter extends QueuedKernelAdapter {
   override async exportStep(
     features: readonly Feature[],
     bodyIds?: readonly string[],
+    options?: StepExportOptions,
   ): Promise<Uint8Array> {
     const evaluator = this.evaluator ?? (await this.ready);
-    return evaluator.exportStep(features, bodyIds);
+    return evaluator.exportStep(features, bodyIds, options);
   }
 
   override async exportMesh(

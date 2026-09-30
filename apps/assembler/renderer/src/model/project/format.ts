@@ -19,6 +19,7 @@ import {
   type FaceRef,
   type FilletFeature,
   type ImportStepFeature,
+  type MeshSolidFeature,
   type MoveFeature,
   type SetAppearanceFeature,
   type ShellFeature,
@@ -108,6 +109,8 @@ export interface ReferenceMeshRecordV1 {
   max: [number, number, number];
   transform: { dx: number; dy: number; dz: number };
   hidden: boolean;
+  /** `#RRGGBB` colour from the imported file (3MF/OBJ); optional and additive. */
+  color?: string;
 }
 
 export interface ProjectFileV1 {
@@ -246,6 +249,9 @@ function validateReferenceMesh(v: unknown, index: number): ReferenceMeshRecordV1
     if (!isNumber(t[field])) fail(`${path}.transform.${field}`, 'expected a number');
   }
   if (!isBoolean(r.hidden)) fail(`${path}.hidden`, 'expected a boolean');
+  if (r.color !== undefined && (!isString(r.color) || !/^#[0-9a-fA-F]{6}$/.test(r.color))) {
+    fail(`${path}.color`, 'expected a "#RRGGBB" string');
+  }
   return {
     id: r.id,
     name: r.name,
@@ -255,6 +261,7 @@ function validateReferenceMesh(v: unknown, index: number): ReferenceMeshRecordV1
     max,
     transform: { dx: t.dx as number, dy: t.dy as number, dz: t.dz as number },
     hidden: r.hidden,
+    ...(r.color !== undefined ? { color: r.color as string } : {}),
   };
 }
 
@@ -426,7 +433,18 @@ function validateFeature(v: unknown, index: number): Feature {
     case 'importStep': {
       if (!isString(r.data) || r.data === '') fail(`${path}.data`, 'expected a non-empty string');
       if (!isString(r.fileName)) fail(`${path}.fileName`, 'expected a string');
+      if (r.structure !== undefined && r.structure !== 'assembly') {
+        fail(`${path}.structure`, 'expected "assembly"');
+      }
       return r as unknown as ImportStepFeature;
+    }
+    case 'meshSolid': {
+      if (!isString(r.data) || r.data === '') fail(`${path}.data`, 'expected a non-empty string');
+      if (!isString(r.fileName)) fail(`${path}.fileName`, 'expected a string');
+      if (!isNumber(r.triangles) || r.triangles < 0) {
+        fail(`${path}.triangles`, 'expected a non-negative number');
+      }
+      return r as unknown as MeshSolidFeature;
     }
     default:
       if (isModelingFeatureKind(r.kind)) {

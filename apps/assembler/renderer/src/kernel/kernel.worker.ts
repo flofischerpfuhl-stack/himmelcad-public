@@ -25,6 +25,7 @@ import wasmUrl from 'replicad-opencascadejs/wasm?url';
 
 import { createEvaluator, type KernelEvaluator } from './evaluator.js';
 import { isFatalKernelError } from './fatal.js';
+import { occtFormatCapabilities } from './stepImport.js';
 import type { EvaluationResult, KernelStatusInfo } from './types.js';
 import type { WireBody, WorkerRequest, WorkerResponse } from './workerProtocol.js';
 
@@ -88,7 +89,13 @@ async function load(): Promise<KernelEvaluator> {
   const oc = await init({ wasmBinary, locateFile: () => wasmUrl });
   const evaluator = createEvaluator(oc);
   const loadMs = performance.now() - start;
-  status({ status: 'ready', message: 'CAD kernel ready', progress: 1, loadMs });
+  status({
+    status: 'ready',
+    message: 'CAD kernel ready',
+    progress: 1,
+    loadMs,
+    capabilities: occtFormatCapabilities(oc),
+  });
   return evaluator;
 }
 
@@ -133,7 +140,9 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
     void ready.then(
       async (evaluator) => {
         try {
-          const bytes = (await evaluator.exportStep(message.features, message.bodyIds)).slice();
+          const bytes = (
+            await evaluator.exportStep(message.features, message.bodyIds, message.options)
+          ).slice();
           post({ type: 'exportResult', jobId: message.jobId, bytes: bytes.buffer }, [bytes.buffer]);
         } catch (error) {
           post({

@@ -23,6 +23,7 @@ import { StatusStrip } from './chrome/StatusStrip.js';
 import { ToolSession } from './chrome/ToolSession.js';
 import { TopBar } from './chrome/TopBar.js';
 import { useGlobalKeyboard } from './chrome/useGlobalKeyboard.js';
+import { InteropChrome } from './interop/ui/InteropChrome.js';
 import { useAssemblerStore, type SelectionItem } from './model/store.js';
 import { PrintChrome } from './print/ui/PrintChrome.js';
 import { SketchChrome } from './sketch/ui/SketchChrome.js';
@@ -101,6 +102,7 @@ export function App(): JSX.Element {
       <KernelActivity state={state} />
       <AgentAccessIndicator />
       <HomeScreen />
+      <InteropChrome />
       <NoticeToast />
 
       {commandSearch ? (

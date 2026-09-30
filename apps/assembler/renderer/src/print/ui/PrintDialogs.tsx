@@ -126,6 +126,7 @@ export function StlExportDialog(): JSX.Element {
             value={scope}
             options={[
               { value: 'all', label: 'All bodies, one file' },
+              { value: 'visible', label: 'Visible bodies, one file' },
               {
                 value: 'selected',
                 label: 'Selected bodies, one file',

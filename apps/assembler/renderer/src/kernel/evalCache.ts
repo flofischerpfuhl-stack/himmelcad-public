@@ -87,6 +87,8 @@ export interface BodySnapshot {
   readonly createdBy: string;
   readonly shape: Shape3D;
   readonly faces: KeyedFace[];
+  /** Assembly folder path of an imported part (`Body.itemPath`). */
+  readonly itemPath?: readonly string[];
 }
 
 /** The replay state after feature `index` of a document whose prefix hashes to `hash`. */

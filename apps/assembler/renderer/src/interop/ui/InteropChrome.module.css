@@ -1,0 +1,165 @@
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-family: var(--hc-font-ui);
+  min-width: 360px;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 34px;
+  padding: 2px 0;
+}
+
+.label {
+  font-size: 12px;
+  color: var(--hc-fg-default);
+}
+
+.control {
+  display: flex;
+  justify-content: flex-end;
+  width: 220px;
+  flex-shrink: 0;
+}
+
+.control > * {
+  width: 100%;
+}
+
+.text {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--hc-fg-default);
+  margin: 0 0 4px;
+}
+
+.hint {
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--hc-fg-subtle);
+  margin: 6px 0 0;
+}
+
+.muted {
+  margin-top: 4px;
+  color: var(--hc-fg-subtle);
+}
+
+.summary {
+  margin-top: 6px;
+  padding: 8px 10px;
+  border-radius: var(--hc-radius-md);
+  background: var(--hc-bg-chip);
+  font-family: var(--hc-font-mono);
+  font-size: 11px;
+  color: var(--hc-fg-muted);
+}
+
+.errorText {
+  font-size: 12px;
+  color: var(--hc-error);
+  margin: 4px 0 0;
+}
+
+.report,
+.reportError {
+  margin: 0;
+  padding: 0 0 0 16px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--hc-fg-default);
+  max-width: 460px;
+}
+
+.reportError li:first-child {
+  color: var(--hc-fg-strong);
+}
+
+.job {
+  position: fixed;
+  left: 50%;
+  bottom: 64px;
+  transform: translateX(-50%);
+  z-index: var(--hc-z-popover);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 340px;
+  padding: 8px 10px 8px 12px;
+  border: 1px solid var(--hc-border-subtle);
+  border-radius: var(--hc-radius-lg);
+  background: var(--hc-bg-island);
+  box-shadow: var(--hc-shadow-island);
+  font-family: var(--hc-font-ui);
+}
+
+.jobText {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+
+.jobTitle {
+  font-size: 12px;
+  color: var(--hc-fg-strong);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.spin {
+  color: var(--hc-accent-base);
+  animation: spin 1s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spin {
+    animation: none;
+  }
+}
+
+.dropOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--hc-z-modal);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--hc-bg-overlay);
+  pointer-events: none;
+}
+
+.dropCard {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 28px 36px;
+  border: 2px dashed var(--hc-accent-base);
+  border-radius: var(--hc-radius-lg);
+  background: var(--hc-bg-elevated);
+  color: var(--hc-fg-default);
+  font-family: var(--hc-font-ui);
+  font-size: 12px;
+  text-align: center;
+  max-width: 420px;
+}
+
+.dropCard strong {
+  font-size: 15px;
+  color: var(--hc-fg-strong);
+}

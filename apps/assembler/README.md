@@ -218,7 +218,21 @@ manifold objects, names, colours, item transforms) and Open in Slicer
   filed in folders, deleted and exported (STL/3MF) like a body, but it is
   never a kernel input — modelling tools refuse it as a reference. A bounding
   box that looks like metres or inches offers a one-time rescale to mm; it is
-  never applied silently.
+  never applied silently. **Convert Mesh to Solid** (adaptive toolbar/context
+  menu of a selected mesh) turns a closed, manifold mesh into a B-rep body
+  (one step; coplanar triangles merged into planar faces; open, non-manifold
+  or too large meshes are refused with the reason).
+- **Import/export** (`renderer/src/interop/`, details, fidelity checks and
+  limits: `assembler/INTEROP.md`): File › Import… (every format), drag & drop
+  of files onto the window, progress with Cancel. STEP assemblies keep their
+  product structure (nested Items folders, part names and colours, one Import
+  step); 3MF (objects, transforms, unit, colours) and OBJ (groups) become
+  reference meshes; DXF becomes a sketch on a plane or planar face. Export
+  STEP… (assembly from Items folders / flat / per body, AP242/AP214, mm/cm/m/in,
+  all/visible/selected), Export DXF… (sketch or planar face outline, R2000/R12),
+  STL "visible bodies" scope. IGES is not in this OCCT build (entries disabled
+  with the reason). Agent API: `import.step/mesh/dxf`, `export.step/dxf`,
+  `mesh.toSolid`, `interop.formats`.
 - File > Open Recent (Electron): up to 8 files, missing ones greyed with
   Locate…/Remove (`electron/recentFiles.ts`, stored in `userData`). The main
   process only opens paths that are on that list.
@@ -315,6 +329,7 @@ viewport, directly usable with `page.mouse`.
 | `viewportBenchmark(frames)`       | Mean ms per frame over `frames` back-to-back renders while orbiting (scene build + GPU, no vsync).                                                                                                                                   |
 | `measureStore`                    | Measure panel state: pins, picked points, Points tool.                                                                                                                                                                               |
 | `projectStore`                    | Project file state: `newFromTemplate(id)`, `requestTemplate`, `checkRecovery`/`restoreRecovery`, `dirty`, `busyMessage`; Home is `workspaceStore.setHomeOpen` (`D:\AgentWork\HimmelCAD-Assembler\shots\h-shots.mjs`).                |
+| `interopStore`                    | Import/export: `importFiles`, the running `job` (`cancelJob`), DXF/STEP/DXF-export dialogs, `convertMeshToSolid`; files can also be dropped as a synthetic `DataTransfer` (`D:\AgentWork\HimmelCAD-Assembler\shots\io-shots.mjs`).   |
 
 The view cube's cells carry `data-cell="<face>:<i>:<j>"` (e.g. `front:1:1` =
 the Front-Right-Top corner) for DOM-anchored clicks. Example (see

@@ -218,6 +218,7 @@ async function encodeReferenceMeshes(
       max: m.max,
       transform: { ...m.transform },
       hidden: m.hidden,
+      ...(m.color ? { color: m.color } : {}),
     })),
   );
 }
@@ -240,6 +241,7 @@ async function decodeReferenceMeshes(
         max: r.max,
         transform: { ...r.transform },
         hidden: r.hidden,
+        ...(r.color ? { color: r.color } : {}),
       } satisfies ReferenceMesh;
     }),
   );

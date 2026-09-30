@@ -5,6 +5,7 @@
  */
 import type { Feature } from '../model/document.js';
 import type { ExportMeshBody } from './meshExport.js';
+import type { StepExportOptions } from './stepExport.js';
 import type {
   Body,
   DistanceMeasurement,
@@ -17,7 +18,13 @@ import type {
 
 export type WorkerRequest =
   | { type: 'evaluate'; jobId: number; features: Feature[]; quality?: TessellationQuality }
-  | { type: 'exportStep'; jobId: number; features: Feature[]; bodyIds?: string[] }
+  | {
+      type: 'exportStep';
+      jobId: number;
+      features: Feature[];
+      bodyIds?: string[];
+      options?: StepExportOptions;
+    }
   | {
       type: 'exportMesh';
       jobId: number;

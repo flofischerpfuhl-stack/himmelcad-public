@@ -28,6 +28,7 @@ from typing import Any, TypeVar
 
 from .client import AssemblerClient
 from .errors import AssemblerError, NotFoundError
+from .interop import InteropMixin
 from .printing import PrintToolsMixin
 
 Vec3 = tuple[float, float, float]
@@ -241,6 +242,8 @@ class Body:
 
     def __init__(self, doc: Document, body_id: str, feature: Feature | None = None) -> None:
         self.doc, self.id, self.feature = doc, body_id, feature
+        #: Assembly folders of an imported STEP part (`Document.import_step`), else empty.
+        self.item_path: tuple[str, ...] = ()
 
     def __repr__(self) -> str:
         return f"Body({self.id!r})"
@@ -313,6 +316,8 @@ class Sketch:
         self.profiles: list[dict[str, Any]] = []
         #: Per shape: its dimension names by role (``{"x": "d1", "y": "d2", "width": "d3", "height": "d4"}``).
         self.dimensions: list[dict[str, str]] = []
+        #: What `Document.import_dxf` reported (curves, connected end points, units, skipped entities).
+        self.import_report: dict[str, Any] | None = None
 
     @property
     def id(self) -> str:
@@ -554,7 +559,7 @@ class _LoggedCall:
     params: Mapping[str, Any]
 
 
-class Document(PrintToolsMixin):
+class Document(PrintToolsMixin, InteropMixin):
     """An Assembler document driven through canonical commands (print-part helpers: :mod:`.printing`)."""
 
     def __init__(self, client: AssemblerClient) -> None:
@@ -876,13 +881,7 @@ class Document(PrintToolsMixin):
         """Triangle counts and expected STL sizes for an export resolution (the export preview)."""
         return self.client.mesh_stats(body_ids=None if bodies is None else [b.id for b in bodies], resolution=resolution)
 
-    def export_step(self, path: str | Path, bodies: Iterable[Body] | None = None) -> Path:
-        return self.client.export_to("step", path, body_ids=None if bodies is None else [b.id for b in bodies])
-
-    def import_step(self, path: str | Path) -> list[Body]:
-        result = self.client.import_step(path)
-        feature = self._feature(result)
-        return [Body(self, body_id, feature) for body_id in result.get("createdBodyIds", [])]
+    # export_step / import_step / import_mesh / import_dxf / export_dxf / mesh_to_solid: InteropMixin (interop.py).
 
     def save(self, path: str | Path, *, name: str | None = None) -> Path:
         return self.client.save_project(path, name=name)

@@ -28,7 +28,12 @@ export interface ReferenceMesh {
   max: [number, number, number];
   transform: ReferenceMeshTransform;
   hidden: boolean;
+  /** Display colour from the file (3MF material, OBJ vertex colours), `#RRGGBB`; absent = the reference slate. */
+  color?: string;
 }
+
+/** Colour of reference meshes without their own. */
+export const REFERENCE_MESH_COLOR = '#8890a0';
 
 /** `body:` id prefix reserved for kernel bodies; reference meshes use this one so the two id spaces never collide. */
 export const REFERENCE_MESH_ID_PREFIX = 'mesh:';
@@ -112,8 +117,8 @@ function buildReferenceMeshBody(mesh: ReferenceMesh): Body {
     name: mesh.name,
     // A distinct, slightly desaturated slate — deliberately unlike the
     // saturated per-body palette kernel solids get, so a reference mesh
-    // reads as "not a solid" at a glance.
-    color: '#8890a0',
+    // reads as "not a solid" at a glance — unless the file gave it a colour.
+    color: mesh.color ?? REFERENCE_MESH_COLOR,
     createdBy: mesh.id,
     min,
     max,

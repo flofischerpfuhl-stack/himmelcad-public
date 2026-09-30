@@ -45,6 +45,8 @@ export interface BodyDescriptor {
   bbox: { min: Vec3; max: Vec3; size: Vec3 };
   faceCount: number;
   edgeCount: number;
+  /** Assembly folder path of an imported STEP part. */
+  itemPath?: string[];
 }
 
 export function round(value: number, digits = 2): number {
@@ -148,6 +150,7 @@ export function describeBody(body: Body): BodyDescriptor {
     bbox: { min, max, size: cleanVec([max[0] - min[0], max[1] - min[1], max[2] - min[2]]) },
     faceCount: body.faces.length,
     edgeCount: body.edges.length,
+    ...(body.itemPath && body.itemPath.length > 0 ? { itemPath: [...body.itemPath] } : {}),
   };
 }
 

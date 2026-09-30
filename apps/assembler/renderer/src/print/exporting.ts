@@ -23,7 +23,7 @@ export function setPrintKernel(adapter: KernelAdapter): void {
   kernel = adapter;
 }
 
-export type StlScope = 'all' | 'selected' | 'each';
+export type StlScope = 'all' | 'visible' | 'selected' | 'each';
 
 export interface StlExportOptions {
   scope: StlScope;
@@ -48,6 +48,10 @@ export function stlBodyIds(scope: StlScope): string[] {
     return state.selection
       .filter((s): s is { kind: 'body'; bodyId: string } => s.kind === 'body')
       .map((s) => s.bodyId);
+  }
+  if (scope === 'visible') {
+    const hidden = new Set(state.hiddenBodyIds);
+    return state.evaluation.bodies.filter((b) => !hidden.has(b.id)).map((b) => b.id);
   }
   return state.evaluation.bodies.map((b) => b.id);
 }

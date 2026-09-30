@@ -25,6 +25,7 @@
  */
 import { API_ERROR_CODES } from './errors.js';
 import { MESH_RESOLUTION_SCHEMA, PRINT_METHODS, PRINT_SETTINGS_SCHEMA } from './printApi.js';
+import { INTEROP_METHODS, STEP_EXPORT_PARAMS, STEP_IMPORT_STRUCTURE } from './interopApi.js';
 import { BLEND_OPTION_PARAMS, PRINT_DEFS, PRINT_FEATURE_KIND_SCHEMAS } from './printSchema.js';
 import type { JsonSchema } from './validate.js';
 
@@ -580,8 +581,25 @@ export const FEATURE_KIND_SCHEMAS: Record<string, FeatureKindSpec> = {
   },
   importStep: {
     label: 'Import',
-    summary: 'A STEP file embedded (base64) as one history step producing bodies.',
-    params: obj({ data: str, fileName: str }, ['data', 'fileName']),
+    summary:
+      'A STEP file embedded (base64) as one history step producing bodies (`structure: "assembly"`: one per placed part, named, coloured, with folder paths; import.step sets it).',
+    params: obj({ data: str, fileName: str, structure: { enum: ['assembly'] } }, [
+      'data',
+      'fileName',
+    ]),
+  },
+  meshSolid: {
+    label: 'Mesh to Solid',
+    summary:
+      'A closed triangle mesh (embedded, see mesh.toSolid which builds it from a reference mesh) as a B-rep solid; coplanar triangles become planar faces.',
+    params: obj(
+      {
+        data: { ...str, description: 'Base64 welded-mesh payload (interop/meshSolid.ts).' },
+        fileName: str,
+        triangles: { type: 'integer', minimum: 0 },
+      },
+      ['data', 'fileName', 'triangles'],
+    ),
   },
   revolve: {
     label: 'Revolve',
@@ -1372,27 +1390,34 @@ export const METHODS: Record<string, MethodSpec> = {
   'export.step': {
     kind: 'command',
     capability: 'document.read',
-    summary: 'Exact-B-rep STEP (AP214) of all (or the given) bodies.',
-    params: exportParams,
-    result: '{mediaType, byteLength, data?: base64, path?}',
+    summary:
+      'Exact-B-rep STEP of all (or the given) bodies with names and colours: AP242 (default) or AP214, a chosen length unit, flat parts or the Items folders as sub-assemblies, optionally only visible bodies.',
+    params: obj({
+      ...(exportParams.properties as Record<string, JsonSchema>),
+      ...STEP_EXPORT_PARAMS,
+    }),
+    result: '{mediaType, byteLength, bodyIds, data?: base64, path?}',
   },
   'import.step': {
     kind: 'command',
     capability: 'document.write',
     transactional: true,
-    summary: 'Imports a STEP file as one "Import" history step.',
+    summary:
+      'Imports a STEP file as one "Import" history step: one body per placed part with names, colours and assembly folders (`structure: "single"`: the whole file as one body).',
     params: {
       type: 'object',
       properties: {
         path: { type: 'string', minLength: 1, description: 'Headless only (filesystem.read).' },
         data: { type: 'string', minLength: 1, description: 'Base64 STEP bytes.' },
         fileName: str,
+        structure: STEP_IMPORT_STRUCTURE,
         expectedRevision: revision,
       },
       additionalProperties: false,
       anyOf: [{ required: ['path'] }, { required: ['data', 'fileName'] }],
     },
-    result: '{featureId, createdBodyIds, revision, committed, errors}',
+    result:
+      '{featureId, createdBodyIds, parts: [{bodyId, name, color, itemPath}], warnings?, revision, committed, errors}',
   },
   'project.new': {
     kind: 'command',
@@ -1431,6 +1456,7 @@ export const METHODS: Record<string, MethodSpec> = {
     result: '{text?, path?, byteLength}',
   },
   ...PRINT_METHODS,
+  ...INTEROP_METHODS,
 };
 
 /** The full contract document returned by `api.describe` and checked in as JSON. */

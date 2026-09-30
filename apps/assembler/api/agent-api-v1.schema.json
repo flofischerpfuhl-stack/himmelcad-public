@@ -1538,7 +1538,7 @@
     },
     "importStep": {
       "label": "Import",
-      "summary": "A STEP file embedded (base64) as one history step producing bodies.",
+      "summary": "A STEP file embedded (base64) as one history step producing bodies (`structure: \"assembly\"`: one per placed part, named, coloured, with folder paths; import.step sets it).",
       "params": {
         "type": "object",
         "properties": {
@@ -1549,9 +1549,36 @@
           "fileName": {
             "type": "string",
             "minLength": 1
+          },
+          "structure": {
+            "enum": ["assembly"]
           }
         },
         "required": ["data", "fileName"],
+        "additionalProperties": false
+      }
+    },
+    "meshSolid": {
+      "label": "Mesh to Solid",
+      "summary": "A closed triangle mesh (embedded, see mesh.toSolid which builds it from a reference mesh) as a B-rep solid; coplanar triangles become planar faces.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Base64 welded-mesh payload (interop/meshSolid.ts)."
+          },
+          "fileName": {
+            "type": "string",
+            "minLength": 1
+          },
+          "triangles": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": ["data", "fileName", "triangles"],
         "additionalProperties": false
       }
     },
@@ -3486,7 +3513,7 @@
     "export.step": {
       "kind": "command",
       "capability": "document.read",
-      "summary": "Exact-B-rep STEP (AP214) of all (or the given) bodies.",
+      "summary": "Exact-B-rep STEP of all (or the given) bodies with names and colours: AP242 (default) or AP214, a chosen length unit, flat parts or the Items folders as sub-assemblies, optionally only visible bodies.",
       "params": {
         "type": "object",
         "properties": {
@@ -3502,18 +3529,38 @@
             "type": "string",
             "minLength": 1,
             "description": "Headless only (capability filesystem.write). Omit to receive base64 bytes."
+          },
+          "schema": {
+            "enum": ["AP242", "AP214"],
+            "default": "AP242",
+            "description": "Application protocol: AP242 DIS or AP214 IS (OCCT write.step.schema 5/4)."
+          },
+          "unit": {
+            "enum": ["mm", "cm", "m", "in"],
+            "default": "mm",
+            "description": "Length unit written to the file (geometry is converted, not rescaled)."
+          },
+          "structure": {
+            "enum": ["flat", "folders"],
+            "default": "flat",
+            "description": "`flat`: every body a top-level part. `folders`: an assembly named after the project whose sub-assemblies are the Items folders (app)."
+          },
+          "visibleOnly": {
+            "type": "boolean",
+            "default": false,
+            "description": "Leave out bodies hidden in the app (Items eye)."
           }
         },
         "required": [],
         "additionalProperties": false
       },
-      "result": "{mediaType, byteLength, data?: base64, path?}"
+      "result": "{mediaType, byteLength, bodyIds, data?: base64, path?}"
     },
     "import.step": {
       "kind": "command",
       "capability": "document.write",
       "transactional": true,
-      "summary": "Imports a STEP file as one \"Import\" history step.",
+      "summary": "Imports a STEP file as one \"Import\" history step: one body per placed part with names, colours and assembly folders (`structure: \"single\"`: the whole file as one body).",
       "params": {
         "type": "object",
         "properties": {
@@ -3531,6 +3578,11 @@
             "type": "string",
             "minLength": 1
           },
+          "structure": {
+            "enum": ["assembly", "single"],
+            "default": "assembly",
+            "description": "`assembly`: one body per placed part, named and coloured from the file, with its assembly folder path (`itemPath`; the app files them into Items folders). `single`: the whole file as one body (the behaviour before assemblies)."
+          },
           "expectedRevision": {
             "type": "integer",
             "minimum": 0,
@@ -3547,7 +3599,7 @@
           }
         ]
       },
-      "result": "{featureId, createdBodyIds, revision, committed, errors}"
+      "result": "{featureId, createdBodyIds, parts: [{bodyId, name, color, itemPath}], warnings?, revision, committed, errors}"
     },
     "project.new": {
       "kind": "command",
@@ -3788,6 +3840,193 @@
         "additionalProperties": false
       },
       "result": "{resolution, bodies: [{id, name, triangles}], triangles, stlBinaryBytes, stlAsciiBytes}"
+    },
+    "interop.formats": {
+      "kind": "query",
+      "capability": "document.read",
+      "summary": "Import and export formats with what each keeps (structure, names, colours, units) and whether the loaded kernel supports it (IGES: not in this OCCT build).",
+      "params": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "result": "{import: [{format, extensions, target, available, reason?, keeps}], export: [...], kernel}"
+    },
+    "import.mesh": {
+      "kind": "command",
+      "capability": "document.write",
+      "summary": "Imports an STL, 3MF or OBJ file as reference meshes (shown, measured and exported, never kernel inputs; `mesh.toSolid` converts one). 3MF: one mesh per build item, transforms baked, the declared unit converted to mm, colours; OBJ: one mesh per group. Unitless formats get a `unitHint` when the size suggests metres or inches (never applied silently).",
+      "params": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Headless only (filesystem.read)."
+          },
+          "data": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Base64 file bytes."
+          },
+          "fileName": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false,
+        "anyOf": [
+          {
+            "required": ["path"]
+          },
+          {
+            "required": ["data", "fileName"]
+          }
+        ]
+      },
+      "result": "{format, meshes: [{meshId, bodyId, name, color?, folder, triangles, min, max}], declaredUnit, unitScale, unitHint?, warnings}"
+    },
+    "import.dxf": {
+      "kind": "command",
+      "capability": "document.write",
+      "transactional": true,
+      "summary": "Imports a DXF drawing (lines, arcs, circles, polylines with bulges, splines, ellipses, points, block inserts) as a new sketch on a plane or planar face; end points are connected (coincident) unless `connect: false`. Units: $INSUNITS, else read as mm (reported), or `unitScale` (mm per drawing unit).",
+      "params": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Headless only (filesystem.read)."
+          },
+          "data": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Base64 file bytes."
+          },
+          "fileName": {
+            "type": "string",
+            "minLength": 1
+          },
+          "plane": {
+            "enum": ["XY", "XZ", "YZ"],
+            "default": "XY"
+          },
+          "offset": {
+            "type": "number",
+            "default": 0,
+            "description": "Plane offset, mm."
+          },
+          "face": {
+            "$ref": "#/$defs/FaceInput",
+            "description": "A planar face instead of a plane."
+          },
+          "connect": {
+            "type": "boolean",
+            "default": true
+          },
+          "unitScale": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Optimistic concurrency: the command fails with `conflict` unless the document revision still equals this value."
+          }
+        },
+        "additionalProperties": false,
+        "anyOf": [
+          {
+            "required": ["path"]
+          },
+          {
+            "required": ["data", "fileName"]
+          }
+        ]
+      },
+      "result": "{featureId, curves, points, connected, approximated, skipped, units: {scale, source, label}, regions, revision, committed}"
+    },
+    "export.dxf": {
+      "kind": "command",
+      "capability": "document.read",
+      "summary": "DXF (R2000 default, or R12) of a sketch (`sketchId`, in sketch coordinates; construction on layer CONSTRUCTION) or of a planar face outline (`face`, in the face sketch frame).",
+      "params": {
+        "type": "object",
+        "properties": {
+          "sketchId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "face": {
+            "$ref": "#/$defs/FaceInput"
+          },
+          "version": {
+            "enum": ["R2000", "R12"],
+            "default": "R2000"
+          },
+          "includeConstruction": {
+            "type": "boolean",
+            "default": true
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Headless only (capability filesystem.write). Omit to receive base64 bytes."
+          },
+          "scope": {
+            "enum": ["auto", "committed", "staged"],
+            "default": "auto",
+            "description": "`auto`: the open transaction's staged state if any, else the committed document."
+          }
+        },
+        "additionalProperties": false,
+        "oneOf": [
+          {
+            "required": ["sketchId"]
+          },
+          {
+            "required": ["face"]
+          }
+        ]
+      },
+      "result": "{mediaType, byteLength, entities, data?: base64, path?}"
+    },
+    "mesh.toSolid": {
+      "kind": "command",
+      "capability": "document.write",
+      "transactional": true,
+      "summary": "Converts a closed, manifold reference mesh into a B-rep solid (one \"Mesh to Solid\" step; coplanar triangles merged into planar faces) so kernel tools can modify it. Refuses open, non-manifold, multi-part or too large meshes with the reason. The mesh is hidden, not deleted.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "meshId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Reference mesh id (or its `mesh:` body id)."
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "hideMesh": {
+            "type": "boolean",
+            "default": true
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Optimistic concurrency: the command fails with `conflict` unless the document revision still equals this value."
+          }
+        },
+        "required": ["meshId"],
+        "additionalProperties": false
+      },
+      "result": "{featureId, bodyId, check: {triangles, faces, flipped, inverted, volume}, summary, revision, committed}"
     }
   },
   "limits": {
