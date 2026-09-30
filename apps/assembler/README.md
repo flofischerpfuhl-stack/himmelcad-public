@@ -33,6 +33,11 @@ stable-reference scheme and open risks: `assembler/KERNEL-SPIKE.md`.
   Node (once per test file).
 - `pnpm test:electron` — production build, then Playwright-driven Electron
   checks (packaged code path, agent access, kernel determinism).
+- `pnpm test:acceptance` — production build, then the PLAN §7 acceptance
+  cases: headless through the agent API (parts, negative cases, hand-over,
+  persistence) and one long Electron scenario (Home → template, hand-over,
+  Select Through, kernel worker killed mid-edit, app killed → recovery).
+  Case list and results: `assembler/ACCEPTANCE.md`.
 - `pnpm bench:kernel` — kernel performance table (`assembler/KERNEL-SPIKE.md`).
 - `pnpm package:win` — Windows installer (NSIS, per-user, no admin prompt)
   into `release/` via `electron-builder.win.yml`; `pnpm icon` regenerates the

@@ -252,6 +252,11 @@ Nicht nur Bilder vergleichen: Einheiten, Abmessungen, Volumen, B-rep-Gültigkeit
 Körperzahl, Referenzbindung und exportierte Druckdaten prüfen. Unterschiedliche
 Face-Zahlen verschiedener Kernel sind nicht automatisch ein Fehler.
 
+Stand 2026-09-30: Diese Pflicht- und Negativfälle laufen automatisiert
+(`pnpm --filter @himmelcad/assembler test:acceptance`, headless über die
+Agent-API plus Electron-Produktionsbuild); Fallliste, Nachweise und Grenzen
+in [ACCEPTANCE.md](ACCEPTANCE.md). Ein realer Druck ist damit nicht ersetzt.
+
 Die Recherche umfasst 134 offizielle Tutorial-Einträge und 29 gesicherte
 Originalmedien. Acht Bilder/GIF-Stichproben und Stellen aus zwei Videos wurden
 visuell geprüft. Es wurde keine aktuelle Shapr3D-Installation vollständig

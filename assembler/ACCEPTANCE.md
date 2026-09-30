@@ -1,0 +1,92 @@
+# HimmelCAD Assembler — acceptance suite (PLAN §7)
+
+Status: implemented 2026-09-30 on `feat/assembler-phase0-20260929`. The
+mandatory cases of [PLAN.md](PLAN.md) §7 as automated end-to-end checks.
+Serves owner intent U1 (complete, precise, editable print workflows) and U5
+(agent use), per [OWNER-INTENT.md](OWNER-INTENT.md). An automated pass is
+evidence for these workflows in this build — **not** a real printed-part
+acceptance, not Shapr3D parity, and not a claim that the first version is
+done.
+
+```text
+pnpm --filter @himmelcad/assembler test:acceptance
+```
+
+builds the app (production renderer, Electron main, headless CLI), then runs
+four files with `node --test` (one process each, 300 s timeout per test):
+
+| File                                          | Path                                                                                             |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `test/acceptance/parts.acceptance.test.ts`    | Agent API (`AgentSession`, headless capabilities) on the real app store, OCCT and planeGCS       |
+| `test/acceptance/negative.acceptance.test.ts` | Same, plus the UI's own edit and pick functions                                                  |
+| `test/acceptance/handover.acceptance.test.ts` | Agent API + the store actions the History/Parameters panels call                                 |
+| `test/acceptance/electron.acceptance.test.ts` | The production Electron app (`app://`, strict CSP) driven by Playwright + the loopback agent API |
+
+**What is checked: numbers, not pictures.** Units (mm; the 3MF declares
+`millimeter`), bounding boxes and dimensions, exact B-rep volumes against
+hand calculations (relative 1e-6 unless stated), B-rep validity
+(`BRepCheck`), body counts, reference binding (stable face/edge keys,
+readable errors when a reference is gone), exact kernel distances
+(`BRepExtrema`), exported print data (3MF through the strict package/schema
+validator `test/kernel/threeMfValidator.ts`; binary STL re-parsed, welded and
+required to be closed and consistently oriented). Screenshots are only
+illustration. Every headless case writes its evidence to
+`$ASSEMBLER_ACCEPTANCE_OUT/<case>.json` (default: the OS temp directory) and
+prints it as a test diagnostic.
+
+## Cases and results (run 2026-09-30, Windows host, 14/14 passed, 66 s incl. build)
+
+| Case                                        | What it proves                                                                                                                                                                                                                                                                                         | Result | Evidence                                                                                                                                                                                        |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A1 Enclosure with lid                       | The Home template (agent-API script): R4 box shelled 2 mm (top open), four Ø7 bosses with Ø2.5 × 20 pilot holes, a lid with a lip 0.2 mm smaller than the opening all round (R1.8 corners) and four Ø3.4 holes. Parametric: `width` 80 → 100 re-solves both sketches and moves the lid; undo restores. | pass   | Enclosure 27 817.92 mm³, Lid 21 992.68 mm³ (= hand calc), bboxes 80×60×30 / 80×60×5 at x = 90, both valid; 16 cylindrical faces; STL 5 448 triangles watertight; 3MF 2 objects, validator clean |
+| A2 Holder with slot                         | Bracket template: L-bracket, a real sketch slot entity (centre distance 14, width 6) cut through the base, two Ø5 holes (Hole feature) in the upright, R4 inner and R3 front rounds.                                                                                                                   | pass   | 20 428.98 mm³ = hand calc; bbox 60×30×45; STL 1 300 triangles watertight                                                                                                                        |
+| A3 Pipe adapter (revolve)                   | Stepped reducer (Ø30 → Ø20, Ø16 bore, Ø26 × 12 socket) as one polyline profile revolved 360° about a construction centre line.                                                                                                                                                                         | pass   | 5 890.49 mm³ = π·1875; bbox [-15,-15,0]–[15,15,35]; STL 1 428 triangles watertight                                                                                                              |
+| A4 Imported STEP adapted                    | The demo part exported as STEP (AP214), imported as one history step, then a Ø5 × 2 blind hole on its top face; save → reopen keeps the embedded STEP and the new step.                                                                                                                                | pass   | STEP 30 206 bytes; imported volume = original 49 705.04 mm³ (1e-6); hole removes exactly π·2.5²·2 = 39.27 mm³; reopened 2 features, same volume                                                 |
+| A5 Static multi-body assembly               | The lid flipped (Move/Rotate) and aligned onto the enclosure rim (Align, centred).                                                                                                                                                                                                                     | pass   | Lid bbox [0,0,27]–[80,60,32]; exact kernel distances: lip side ↔ inner wall **0.2 mm**, lid ↔ enclosure 0 (resting on the rim), lip end ↔ boss tops 1 mm                                        |
+| A6 Multicolour 3MF                          | Colours per body (Appearance steps) reach the 3MF; one object and one build item per body.                                                                                                                                                                                                             | pass   | 419 620 bytes, validator clean, unit millimeter; Enclosure #5B7FA6 (3 388 triangles), Lid #D9A441 (2 060)                                                                                       |
+| Template: cable clip                        | The third Home template evaluates valid with its hand-calculated volume.                                                                                                                                                                                                                               | pass   | 1 337.60 mm³ (1e-3: the opening's area is integrated numerically)                                                                                                                               |
+| H1 UI/agent hand-over (headless)            | The agent creates a plate with a parameter-driven height; the UI's History dimension edit (`setSketchDimension`) and Parameters edit (`editParameter`) change it; the agent reads the new volume and revisions; one shared undo stack in both directions.                                              | pass   | 40 → 60 wide, 10 → 12 thick: agent reads 21 600 mm³; revision +2; agent undo reverts the UI edit, UI undo reverts the agent edit                                                                |
+| S1 Save / reopen / recovery payload         | `project.save` → `project.open` restores features, parameters and bodies exactly; the crash-recovery payload (`currentProjectText`, what autosave writes) restores the same geometry.                                                                                                                  | pass   | 17 features, 6 parameters, identical volumes; recovery payload 17 features, identical volumes                                                                                                   |
+| N1 Over-constrained sketch                  | A second, different length on an already dimensioned rectangle side is refused (`sketchConflict`, conflicting ids named, nothing committed); the History field refuses a collapsing value with a reason.                                                                                               | pass   | "Over-constrained — these constraints conflict: d3, d5."; UI: "d3 must be positive. The last valid sketch is kept."; same feature array and revision                                            |
+| N2 Invalid fillet / shell size              | R25 on a 20 mm box edge, 10 and 11 mm shell walls in a 10 mm tall box, R0: all refused before commit.                                                                                                                                                                                                  | pass   | `featureFailed` "Fillet failed: it fails on the highlighted edge…", "Shell failed: a 11 mm wall does not fit in this body; try a thinner wall"; R0 `invalidParams`; part untouched              |
+| N3 Hidden geometry (Select Through)         | On the real kernel mesh: without Select Through only the visible face is a candidate; with it the face behind is offered (ambiguous → the list asks), choosing it selects the hidden bottom face, and a shell opening that face succeeds.                                                              | pass   | Candidates "Face · Planar, 1200 mm²" / "… (behind)"; selection = bottom face key; shelled volume = hand calc                                                                                    |
+| N4 Edits before referenced features         | Widening the base sketch (step 1 of 6) under two fillets: the stable edge key is kept and the result matches the hand calculation; deleting the boss a fillet references gives a readable error on that fillet only (also in `features.list`); undo restores.                                          | pass   | 18 413.29 mm³ = hand calc (Pappus for the rim round); error: `Missing reference: edge "…" on "Plate"`                                                                                           |
+| E1 Home → template (Electron)               | Production app starts on the Home screen; the "Enclosure with lid" card builds the template; the agent endpoint reads it.                                                                                                                                                                              | pass   | 2 valid bodies, same volumes as A1, 17 features, `canUndo` false (clean baseline); `h-electron-template.png`                                                                                    |
+| E2 Hand-over (Electron)                     | Agent (loopback JSON-RPC) creates a plate; the user edits the width in the History panel's dimension field; the agent reads the new volume.                                                                                                                                                            | pass   | d3 40 → 60 typed in the UI; agent reads 18 000 mm³                                                                                                                                              |
+| E3 Select Through (Electron)                | Ctrl+Shift+S, click on the plate: the "Select from overlapping items" list offers the face behind; choosing it selects that hidden face.                                                                                                                                                               | pass   | Rows "Face · Planar, 1800 mm² / Plate" and "… / Plate · behind"; selection ≠ the visible top face; `h-electron-select-through.png`                                                              |
+| E4 Kernel worker killed mid-edit (Electron) | A width edit is committed and an uncaught error is thrown inside the OCCT worker right away: the adapter restarts the worker and re-runs the evaluation; the edit is not lost.                                                                                                                         | pass   | New worker instance, kernel `ready`, volume 21 000 mm³ (70 × 30 × 10), body valid                                                                                                               |
+| E5 Save, app killed, recovery (Electron)    | Ctrl+S (dialog stubbed) writes the `.hcasm` with a thumbnail; File › Home lists it with the preview; an unsaved edit is autosaved; the app's whole process tree is killed (`taskkill /T /F`); the next start shows the recovery offer on Home; Recover restores the document.                          | pass   | Thumbnail 18 462 chars saved and shown; recovered 24 000 mm³ (the unsaved 80 mm width), 2 features, project "Hand-over"; `h-electron-home-recent.png`, `h-electron-recovery.png`                |
+
+## Defects the suite found (fixed in the same branch)
+
+- **Shell walls that do not fit** silently returned the solid unchanged (wall
+  > half the part: a "valid" unshelled body) or an invalid, empty one (walls
+  > meeting in the middle: volume 0 in the UI) — no error. Now refused:
+  > "Shell failed: a N mm wall does not fit in this body" (N2; regression test
+  > in `test/print/analysis.test.ts`).
+- **Headless `project.save`/`project.open` dropped document parameters**, so a
+  parametric part saved from the CLI or Python reopened with every formula
+  unresolvable (S1; regression test in `test/api/session.test.ts`).
+
+## Limits (stated honestly)
+
+- **No physical print.** "Export im Slicer maßhaltig" / "reale
+  Druckteil-Abnahme" (PLAN §6) is not automated: the 3MF/STL are validated
+  structurally and geometrically, not sliced or printed. The lip clearance is
+  a CAD distance, not a measured fit.
+- **Electron checks are one long scenario** (E1–E5 share one app session so
+  the recovery case has real history); a failure early hides later steps.
+  They drive the UI by DOM roles/labels and the canvas centre, not by
+  pixel-exact geometry anchors (the DEV hook is absent from production).
+- **E4 simulates the crash** with an uncaught error inside the worker (the
+  same `onerror` path as a wasm abort or out-of-memory), not an actual OCCT
+  abort; E5 kills the process tree (like End task), not an OS crash.
+- **N3 headless** checks the candidate logic on the real kernel mesh with a
+  constructed ray; the viewport's picking itself is covered by E3 only for
+  one view of one part.
+- **Select Through with several bodies**, sketch-profile candidates and edge
+  candidates are not part of these cases (unit tests cover the logic).
+- The templates' hand calculations assume the default parameters; the
+  parametric change in A1 is checked by bounding boxes, not volumes.
+- The suite runs on the Windows host only so far (it needs the built
+  Electron app and a display); runtime ≈ 66 s including the build.
