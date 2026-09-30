@@ -75,8 +75,21 @@ of view, camera animation, single-key hotkeys.
   reduced motion or turned off.
 - Zoom to selection `Z`; Look at face = pointer over a face + Space (or one
   selected planar face) — Shapr3D's mapping; `F` stays Fillet.
-- Saved views: up to 8 (View menu, cube menu, command search), saved in the
-  project; restoring keeps the Settings projection.
+- Saved views: up to 8 (View menu, cube menu, command search; the used count
+  is shown), saved in the project with the Section View state (on/off, axis
+  or face plane, offset, flip, Section only — Shapr3D 26.30/26.80); restoring
+  applies the section and keeps the Settings projection. Views saved by older
+  builds restore the camera only. "Nearest ortho view" snaps to the closest
+  world axis direction.
+- Grid resolution (2026-09-30): follows the zoom in a 1-2-5 series (minor
+  lines ≥ 14 px apart) and is shown next to the magnet in the right dock;
+  clicking it locks the current step (Shapr3D's unit icon). Sketch snapping
+  and the sketch grid use the same step. `.hcasm` stores `grid.auto`;
+  projects without it reopen locked at their stored step.
+- Snapping popover (magnet): Grid, Points, Midpoints, Guidelines, On curves,
+  Auto-constrain (inferred H/V/perpendicular/parallel; point connections
+  stay) and Show snap hints. Grid snapping is project view state, the other
+  switches are preferences.
 - Navigation presets (`viewport/navigation.ts`, data): Shapr3D (right drag
   orbit, middle / Shift+right pan), Fusion 360 style (Shift+middle orbit,
   middle pan), SolidWorks style (middle orbit, Ctrl+middle pan). Wheel zoom in
@@ -91,6 +104,12 @@ of view, camera animation, single-key hotkeys.
   Sketches), inline rename (double-click or F2), colour swatch, "Show hidden
   items", "Invert visibility", "Reveal in Items" (context menu) scrolls to and
   outlines the row.
+- Items rows also have Zoom to (frames the item without selecting it); a
+  Meshes filter appears once the project has a reference mesh.
+- History card settings (Shapr3D): Rename, Suppress (Del on a focused card),
+  Breakpoint after this step / Remove breakpoint (the rollback marker below),
+  Zoom to, Duplicate (a copy right after the step, one undo step), Move
+  up/down, Delete (Shift+Del); the header expands/collapses all cards.
 - History: filter to the selection's steps (their creators, the steps that
   reference the selected bodies, and their dependencies —
   `model/historyTools.ts`); rollback marker (drag the bar, or "Roll back to
@@ -115,6 +134,12 @@ of view, camera animation, single-key hotkeys.
 - Hold Ctrl (0.7 s) or press `?`: cheat sheet generated from the command
   registry plus the active preset's gestures. Single-key hotkeys off: typing a
   letter opens command search with it.
+- Settings › Keyboard: every registry command can get another shortcut (press
+  the new keys; a key used by another command in the same sketch/model
+  context, or by the shell itself — Esc, Enter, Tab, Space, X, Ctrl+F, ?,
+  panel keys — is refused with the reason). Overrides are preferences and
+  are written onto the registry, so menus, search and the cheat sheet show
+  them. Settings › Selection extension: every click adds to the selection.
 - Touch: one finger orbits, two fingers pan and pinch-zoom, tap selects (taps
   add up, like Shapr3D), double tap selects the body, long press opens the
   context menu, long press + drag draws a selection box. Coarse pointers get

@@ -100,6 +100,7 @@ runs edit its references; clicking empty space finishes:
 | Pattern                      | bodies (+ an edge as direction/axis)                 | Linear/Circular, X/Y/Z, spacing arrow or angle arc, count chip                                                                                                                                                                         |
 | Split Body                   | one body (+ a planar face)                           | plane YZ/XZ/XY/face with offset arrow                                                                                                                                                                                                  |
 | Align                        | a face on the moving body, then a face on the target | Face to face / Same direction, Centred / Keep position, gap arrow                                                                                                                                                                      |
+| Rotate Around Axis           | bodies (or a face of one) + an edge as the axis      | angle arc, Rotate/Copy, axis X/Y/Z/edge; click an edge or sketch line for the axis, bodies to add/remove; suggested for an edge + face (Shapr3D)                                                                                       |
 | Offset Face                  | faces of one body (recommended for curved faces)     | distance arrow (negative removes material, e.g. enlarges a hole); printing clearance presets −0.1/−0.2/−0.3/−0.4 mm                                                                                                                    |
 | Delete Face (`Del` on faces) | faces of one body                                    | — (holes, fillets and chamfers between planar faces)                                                                                                                                                                                   |
 | Hole                         | a planar face, or a sketch with points/circles       | click the face to add a hole where clicked, click a hole to remove it; Simple/Counterbore/Countersink, Through all/Blind (depth arrow), size M2–M10 + ISO clearance/tap-drill or printed fit menu, Ø/head chips, cosmetic thread label |
@@ -143,6 +144,31 @@ validated reordering, the shortcut sheet (hold Ctrl or `?`), Settings
 (`Ctrl+,`) and touch/pen gestures. Decisions (e.g. names/folders are item
 properties, colour is a `setAppearance` step) and limits:
 `assembler/SELECTION-NAVIGATION.md`.
+
+## Shapr3D parity (gap inventory)
+
+`assembler/GAP-INVENTORY.md` lists every documented Shapr3D behaviour with
+its status here, evidence and effort, and a weighted parity estimate; update
+the rows when a behaviour changes. Behaviours added from it (2026-09-30):
+
+- **Adaptive toolbar** (`registry.ts` `resolveAdaptive`): only actions for the
+  selection; face → Offset Face (then Extrude), two faces of two bodies →
+  Align, edge + face/body → Rotate Around Axis, profile + edge → Revolve; the
+  bar fills the window height and shows More only for what does not fit
+  (`chrome/adaptiveLayout.ts`).
+- **Command search**: exact > prefix > word > abbreviation ("p3", "nsxy") >
+  subsequence; with a selection only valid actions (plus strong name matches
+  with their reason).
+- **Empty-space click = Done** for Fillet/Chamfer, Shell, Booleans and the
+  feature tools, said in the tool pill (`model/toolFinish.ts`).
+- **History card**: Breakpoint after this step, Zoom to, Duplicate, expand/
+  collapse all; focused card: Del suppresses, Shift+Del deletes.
+- **Snapping** (right dock magnet): Grid, Points, Midpoints, Guidelines, On
+  curves, Auto-constrain, Show snap hints; the grid resolution follows the
+  zoom (read-out + lock, `model/gridResolution.ts`).
+- **Settings**: custom shortcuts (`commands/shortcutOverrides.ts`), Selection
+  extension. Saved views keep the section state; Nearest ortho view; quick
+  measurement in the status strip.
 
 ## 3D printing (Print mode, build plate, exports, slicer handoff)
 
@@ -314,6 +340,7 @@ viewport, directly usable with `page.mouse`.
 | `viewportStats(finish?)`          | Renderer counters: frames drawn (idle check), last frame CPU ms, uploads, draw calls, AO/shadow state; `finish` syncs the GPU after each frame.                                                                                      |
 | `viewportBenchmark(frames)`       | Mean ms per frame over `frames` back-to-back renders while orbiting (scene build + GPU, no vsync).                                                                                                                                   |
 | `measureStore`                    | Measure panel state: pins, picked points, Points tool.                                                                                                                                                                               |
+| `commands`                        | The command registry as the UI sees it: `list()`, `adaptive()` (order + recommendation for the selection), `search(query)`, `run(id)` (`D:\AgentWork\HimmelCAD-Assembler\shots\g-probe.mjs`, `g-shots.mjs`).                         |
 | `projectStore`                    | Project file state: `newFromTemplate(id)`, `requestTemplate`, `checkRecovery`/`restoreRecovery`, `dirty`, `busyMessage`; Home is `workspaceStore.setHomeOpen` (`D:\AgentWork\HimmelCAD-Assembler\shots\h-shots.mjs`).                |
 
 The view cube's cells carry `data-cell="<face>:<i>:<j>"` (e.g. `front:1:1` =
