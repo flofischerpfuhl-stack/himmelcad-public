@@ -4,6 +4,7 @@
  * the drawing tools, the demo document, the v1 → v2 project migration and
  * tests. Pure functions returning new {@link SketchData}.
  */
+import { naturalHandles } from './spline.js';
 import {
   idAllocator,
   nextDimensionName,
@@ -167,6 +168,155 @@ export function addPolyline(
     pointIds,
     lineIds,
   };
+}
+
+/**
+ * Adds an ellipse (centre, major-axis end, minor-axis end points). `rx` is
+ * the radius along `angle` (degrees), `ry` perpendicular to it. With
+ * `arc: [start°, end°]` (parametric angles, counter-clockwise) an
+ * elliptical arc is added instead.
+ */
+export function addEllipse(
+  sketch: SketchData,
+  center: Vec2,
+  rx: number,
+  ry: number,
+  angle = 0,
+  options: BuildOptions & { arc?: [number, number] } = {},
+): { sketch: SketchData; entityId: string; pointIds: string[] } {
+  const alloc = idAllocator(sketch);
+  const a = (angle * Math.PI) / 180;
+  const u: Vec2 = [Math.cos(a), Math.sin(a)];
+  const v: Vec2 = [-u[1], u[0]];
+  const at = (theta: number): Vec2 => [
+    center[0] + u[0] * rx * Math.cos(theta) + v[0] * ry * Math.sin(theta),
+    center[1] + u[1] * rx * Math.cos(theta) + v[1] * ry * Math.sin(theta),
+  ];
+  const ids = { c: alloc('p'), m: alloc('p'), n: alloc('p') };
+  const entities: SketchEntity[] = [
+    { id: ids.c, kind: 'point', x: center[0], y: center[1] },
+    { id: ids.m, kind: 'point', x: at(0)[0], y: at(0)[1] },
+    { id: ids.n, kind: 'point', x: at(Math.PI / 2)[0], y: at(Math.PI / 2)[1] },
+  ];
+  const construction = options.construction ? { construction: true } : {};
+  let entityId: string;
+  const pointIds = [ids.c, ids.m, ids.n];
+  if (options.arc) {
+    const s = alloc('p');
+    const e = alloc('p');
+    const ps = at((options.arc[0] * Math.PI) / 180);
+    const pe = at((options.arc[1] * Math.PI) / 180);
+    entities.push(
+      { id: s, kind: 'point', x: ps[0], y: ps[1] },
+      { id: e, kind: 'point', x: pe[0], y: pe[1] },
+    );
+    entityId = alloc('ea');
+    entities.push({
+      id: entityId,
+      kind: 'ellipticArc',
+      center: ids.c,
+      major: ids.m,
+      minor: ids.n,
+      start: s,
+      end: e,
+      ...construction,
+    });
+    pointIds.push(s, e);
+  } else {
+    entityId = alloc('e');
+    entities.push({
+      id: entityId,
+      kind: 'ellipse',
+      center: ids.c,
+      major: ids.m,
+      minor: ids.n,
+      ...construction,
+    });
+  }
+  return { sketch: { ...sketch, entities: [...sketch.entities, ...entities] }, entityId, pointIds };
+}
+
+/**
+ * Adds a spline through `points` (`fit`, with tangent handles unless
+ * `handles: false`) or with `points` as its control polygon (`control`).
+ * `endpoints` reuses existing point ids for the first/last point.
+ */
+export function addSpline(
+  sketch: SketchData,
+  points: readonly Vec2[],
+  options: BuildOptions & {
+    mode?: 'fit' | 'control';
+    handles?: boolean | [Vec2 | null, Vec2 | null];
+    endpoints?: [string | null, string | null];
+  } = {},
+): { sketch: SketchData; entityId: string; pointIds: string[]; handleIds: (string | null)[] } {
+  const alloc = idAllocator(sketch);
+  const mode = options.mode ?? 'fit';
+  const entities: SketchEntity[] = [];
+  const pointIds = points.map((p, i) => {
+    const reuse =
+      i === 0 ? options.endpoints?.[0] : i === points.length - 1 ? options.endpoints?.[1] : null;
+    if (reuse) return reuse;
+    const id = alloc('p');
+    entities.push({ id, kind: 'point', x: p[0], y: p[1] });
+    return id;
+  });
+  let handleIds: (string | null)[] = [];
+  if (mode === 'fit' && options.handles !== false) {
+    const given = Array.isArray(options.handles) ? options.handles : naturalHandles(points);
+    handleIds = [0, 1].map((k) => {
+      const h = given?.[k];
+      if (!h) return null;
+      const id = alloc('p');
+      entities.push({ id, kind: 'point', x: h[0], y: h[1] });
+      return id;
+    });
+  }
+  const entityId = alloc('s');
+  entities.push({
+    id: entityId,
+    kind: 'spline',
+    mode,
+    points: pointIds,
+    ...(mode === 'control' ? { degree: 3 } : {}),
+    ...(handleIds.length === 2
+      ? { handles: [handleIds[0]!, handleIds[1]!] as [string | null, string | null] }
+      : {}),
+    ...(options.construction ? { construction: true } : {}),
+  });
+  return {
+    sketch: { ...sketch, entities: [...sketch.entities, ...entities] },
+    entityId,
+    pointIds,
+    handleIds,
+  };
+}
+
+/** Adds a text entity (anchor point + stored outline). */
+export function addText(
+  sketch: SketchData,
+  anchor: Vec2,
+  text: { text: string; height: number; angle?: number; font: string; outline: string },
+  options: BuildOptions = {},
+): { sketch: SketchData; entityId: string; anchorId: string } {
+  const alloc = idAllocator(sketch);
+  const anchorId = alloc('p');
+  const entityId = alloc('t');
+  const entities: SketchEntity[] = [
+    { id: anchorId, kind: 'point', x: anchor[0], y: anchor[1] },
+    {
+      id: entityId,
+      kind: 'text',
+      anchor: anchorId,
+      text: text.text,
+      height: text.height,
+      angle: text.angle ?? 0,
+      font: text.font,
+      outline: text.outline,
+      ...(options.construction ? { construction: true } : {}),
+    },
+  ];
+  return { sketch: { ...sketch, entities: [...sketch.entities, ...entities] }, entityId, anchorId };
 }
 
 /** Appends constraints (ids allocated here). */

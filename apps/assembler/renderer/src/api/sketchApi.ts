@@ -15,12 +15,14 @@ import type { SketchFeature } from '../model/document.js';
 import { addCircle, addPolyline, addRectangle, withConstraints } from '../sketch/builders.js';
 import { deleteItems } from '../sketch/edits.js';
 import { isPlainNumber } from '../sketch/expressions.js';
+import { adoptProjectedEntities } from '../sketch/projection.js';
 import { detectRegions } from '../sketch/regions.js';
 import { describeProblem } from '../sketch/session.js';
 import { getSketchSolver } from '../sketch/solverProvider.js';
 import {
   idAllocator,
   nextDimensionName,
+  sketchDataOf as sketchDataOfFeature,
   type SketchConstraintKind,
   type SketchData,
   type SketchDimension,
@@ -47,11 +49,7 @@ export interface ShapeResult {
 }
 
 export function sketchDataOf(feature: SketchFeature): SketchData {
-  return {
-    entities: feature.entities,
-    constraints: feature.constraints,
-    dimensions: feature.dimensions,
-  };
+  return sketchDataOfFeature(feature);
 }
 
 const RECTANGLE_ROLES = ['x', 'y', 'width', 'height'];
@@ -298,7 +296,11 @@ export function describeRegions(
   sketch: SketchData,
   evaluated: EvaluatedSketch | undefined,
 ): Json[] {
-  return detectRegions(sketch).map((region) => {
+  // Projected geometry the kernel moved with its source counts as it was evaluated.
+  const current = evaluated?.projectedEntities
+    ? adoptProjectedEntities(sketch, evaluated.projectedEntities)
+    : sketch;
+  return detectRegions(current).map((region) => {
     const shown = evaluated?.profiles.find((p) => p.key === region.key);
     const boundary = [region.outer, ...region.holes].flatMap((loop) =>
       loop.pieces.map((piece) => piece.entityId),

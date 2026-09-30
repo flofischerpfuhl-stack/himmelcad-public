@@ -183,3 +183,57 @@
   stroke: var(--hc-geometry-prohibited);
   stroke-width: 2;
 }
+
+.projected {
+  stroke: var(--hc-accent-base);
+}
+
+.projectedFrozen {
+  stroke: var(--hc-warning);
+  stroke-dasharray: 2 4;
+}
+
+.controlPolygon {
+  fill: none;
+  stroke: var(--hc-fg-muted);
+  stroke-width: 1;
+  stroke-dasharray: 2 3;
+}
+
+.pointHandle {
+  fill: var(--hc-geometry-support);
+}
+
+.dimLineDriven {
+  stroke-dasharray: 4 3;
+}
+
+.dimDriven {
+  color: var(--hc-fg-muted);
+  font-style: italic;
+}
+
+.glyphDelete {
+  pointer-events: all;
+  cursor: pointer;
+}
+
+.glyphDeleteBox {
+  fill: var(--hc-error);
+  stroke: var(--hc-bg-void);
+  stroke-width: 1;
+}
+
+.glyphDeleteMark {
+  stroke: var(--hc-fg-on-accent);
+  stroke-width: 1.6;
+  stroke-linecap: round;
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}

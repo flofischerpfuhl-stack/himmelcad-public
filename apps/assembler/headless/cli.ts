@@ -29,6 +29,7 @@ import { AgentSession, HEADLESS_CAPABILITIES } from '../renderer/src/api/session
 import { useAssemblerStore } from '../renderer/src/model/store.js';
 import { setSketchSolverFactory } from '../renderer/src/sketch/solverProvider.js';
 import { createHeadlessKernel } from './nodeKernel.js';
+import { installHeadlessFonts } from './nodeFonts.js';
 import { createHeadlessSketchSolver } from './nodeSolver.js';
 
 function writeLine(value: unknown): void {
@@ -56,6 +57,8 @@ async function serve(): Promise<void> {
   store.getState().attachKernel(kernel);
   // Sketch writes re-solve with planeGCS in-process (loaded on first use).
   setSketchSolverFactory(createHeadlessSketchSolver);
+  // Sketch text reads the bundled font from node_modules (Inter, OFL-1.1).
+  installHeadlessFonts();
 
   const session = new AgentSession({
     store,

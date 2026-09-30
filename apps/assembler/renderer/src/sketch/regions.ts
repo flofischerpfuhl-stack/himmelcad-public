@@ -27,10 +27,12 @@ import {
   EPS,
   areaTerm,
   cross,
-  curvatureOf,
+  curvatureAt,
+  curveBox,
+  curveLength,
   dist,
   intersectCurves,
-  isFullCircle,
+  isClosedCurve,
   pointAt,
   pointInPolygon,
   sampleCurve,
@@ -43,7 +45,10 @@ import {
 } from './geometry.js';
 import type { SketchData, Vec2 } from './types.js';
 
-/** One oriented piece of a region boundary, part of the curve of `entityId`. */
+/**
+ * One oriented piece of a region boundary, part of the curve `entityId`
+ * (the sketch entity id; `<textId>.<n>` for a glyph contour of a text).
+ */
 export interface RegionPiece {
   entityId: string;
   /** Oriented in traversal order (arcs: negative sweep = clockwise). */
@@ -85,20 +90,24 @@ interface Piece {
 export function detectRegions(sketch: Pick<SketchData, 'entities'>): SketchRegion[] {
   const curves = sketchCurves(sketch);
   if (curves.length === 0) return [];
-  const extent = Math.max(
-    1,
-    ...curves.flatMap(({ curve }) =>
-      curve.kind === 'line'
-        ? [Math.abs(curve.a[0]), Math.abs(curve.a[1]), Math.abs(curve.b[0]), Math.abs(curve.b[1])]
-        : [Math.abs(curve.c[0]) + curve.r, Math.abs(curve.c[1]) + curve.r],
-    ),
-  );
+  const boxes = curves.map(({ curve }) => curveBox(curve));
+  const extent = Math.max(1, ...boxes.flatMap((b) => b.map(Math.abs)));
   const eps = EPS * extent;
 
   // 1. Split parameters per curve.
-  const params: number[][] = curves.map(({ curve }) => (isFullCircle(curve) ? [] : [0, 1]));
+  const params: number[][] = curves.map(({ curve }) => (isClosedCurve(curve) ? [] : [0, 1]));
   for (let i = 0; i < curves.length; i += 1) {
     for (let j = i + 1; j < curves.length; j += 1) {
+      const bi = boxes[i]!;
+      const bj = boxes[j]!;
+      if (
+        bi[0] > bj[2] + eps ||
+        bj[0] > bi[2] + eps ||
+        bi[1] > bj[3] + eps ||
+        bj[1] > bi[3] + eps
+      ) {
+        continue;
+      }
       for (const hit of intersectCurves(curves[i]!.curve, curves[j]!.curve, eps)) {
         params[i]!.push(hit.t1);
         params[j]!.push(hit.t2);
@@ -116,8 +125,8 @@ export function detectRegions(sketch: Pick<SketchData, 'entities'>): SketchRegio
   const pieces: Piece[] = [];
   const standaloneCircles: { entityId: string; curve: Curve2 }[] = [];
   curves.forEach(({ id, curve }, index) => {
-    const full = isFullCircle(curve);
-    const length = curve.kind === 'line' ? dist(curve.a, curve.b) : Math.abs(curve.sweep) * curve.r;
+    const full = isClosedCurve(curve);
+    const length = curveLength(curve);
     if (length < eps) return;
     const ts = [...params[index]!].sort((a, b) => a - b);
     const unique: number[] = [];
@@ -199,7 +208,7 @@ export function detectRegions(sketch: Pick<SketchData, 'entities'>): SketchRegio
       from: piece.v0,
       to: piece.v1,
       angle: Math.atan2(t0[1], t0[0]),
-      curvature: curvatureOf(piece.curve),
+      curvature: curvatureAt(piece.curve, 0),
     });
     halfEdges.push({
       piece,
@@ -207,7 +216,7 @@ export function detectRegions(sketch: Pick<SketchData, 'entities'>): SketchRegio
       from: piece.v1,
       to: piece.v0,
       angle: Math.atan2(-t1[1], -t1[0]),
-      curvature: -curvatureOf(piece.curve),
+      curvature: -curvatureAt(piece.curve, 1),
     });
   }
   const outgoing = new Map<number, number[]>();
@@ -325,8 +334,25 @@ export function detectRegions(sketch: Pick<SketchData, 'entities'>): SketchRegio
       ),
     };
   });
-  assignKeys(regions, sketch);
-  return regions.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+  // Text follows the font's fill rule: a counter (the inside of an "O") is not a profile.
+  const textPolygons = new Map<string, Vec2[][]>();
+  for (const c of curves) {
+    if (c.id === c.entityId) continue;
+    const list = textPolygons.get(c.entityId) ?? [];
+    list.push(sampleCurve(c.curve));
+    textPolygons.set(c.entityId, list);
+  }
+  const filled = regions.filter((region) => {
+    const owners = new Set(
+      region.outer.pieces.map((p) => (p.entityId.includes('.') ? p.entityId.split('.')[0]! : '')),
+    );
+    if (owners.size !== 1 || owners.has('')) return true;
+    const polygons = textPolygons.get([...owners][0]!) ?? [];
+    const inside = polygons.filter((poly) => pointInPolygon(region.sample, poly)).length;
+    return inside % 2 === 1;
+  });
+  assignKeys(filled, sketch);
+  return filled.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
 }
 
 function polygonOf(pieces: readonly RegionPiece[]): Vec2[] {

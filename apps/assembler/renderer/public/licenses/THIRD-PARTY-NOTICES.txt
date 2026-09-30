@@ -105,3 +105,7 @@ Other runtime components (bundled into the application code)
 - tiny-inflate 1.0.3 - MIT (tiny-inflate-MIT.txt)
 - string.prototype.codepointat 0.2.1 - MIT
   (string.prototype.codepointat-MIT.txt)
+- Inter 4.001 (font, Latin subset, from @fontsource/inter 5.3.0) - SIL Open
+  Font License 1.1 (Inter-OFL.txt) - Copyright 2016 The Inter Project
+  Authors, https://github.com/rsms/inter - used unmodified to turn sketch
+  text into glyph outlines

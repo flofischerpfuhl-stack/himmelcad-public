@@ -7,9 +7,10 @@
 import type { SketchFeature } from '../model/document.js';
 import { useAssemblerStore } from '../model/store.js';
 import { isPlainNumber } from './expressions.js';
+import { rememberRegions } from './regionMemory.js';
 import { describeProblem } from './session.js';
 import { getSketchSolver } from './solverProvider.js';
-import type { SketchData } from './types.js';
+import { sketchDataOf, type SketchData } from './types.js';
 
 /**
  * Sets dimension `dimensionId` of sketch `featureId` to `input` (a number
@@ -27,6 +28,8 @@ export async function setSketchDimension(
   if (!feature) return `Sketch "${featureId}" not found`;
   const dimension = feature.dimensions.find((d) => d.id === dimensionId);
   if (!dimension) return `Dimension "${dimensionId}" not found`;
+  if (dimension.driven)
+    return `${dimension.name} is a reference dimension; it follows the geometry`;
   const text = typeof input === 'number' ? String(input) : input.trim();
   if (text === '') return 'Enter a value';
   const plain = isPlainNumber(text);
@@ -34,16 +37,18 @@ export async function setSketchDimension(
   const next = plain
     ? { ...rest, value: Number(text.replace(',', '.').replace(/\s*(mm|°|deg)\s*$/i, '')) }
     : { ...rest, expression: text };
+  const base = sketchDataOf(feature);
   const sketch: SketchData = {
-    entities: feature.entities,
-    constraints: feature.constraints,
-    dimensions: feature.dimensions.map((d) => (d.id === dimensionId ? next : d)),
+    ...base,
+    dimensions: base.dimensions.map((d) => (d.id === dimensionId ? next : d)),
   };
   const result = await getSketchSolver().solve({ sketch });
   if (result.status !== 'ok') return describeProblem(result, sketch).message;
   // The document may have changed while solving: apply only onto the same sketch.
   const current = useAssemblerStore.getState().features.find((f) => f.id === featureId);
   if (current !== feature) return 'The sketch changed meanwhile; try again';
-  useAssemblerStore.getState().editFeatureParams(featureId, { ...result.sketch });
+  useAssemblerStore
+    .getState()
+    .editFeatureParams(featureId, { ...rememberRegions(result.sketch, base) });
   return null;
 }

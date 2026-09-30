@@ -158,6 +158,50 @@ class ModelingLayerTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.doc.fillet(edges.filter(curve="ellipse"), 1)
 
+    def test_advanced_sketch_geometry_is_one_canonical_command_each(self) -> None:
+        canned = {
+            "sketch.addSpline": {"entityId": "s1", "pointIds": ["p1", "p2"], "handleIds": ["p3", "p4"]},
+            "sketch.addEllipse": {"entityId": "e1"},
+            "sketch.addSlot": {"curveIds": ["l1", "a1", "l2", "a2"]},
+            "sketch.addPolygon": {"lineIds": ["l3", "l4", "l5"]},
+            "sketch.addText": {"entityId": "t1", "missingCharacters": []},
+            "sketch.mirror": {"createdIds": ["l9"]},
+            "sketch.pattern": {"createdIds": ["c2", "c3"]},
+            "sketch.roundCorner": {"createdIds": ["a3"]},
+            "sketch.project": {"entityIds": ["l10"]},
+        }
+        original = self.transport.request
+
+        def request(method: str, params: Mapping[str, Any]) -> Any:
+            result = original(method, params)
+            return canned.get(method, result)
+
+        self.transport.request = request  # type: ignore[method-assign]
+        s = self.doc.sketch("XY")
+        self.assertEqual(s.spline([(0, 0), (10, 5), (20, 0)]), "s1")
+        self.assertEqual(s.ellipse(10, 4, angle=30), "e1")
+        self.assertEqual(len(s.slot_between((0, 0), (30, 0), 8)), 4)
+        self.assertEqual(s.polygon(10, 3, inscribed=False), ["l3", "l4", "l5"])
+        self.assertEqual(s.text("Hi", 5), "t1")
+        self.assertEqual(s.mirror(["l3"], "l1"), ["l9"])
+        self.assertEqual(s.pattern(["c1"], 3, spacing=10), ["c2", "c3"])
+        self.assertEqual(s.fillet_corner("p5", 2), ["a3"])
+        from himmelcad.assembler import Face
+
+        self.assertEqual(s.project(Face("body:b", "x:end:0", "top", "plane", (0, 0, 1), (0, 0, 6), 1.0)), ["l10"])
+        s.set_reference("d1")
+        self.assertEqual(
+            self.transport.methods,
+            ["feature.create", "sketch.addSpline", "sketch.addEllipse", "sketch.addSlot", "sketch.addPolygon", "sketch.addText", "sketch.mirror", "sketch.pattern", "sketch.roundCorner", "sketch.project", "sketch.setReference"],
+        )
+        polygon = self.transport.requests[5][1]
+        self.assertEqual(polygon["inscribed"], False)
+        project = self.transport.requests[10][1]
+        self.assertEqual(project["face"], {"bodyId": "body:b", "key": "x:end:0"})
+        self.assertNotIn("edge", project)
+        with self.assertRaises(ValueError):
+            s.pattern(["c1"], 3)
+
     def test_exports_are_written_by_the_client(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = self.doc.export_3mf(Path(tmp) / "out" / "part.3mf")
@@ -275,6 +319,32 @@ class HeadlessIntegrationTests(unittest.TestCase):
             body = doc.extrude(s, 5)
             s.edit_profile(1, radius=6)
             self.assertEqual(body.bbox.max[0], 56.0)
+
+    def test_advanced_sketch_geometry_extrudes(self) -> None:
+        import math
+
+        with Document(AssemblerClient(StdioTransport())) as doc:
+            s = doc.sketch("XY")
+            s.slot_between((0, 0), (30, 0), 8)
+            slot = doc.extrude(s, 2)
+            self.assertTrue(slot.valid)
+            self.assertAlmostEqual(slot.volume, (30 * 8 + math.pi * 16) * 2, places=4)
+            # A true slot is one profile.
+            self.assertEqual(len(s.regions()), 1)
+            label = doc.sketch("XY", 1.0)
+            label.text("OK", 4, position=(2, -2))
+            self.assertEqual(len(label.regions()), 2, "one region per glyph, counters open")
+            doc.cut(label, 1)  # engraved 1 mm deep into the top
+            self.assertTrue(slot.valid)
+            self.assertLess(slot.volume, (30 * 8 + math.pi * 16) * 2)
+            # A projection follows its source.
+            top = doc.sketch("XY", 10.0)
+            top.project(slot.face("<Z"), construction=False)
+            area = lambda: top.regions()[0]["area"]  # noqa: E731
+            self.assertAlmostEqual(area(), 30 * 8 + math.pi * 16, places=3)
+            s.set_dimension("d2", 10)  # slot width
+            self.assertAlmostEqual(area(), 30 * 10 + math.pi * 25, places=3)
+            self.assertEqual(doc.errors(), {})
 
 
 if __name__ == "__main__":

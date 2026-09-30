@@ -50,7 +50,14 @@
       "type": "object",
       "properties": {
         "surface": {
-          "enum": ["plane", "cylinder", "cone", "sphere", "torus", "other"]
+          "enum": [
+            "plane",
+            "cylinder",
+            "cone",
+            "sphere",
+            "torus",
+            "other"
+          ]
         },
         "normal": {
           "anyOf": [
@@ -72,14 +79,25 @@
           "type": "number"
         }
       },
-      "required": ["surface", "normal", "centroid", "area", "adjacentFaces"],
+      "required": [
+        "surface",
+        "normal",
+        "centroid",
+        "area",
+        "adjacentFaces"
+      ],
       "additionalProperties": false
     },
     "EdgeSignature": {
       "type": "object",
       "properties": {
         "curve": {
-          "enum": ["line", "circle", "ellipse", "other"]
+          "enum": [
+            "line",
+            "circle",
+            "ellipse",
+            "other"
+          ]
         },
         "midpoint": {
           "$ref": "#/$defs/Vec3"
@@ -98,7 +116,12 @@
           ]
         }
       },
-      "required": ["curve", "midpoint", "length", "direction"],
+      "required": [
+        "curve",
+        "midpoint",
+        "length",
+        "direction"
+      ],
       "additionalProperties": false
     },
     "FaceRef": {
@@ -116,7 +139,10 @@
           "$ref": "#/$defs/FaceSignature"
         }
       },
-      "required": ["bodyId", "key"],
+      "required": [
+        "bodyId",
+        "key"
+      ],
       "additionalProperties": false,
       "description": "Stable face reference. `signature` is optional on input; the server fills it from the current evaluation."
     },
@@ -135,7 +161,10 @@
           "$ref": "#/$defs/EdgeSignature"
         }
       },
-      "required": ["bodyId", "key"],
+      "required": [
+        "bodyId",
+        "key"
+      ],
       "additionalProperties": false,
       "description": "Stable edge reference (`key` is \"<faceKeyA>|<faceKeyB>\"). `signature` is optional on input."
     },
@@ -152,7 +181,10 @@
           "description": "CadQuery-style selector: \"+Z\"/\"-X\" (planar faces facing / lines along), \"|Z\" (parallel), \"#Z\" (perpendicular), \">Z\"/\"<Z\" (max/min along axis), \"%PLANE\", \"%CYLINDER\", \"%LINE\", \"%CIRCLE\"; combine with \" and \"."
         }
       },
-      "required": ["bodyId", "select"],
+      "required": [
+        "bodyId",
+        "select"
+      ],
       "additionalProperties": false
     },
     "FaceInput": {
@@ -205,7 +237,13 @@
               "type": "number"
             }
           },
-          "required": ["kind", "x", "y", "width", "height"],
+          "required": [
+            "kind",
+            "x",
+            "y",
+            "width",
+            "height"
+          ],
           "additionalProperties": false,
           "description": "Axis-aligned rectangle in sketch (u, v) coordinates; (x, y) is a corner. Dimension roles: x, y, width, height."
         },
@@ -226,7 +264,12 @@
               "exclusiveMinimum": 0
             }
           },
-          "required": ["kind", "cx", "cy", "radius"],
+          "required": [
+            "kind",
+            "cx",
+            "cy",
+            "radius"
+          ],
           "additionalProperties": false,
           "description": "Circle. Dimension roles: cx, cy, diameter."
         }
@@ -255,7 +298,12 @@
               "type": "boolean"
             }
           },
-          "required": ["id", "kind", "x", "y"],
+          "required": [
+            "id",
+            "kind",
+            "x",
+            "y"
+          ],
           "additionalProperties": false
         },
         {
@@ -280,7 +328,12 @@
               "type": "boolean"
             }
           },
-          "required": ["id", "kind", "a", "b"],
+          "required": [
+            "id",
+            "kind",
+            "a",
+            "b"
+          ],
           "additionalProperties": false
         },
         {
@@ -305,7 +358,12 @@
               "type": "boolean"
             }
           },
-          "required": ["id", "kind", "center", "radius"],
+          "required": [
+            "id",
+            "kind",
+            "center",
+            "radius"
+          ],
           "additionalProperties": false
         },
         {
@@ -334,9 +392,208 @@
               "type": "boolean"
             }
           },
-          "required": ["id", "kind", "center", "start", "end"],
+          "required": [
+            "id",
+            "kind",
+            "center",
+            "start",
+            "end"
+          ],
           "additionalProperties": false,
           "description": "Counter-clockwise from start to end around center."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "kind": {
+              "const": "ellipse"
+            },
+            "center": {
+              "type": "string",
+              "minLength": 1
+            },
+            "major": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minor": {
+              "type": "string",
+              "minLength": 1
+            },
+            "construction": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "id",
+            "kind",
+            "center",
+            "major",
+            "minor"
+          ],
+          "additionalProperties": false,
+          "description": "Ellipse by its centre and the end points of its major and minor axis (the minor point is kept perpendicular; minor radius ≤ major radius)."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "kind": {
+              "const": "ellipticArc"
+            },
+            "center": {
+              "type": "string",
+              "minLength": 1
+            },
+            "major": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minor": {
+              "type": "string",
+              "minLength": 1
+            },
+            "start": {
+              "type": "string",
+              "minLength": 1
+            },
+            "end": {
+              "type": "string",
+              "minLength": 1
+            },
+            "construction": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "id",
+            "kind",
+            "center",
+            "major",
+            "minor",
+            "start",
+            "end"
+          ],
+          "additionalProperties": false,
+          "description": "Elliptical arc, counter-clockwise from start to end on the ellipse (centre, major, minor)."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "kind": {
+              "const": "spline"
+            },
+            "mode": {
+              "enum": [
+                "fit",
+                "control"
+              ]
+            },
+            "points": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "minItems": 2
+            },
+            "degree": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "knots": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              }
+            },
+            "handles": {
+              "type": "array",
+              "items": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "minItems": 2,
+              "maxItems": 2
+            },
+            "construction": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "id",
+            "kind",
+            "mode",
+            "points"
+          ],
+          "additionalProperties": false,
+          "description": "Cubic spline: `fit` passes through `points` (C2, chord-length; `handles` = end tangent handles, the first/last Bézier control point); `control` uses `points` as the control polygon of a clamped B-spline (`knots` only after a split). The same point as first and last closes it."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "kind": {
+              "const": "text"
+            },
+            "anchor": {
+              "type": "string",
+              "minLength": 1
+            },
+            "text": {
+              "type": "string"
+            },
+            "height": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "angle": {
+              "type": "number"
+            },
+            "font": {
+              "type": "string",
+              "minLength": 1
+            },
+            "outline": {
+              "type": "string"
+            },
+            "construction": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "id",
+            "kind",
+            "anchor",
+            "text",
+            "height",
+            "angle",
+            "font",
+            "outline"
+          ],
+          "additionalProperties": false,
+          "description": "Text at `anchor` (baseline start): `height` is the cap height (mm), `angle` degrees; `outline` stores the glyph outlines (SVG path data, 1 = cap height) so the document needs no font. Each glyph is a profile (region keys \"<textId>.<n>\"). Create it with sketch.addText."
         }
       ]
     },
@@ -353,11 +610,20 @@
         "midpoint",
         "symmetric",
         "concentric",
-        "pointOnObject"
+        "pointOnObject",
+        "translate",
+        "rotate"
       ]
     },
     "SketchDimensionKind": {
-      "enum": ["distance", "horizontalDistance", "verticalDistance", "radius", "diameter", "angle"]
+      "enum": [
+        "distance",
+        "horizontalDistance",
+        "verticalDistance",
+        "radius",
+        "diameter",
+        "angle"
+      ]
     },
     "SketchConstraint": {
       "type": "object",
@@ -376,11 +642,18 @@
             "minLength": 1
           },
           "minItems": 1
+        },
+        "value": {
+          "type": "number"
         }
       },
-      "required": ["id", "kind", "refs"],
+      "required": [
+        "id",
+        "kind",
+        "refs"
+      ],
       "additionalProperties": false,
-      "description": "refs: coincident 2 points; horizontal/vertical 1 line or 2 points; parallel/perpendicular 2 lines; tangent 2 curves (one round); equal 2 lines or 2 round; fixed 1 point/curve; midpoint point + line; symmetric 2 points + line/point; concentric 2 round; pointOnObject point + curve."
+      "description": "refs: coincident 2 points; horizontal/vertical 1 line or 2 points; parallel/perpendicular 2 lines; tangent 2 curves (one round, or line+ellipse, or a spline and a line/arc/spline sharing an end point); equal 2 lines or 2 round; fixed 1 point/curve; midpoint point + line; symmetric 2 points + line/point; concentric 2 round/elliptic; pointOnObject point + line/circle/arc/ellipse; translate points p, q, a, b (q − p = b − a, linear pattern); rotate points p, q, c with `value` degrees (circular pattern)."
     },
     "SketchDimension": {
       "type": "object",
@@ -413,11 +686,23 @@
         },
         "offset": {
           "type": "number"
+        },
+        "along": {
+          "type": "number"
+        },
+        "driven": {
+          "type": "boolean"
         }
       },
-      "required": ["id", "name", "kind", "refs", "value"],
+      "required": [
+        "id",
+        "name",
+        "kind",
+        "refs",
+        "value"
+      ],
       "additionalProperties": false,
-      "description": "Driving dimension (mm, angle in degrees). refs: distance 1 line / 2 points / point + line / 2 parallel lines; horizontal/verticalDistance 1 line or 2 points; radius/diameter 1 circle/arc; angle 2 lines. `expression` (e.g. \"d1 / 2 + 3\") uses names of other dimensions of the sketch."
+      "description": "Driving dimension (mm, angle in degrees); `driven: true` makes it a reference dimension that only measures (sketch.setReference). `offset`/`along` place the label. refs: distance 1 line / 2 points / point + line / 2 parallel lines; horizontal/verticalDistance 1 line or 2 points; radius/diameter 1 circle/arc; angle 2 lines. `expression` (e.g. \"d1 / 2 + 3\") uses names of other dimensions of the sketch."
     },
     "SketchPlane": {
       "oneOf": [
@@ -428,13 +713,20 @@
               "const": "plane"
             },
             "plane": {
-              "enum": ["XY", "XZ", "YZ"]
+              "enum": [
+                "XY",
+                "XZ",
+                "YZ"
+              ]
             },
             "offset": {
               "type": "number"
             }
           },
-          "required": ["kind", "plane"],
+          "required": [
+            "kind",
+            "plane"
+          ],
           "additionalProperties": false
         },
         {
@@ -447,7 +739,10 @@
               "$ref": "#/$defs/FaceInput"
             }
           },
-          "required": ["kind", "face"],
+          "required": [
+            "kind",
+            "face"
+          ],
           "additionalProperties": false
         }
       ]
@@ -473,7 +768,10 @@
               "minItems": 1
             }
           },
-          "required": ["kind", "featureId"],
+          "required": [
+            "kind",
+            "featureId"
+          ],
           "additionalProperties": false,
           "description": "Every closed region of the sketch (fused) unless `regions` lists region keys (sketches.list → regions[].key)."
         },
@@ -487,7 +785,10 @@
               "$ref": "#/$defs/FaceInput"
             }
           },
-          "required": ["kind", "face"],
+          "required": [
+            "kind",
+            "face"
+          ],
           "additionalProperties": false,
           "description": "Push/pull of a planar body face along its outward normal (Extrude); a planar face as profile (Revolve/Sweep/Loft)."
         }
@@ -502,13 +803,20 @@
               "const": "world"
             },
             "axis": {
-              "enum": ["X", "Y", "Z"]
+              "enum": [
+                "X",
+                "Y",
+                "Z"
+              ]
             },
             "origin": {
               "$ref": "#/$defs/Vec3"
             }
           },
-          "required": ["kind", "axis"],
+          "required": [
+            "kind",
+            "axis"
+          ],
           "additionalProperties": false,
           "description": "A world axis direction through `origin` (default the world origin)."
         },
@@ -522,7 +830,10 @@
               "$ref": "#/$defs/EdgeInput"
             }
           },
-          "required": ["kind", "edge"],
+          "required": [
+            "kind",
+            "edge"
+          ],
           "additionalProperties": false,
           "description": "A straight body edge, or the axis of a circular edge."
         },
@@ -541,7 +852,11 @@
               "minLength": 1
             }
           },
-          "required": ["kind", "featureId", "entityId"],
+          "required": [
+            "kind",
+            "featureId",
+            "entityId"
+          ],
           "additionalProperties": false,
           "description": "A sketch line by entity id (construction lines included), e.g. a revolve centre line."
         }
@@ -563,7 +878,10 @@
               "minItems": 1
             }
           },
-          "required": ["kind", "edges"],
+          "required": [
+            "kind",
+            "edges"
+          ],
           "additionalProperties": false,
           "description": "A connected chain of body edges."
         },
@@ -582,7 +900,11 @@
               "minLength": 1
             }
           },
-          "required": ["kind", "featureId", "region"],
+          "required": [
+            "kind",
+            "featureId",
+            "region"
+          ],
           "additionalProperties": false,
           "description": "The closed outer outline of a sketch region."
         },
@@ -599,7 +921,11 @@
               "$ref": "#/$defs/Vec3"
             }
           },
-          "required": ["kind", "start", "end"],
+          "required": [
+            "kind",
+            "start",
+            "end"
+          ],
           "additionalProperties": false,
           "description": "A straight world line."
         }
@@ -625,7 +951,12 @@
               "type": "number"
             }
           },
-          "required": ["kind", "direction", "count", "spacing"],
+          "required": [
+            "kind",
+            "direction",
+            "count",
+            "spacing"
+          ],
           "additionalProperties": false
         },
         {
@@ -648,7 +979,12 @@
               "maximum": 360
             }
           },
-          "required": ["kind", "axis", "count", "angle"],
+          "required": [
+            "kind",
+            "axis",
+            "count",
+            "angle"
+          ],
           "additionalProperties": false,
           "description": "`angle` is the total angle in degrees; 360 spreads the instances evenly."
         }
@@ -667,7 +1003,10 @@
               "minLength": 1
             }
           },
-          "required": ["kind", "bodyId"],
+          "required": [
+            "kind",
+            "bodyId"
+          ],
           "additionalProperties": false
         },
         {
@@ -685,7 +1024,11 @@
               "minLength": 1
             }
           },
-          "required": ["kind", "bodyId", "faceKey"],
+          "required": [
+            "kind",
+            "bodyId",
+            "faceKey"
+          ],
           "additionalProperties": false
         },
         {
@@ -703,7 +1046,11 @@
               "minLength": 1
             }
           },
-          "required": ["kind", "bodyId", "edgeKey"],
+          "required": [
+            "kind",
+            "bodyId",
+            "edgeKey"
+          ],
           "additionalProperties": false
         },
         {
@@ -721,7 +1068,10 @@
               "minLength": 1
             }
           },
-          "required": ["kind", "featureId"],
+          "required": [
+            "kind",
+            "featureId"
+          ],
           "additionalProperties": false,
           "description": "One region of a sketch (`regionKey`), or every region."
         },
@@ -736,7 +1086,10 @@
               "minLength": 1
             }
           },
-          "required": ["kind", "featureId"],
+          "required": [
+            "kind",
+            "featureId"
+          ],
           "additionalProperties": false
         }
       ]
@@ -770,6 +1123,20 @@
               "$ref": "#/$defs/SketchDimension"
             }
           },
+          "projections": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            },
+            "description": "Projected body geometry {id, source: {kind: \"edge\"|\"face\", ref}, entities}; created by sketch.project, re-derived from the source on every evaluation."
+          },
+          "regionMemory": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            },
+            "description": "Region fingerprints {key, sample, area, box} recorded on every write (geometric re-binding of redrawn profiles); maintained by the server."
+          },
           "profiles": {
             "type": "array",
             "items": {
@@ -778,7 +1145,9 @@
             "description": "Input-only shorthand, expanded into entities/constraints/dimensions."
           }
         },
-        "required": ["plane"],
+        "required": [
+          "plane"
+        ],
         "additionalProperties": false
       }
     },
@@ -799,7 +1168,11 @@
             "default": false
           },
           "operation": {
-            "enum": ["new", "join", "cut"],
+            "enum": [
+              "new",
+              "join",
+              "cut"
+            ],
             "default": "new"
           },
           "targetBodyId": {
@@ -811,7 +1184,10 @@
             "minLength": 1
           }
         },
-        "required": ["profile", "distance"],
+        "required": [
+          "profile",
+          "distance"
+        ],
         "additionalProperties": false
       }
     },
@@ -833,7 +1209,10 @@
             "exclusiveMinimum": 0
           }
         },
-        "required": ["edges", "radius"],
+        "required": [
+          "edges",
+          "radius"
+        ],
         "additionalProperties": false
       }
     },
@@ -855,7 +1234,10 @@
             "exclusiveMinimum": 0
           }
         },
-        "required": ["edges", "distance"],
+        "required": [
+          "edges",
+          "distance"
+        ],
         "additionalProperties": false
       }
     },
@@ -881,7 +1263,10 @@
             "exclusiveMinimum": 0
           }
         },
-        "required": ["faces", "thickness"],
+        "required": [
+          "faces",
+          "thickness"
+        ],
         "additionalProperties": false
       }
     },
@@ -892,7 +1277,11 @@
         "type": "object",
         "properties": {
           "operation": {
-            "enum": ["union", "subtract", "intersect"]
+            "enum": [
+              "union",
+              "subtract",
+              "intersect"
+            ]
           },
           "targetBodyId": {
             "type": "string",
@@ -907,7 +1296,11 @@
             "minItems": 1
           }
         },
-        "required": ["operation", "targetBodyId", "toolBodyIds"],
+        "required": [
+          "operation",
+          "targetBodyId",
+          "toolBodyIds"
+        ],
         "additionalProperties": false
       }
     },
@@ -931,7 +1324,9 @@
             "type": "number"
           }
         },
-        "required": ["bodyId"],
+        "required": [
+          "bodyId"
+        ],
         "additionalProperties": false,
         "description": "Missing components default to 0."
       }
@@ -951,7 +1346,10 @@
             "pattern": "^#[0-9a-fA-F]{6}$"
           }
         },
-        "required": ["bodyId", "color"],
+        "required": [
+          "bodyId",
+          "color"
+        ],
         "additionalProperties": false
       }
     },
@@ -970,7 +1368,10 @@
             "minLength": 1
           }
         },
-        "required": ["data", "fileName"],
+        "required": [
+          "data",
+          "fileName"
+        ],
         "additionalProperties": false
       }
     },
@@ -994,7 +1395,11 @@
             "description": "Degrees; 360 is a full revolution, negative turns the other way."
           },
           "operation": {
-            "enum": ["new", "join", "cut"],
+            "enum": [
+              "new",
+              "join",
+              "cut"
+            ],
             "default": "new",
             "description": "New body, or join/cut into `targetBodyId` (default: the most recently changed body)."
           },
@@ -1007,7 +1412,10 @@
             "minLength": 1
           }
         },
-        "required": ["profile", "axis"],
+        "required": [
+          "profile",
+          "axis"
+        ],
         "additionalProperties": false
       }
     },
@@ -1024,7 +1432,11 @@
             "$ref": "#/$defs/PathRef"
           },
           "operation": {
-            "enum": ["new", "join", "cut"],
+            "enum": [
+              "new",
+              "join",
+              "cut"
+            ],
             "default": "new",
             "description": "New body, or join/cut into `targetBodyId` (default: the most recently changed body)."
           },
@@ -1037,7 +1449,10 @@
             "minLength": 1
           }
         },
-        "required": ["profile", "path"],
+        "required": [
+          "profile",
+          "path"
+        ],
         "additionalProperties": false
       }
     },
@@ -1059,7 +1474,11 @@
             "default": false
           },
           "operation": {
-            "enum": ["new", "join", "cut"],
+            "enum": [
+              "new",
+              "join",
+              "cut"
+            ],
             "default": "new",
             "description": "New body, or join/cut into `targetBodyId` (default: the most recently changed body)."
           },
@@ -1072,7 +1491,9 @@
             "minLength": 1
           }
         },
-        "required": ["profiles"],
+        "required": [
+          "profiles"
+        ],
         "additionalProperties": false
       }
     },
@@ -1098,7 +1519,10 @@
             "default": true
           }
         },
-        "required": ["bodyIds", "plane"],
+        "required": [
+          "bodyIds",
+          "plane"
+        ],
         "additionalProperties": false
       }
     },
@@ -1120,7 +1544,10 @@
             "$ref": "#/$defs/PatternDefinition"
           }
         },
-        "required": ["bodyIds", "pattern"],
+        "required": [
+          "bodyIds",
+          "pattern"
+        ],
         "additionalProperties": false
       }
     },
@@ -1138,7 +1565,10 @@
             "$ref": "#/$defs/SketchPlane"
           }
         },
-        "required": ["bodyId", "plane"],
+        "required": [
+          "bodyId",
+          "plane"
+        ],
         "additionalProperties": false
       }
     },
@@ -1178,7 +1608,9 @@
             "default": false
           }
         },
-        "required": ["bodyId"],
+        "required": [
+          "bodyId"
+        ],
         "additionalProperties": false,
         "description": "Missing components default to 0, the pivot to the world origin."
       }
@@ -1212,7 +1644,10 @@
             "default": 0
           }
         },
-        "required": ["face", "target"],
+        "required": [
+          "face",
+          "target"
+        ],
         "additionalProperties": false
       }
     },
@@ -1233,7 +1668,10 @@
             "type": "number"
           }
         },
-        "required": ["faces", "distance"],
+        "required": [
+          "faces",
+          "distance"
+        ],
         "additionalProperties": false
       }
     },
@@ -1251,7 +1689,9 @@
             "minItems": 1
           }
         },
-        "required": ["faces"],
+        "required": [
+          "faces"
+        ],
         "additionalProperties": false
       }
     }
@@ -1311,7 +1751,11 @@
         "type": "object",
         "properties": {
           "scope": {
-            "enum": ["auto", "committed", "staged"],
+            "enum": [
+              "auto",
+              "committed",
+              "staged"
+            ],
             "default": "auto",
             "description": "`auto`: the open transaction's staged state if any, else the committed document."
           }
@@ -1333,12 +1777,18 @@
             "minLength": 1
           },
           "scope": {
-            "enum": ["auto", "committed", "staged"],
+            "enum": [
+              "auto",
+              "committed",
+              "staged"
+            ],
             "default": "auto",
             "description": "`auto`: the open transaction's staged state if any, else the committed document."
           }
         },
-        "required": ["featureId"],
+        "required": [
+          "featureId"
+        ],
         "additionalProperties": false
       },
       "result": "{id, name, kind, suppressed, params, error?, warning?}"
@@ -1351,7 +1801,11 @@
         "type": "object",
         "properties": {
           "scope": {
-            "enum": ["auto", "committed", "staged"],
+            "enum": [
+              "auto",
+              "committed",
+              "staged"
+            ],
             "default": "auto",
             "description": "`auto`: the open transaction's staged state if any, else the committed document."
           }
@@ -1373,12 +1827,18 @@
             "minLength": 1
           },
           "scope": {
-            "enum": ["auto", "committed", "staged"],
+            "enum": [
+              "auto",
+              "committed",
+              "staged"
+            ],
             "default": "auto",
             "description": "`auto`: the open transaction's staged state if any, else the committed document."
           }
         },
-        "required": ["bodyId"],
+        "required": [
+          "bodyId"
+        ],
         "additionalProperties": false
       },
       "result": "Same shape as a bodies.list entry."
@@ -1398,12 +1858,18 @@
             "type": "string"
           },
           "scope": {
-            "enum": ["auto", "committed", "staged"],
+            "enum": [
+              "auto",
+              "committed",
+              "staged"
+            ],
             "default": "auto",
             "description": "`auto`: the open transaction's staged state if any, else the committed document."
           }
         },
-        "required": ["bodyId"],
+        "required": [
+          "bodyId"
+        ],
         "additionalProperties": false
       },
       "result": "[{bodyId, key, aliases, name, surface, normal, centroid, area, adjacentFaces, edgeKeys}]"
@@ -1423,12 +1889,18 @@
             "type": "string"
           },
           "scope": {
-            "enum": ["auto", "committed", "staged"],
+            "enum": [
+              "auto",
+              "committed",
+              "staged"
+            ],
             "default": "auto",
             "description": "`auto`: the open transaction's staged state if any, else the committed document."
           }
         },
-        "required": ["bodyId"],
+        "required": [
+          "bodyId"
+        ],
         "additionalProperties": false
       },
       "result": "[{bodyId, key, name, curve, midpoint, length, direction, radius, faceKeys}]"
@@ -1441,7 +1913,11 @@
         "type": "object",
         "properties": {
           "scope": {
-            "enum": ["auto", "committed", "staged"],
+            "enum": [
+              "auto",
+              "committed",
+              "staged"
+            ],
             "default": "auto",
             "description": "`auto`: the open transaction's staged state if any, else the committed document."
           }
@@ -1477,7 +1953,9 @@
             }
           }
         },
-        "required": ["items"],
+        "required": [
+          "items"
+        ],
         "additionalProperties": false
       },
       "result": "{selection}"
@@ -1507,7 +1985,10 @@
             "description": "Optimistic concurrency: the command fails with `conflict` unless the document revision still equals this value."
           }
         },
-        "required": ["kind", "params"],
+        "required": [
+          "kind",
+          "params"
+        ],
         "additionalProperties": false
       },
       "result": "{featureId, name, kind, createdBodyIds, revision, committed, errors, warnings, bodies}"
@@ -1533,7 +2014,10 @@
             "description": "Optimistic concurrency: the command fails with `conflict` unless the document revision still equals this value."
           }
         },
-        "required": ["featureId", "params"],
+        "required": [
+          "featureId",
+          "params"
+        ],
         "additionalProperties": false
       },
       "result": "{featureId, revision, committed, errors, warnings, bodies}"
@@ -1556,7 +2040,9 @@
             "description": "Optimistic concurrency: the command fails with `conflict` unless the document revision still equals this value."
           }
         },
-        "required": ["featureId"],
+        "required": [
+          "featureId"
+        ],
         "additionalProperties": false
       },
       "result": "{featureId, revision, committed, errors}"
@@ -1582,7 +2068,10 @@
             "description": "Optimistic concurrency: the command fails with `conflict` unless the document revision still equals this value."
           }
         },
-        "required": ["featureId", "suppressed"],
+        "required": [
+          "featureId",
+          "suppressed"
+        ],
         "additionalProperties": false
       },
       "result": "{featureId, revision, committed, errors}"
@@ -1609,7 +2098,10 @@
             "description": "Optimistic concurrency: the command fails with `conflict` unless the document revision still equals this value."
           }
         },
-        "required": ["featureId", "name"],
+        "required": [
+          "featureId",
+          "name"
+        ],
         "additionalProperties": false
       },
       "result": "{featureId, revision, committed}"
@@ -1635,7 +2127,10 @@
             "description": "Optimistic concurrency: the command fails with `conflict` unless the document revision still equals this value."
           }
         },
-        "required": ["featureId", "profile"],
+        "required": [
+          "featureId",
+          "profile"
+        ],
         "additionalProperties": false
       },
       "result": "{featureId, shape: {kind, entityIds, dimensions: {role: name}}, dof, regions, revision, committed, errors}"
@@ -1677,7 +2172,10 @@
             "description": "Optimistic concurrency: the command fails with `conflict` unless the document revision still equals this value."
           }
         },
-        "required": ["featureId", "points"],
+        "required": [
+          "featureId",
+          "points"
+        ],
         "additionalProperties": false
       },
       "result": "{featureId, pointIds, lineIds, dof, regions, revision, committed, errors}"
@@ -1713,7 +2211,12 @@
             "description": "Optimistic concurrency: the command fails with `conflict` unless the document revision still equals this value."
           }
         },
-        "required": ["featureId", "center", "start", "end"],
+        "required": [
+          "featureId",
+          "center",
+          "start",
+          "end"
+        ],
         "additionalProperties": false
       },
       "result": "{featureId, entityIds: [center, start, end, arc], dof, regions, revision, committed}"
@@ -1747,7 +2250,11 @@
             "description": "Optimistic concurrency: the command fails with `conflict` unless the document revision still equals this value."
           }
         },
-        "required": ["featureId", "kind", "refs"],
+        "required": [
+          "featureId",
+          "kind",
+          "refs"
+        ],
         "additionalProperties": false
       },
       "result": "{featureId, constraintId, dof, regions, revision, committed}"
@@ -1793,14 +2300,22 @@
             "description": "Optimistic concurrency: the command fails with `conflict` unless the document revision still equals this value."
           }
         },
-        "required": ["featureId", "kind", "refs"],
+        "required": [
+          "featureId",
+          "kind",
+          "refs"
+        ],
         "additionalProperties": false,
         "anyOf": [
           {
-            "required": ["value"]
+            "required": [
+              "value"
+            ]
           },
           {
-            "required": ["expression"]
+            "required": [
+              "expression"
+            ]
           }
         ]
       },
@@ -1836,14 +2351,21 @@
             "description": "Optimistic concurrency: the command fails with `conflict` unless the document revision still equals this value."
           }
         },
-        "required": ["featureId", "dimension"],
+        "required": [
+          "featureId",
+          "dimension"
+        ],
         "additionalProperties": false,
         "anyOf": [
           {
-            "required": ["value"]
+            "required": [
+              "value"
+            ]
           },
           {
-            "required": ["expression"]
+            "required": [
+              "expression"
+            ]
           }
         ]
       },
@@ -1875,10 +2397,484 @@
             "description": "Optimistic concurrency: the command fails with `conflict` unless the document revision still equals this value."
           }
         },
-        "required": ["featureId", "ids"],
+        "required": [
+          "featureId",
+          "ids"
+        ],
         "additionalProperties": false
       },
       "result": "{featureId, dof, regions, revision, committed, errors}"
+    },
+    "sketch.addSpline": {
+      "kind": "command",
+      "capability": "document.write",
+      "transactional": true,
+      "summary": "Adds a spline: `fit` (default) passes through `points` with end tangent handles (constrain tangency with sketch.addConstraint \"tangent\" to a line/arc/spline sharing its end point); `control` uses `points` as control polygon. `closed` ends on the first point.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "featureId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "points": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/Vec2"
+            },
+            "minItems": 2
+          },
+          "mode": {
+            "enum": [
+              "fit",
+              "control"
+            ],
+            "default": "fit"
+          },
+          "closed": {
+            "type": "boolean",
+            "default": false
+          },
+          "construction": {
+            "type": "boolean",
+            "default": false
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Optimistic concurrency: the command fails with `conflict` unless the document revision still equals this value."
+          }
+        },
+        "required": [
+          "featureId",
+          "points"
+        ],
+        "additionalProperties": false
+      },
+      "result": "{featureId, entityId, pointIds, handleIds, dof, regions, revision, committed}"
+    },
+    "sketch.addEllipse": {
+      "kind": "command",
+      "capability": "document.write",
+      "transactional": true,
+      "summary": "Adds an ellipse (or, with `arc: [startDeg, endDeg]` parametric angles, an elliptical arc) at `center` with the major axis along `angle` degrees. `dimension: true` adds the two axis radii as dimensions.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "featureId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "center": {
+            "$ref": "#/$defs/Vec2"
+          },
+          "majorRadius": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "minorRadius": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "angle": {
+            "type": "number"
+          },
+          "arc": {
+            "$ref": "#/$defs/Vec2"
+          },
+          "dimension": {
+            "type": "boolean",
+            "default": false
+          },
+          "construction": {
+            "type": "boolean",
+            "default": false
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Optimistic concurrency: the command fails with `conflict` unless the document revision still equals this value."
+          }
+        },
+        "required": [
+          "featureId",
+          "center",
+          "majorRadius",
+          "minorRadius"
+        ],
+        "additionalProperties": false
+      },
+      "result": "{featureId, entityId, entityIds, dof, regions, revision, committed}"
+    },
+    "sketch.addSlot": {
+      "kind": "command",
+      "capability": "document.write",
+      "transactional": true,
+      "summary": "Adds a slot of `width` between the centres `start` and `end` (dimensioned centre distance and width unless `dimension: false`); with `arcCenter` an arc slot along the circle through `start` (counter-clockwise to the angle of `end`, `clockwise: true` the other way).",
+      "params": {
+        "type": "object",
+        "properties": {
+          "featureId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "start": {
+            "$ref": "#/$defs/Vec2"
+          },
+          "end": {
+            "$ref": "#/$defs/Vec2"
+          },
+          "width": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "arcCenter": {
+            "$ref": "#/$defs/Vec2"
+          },
+          "clockwise": {
+            "type": "boolean",
+            "default": false
+          },
+          "dimension": {
+            "type": "boolean",
+            "default": true
+          },
+          "construction": {
+            "type": "boolean",
+            "default": false
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Optimistic concurrency: the command fails with `conflict` unless the document revision still equals this value."
+          }
+        },
+        "required": [
+          "featureId",
+          "start",
+          "end",
+          "width"
+        ],
+        "additionalProperties": false
+      },
+      "result": "{featureId, curveIds, entityIds, dof, regions, revision, committed}"
+    },
+    "sketch.addPolygon": {
+      "kind": "command",
+      "capability": "document.write",
+      "transactional": true,
+      "summary": "Adds a regular polygon on a construction circle of `radius`: inscribed (vertices on the circle, default) or circumscribed (`inscribed: false`, edges tangent to it); `angle` turns the first vertex / edge midpoint.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "featureId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "center": {
+            "$ref": "#/$defs/Vec2"
+          },
+          "radius": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "sides": {
+            "type": "integer",
+            "minimum": 3,
+            "maximum": 64,
+            "default": 6
+          },
+          "inscribed": {
+            "type": "boolean",
+            "default": true
+          },
+          "angle": {
+            "type": "number"
+          },
+          "construction": {
+            "type": "boolean",
+            "default": false
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Optimistic concurrency: the command fails with `conflict` unless the document revision still equals this value."
+          }
+        },
+        "required": [
+          "featureId",
+          "center",
+          "radius"
+        ],
+        "additionalProperties": false
+      },
+      "result": "{featureId, lineIds, centerId, circleId, dof, regions, revision, committed}"
+    },
+    "sketch.addText": {
+      "kind": "command",
+      "capability": "document.write",
+      "transactional": true,
+      "summary": "Adds text (font Inter, SIL OFL 1.1) with its baseline starting at `position`: `height` is the cap height (mm), `angle` degrees. Every glyph becomes a closed profile (counters stay open) for extrude/emboss.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "featureId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1
+          },
+          "position": {
+            "$ref": "#/$defs/Vec2"
+          },
+          "height": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "angle": {
+            "type": "number"
+          },
+          "font": {
+            "enum": [
+              "inter"
+            ],
+            "default": "inter"
+          },
+          "construction": {
+            "type": "boolean",
+            "default": false
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Optimistic concurrency: the command fails with `conflict` unless the document revision still equals this value."
+          }
+        },
+        "required": [
+          "featureId",
+          "text",
+          "position",
+          "height"
+        ],
+        "additionalProperties": false
+      },
+      "result": "{featureId, entityId, anchorId, missingCharacters, dof, regions, revision, committed}"
+    },
+    "sketch.mirror": {
+      "kind": "command",
+      "capability": "document.write",
+      "transactional": true,
+      "summary": "Mirrors curves/points `ids` about the line `axis`; the copies are tied to the originals by symmetric constraints (they follow later edits).",
+      "params": {
+        "type": "object",
+        "properties": {
+          "featureId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
+          },
+          "axis": {
+            "type": "string",
+            "minLength": 1
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Optimistic concurrency: the command fails with `conflict` unless the document revision still equals this value."
+          }
+        },
+        "required": [
+          "featureId",
+          "ids",
+          "axis"
+        ],
+        "additionalProperties": false
+      },
+      "result": "{featureId, createdIds, dof, regions, revision, committed}"
+    },
+    "sketch.pattern": {
+      "kind": "command",
+      "capability": "document.write",
+      "transactional": true,
+      "summary": "Repeats curves/points `ids`: linear (`direction`, `spacing` — a spacing dimension drives every copy) or circular (`center`, `angle` total degrees, 360 = full turn); `count` includes the original.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "featureId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
+          },
+          "mode": {
+            "enum": [
+              "linear",
+              "circular"
+            ],
+            "default": "linear"
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 2,
+            "maximum": 200
+          },
+          "direction": {
+            "$ref": "#/$defs/Vec2"
+          },
+          "spacing": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "center": {
+            "$ref": "#/$defs/Vec2"
+          },
+          "centerPointId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "angle": {
+            "type": "number"
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Optimistic concurrency: the command fails with `conflict` unless the document revision still equals this value."
+          }
+        },
+        "required": [
+          "featureId",
+          "ids",
+          "count"
+        ],
+        "additionalProperties": false
+      },
+      "result": "{featureId, createdIds, dof, regions, revision, committed}"
+    },
+    "sketch.roundCorner": {
+      "kind": "command",
+      "capability": "document.write",
+      "transactional": true,
+      "summary": "Fillets (radius `size`) or chamfers (set-back `size`) the corner at point `point` between two lines; the corner point stays as a virtual sharp so dimensions to it survive.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "featureId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "point": {
+            "type": "string",
+            "minLength": 1
+          },
+          "size": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "mode": {
+            "enum": [
+              "fillet",
+              "chamfer"
+            ],
+            "default": "fillet"
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Optimistic concurrency: the command fails with `conflict` unless the document revision still equals this value."
+          }
+        },
+        "required": [
+          "featureId",
+          "point",
+          "size"
+        ],
+        "additionalProperties": false
+      },
+      "result": "{featureId, createdIds, dof, regions, revision, committed}"
+    },
+    "sketch.project": {
+      "kind": "command",
+      "capability": "document.write",
+      "transactional": true,
+      "summary": "Projects a body `edge` or the boundary of a `face` into the sketch along its normal (construction unless `construction: false`). Associative: the projected geometry follows the source on re-evaluation; a lost source keeps it frozen with a warning.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "featureId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "edge": {
+            "$ref": "#/$defs/EdgeInput"
+          },
+          "face": {
+            "$ref": "#/$defs/FaceInput"
+          },
+          "construction": {
+            "type": "boolean",
+            "default": true
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Optimistic concurrency: the command fails with `conflict` unless the document revision still equals this value."
+          }
+        },
+        "required": [
+          "featureId"
+        ],
+        "additionalProperties": false
+      },
+      "result": "{featureId, projectionId, entityIds, dof, regions, revision, committed}"
+    },
+    "sketch.setReference": {
+      "kind": "command",
+      "capability": "document.write",
+      "transactional": true,
+      "summary": "Makes a dimension (by id or name) a reference (driven) dimension that only measures, or driving again with `reference: false`.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "featureId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "dimension": {
+            "type": "string",
+            "minLength": 1
+          },
+          "reference": {
+            "type": "boolean",
+            "default": true
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Optimistic concurrency: the command fails with `conflict` unless the document revision still equals this value."
+          }
+        },
+        "required": [
+          "featureId",
+          "dimension"
+        ],
+        "additionalProperties": false
+      },
+      "result": "{featureId, dimensionId, name, reference, dof, regions, revision, committed}"
     },
     "transaction.begin": {
       "kind": "command",
@@ -2087,10 +3083,15 @@
         "additionalProperties": false,
         "anyOf": [
           {
-            "required": ["path"]
+            "required": [
+              "path"
+            ]
           },
           {
-            "required": ["data", "fileName"]
+            "required": [
+              "data",
+              "fileName"
+            ]
           }
         ]
       },
@@ -2134,10 +3135,14 @@
         "additionalProperties": false,
         "oneOf": [
           {
-            "required": ["path"]
+            "required": [
+              "path"
+            ]
           },
           {
-            "required": ["text"]
+            "required": [
+              "text"
+            ]
           }
         ]
       },

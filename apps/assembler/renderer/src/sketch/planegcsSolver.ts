@@ -15,9 +15,15 @@
 import type { GcsWrapper, ModuleStatic, SketchPrimitive } from '@salusoft89/planegcs';
 
 import { resolveDimensionValues } from './expressions.js';
+import { measure } from './measure.js';
+import { splineTangentPoint } from './splineTangent.js';
 import type { SketchSolver, SolveRequest, SolveResult } from './solverTypes.js';
 import {
+  curveEnds,
+  curvePointIds,
   entityMap,
+  isCurve,
+  isElliptic,
   isRound,
   ORIGIN_ID,
   pointPos,
@@ -26,6 +32,7 @@ import {
   type SketchData,
   type SketchDimension,
   type SketchEntity,
+  type Vec2,
 } from './types.js';
 
 /** The runtime pieces of `@salusoft89/planegcs` the solver needs. */
@@ -57,26 +64,196 @@ function now(): number {
   return typeof performance !== 'undefined' ? performance.now() : Date.now();
 }
 
+/** Prefix of solver-internal primitives (helper points, fixes); never reported to callers. */
+const HIDDEN = '__';
+
+/** Points (and circles) of projected geometry: fixed for the solver. */
+function projectedGeometry(sketch: SketchData): { points: Set<string>; circles: string[] } {
+  const map = entityMap(sketch);
+  const points = new Set<string>();
+  const circles: string[] = [];
+  for (const projection of sketch.projections ?? []) {
+    for (const id of projection.entities) {
+      const e = map.get(id);
+      if (!isCurve(e)) continue;
+      for (const p of curvePointIds(e)) points.add(p);
+      if (e.kind === 'circle') circles.push(e.id);
+    }
+  }
+  return { points, circles };
+}
+
+/** Ellipse parameters (major radius, minor radius, focus, parametric angles) for planeGCS. */
+function ellipseSetup(
+  map: ReadonlyMap<string, SketchEntity>,
+  e: Extract<SketchEntity, { kind: 'ellipse' | 'ellipticArc' }>,
+): {
+  focus: Vec2;
+  opposite: Vec2;
+  oppositeMinor: Vec2;
+  radmin: number;
+  angle: (p: Vec2) => number;
+} {
+  const c = pointPos(map, e.center)!;
+  const m = pointPos(map, e.major)!;
+  const n = pointPos(map, e.minor)!;
+  const a = Math.hypot(m[0] - c[0], m[1] - c[1]);
+  const b = Math.hypot(n[0] - c[0], n[1] - c[1]);
+  const ux = (m[0] - c[0]) / (a || 1);
+  const uy = (m[1] - c[1]) / (a || 1);
+  const f = Math.sqrt(Math.max(0, a * a - b * b));
+  return {
+    focus: [c[0] + ux * f, c[1] + uy * f],
+    opposite: [2 * c[0] - m[0], 2 * c[1] - m[1]],
+    oppositeMinor: [2 * c[0] - n[0], 2 * c[1] - n[1]],
+    radmin: b,
+    angle: (p) => {
+      const dx = p[0] - c[0];
+      const dy = p[1] - c[1];
+      return Math.atan2((-uy * dx + ux * dy) / (b || 1), (ux * dx + uy * dy) / (a || 1));
+    },
+  };
+}
+
 /** Builds planeGCS primitives for a sketch; `values` are the resolved dimension values. */
 function buildPrimitives(sketch: SketchData, values: ReadonlyMap<string, number>): Primitive[] {
   const map = entityMap(sketch);
   const prims: Primitive[] = [];
+  const projected = projectedGeometry(sketch);
   const usesOrigin =
     sketch.constraints.some((c) => c.refs.includes(ORIGIN_ID)) ||
-    sketch.dimensions.some((d) => d.refs.includes(ORIGIN_ID));
+    sketch.dimensions.some((d) => !d.driven && d.refs.includes(ORIGIN_ID));
   if (usesOrigin)
     prims.push({ id: ORIGIN_ID, type: 'point', x: 0, y: 0, fixed: true } as Primitive);
   for (const e of sketch.entities) {
-    if (e.kind === 'point')
-      prims.push({ id: e.id, type: 'point', x: e.x, y: e.y, fixed: false } as Primitive);
+    if (e.kind === 'point') {
+      prims.push({
+        id: e.id,
+        type: 'point',
+        x: e.x,
+        y: e.y,
+        fixed: projected.points.has(e.id),
+      } as Primitive);
+    }
+  }
+  // Arcs whose three points are all fixed (projected geometry) are solved as fixed circles:
+  // the arc rules would be redundant (four equations for three free arc parameters).
+  const solverMap = new Map(map);
+  const fixedRadii: { id: string; radius: number }[] = [];
+  for (const id of projected.circles) {
+    const e = map.get(id);
+    if (e?.kind === 'circle') fixedRadii.push({ id, radius: e.radius });
   }
   for (const e of sketch.entities) {
+    if (e.kind !== 'arc') continue;
+    if (![e.center, e.start, e.end].every((p) => projected.points.has(p))) continue;
+    const radius = radiusOf(map, e);
+    solverMap.set(e.id, {
+      id: e.id,
+      kind: 'circle',
+      center: e.center,
+      radius,
+      ...(e.construction ? { construction: true } : {}),
+    });
+    fixedRadii.push({ id: e.id, radius });
+  }
+  for (const e of sketch.entities) {
+    if (e.kind === 'ellipse' || e.kind === 'ellipticArc') {
+      requirePoints(
+        map,
+        e.id,
+        e.kind === 'ellipse'
+          ? [e.center, e.major, e.minor]
+          : [e.center, e.major, e.minor, e.start, e.end],
+      );
+      const setup = ellipseSetup(map, e);
+      const focus = `${HIDDEN}${e.id}:f`;
+      const opposite = `${HIDDEN}${e.id}:o`;
+      const oppositeMinor = `${HIDDEN}${e.id}:n`;
+      const fixed = projected.points.has(e.center);
+      prims.push(
+        { id: focus, type: 'point', x: setup.focus[0], y: setup.focus[1], fixed } as Primitive,
+        {
+          id: opposite,
+          type: 'point',
+          x: setup.opposite[0],
+          y: setup.opposite[1],
+          fixed,
+        } as Primitive,
+        {
+          id: oppositeMinor,
+          type: 'point',
+          x: setup.oppositeMinor[0],
+          y: setup.oppositeMinor[1],
+          fixed,
+        } as Primitive,
+      );
+      if (e.kind === 'ellipse') {
+        prims.push({
+          id: e.id,
+          type: 'ellipse',
+          c_id: e.center,
+          focus1_id: focus,
+          radmin: setup.radmin,
+        } as Primitive);
+      } else {
+        const s = setup.angle(pointPos(map, e.start)!);
+        let t = setup.angle(pointPos(map, e.end)!);
+        while (t <= s) t += Math.PI * 2;
+        prims.push(
+          {
+            id: e.id,
+            type: 'arc_of_ellipse',
+            c_id: e.center,
+            focus1_id: focus,
+            radmin: setup.radmin,
+            start_id: e.start,
+            end_id: e.end,
+            start_angle: s,
+            end_angle: t,
+          } as Primitive,
+          { id: `${HIDDEN}${e.id}:rules`, type: 'arc_of_ellipse_rules', a_id: e.id } as Primitive,
+        );
+      }
+      prims.push(
+        {
+          id: `${HIDDEN}${e.id}:major`,
+          type: 'internal_alignment_ellipse_major_diameter',
+          e_id: e.id,
+          p1_id: e.major,
+          p2_id: opposite,
+        } as Primitive,
+        {
+          id: `${HIDDEN}${e.id}:minor`,
+          type: 'internal_alignment_ellipse_minor_diameter',
+          e_id: e.id,
+          p1_id: e.minor,
+          p2_id: oppositeMinor,
+        } as Primitive,
+      );
+      continue;
+    }
+    if (e.kind === 'spline') {
+      requirePoints(map, e.id, curvePointIds(e));
+      continue;
+    }
+    if (e.kind === 'text') {
+      requirePoints(map, e.id, [e.anchor]);
+      continue;
+    }
     if (e.kind === 'line') {
       requirePoints(map, e.id, [e.a, e.b]);
       prims.push({ id: e.id, type: 'line', p1_id: e.a, p2_id: e.b } as Primitive);
     } else if (e.kind === 'circle') {
       requirePoints(map, e.id, [e.center]);
       prims.push({ id: e.id, type: 'circle', c_id: e.center, radius: e.radius } as Primitive);
+    } else if (e.kind === 'arc' && solverMap.get(e.id)?.kind === 'circle') {
+      prims.push({
+        id: e.id,
+        type: 'circle',
+        c_id: e.center,
+        radius: radiusOf(map, e),
+      } as Primitive);
     } else if (e.kind === 'arc') {
       requirePoints(map, e.id, [e.center, e.start, e.end]);
       const c = pointPos(map, e.center)!;
@@ -98,14 +275,25 @@ function buildPrimitives(sketch: SketchData, values: ReadonlyMap<string, number>
       prims.push({ id: `${e.id}#rules`, type: 'arc_rules', a_id: e.id } as Primitive);
     }
   }
+  for (const { id, radius } of fixedRadii) {
+    prims.push({ id: `${HIDDEN}fix:${id}`, type: 'circle_radius', c_id: id, radius } as Primitive);
+  }
   for (const c of sketch.constraints) {
-    constraintPrimitives(map, c).forEach((body, i) =>
-      prims.push({ ...body, id: i === 0 ? c.id : `${c.id}#${i}` } as Primitive),
-    );
+    let n = 0;
+    for (const body of constraintPrimitives(solverMap, c, map)) {
+      // Helper geometry carries its own (hidden) id; constraints are `<id>` / `<id>#<n>`.
+      if (typeof body.id === 'string') {
+        prims.push(body as unknown as Primitive);
+        continue;
+      }
+      prims.push({ ...body, id: n === 0 ? c.id : `${c.id}#${n}` } as Primitive);
+      n += 1;
+    }
   }
   for (const d of sketch.dimensions) {
+    if (d.driven) continue;
     const value = values.get(d.id) ?? d.value;
-    dimensionPrimitives(map, d, value).forEach((body, i) =>
+    dimensionPrimitives(solverMap, d, value).forEach((body, i) =>
       prims.push({ ...body, id: i === 0 ? d.id : `${d.id}#${i}` } as Primitive),
     );
   }
@@ -131,10 +319,102 @@ function isPointRef(map: ReadonlyMap<string, SketchEntity>, id: string): boolean
   return k === 'point' || k === 'origin';
 }
 
+/** End point ids of an open curve (`null` for circles, ellipses, text). */
+function endsOf(e: SketchEntity | undefined): string[] {
+  const ends = curveEnds(e);
+  return ends ? [...ends] : [];
+}
+
+function tangentPrimitives(
+  map: ReadonlyMap<string, SketchEntity>,
+  c: SketchConstraint,
+  bad: () => never,
+  original?: ReadonlyMap<string, SketchEntity>,
+): PrimitiveBody[] {
+  const [r0 = '', r1 = ''] = c.refs;
+  const e0 = map.get(r0);
+  const e1 = map.get(r1);
+  const k0 = e0?.kind;
+  const k1 = e1?.kind;
+  // Tangent at a shared end point (a line running into an arc, arc into arc): the curve
+  // distance form is degenerate there (first-order dependent on the arc rules), so use the
+  // direction form FreeCAD uses for endpoint tangency — well conditioned and never redundant.
+  // Fixed (projected) arcs are mapped as circles; their end points still count here.
+  const o0 = original?.get(r0) ?? e0;
+  const o1 = original?.get(r1) ?? e1;
+  const shared = endsOf(o0).find((p) => endsOf(o1).includes(p));
+  const ok0 = o0?.kind;
+  const ok1 = o1?.kind;
+  if (
+    shared &&
+    (ok0 === 'line' || ok0 === 'arc') &&
+    (ok1 === 'line' || ok1 === 'arc') &&
+    ok0 !== ok1
+  ) {
+    const line = (ok0 === 'line' ? o0 : o1) as Extract<SketchEntity, { kind: 'line' }>;
+    const arc = (ok0 === 'arc' ? o0 : o1) as Extract<SketchEntity, { kind: 'arc' }>;
+    const far = line.a === shared ? line.b : line.a;
+    return [
+      {
+        type: 'perpendicular_pppp',
+        l1p1_id: arc.center,
+        l1p2_id: shared,
+        l2p1_id: shared,
+        l2p2_id: far,
+      },
+    ];
+  }
+  if (shared && ok0 === 'arc' && ok1 === 'arc') {
+    const a0 = o0 as Extract<SketchEntity, { kind: 'arc' }>;
+    const a1 = o1 as Extract<SketchEntity, { kind: 'arc' }>;
+    return [{ type: 'point_on_line_ppp', p_id: shared, lp1_id: a0.center, lp2_id: a1.center }];
+  }
+  if (k0 === 'line' && k1 === 'circle') return [{ type: 'tangent_lc', l_id: r0, c_id: r1 }];
+  if (k0 === 'circle' && k1 === 'line') return [{ type: 'tangent_lc', l_id: r1, c_id: r0 }];
+  if (k0 === 'line' && k1 === 'arc') return [{ type: 'tangent_la', l_id: r0, a_id: r1 }];
+  if (k0 === 'arc' && k1 === 'line') return [{ type: 'tangent_la', l_id: r1, a_id: r0 }];
+  if (k0 === 'circle' && k1 === 'circle') return [{ type: 'tangent_cc', c1_id: r0, c2_id: r1 }];
+  if (k0 === 'arc' && k1 === 'arc') return [{ type: 'tangent_aa', a1_id: r0, a2_id: r1 }];
+  if (k0 === 'circle' && k1 === 'arc') return [{ type: 'tangent_ca', c_id: r0, a_id: r1 }];
+  if (k0 === 'arc' && k1 === 'circle') return [{ type: 'tangent_ca', c_id: r1, a_id: r0 }];
+  if (k0 === 'line' && k1 === 'ellipse') return [{ type: 'tangent_le', l_id: r0, e_id: r1 }];
+  if (k0 === 'ellipse' && k1 === 'line') return [{ type: 'tangent_le', l_id: r1, e_id: r0 }];
+  // Splines: tangent at a shared end point, through the tangent-carrying point.
+  if (e0?.kind === 'spline' || e1?.kind === 'spline') {
+    const [spline, other] = (e0?.kind === 'spline' ? [e0, e1] : [e1, e0]) as [
+      Extract<SketchEntity, { kind: 'spline' }>,
+      SketchEntity | undefined,
+    ];
+    const shared = endsOf(spline).find((p) => endsOf(other).includes(p));
+    if (!shared) bad();
+    const h = splineTangentPoint(spline, shared!);
+    if (!h) bad();
+    if (other?.kind === 'line') return [{ type: 'point_on_line_pl', p_id: h, l_id: other.id }];
+    if (other?.kind === 'arc') {
+      return [
+        {
+          type: 'perpendicular_pppp',
+          l1p1_id: other.center,
+          l1p2_id: shared,
+          l2p1_id: shared,
+          l2p2_id: h,
+        },
+      ];
+    }
+    if (other?.kind === 'spline') {
+      const h2 = splineTangentPoint(other, shared!);
+      if (!h2) bad();
+      return [{ type: 'point_on_line_ppp', p_id: h2, lp1_id: h, lp2_id: shared }];
+    }
+  }
+  return bad();
+}
+
 function constraintPrimitives(
   map: ReadonlyMap<string, SketchEntity>,
   c: SketchConstraint,
-): PrimitiveBody[] {
+  original?: ReadonlyMap<string, SketchEntity>,
+): (PrimitiveBody & { id?: string })[] {
   const [r0, r1, r2] = c.refs;
   const k0 = r0 !== undefined ? kindOf(map, r0) : null;
   const k1 = r1 !== undefined ? kindOf(map, r1) : null;
@@ -147,6 +427,34 @@ function constraintPrimitives(
     return e!;
   };
   switch (c.kind) {
+    case 'translate': {
+      const [p, q, a, b] = c.refs;
+      if (!p || !q || !a || !b || ![p, q, a, b].every((id) => isPointRef(map, id))) return bad();
+      // q − p = b − a. When p is b itself (a pattern's second copy of its base point),
+      // b is simply the midpoint of a and q.
+      if (p === b) return [{ type: 'p2p_symmetric_ppp', p1_id: q, p2_id: a, p_id: b }];
+      const pp = pointPos(map, p)!;
+      const pb = pointPos(map, b)!;
+      const m = `${HIDDEN}${c.id}:m`;
+      return [
+        { id: m, type: 'point', x: (pp[0] + pb[0]) / 2, y: (pp[1] + pb[1]) / 2, fixed: false },
+        { type: 'p2p_symmetric_ppp', p1_id: p, p2_id: b, p_id: m },
+        { type: 'p2p_symmetric_ppp', p1_id: q, p2_id: a, p_id: m },
+      ];
+    }
+    case 'rotate': {
+      const [p, q, center] = c.refs;
+      if (!p || !q || !center || ![p, q, center].every((id) => isPointRef(map, id))) return bad();
+      if (!(typeof c.value === 'number' && Number.isFinite(c.value))) return bad();
+      const l1 = `${HIDDEN}${c.id}:l1`;
+      const l2 = `${HIDDEN}${c.id}:l2`;
+      return [
+        { id: l1, type: 'line', p1_id: center, p2_id: p },
+        { id: l2, type: 'line', p1_id: center, p2_id: q },
+        { type: 'equal_length', l1_id: l1, l2_id: l2 },
+        { type: 'l2l_angle_ll', l1_id: l1, l2_id: l2, angle: (c.value * Math.PI) / 180 },
+      ];
+    }
     case 'coincident':
       if (!r0 || !r1 || !isPointRef(map, r0) || !isPointRef(map, r1)) bad();
       return [{ type: 'p2p_coincident', p1_id: r0, p2_id: r1 }];
@@ -163,18 +471,9 @@ function constraintPrimitives(
     case 'perpendicular':
       if (k0 !== 'line' || k1 !== 'line') bad();
       return [{ type: 'perpendicular_ll', l1_id: r0, l2_id: r1 }];
-    case 'tangent': {
+    case 'tangent':
       if (!r0 || !r1) return bad();
-      if (k0 === 'line' && k1 === 'circle') return [{ type: 'tangent_lc', l_id: r0, c_id: r1 }];
-      if (k0 === 'circle' && k1 === 'line') return [{ type: 'tangent_lc', l_id: r1, c_id: r0 }];
-      if (k0 === 'line' && k1 === 'arc') return [{ type: 'tangent_la', l_id: r0, a_id: r1 }];
-      if (k0 === 'arc' && k1 === 'line') return [{ type: 'tangent_la', l_id: r1, a_id: r0 }];
-      if (k0 === 'circle' && k1 === 'circle') return [{ type: 'tangent_cc', c1_id: r0, c2_id: r1 }];
-      if (k0 === 'arc' && k1 === 'arc') return [{ type: 'tangent_aa', a1_id: r0, a2_id: r1 }];
-      if (k0 === 'circle' && k1 === 'arc') return [{ type: 'tangent_ca', c_id: r0, a_id: r1 }];
-      if (k0 === 'arc' && k1 === 'circle') return [{ type: 'tangent_ca', c_id: r1, a_id: r0 }];
-      return bad();
-    }
+      return tangentPrimitives(map, c, bad, original);
     case 'equal': {
       if (!r0 || !r1) return bad();
       if (k0 === 'line' && k1 === 'line') return [{ type: 'equal_length', l1_id: r0, l2_id: r1 }];
@@ -190,14 +489,7 @@ function constraintPrimitives(
       if (!r0) return bad();
       const e = map.get(r0);
       if (!e) return bad();
-      const pointIds =
-        e.kind === 'point'
-          ? [e.id]
-          : e.kind === 'line'
-            ? [e.a, e.b]
-            : e.kind === 'circle'
-              ? [e.center]
-              : [e.center, e.start, e.end];
+      const pointIds = e.kind === 'point' ? [e.id] : curvePointIds(e);
       const out: PrimitiveBody[] = [];
       for (const id of pointIds) {
         const p = pointPos(map, id)!;
@@ -225,8 +517,9 @@ function constraintPrimitives(
     }
     case 'concentric': {
       if (!r0 || !r1) return bad();
-      const a = round(r0) as Extract<SketchEntity, { kind: 'circle' | 'arc' }>;
-      const b = round(r1) as Extract<SketchEntity, { kind: 'circle' | 'arc' }>;
+      const a = map.get(r0);
+      const b = map.get(r1);
+      if (!(isRound(a) || isElliptic(a)) || !(isRound(b) || isElliptic(b))) return bad();
       return [{ type: 'p2p_coincident', p1_id: a.center, p2_id: b.center }];
     }
     case 'pointOnObject':
@@ -234,6 +527,9 @@ function constraintPrimitives(
       if (k1 === 'line') return [{ type: 'point_on_line_pl', p_id: r0, l_id: r1 }];
       if (k1 === 'circle') return [{ type: 'point_on_circle', p_id: r0, c_id: r1 }];
       if (k1 === 'arc') return [{ type: 'point_on_arc', p_id: r0, a_id: r1 }];
+      if (k1 === 'ellipse' || k1 === 'ellipticArc') {
+        return [{ type: 'point_on_ellipse', p_id: r0, e_id: r1 }];
+      }
       return bad();
   }
 }
@@ -354,9 +650,28 @@ function collapsedEntity(sketch: SketchData): string | null {
       if (Math.hypot(a[0] - b[0], a[1] - b[1]) < MIN_SIZE) return e.id;
     } else if (e.kind === 'circle' || e.kind === 'arc') {
       if (!(radiusOf(map, e) >= MIN_SIZE)) return e.id;
+    } else if (e.kind === 'ellipse' || e.kind === 'ellipticArc') {
+      const c = pointPos(map, e.center)!;
+      const m = pointPos(map, e.major)!;
+      const n = pointPos(map, e.minor)!;
+      if (!(Math.hypot(m[0] - c[0], m[1] - c[1]) >= MIN_SIZE)) return e.id;
+      if (!(Math.hypot(n[0] - c[0], n[1] - c[1]) >= MIN_SIZE)) return e.id;
     }
   }
   return null;
+}
+
+/** Current values of the reference (driven) dimensions of a solved sketch. */
+export function withDrivenValues(sketch: SketchData): SketchData {
+  if (!sketch.dimensions.some((d) => d.driven)) return sketch;
+  return {
+    ...sketch,
+    dimensions: sketch.dimensions.map((d) => {
+      if (!d.driven) return d;
+      const value = measure(sketch, d.kind, d.refs);
+      return value !== null && value !== d.value ? { ...d, value } : d;
+    }),
+  };
 }
 
 /**
@@ -405,7 +720,21 @@ export function createPlanegcsSolver(
       ...extra,
     });
 
-    const values = resolveDimensionValues(input.dimensions);
+    const drivenNames = new Set(input.dimensions.filter((d) => d.driven).map((d) => d.name));
+    const usesDriven = input.dimensions.find(
+      (d) =>
+        !d.driven &&
+        d.expression !== undefined &&
+        [...drivenNames].some((name) => new RegExp(`\\b${name}\\b`).test(d.expression!)),
+    );
+    if (usesDriven) {
+      return fail(
+        'invalid',
+        `Dimension ${usesDriven.name} uses a reference dimension; only driving dimensions can be used in expressions`,
+        { conflicting: [usesDriven.id] },
+      );
+    }
+    const values = resolveDimensionValues(input.dimensions.filter((d) => !d.driven));
     if (!values.ok) return fail('invalid', values.message, { conflicting: [values.dimensionId] });
 
     let prims: Primitive[];
@@ -469,7 +798,7 @@ export function createPlanegcsSolver(
     }
 
     const solvedById = new Map(outcome.primitives.map((p) => [p.id, p]));
-    const sketch: SketchData = {
+    const solvedSketch: SketchData = {
       ...input,
       dimensions: input.dimensions.map((d) => {
         const v = values.values.get(d.id);
@@ -483,6 +812,7 @@ export function createPlanegcsSolver(
         return e;
       }),
     };
+    const sketch = withDrivenValues(solvedSketch);
     const collapsed = collapsedEntity(sketch);
     if (collapsed) {
       return fail('failed', 'These constraints would collapse the geometry', {
@@ -544,11 +874,9 @@ export function createPlanegcsSolver(
     }
     const out = [...determinedPoints];
     for (const c of curves) {
-      if (c.kind === 'line') {
-        if (determinedPoints.has(c.a) && determinedPoints.has(c.b)) out.push(c.id);
-      } else if (c.kind === 'arc') {
-        if ([c.center, c.start, c.end].every((id) => determinedPoints.has(id))) out.push(c.id);
-      } else if (c.kind === 'circle' && determinedPoints.has(c.center)) {
+      if (c.kind !== 'circle') {
+        if (curvePointIds(c).every((id) => determinedPoints.has(id))) out.push(c.id);
+      } else if (determinedPoints.has(c.center)) {
         const r = isDetermined({
           id: '__probe',
           type: 'circle_radius',

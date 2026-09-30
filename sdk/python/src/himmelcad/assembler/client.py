@@ -24,6 +24,8 @@ METHODS = (
     "feature.create", "feature.edit", "feature.delete", "feature.suppress", "feature.rename",
     "sketch.addProfile", "sketch.addPolyline", "sketch.addArc", "sketch.addConstraint",
     "sketch.addDimension", "sketch.setDimension", "sketch.deleteItems",
+    "sketch.addSpline", "sketch.addEllipse", "sketch.addSlot", "sketch.addPolygon", "sketch.addText",
+    "sketch.mirror", "sketch.pattern", "sketch.roundCorner", "sketch.project", "sketch.setReference",
     "transaction.begin", "transaction.preview", "transaction.commit", "transaction.cancel",
     "history.undo", "history.redo",
     "export.stl", "export.3mf", "export.step", "import.step",
@@ -146,6 +148,48 @@ class AssemblerClient:
 
     def delete_sketch_items(self, feature_id: str, ids: list[str]) -> Mapping[str, Any]:
         return self.call("sketch.deleteItems", {"featureId": feature_id, "ids": list(ids)})
+
+    # ---- advanced sketch geometry (same builders as the app's sketch tools) ----
+
+    def add_spline(self, feature_id: str, points: list[tuple[float, float]], *, mode: str = "fit", closed: bool = False, construction: bool = False) -> Mapping[str, Any]:
+        """Spline through (``fit``) or controlled by (``control``) ``points``."""
+        return self.call("sketch.addSpline", {"featureId": feature_id, "points": [[float(u), float(v)] for u, v in points], "mode": mode, "closed": closed, "construction": construction})
+
+    def add_ellipse(self, feature_id: str, center: tuple[float, float], major_radius: float, minor_radius: float, *, angle: float = 0.0, arc: tuple[float, float] | None = None, dimension: bool = False, construction: bool = False) -> Mapping[str, Any]:
+        """Ellipse (major axis along ``angle`` degrees); ``arc=(start°, end°)`` for an elliptical arc."""
+        return self.call("sketch.addEllipse", {"featureId": feature_id, "center": list(center), "majorRadius": major_radius, "minorRadius": minor_radius, "angle": angle, "arc": list(arc) if arc else None, "dimension": dimension, "construction": construction})
+
+    def add_slot(self, feature_id: str, start: tuple[float, float], end: tuple[float, float], width: float, *, arc_center: tuple[float, float] | None = None, clockwise: bool = False, dimension: bool = True, construction: bool = False) -> Mapping[str, Any]:
+        """Slot between the centres ``start``/``end``; with ``arc_center`` an arc slot."""
+        return self.call("sketch.addSlot", {"featureId": feature_id, "start": list(start), "end": list(end), "width": width, "arcCenter": list(arc_center) if arc_center else None, "clockwise": clockwise, "dimension": dimension, "construction": construction})
+
+    def add_polygon(self, feature_id: str, center: tuple[float, float], radius: float, *, sides: int = 6, inscribed: bool = True, angle: float = 0.0, construction: bool = False) -> Mapping[str, Any]:
+        """Regular polygon inscribed in (or circumscribed about) a construction circle of ``radius``."""
+        return self.call("sketch.addPolygon", {"featureId": feature_id, "center": list(center), "radius": radius, "sides": sides, "inscribed": inscribed, "angle": angle, "construction": construction})
+
+    def add_text(self, feature_id: str, text: str, position: tuple[float, float], height: float, *, angle: float = 0.0, font: str = "inter", construction: bool = False) -> Mapping[str, Any]:
+        """Text (cap ``height`` mm) starting at ``position``; every glyph is a profile."""
+        return self.call("sketch.addText", {"featureId": feature_id, "text": text, "position": list(position), "height": height, "angle": angle, "font": font, "construction": construction})
+
+    def mirror_sketch(self, feature_id: str, ids: list[str], axis: str) -> Mapping[str, Any]:
+        """Mirrors sketch curves/points about the line ``axis`` (symmetric constraints)."""
+        return self.call("sketch.mirror", {"featureId": feature_id, "ids": list(ids), "axis": axis})
+
+    def pattern_sketch(self, feature_id: str, ids: list[str], count: int, *, mode: str = "linear", direction: tuple[float, float] | None = None, spacing: float | None = None, center: tuple[float, float] | None = None, center_point_id: str | None = None, angle: float | None = None) -> Mapping[str, Any]:
+        """Linear (``direction``, ``spacing``) or circular (``center``, ``angle``) sketch pattern."""
+        return self.call("sketch.pattern", {"featureId": feature_id, "ids": list(ids), "count": count, "mode": mode, "direction": list(direction) if direction else None, "spacing": spacing, "center": list(center) if center else None, "centerPointId": center_point_id, "angle": angle})
+
+    def round_corner(self, feature_id: str, point: str, size: float, *, mode: str = "fillet") -> Mapping[str, Any]:
+        """Fillets (radius) or chamfers (set-back) the corner at ``point`` between two lines."""
+        return self.call("sketch.roundCorner", {"featureId": feature_id, "point": point, "size": size, "mode": mode})
+
+    def project(self, feature_id: str, *, edge: Mapping[str, Any] | None = None, face: Mapping[str, Any] | None = None, construction: bool = True) -> Mapping[str, Any]:
+        """Projects a body edge or face outline into the sketch (associative)."""
+        return self.call("sketch.project", {"featureId": feature_id, "edge": dict(edge) if edge else None, "face": dict(face) if face else None, "construction": construction})
+
+    def set_reference(self, feature_id: str, dimension: str, reference: bool = True) -> Mapping[str, Any]:
+        """Turns a dimension into a reference (driven) dimension, or back with ``reference=False``."""
+        return self.call("sketch.setReference", {"featureId": feature_id, "dimension": dimension, "reference": reference})
 
     def begin(self, label: str | None = None) -> Mapping[str, Any]:
         return self.call("transaction.begin", {"label": label})

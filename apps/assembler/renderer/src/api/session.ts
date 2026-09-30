@@ -31,6 +31,8 @@ import type { Feature, SketchFeature } from '../model/document.js';
 import { consumedSketchIds } from '../model/modeling.js';
 import { ProjectFormatError, loadProjectFile, saveProjectFile } from '../model/project/format.js';
 import type { AssemblerState, SelectionItem } from '../model/store.js';
+import { rememberRegions } from '../sketch/regionMemory.js';
+import { ADVANCED_SKETCH_METHODS, advancedSketchEdit } from './sketchAdvancedApi.js';
 import {
   describeBody,
   describeEdge,
@@ -274,7 +276,17 @@ export class AgentSession {
       case 'sketch.addDimension':
       case 'sketch.setDimension':
       case 'sketch.deleteItems':
-        return this.write(method, (f) => this.editSketch(method, p, f));
+      case 'sketch.addSpline':
+      case 'sketch.addEllipse':
+      case 'sketch.addSlot':
+      case 'sketch.addPolygon':
+      case 'sketch.addText':
+      case 'sketch.mirror':
+      case 'sketch.pattern':
+      case 'sketch.roundCorner':
+      case 'sketch.project':
+      case 'sketch.setReference':
+        return this.write(method, (f, e) => this.editSketch(method, p, f, e));
       case 'transaction.begin':
         return this.beginTransaction(p);
       case 'transaction.preview':
@@ -682,7 +694,11 @@ export class AgentSession {
     data: SketchData,
   ): Promise<{ feature: SketchFeature; dof: number }> {
     const { sketch, dof } = await solveSketch(data);
-    const stored = validateStored({ ...feature, ...sketch }) as SketchFeature;
+    // Region fingerprints, like a sketch commit in the app (geometric re-binding of profiles).
+    const stored = validateStored({
+      ...feature,
+      ...rememberRegions(sketch, feature),
+    }) as SketchFeature;
     return { feature: stored, dof };
   }
 
@@ -710,7 +726,12 @@ export class AgentSession {
   }
 
   /** The `sketch.*` commands: one edit of one sketch, re-solved, validated and committed as one step. */
-  private async editSketch(method: string, p: Json, features: Feature[]): Promise<WriteOutcome> {
+  private async editSketch(
+    method: string,
+    p: Json,
+    features: Feature[],
+    evaluation: EvaluationResult,
+  ): Promise<WriteOutcome> {
     const existing = this.findFeature(features, String(p.featureId));
     if (existing.kind !== 'sketch') {
       throw new ApiError('invalidParams', `"${existing.name}" is a ${existing.kind}, not a sketch`);
@@ -718,64 +739,73 @@ export class AgentSession {
     const data = sketchDataOf(existing);
     let next: SketchData;
     let result: Json = {};
-    switch (method) {
-      case 'sketch.addProfile': {
-        const added = addShape(data, p.profile as SketchShape);
-        next = added.sketch;
-        result = { shape: added.added };
-        break;
+    if ((ADVANCED_SKETCH_METHODS as readonly string[]).includes(method)) {
+      const edit = await advancedSketchEdit(method, p, data, {
+        featureId: existing.id,
+        evaluation,
+        features,
+      });
+      next = edit.sketch;
+      result = edit.result;
+    } else
+      switch (method) {
+        case 'sketch.addProfile': {
+          const added = addShape(data, p.profile as SketchShape);
+          next = added.sketch;
+          result = { shape: added.added };
+          break;
+        }
+        case 'sketch.addPolyline': {
+          const added = addPolylineShape(data, p.points as Vec2[], {
+            closed: p.closed === true,
+            construction: p.construction === true,
+            autoConstrain: p.autoConstrain !== false,
+          });
+          next = added.sketch;
+          result = { pointIds: added.pointIds, lineIds: added.lineIds };
+          break;
+        }
+        case 'sketch.addArc': {
+          const added = addArcShape(
+            data,
+            p.center as Vec2,
+            p.start as Vec2,
+            p.end as Vec2,
+            p.construction === true,
+          );
+          next = added.sketch;
+          result = { entityIds: added.entityIds };
+          break;
+        }
+        case 'sketch.addConstraint': {
+          const added = addConstraint(data, p.kind as SketchConstraintKind, p.refs as string[]);
+          next = added.sketch;
+          result = { constraintId: added.constraintId };
+          break;
+        }
+        case 'sketch.addDimension': {
+          const added = addDimension(data, p.kind as SketchDimensionKind, p.refs as string[], {
+            ...(typeof p.value === 'number' ? { value: p.value } : {}),
+            ...(typeof p.expression === 'string' ? { expression: p.expression } : {}),
+            ...(typeof p.name === 'string' ? { name: p.name } : {}),
+          });
+          next = added.sketch;
+          result = { dimensionId: added.dimension.id, name: added.dimension.name };
+          break;
+        }
+        case 'sketch.setDimension': {
+          const dimension = findDimension(data, String(p.dimension));
+          next = setDimension(data, dimension.id, {
+            ...(typeof p.value === 'number' ? { value: p.value } : {}),
+            ...(typeof p.expression === 'string' ? { expression: p.expression } : {}),
+          });
+          result = { dimensionId: dimension.id, name: dimension.name };
+          break;
+        }
+        default:
+          next = deleteSketchItems(data, p.ids as string[]);
+          break;
       }
-      case 'sketch.addPolyline': {
-        const added = addPolylineShape(data, p.points as Vec2[], {
-          closed: p.closed === true,
-          construction: p.construction === true,
-          autoConstrain: p.autoConstrain !== false,
-        });
-        next = added.sketch;
-        result = { pointIds: added.pointIds, lineIds: added.lineIds };
-        break;
-      }
-      case 'sketch.addArc': {
-        const added = addArcShape(
-          data,
-          p.center as Vec2,
-          p.start as Vec2,
-          p.end as Vec2,
-          p.construction === true,
-        );
-        next = added.sketch;
-        result = { entityIds: added.entityIds };
-        break;
-      }
-      case 'sketch.addConstraint': {
-        const added = addConstraint(data, p.kind as SketchConstraintKind, p.refs as string[]);
-        next = added.sketch;
-        result = { constraintId: added.constraintId };
-        break;
-      }
-      case 'sketch.addDimension': {
-        const added = addDimension(data, p.kind as SketchDimensionKind, p.refs as string[], {
-          ...(typeof p.value === 'number' ? { value: p.value } : {}),
-          ...(typeof p.expression === 'string' ? { expression: p.expression } : {}),
-          ...(typeof p.name === 'string' ? { name: p.name } : {}),
-        });
-        next = added.sketch;
-        result = { dimensionId: added.dimension.id, name: added.dimension.name };
-        break;
-      }
-      case 'sketch.setDimension': {
-        const dimension = findDimension(data, String(p.dimension));
-        next = setDimension(data, dimension.id, {
-          ...(typeof p.value === 'number' ? { value: p.value } : {}),
-          ...(typeof p.expression === 'string' ? { expression: p.expression } : {}),
-        });
-        result = { dimensionId: dimension.id, name: dimension.name };
-        break;
-      }
-      default:
-        next = deleteSketchItems(data, p.ids as string[]);
-        break;
-    }
     const solved = await this.solved(existing, next);
     const dimensionId = result.dimensionId;
     if (typeof dimensionId === 'string') {

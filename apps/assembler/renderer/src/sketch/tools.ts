@@ -26,8 +26,21 @@ import {
   sub,
   type Curve2,
 } from './geometry.js';
+import {
+  ADVANCED_TOOL_KINDS,
+  advancedInProgress,
+  advancedPreview,
+  advancedSegmentStart,
+  initialAdvancedTool,
+  isAdvancedTool,
+  reduceAdvanced,
+  type AdvancedTool,
+  type AdvancedToolKind,
+  type AdvancedValueField,
+} from './advancedTools.js';
 import type { Inference, SketchHit } from './inference.js';
 import { measure } from './measure.js';
+import { regularPolygon } from './shapes.js';
 import {
   entityMap,
   isCurve,
@@ -69,25 +82,39 @@ export type SketchTool =
       width: number | null;
       height: number | null;
     }
-  | { kind: 'polygon'; sides: number; center: SnapTarget | null }
+  | {
+      kind: 'polygon';
+      sides: number;
+      center: SnapTarget | null;
+      /** Vertices on the construction circle (`true`) or edges tangent to it. */
+      inscribed: boolean;
+    }
   | { kind: 'trim' }
   | { kind: 'offset'; curveId: string | null }
   | {
       kind: 'dimension';
       first: string | null;
       mode: 'aligned' | 'horizontal' | 'vertical';
-    };
+    }
+  | AdvancedTool;
 
 export type SketchToolKind = SketchTool['kind'];
 
 export type ToolEvent =
   | { type: 'click'; snap: Inference; hit: SketchHit | null; raw: Vec2 }
-  /** A typed value for the tool's chip (length, diameter, width, height, distance). */
+  /** A typed value for the tool's chip (length, diameter, width, height, distance, …). */
   | { type: 'value'; field: ValueField; value: number; snap: Inference }
   /** Enter / double click: end the running chain. */
   | { type: 'finish' };
 
-export type ValueField = 'length' | 'radius' | 'diameter' | 'width' | 'height' | 'distance';
+export type ValueField =
+  | 'length'
+  | 'radius'
+  | 'diameter'
+  | 'width'
+  | 'height'
+  | 'distance'
+  | AdvancedValueField;
 
 export interface ToolContext {
   /** New curves are construction geometry. */
@@ -99,9 +126,14 @@ export interface ToolStep {
   edit?: EditResult;
   /** Open the value chip of this new dimension (Dimension tool). */
   editDimensionId?: string;
+  /** Why the input did nothing (shown in the tool pill). */
+  notice?: string;
 }
 
-export function initialTool(kind: SketchToolKind): SketchTool {
+export function initialTool(kind: SketchToolKind, selection: readonly string[] = []): SketchTool {
+  if ((ADVANCED_TOOL_KINDS as readonly string[]).includes(kind)) {
+    return initialAdvancedTool(kind as AdvancedToolKind, selection);
+  }
   switch (kind) {
     case 'select':
       return { kind };
@@ -114,18 +146,21 @@ export function initialTool(kind: SketchToolKind): SketchTool {
     case 'rectangle':
       return { kind, mode: 'corner', first: null, width: null, height: null };
     case 'polygon':
-      return { kind, sides: 6, center: null };
+      return { kind, sides: 6, center: null, inscribed: true };
     case 'trim':
       return { kind };
     case 'offset':
       return { kind, curveId: null };
     case 'dimension':
       return { kind, first: null, mode: 'aligned' };
+    default:
+      return initialAdvancedTool(kind, selection);
   }
 }
 
 /** `true` while the tool holds an unfinished segment/shape (first Escape cancels it). */
 export function toolInProgress(tool: SketchTool): boolean {
+  if (isAdvancedTool(tool)) return advancedInProgress(tool);
   switch (tool.kind) {
     case 'line':
       return tool.start !== null || tool.lastPointId !== null;
@@ -168,6 +203,7 @@ export function segmentStart(
       };
   }
   if (tool.kind === 'rectangle' && tool.first) return { pos: tool.first.pos };
+  if (isAdvancedTool(tool)) return advancedSegmentStart(sketch, tool);
   return undefined;
 }
 
@@ -202,6 +238,7 @@ export function reduceTool(
   event: ToolEvent,
   ctx: ToolContext,
 ): ToolStep {
+  if (isAdvancedTool(tool)) return reduceAdvanced(sketch, tool, event, ctx);
   if (event.type === 'finish') {
     if (tool.kind === 'line') return { tool: initialTool('line') };
     return { tool };
@@ -229,6 +266,8 @@ export function reduceTool(
       return reduceOffset(sketch, tool, event);
     case 'dimension':
       return reduceDimension(sketch, tool, event);
+    default:
+      return { tool };
   }
 }
 
@@ -516,16 +555,20 @@ function reducePolygon(
   if (!tool.center) return { tool: { ...tool, center: event.snap } };
   const r = dist(tool.center.pos, event.snap.pos);
   if (r < MIN_SKETCH_SIZE) return { tool };
-  const vertices = polygonVertices(tool.center.pos, event.snap.pos, tool.sides);
+  const vertices = regularPolygon(tool.center.pos, event.snap.pos, tool.sides, tool.inscribed);
   const b = new SketchBuilder(sketch);
   const center = b.pointFor(tool.center);
   const circle = b.addCircle(center, r, true);
-  const ids = vertices.map((v, i) => (i === 0 ? b.pointFor(event.snap) : b.addPoint(v)));
+  // Inscribed: the clicked point is a vertex (reuse what it snapped to); circumscribed: an edge midpoint.
+  const ids = vertices.map((v, i) =>
+    i === 0 && tool.inscribed ? b.pointFor(event.snap) : b.addPoint(v),
+  );
   const lines = ids.map((id, i) => b.addLine(id, ids[(i + 1) % ids.length]!, ctx.construction));
-  for (const id of ids) b.constrain('pointOnObject', [id, circle]);
+  if (tool.inscribed) for (const id of ids) b.constrain('pointOnObject', [id, circle]);
+  else for (const line of lines) b.constrain('tangent', [line, circle]);
   for (let i = 1; i < lines.length; i += 1) b.constrain('equal', [lines[0]!, lines[i]!]);
   return {
-    tool: { ...initialTool('polygon'), sides: tool.sides } as SketchTool,
+    tool: { ...tool, center: null },
     edit: b.result(lines),
   };
 }
@@ -678,8 +721,10 @@ export function toolPreview(
   tool: SketchTool,
   cursor: Inference | null,
   hit: SketchHit | null,
+  ctx: ToolContext = { construction: false },
 ): ToolPreview {
   if (!cursor) return EMPTY_PREVIEW;
+  if (isAdvancedTool(tool)) return advancedPreview(sketch, tool, cursor, hit, ctx);
   const c = cursor.pos;
   switch (tool.kind) {
     case 'line': {
@@ -767,10 +812,12 @@ export function toolPreview(
     }
     case 'polygon': {
       if (!tool.center) return { ...EMPTY_PREVIEW, points: [c] };
-      const vertices = polygonVertices(tool.center.pos, c, tool.sides);
+      const vertices = regularPolygon(tool.center.pos, c, tool.sides, tool.inscribed);
+      const r = dist(tool.center.pos, c);
+      const circle: Curve2 = { kind: 'arc', c: tool.center.pos, r, a0: 0, sweep: Math.PI * 2 };
       return {
         ...EMPTY_PREVIEW,
-        curves: [[...vertices, vertices[0]!]],
+        curves: [[...vertices, vertices[0]!], sampleCurve(circle)],
         points: [tool.center.pos, ...vertices],
       };
     }
