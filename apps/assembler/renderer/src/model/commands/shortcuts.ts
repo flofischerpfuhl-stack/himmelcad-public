@@ -8,7 +8,7 @@
  * its window-level `keydown` handler and, when it returns a command whose
  * availability is enabled, call `command.run(ctx)`.
  */
-import type { Command, CommandContext } from './registry.js';
+import type { Command, CommandContext, ShortcutScope } from './registry.js';
 import { COMMANDS } from './registry.js';
 
 /**
@@ -54,12 +54,15 @@ function normalizeCombo(event: KeyEvent): string {
   return parts.join('+');
 }
 
-const SHORTCUT_MAP: ReadonlyMap<string, string> = new Map(
-  COMMANDS.filter((c): c is Command & { shortcut: string } => c.shortcut !== undefined).map((c) => [
-    c.shortcut,
-    c.id,
-  ]),
-);
+/** Every command per shortcut (several only in disjoint `shortcutScope`s, see `shortcutSheet.ts`). */
+const SHORTCUT_MAP: ReadonlyMap<string, readonly Command[]> = (() => {
+  const map = new Map<string, Command[]>();
+  for (const c of COMMANDS) {
+    if (c.shortcut === undefined) continue;
+    map.set(c.shortcut, [...(map.get(c.shortcut) ?? []), c]);
+  }
+  return map;
+})();
 
 /**
  * Resolves a key event to the command it should trigger, or `null` if
@@ -68,18 +71,25 @@ const SHORTCUT_MAP: ReadonlyMap<string, string> = new Map(
  * tool is in the `numericEditing` phase, so typing a number into a
  * dimension field never triggers e.g. "E" for Extrude.
  *
+ * `scope` is the keyboard context (`'sketch'` while a sketch session is
+ * open): commands whose `shortcutScope` names the other context are
+ * skipped, so `P` is Project in a sketch and Printability in the model.
+ *
  * Does not check whether the resolved command is currently enabled —
  * callers should check `command.availability(ctx).enabled` before
  * running it, exactly as command search and the context menu do.
  */
-export function resolveShortcut(event: KeyEvent, ctx: CommandContext): Command | null {
+export function resolveShortcut(
+  event: KeyEvent,
+  ctx: CommandContext,
+  scope: ShortcutScope = 'model',
+): Command | null {
   if (event.targetIsTextInput) return null;
   const hasModifier = event.ctrlKey || event.metaKey || event.altKey;
   if (!hasModifier && ctx.activeTool?.phase === 'numericEditing') return null;
   const combo = normalizeCombo(event);
-  const commandId = SHORTCUT_MAP.get(combo);
-  if (!commandId) return null;
-  return COMMANDS.find((c) => c.id === commandId) ?? null;
+  const candidates = SHORTCUT_MAP.get(combo) ?? [];
+  return candidates.find((c) => c.shortcutScope === undefined || c.shortcutScope === scope) ?? null;
 }
 
 /**

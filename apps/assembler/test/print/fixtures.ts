@@ -147,6 +147,18 @@ export function plateWithHoles(): Feature[] {
   ];
 }
 
+/**
+ * The same plate extruded directly from **one region with holes** (rectangle
+ * and circles in one sketch) — the case PRINTING.md recorded as broken
+ * before the sketch-region fix (holes added, invalid B-rep).
+ */
+export function plateWithHolesOneRegion(): Feature[] {
+  const s = sketchFeature('q-s', [rect(0, 0, 40, 20), circle(10, 10, 0.75), circle(28, 10, 3)]);
+  const ring = detectRegions(s.feature).find((r) => r.holes.length === 2);
+  if (!ring) throw new Error('expected one region with two holes');
+  return [s.feature, extrude('q-e', 'q-s', [ring.key], 5, { name: 'Plate' })];
+}
+
 /** A Ø0.8 mm pin, 4 mm tall. */
 export function pin(): Feature[] {
   const s = sketchFeature('pin-s', [circle(0, 0, 0.4)]);

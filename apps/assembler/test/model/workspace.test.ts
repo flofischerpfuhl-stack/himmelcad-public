@@ -3,9 +3,15 @@ import test from 'node:test';
 
 import { withBodyColour, normalizeHexColour } from '../../renderer/src/model/appearance.js';
 import {
+  COMMANDS,
+  type Command,
+  type CommandContext,
+} from '../../renderer/src/model/commands/registry.js';
+import {
   shortcutConflicts,
   shortcutSections,
 } from '../../renderer/src/model/commands/shortcutSheet.js';
+import { resolveShortcut } from '../../renderer/src/model/commands/shortcuts.js';
 import { createDemoDocument, type Feature } from '../../renderer/src/model/document.js';
 import {
   checkMove,
@@ -246,4 +252,35 @@ void test('shortcut sheet: generated from the registry, no two commands share a 
   const modified = shortcutSections(false).flatMap((s) => s.rows);
   assert.ok(!modified.some((r) => /^[A-Z]$/.test(r.keys)));
   assert.ok(modified.some((r) => r.keys === 'Ctrl+Z'));
+});
+
+void test('shortcuts: P is Project in a sketch and Printability in the model (scoped keys)', () => {
+  const key = (k: string) => ({
+    key: k,
+    ctrlKey: false,
+    metaKey: false,
+    shiftKey: false,
+    altKey: false,
+    targetIsTextInput: false,
+  });
+  const ctx = { activeTool: null } as unknown as CommandContext;
+  assert.equal(resolveShortcut(key('p'), ctx, 'sketch')?.id, 'sketch.project');
+  assert.equal(resolveShortcut(key('p'), ctx, 'model')?.id, 'modes.print');
+  assert.equal(resolveShortcut(key('p'), ctx)?.id, 'modes.print', 'model is the default scope');
+  // Unscoped keys resolve in both contexts.
+  assert.equal(resolveShortcut(key('l'), ctx, 'sketch')?.id, 'sketch.line');
+  assert.equal(resolveShortcut(key('l'), ctx, 'model')?.id, 'sketch.line');
+  // Sketch-only tools do not resolve outside a sketch.
+  assert.equal(resolveShortcut(key('t'), ctx, 'model'), null);
+  // Every shared key is scoped disjointly.
+  const byKey = new Map<string, Command[]>();
+  for (const c of COMMANDS) {
+    if (c.shortcut) byKey.set(c.shortcut, [...(byKey.get(c.shortcut) ?? []), c]);
+  }
+  for (const [shortcut, commands] of byKey) {
+    if (commands.length < 2) continue;
+    const scopes = commands.map((c) => c.shortcutScope);
+    assert.ok(!scopes.includes(undefined), `${shortcut}: shared keys are scoped`);
+    assert.equal(new Set(scopes).size, scopes.length, `${shortcut}: scopes are disjoint`);
+  }
 });

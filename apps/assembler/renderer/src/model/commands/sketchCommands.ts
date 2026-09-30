@@ -85,6 +85,7 @@ function sessionTool(
     label,
     group: 'sketch',
     shortcut,
+    shortcutScope: 'sketch',
     keywords: ['sketch', ...keywords],
     availability: () =>
       session()
@@ -100,6 +101,7 @@ function constraintCommand(info: (typeof CONSTRAINT_INFO)[number]): Command {
     label: info.label,
     group: 'sketch',
     shortcut: info.shortcut,
+    shortcutScope: 'sketch',
     keywords: ['constraint', 'sketch', info.kind],
     availability: () => {
       const s = session();

@@ -196,12 +196,21 @@ analysis) with the user's panel settings as defaults. Python:
   ghost, placement, settings, STL dialog, slicers dialog (browser fallback),
   pick hint, progress and cancel on 32 bodies.
 
-## Found on the way (not fixed here)
+## Found on the way (fixed by the sketch merge)
 
 Extruding a sketch region **with holes** directly (a rectangle with circles
-inside, built with the legacy-profile test builders, one region with holes)
-produced a body whose holes were added instead of subtracted (volume
-4141 mm³ instead of 3859 mm³), `BRepCheck` invalid and inverted hole faces;
-the Printability panel reports it (invalid B-rep, open mesh, the "hole" as a
-pin). The usual workflow (plate, then a cut extrude) is correct. Owner: the
-sketch/kernel region extrude; not verified through the interactive sketch UI.
+inside, one region with holes) produced a body whose holes were added
+instead of subtracted (volume 4141 mm³ instead of 3859 mm³), `BRepCheck`
+invalid and inverted hole faces; the Printability panel reported it
+(invalid B-rep, open mesh, the "hole" as a pin). Fixed on the sketch side
+(`2efbc7c`, regions with holes cut their holes on every plane); since the
+integration merge `test/print/analysis.test.ts` checks that case on the
+merged kernel: valid B-rep, watertight, exact volume, two holes and no pin.
+
+## Keyboard
+
+`P` toggles Printability in the model. Inside an open sketch `P` is the
+sketch **Project** tool instead: registry commands carry a
+`shortcutScope` (`'sketch'` / `'model'`), the keyboard resolves with the
+current context, and a test allows shared keys only in disjoint scopes.
+Leave the sketch (Enter / Finish) to toggle Printability by key.

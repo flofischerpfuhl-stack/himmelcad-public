@@ -23,6 +23,7 @@ import {
   evaluate,
   pin,
   plateWithHoles,
+  plateWithHolesOneRegion,
   shelledBox,
 } from './fixtures.js';
 
@@ -121,6 +122,21 @@ void test('small holes and pins are flagged by diameter', async () => {
   assert.equal(pinReport.cylinders.length, 1);
   assert.equal(pinReport.cylinders[0]!.kind, 'pin');
   assert.ok(pinReport.cylinders[0]!.flagged, 'Ø0.8 pin is below 1 mm');
+});
+
+void test('a plate extruded from one region with holes is valid, watertight and has two holes (not pins)', async () => {
+  const result = await evaluate(plateWithHolesOneRegion());
+  const body = result.bodies[0]!;
+  const expected = (800 - Math.PI * (0.75 ** 2 + 3 ** 2)) * 5;
+  assert.ok(Math.abs(body.volume - expected) < 1e-6 * expected, `volume ${body.volume}`);
+  const report = analyzeBody(bodyToPrintInput(body), settings());
+  assert.ok(report.brepValid, 'B-rep valid');
+  assert.ok(report.watertight, 'watertight');
+  assert.ok(Math.abs(report.meshVolumeMm3 - expected) < 0.01 * expected);
+  assert.deepEqual(
+    report.cylinders.map((c) => `${c.kind} ${c.diameterMm.toFixed(3)}`).sort(),
+    ['hole 1.500', 'hole 6.000'],
+  );
 });
 
 void test('kernel meshes weld into watertight manifolds; a missing triangle is detected', async () => {

@@ -41,12 +41,22 @@ export interface CommandAvailability {
   priority?: number;
 }
 
+/** Keyboard context a shortcut is resolved in (see `Command.shortcutScope`). */
+export type ShortcutScope = 'sketch' | 'model';
+
 export interface Command {
   id: string;
   label: string;
   group: CommandGroup;
   /** Display form of the shortcut, e.g. `'E'`, `'Ctrl+Z'`, `'Ctrl+1'`. */
   shortcut?: string;
+  /**
+   * Where the shortcut resolves: `'sketch'` only while a sketch is open,
+   * `'model'` only outside sketch mode; absent = everywhere. Two commands
+   * may share a key only in disjoint scopes (e.g. `P`: Project in a
+   * sketch, Printability in the model).
+   */
+  shortcutScope?: ShortcutScope;
   keywords?: string[];
   /**
    * `true` for operations that create B-rep features (booleans,

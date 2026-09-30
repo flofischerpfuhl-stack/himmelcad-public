@@ -240,6 +240,12 @@ arc/arc, spline ends) is mapped to a direction constraint instead of the
 curve-distance form, which is degenerate there (planeGCS reported it
 redundant — the old tangent-arc tool silently dropped it).
 
+Sketch-only tools and constraints (Trim, Offset, Dimension, Project,
+Sketch Fillet/Chamfer, Mirror, Pattern and the `Shift+…` constraints) have `shortcutScope: 'sketch'`: their keys resolve
+only while a sketch is open. `P` is shared on purpose — Project in a
+sketch, Printability (`PRINTING.md`) in the model; `shortcutConflicts()`
+allows a shared key only in disjoint scopes.
+
 ### Projection is associative
 
 A projection stores its source (`{kind: 'edge'|'face', ref}` — a naming v2

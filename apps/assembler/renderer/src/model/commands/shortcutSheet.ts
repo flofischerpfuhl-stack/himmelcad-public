@@ -2,7 +2,7 @@
  * The keyboard cheat sheet's content, generated from the command registry
  * (pure; rendered by `chrome/ShortcutOverlay.tsx`, checked by tests).
  */
-import { COMMANDS, type CommandGroup } from './registry.js';
+import { COMMANDS, type Command, type CommandGroup } from './registry.js';
 
 const GROUP_TITLE: Record<CommandGroup, string> = {
   sketch: 'Sketch',
@@ -47,14 +47,22 @@ export function shortcutSections(
   })).filter((section) => section.rows.length > 0);
 }
 
-/** Shortcuts used by more than one command (should be empty). */
+/**
+ * Shortcuts used by more than one command in an overlapping keyboard
+ * context (should be empty). Commands may share a key only when their
+ * `shortcutScope`s are disjoint (`'sketch'` vs `'model'`).
+ */
 export function shortcutConflicts(): { shortcut: string; ids: string[] }[] {
-  const byKey = new Map<string, string[]>();
+  const byKey = new Map<string, Command[]>();
   for (const c of COMMANDS) {
     if (!c.shortcut) continue;
-    byKey.set(c.shortcut, [...(byKey.get(c.shortcut) ?? []), c.id]);
+    byKey.set(c.shortcut, [...(byKey.get(c.shortcut) ?? []), c]);
   }
+  const overlap = (a: Command, b: Command) =>
+    a.shortcutScope === undefined ||
+    b.shortcutScope === undefined ||
+    a.shortcutScope === b.shortcutScope;
   return [...byKey.entries()]
-    .filter(([, ids]) => ids.length > 1)
-    .map(([shortcut, ids]) => ({ shortcut, ids }));
+    .filter(([, cs]) => cs.some((a, i) => cs.some((b, j) => j > i && overlap(a, b))))
+    .map(([shortcut, cs]) => ({ shortcut, ids: cs.map((c) => c.id) }));
 }

@@ -21,6 +21,7 @@ import { handleEscape, resolveShortcut } from '../model/commands/shortcuts.js';
 import { usePreferences } from '../model/preferences.js';
 import type { AssemblerState } from '../model/store.js';
 import { useWorkspaceStore } from '../model/workspace.js';
+import { useSketchStore } from '../sketch/session.js';
 
 /** Holding Ctrl alone this long shows the shortcut overlay (Shapr3D, Windows). */
 export const CTRL_HOLD_MS = 700;
@@ -184,6 +185,7 @@ export function useGlobalKeyboard(
           targetIsTextInput,
         },
         state,
+        useSketchStore.getState().session ? 'sketch' : 'model',
       );
       if (!command) return;
       const availability = command.availability(state);

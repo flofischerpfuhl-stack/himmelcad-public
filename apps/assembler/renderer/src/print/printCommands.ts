@@ -52,6 +52,8 @@ export const PRINT_COMMANDS: readonly Command[] = [
     label: 'Printability',
     group: 'modes',
     shortcut: 'P',
+    // P is Project inside a sketch (sketchCommands.ts); Printability only outside it.
+    shortcutScope: 'model',
     keywords: [
       'print',
       '3d print',
