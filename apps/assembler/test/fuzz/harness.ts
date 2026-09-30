@@ -87,6 +87,8 @@ export interface RunResult {
   committed: number;
   refused: number;
   maxHeapBytes: number;
+  /** Incremental/cold differences explained by OCCT's heap-layout dependence (F3). */
+  marginal: string[];
   kernelLoads: number;
 }
 
@@ -188,7 +190,9 @@ export class FuzzHarness {
   readonly store = useAssemblerStore;
   readonly kernel: InProcessKernelAdapter;
   readonly session: AgentSession;
-  private reference: { oc: OpenCascade; checks: number } | null = null;
+  private reference: { oc: OpenCascade; checks: number; ballast: unknown[] } | null = null;
+  /** Determinism differences explained by OCCT's heap-layout dependence (finding F3), this run. */
+  private marginal: string[] = [];
   /** The fuzzed kernel's OCCT instance (replicad keeps one global instance; see coldEvaluate). */
   private mainOc: OpenCascade | null = null;
   private asyncErrors: unknown[] = [];
@@ -250,16 +254,20 @@ export class FuzzHarness {
    * kernel's instance restored afterwards (never concurrently: the store is
    * settled before every check).
    */
-  async coldEvaluate(features: Feature[]): Promise<EvaluationResult> {
+  async coldEvaluate(features: Feature[], perturbation = 0): Promise<EvaluationResult> {
     await this.settle();
     // Waits for the fuzzed kernel to be (re)loaded, so its `setOC` cannot land mid-evaluation.
     await this.call('document.get');
     await this.call('bodies.list', { scope: 'committed' });
     if (!this.reference || this.reference.checks >= 150) {
       this.reference = null;
-      this.reference = { oc: await loadOcct(), checks: 0 };
+      this.reference = { oc: await loadOcct(), checks: 0, ballast: [] };
     }
     this.reference.checks += 1;
+    // A different wasm heap layout for the same document (see checkDeterminism).
+    for (let i = 0; i < perturbation * 7; i += 1) {
+      this.reference.ballast.push(new this.reference.oc.gp_Pnt(i, perturbation, 0));
+    }
     let evaluator: KernelEvaluator | null = null;
     try {
       evaluator = createEvaluator(this.reference.oc);
@@ -953,9 +961,22 @@ export class FuzzHarness {
   private async checkDeterminism(): Promise<void> {
     const state = this.store.getState();
     const active = this.activeFeatures();
+    const incremental = evaluationSignature(state.evaluation);
     const cold = await this.coldEvaluate(active);
-    const d = firstDifference(evaluationSignature(state.evaluation), evaluationSignature(cold));
-    if (d) fail('determinism', `incremental ≠ cold evaluation: ${d}`);
+    const d = firstDifference(incremental, evaluationSignature(cold));
+    if (!d) return;
+    // OCCT's result for marginal geometry depends on the wasm heap layout (containers hashed by
+    // address; finding F3): the SAME cold evaluation flips with prior allocations. If a cold
+    // evaluation in another heap state reproduces the incremental result, the difference is the
+    // kernel's, not a cache bug — recorded as marginal, not failed. A cache bug differs always.
+    for (let k = 1; k <= 16; k += 1) {
+      const again = evaluationSignature(await this.coldEvaluate(active, k));
+      if (!firstDifference(incremental, again)) {
+        this.marginal.push(`heap-layout dependent (cold run ${k} agrees): ${d}`);
+        return;
+      }
+    }
+    fail('determinism', `incremental ≠ cold evaluation: ${d}`);
   }
 
   private async checkUndoRedo(): Promise<void> {
@@ -998,6 +1019,7 @@ export class FuzzHarness {
     options: { log?: (line: string) => void; deadline?: number } = {},
   ): Promise<RunResult> {
     await this.reset();
+    this.marginal = [];
     const log: StepLog[] = [];
     let committed = 0;
     let refused = 0;
@@ -1105,6 +1127,7 @@ export class FuzzHarness {
           refused,
           maxHeapBytes,
           kernelLoads: this.kernelLoads,
+          marginal: [...this.marginal],
         };
       }
     }
@@ -1116,6 +1139,7 @@ export class FuzzHarness {
       refused,
       maxHeapBytes,
       kernelLoads: this.kernelLoads,
+      marginal: [...this.marginal],
     };
   }
 }

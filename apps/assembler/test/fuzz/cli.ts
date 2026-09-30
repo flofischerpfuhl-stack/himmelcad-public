@@ -72,6 +72,7 @@ async function main(): Promise<number> {
   let totalCommitted = 0;
   let totalRefused = 0;
   let maxHeap = 0;
+  let totalMarginal = 0;
   let sequence = 0;
   print(`fuzz: seed ${seed}, ${minutes} min, ${steps} ops/sequence, reproducers → ${outDir}`);
   for (; sequence < maxSequences && Date.now() < deadline; sequence += 1) {
@@ -81,12 +82,15 @@ async function main(): Promise<number> {
     totalCommitted += result.committed;
     totalRefused += result.refused;
     maxHeap = Math.max(maxHeap, result.maxHeapBytes);
+    totalMarginal += result.marginal.length;
     print(
       `seq ${sequence}: ${result.steps} steps, ${result.committed} committed, ${result.refused} refused, heap ≤ ${Math.round(result.maxHeapBytes / 2 ** 20)} MB, kernel loads ${result.kernelLoads}, ${Math.round((Date.now() - start) / 1000)} s${result.failure ? ` — FAILED ${result.failure.invariant} at step ${result.failure.step}` : ''}`,
     );
+    for (const note of result.marginal)
+      print(`  MARGINAL (OCCT heap-layout dependent, F3): ${note.slice(0, 300)}`);
     if (!result.failure) continue;
     const failure: Failure = result.failure;
-    const key = `${failure.invariant}:${failure.message.replace(/feature-[\w-]+|body:[\w:-]+|\d+(\.\d+)?/g, '#').slice(0, 120)}`;
+    const key = `${failure.invariant}:${failure.op.op}:${failure.message.replace(/feature-[\w-]+|body:[\w:-]+|\d+(\.\d+)?/g, '#').slice(0, 120)}`;
     const prefix = ops.slice(0, failure.step + 1);
     const reproduces = async (candidate: readonly Op[]) => {
       const again = await harness.run(candidate);
@@ -124,7 +128,7 @@ async function main(): Promise<number> {
     for (const line of repro.calls ?? []) print(`    ${line.slice(0, 300)}`);
   }
   print(
-    `fuzz done: seed ${seed}, ${sequence} sequences, ${totalSteps} steps, ${totalCommitted} committed, ${totalRefused} refused, max heap ${Math.round(maxHeap / 2 ** 20)} MB, kernel loads ${harness.kernelLoads}, ${Math.round((Date.now() - start) / 1000)} s, ${findings.length} finding(s)`,
+    `fuzz done: seed ${seed}, ${sequence} sequences, ${totalSteps} steps, ${totalCommitted} committed, ${totalRefused} refused, max heap ${Math.round(maxHeap / 2 ** 20)} MB, kernel loads ${harness.kernelLoads}, ${Math.round((Date.now() - start) / 1000)} s, ${findings.length} finding(s), ${totalMarginal} marginal (OCCT heap-layout, F3)`,
   );
   return findings.length > 0 ? 1 : 0;
 }

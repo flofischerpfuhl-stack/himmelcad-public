@@ -1707,7 +1707,7 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
             // Never an invalid body silently: the step that produced it says so.
             if (!out.body.valid) {
               const by = state.changedBy ?? state.createdBy;
-              const message = `"${state.name}" is not a valid solid after this step (self-intersecting or open); it may not export or print correctly`;
+              const message = `"${state.name}" is not a valid solid after this step (self-intersecting, open or non-manifold); it may not export or print correctly`;
               if (!errors[by])
                 warnings[by] = warnings[by] ? `${warnings[by]}; ${message}` : message;
             }

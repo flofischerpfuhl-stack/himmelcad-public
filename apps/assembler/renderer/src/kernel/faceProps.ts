@@ -195,7 +195,10 @@ export class FacePropsCache {
     if (mode === 'full') {
       const ok = isValidShape(oc, shape);
       if (ok) for (const e of this.entriesOf(topology)) e.valid = true;
-      return ok;
+      // The closure test is part of every mode: `BRepCheck_Analyzer` accepts an edge shared by
+      // three faces, the incremental modes did not, so the same body was valid after a reopen
+      // and invalid while editing (fuzzer finding F4, `assembler/ROBUSTNESS.md`).
+      return ok && this.closed(topology);
     }
     const entries = this.entriesOf(topology);
     for (const [i, wrapper] of topology.faces.entries()) {
@@ -210,9 +213,18 @@ export class FacePropsCache {
       }
       if (e.valid === false) return false;
     }
-    // Closed solid: every edge bounds exactly two faces, or is the seam of one.
+    return this.closed(topology);
+  }
+
+  /**
+   * Closed, manifold solid: every edge bounds exactly two faces, or is the seam of one, or is
+   * degenerated (the pole of a sphere or a blend corner patch).
+   */
+  private closed(topology: Topology): boolean {
+    const oc = this.oc;
     for (const [edgeIndex, faces] of topology.edgeFaces.entries()) {
       if (faces.length === 2) continue;
+      if (oc.BRep_Tool.Degenerated(topology.edges[edgeIndex]!.wrapped as never)) continue;
       if (faces.length !== 1) return false;
       const seam = oc.BRep_Tool.IsClosed(
         topology.edges[edgeIndex]!.wrapped as never,

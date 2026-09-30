@@ -11,7 +11,7 @@ import test from 'node:test';
 import { ApiError } from '../../renderer/src/api/errors.js';
 import { FuzzHarness } from './harness.js';
 import { generateSequence, sequenceSeed } from './ops.js';
-import { REPRODUCERS } from './reproducers.js';
+import { MARGINAL_REPRODUCERS, REPRODUCERS } from './reproducers.js';
 
 type Json = Record<string, unknown>;
 
@@ -31,6 +31,19 @@ for (const repro of REPRODUCERS) {
   void test(`fuzz regression ${repro.name} (${repro.finding}, was ${repro.invariant})`, async () => {
     const harness = await harnessReady;
     const result = await harness.run(repro.ops);
+    assert.equal(
+      result.failure,
+      null,
+      result.failure ? `${result.failure.invariant}: ${result.failure.message}` : '',
+    );
+  });
+}
+
+for (const repro of MARGINAL_REPRODUCERS) {
+  void test(`fuzz known-marginal ${repro.name} (${repro.finding}): every other invariant holds`, async () => {
+    const harness = await harnessReady;
+    const result = await harness.run(repro.ops);
+    // A determinism difference the harness could not prove heap-layout dependent still fails.
     assert.equal(
       result.failure,
       null,

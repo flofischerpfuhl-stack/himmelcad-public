@@ -58,4 +58,47 @@ export const REPRODUCERS: RegressionCase[] = [
       { op: 'revolve', r: [0.4108, 0.019, 0.7476, 0.4719, 0.2844, 0.8853, 0.9736, 0.4627] },
     ],
   },
+  {
+    // Plate with a through hole, then a cylinder cut from a side face: the edited body's
+    // incremental validity (closure test: an edge shared by three faces) said invalid, the
+    // full BRepCheck after a reopen said valid.
+    name: 'determinism-s1-q281',
+    finding: 'F4',
+    invariant: 'determinism',
+    ops: [
+      { op: 'sketch', r: [0.6422, 0.8789, 0.5439, 0.1533, 0.6176, 0.8826, 0.6611, 0.4708] },
+      { op: 'extrude', r: [0.7958, 0.5556, 0.6148, 0.188, 0.4737, 0.3364, 0.1976, 0.0171] },
+      { op: 'sketchOnFace', r: [0.1478, 0.0259, 0.8637, 0.3426, 0.9071, 0.4192, 0.8019, 0.0729] },
+      { op: 'hole', r: [0.2274, 0.8989, 0.0614, 0.6924, 0.826, 0.3282, 0.8947, 0.159] },
+      { op: 'extrude', r: [0.6349, 0.9919, 0.4834, 0.2315, 0.0539, 0.9114, 0.1419, 0.5449] },
+    ],
+  },
+];
+
+/**
+ * Known kernel-marginal cases (finding F3): OCCT's result for this geometry
+ * depends on the wasm heap layout, so an incremental and a cold evaluation
+ * can disagree. Replayed to keep every other invariant; a determinism
+ * difference is accepted only when the harness proves it heap-layout
+ * dependent (`harness.ts#checkDeterminism`).
+ */
+export const MARGINAL_REPRODUCERS: RegressionCase[] = [
+  {
+    // Disc r 7 x 4, linear pattern, shell 2.6 (open end), emboss on a copy, then a 0.7 mm
+    // shell of the shell's inner face: fits or not depending on the heap layout.
+    name: 'determinism-s1-q28',
+    finding: 'F3',
+    invariant: 'determinism',
+    ops: [
+      { op: 'sketch', r: [0.6584, 0.4288, 0.8248, 0.8017, 0.3218, 0.5288, 0.9572, 0.159] },
+      { op: 'extrudeExpr', r: [0.6614, 0.3842, 0.267, 0.1494, 0.3448, 0.0976, 0.7693, 0.9491] },
+      { op: 'pattern', r: [0.2836, 0.3403, 0.668, 0.7395, 0.7216, 0.2286, 0.5159, 0.731] },
+      { op: 'shell', r: [0.1591, 0.5819, 0.6302, 0.1362, 0.9546, 0.3989, 0.0636, 0.8534] },
+      { op: 'emboss', r: [0.2898, 0.6566, 0.2363, 0.466, 0.5365, 0.716, 0.1983, 0.5107] },
+      { op: 'polyline', r: [0.0022, 0.4421, 0.7891, 0.5418, 0.8534, 0.453, 0.9612, 0.6915] },
+      { op: 'shell', r: [0.1319, 0.8226, 0.1342, 0.2703, 0.2331, 0.7289, 0.665, 0.9798] },
+      { op: 'sketch', r: [0.2835, 0.4519, 0.7077, 0.7474, 0.511, 0.152, 0.5781, 0.8829] },
+      { op: 'polyline', r: [0.0295, 0.6546, 0.1875, 0.8846, 0.0303, 0.1, 0.0967, 0.4114] },
+    ],
+  },
 ];
