@@ -122,10 +122,12 @@
 }
 
 .error {
+  /* Anchored under the pill, which may wrap onto a second row (Extrude, Hole). */
   position: absolute;
-  top: 100px;
+  top: calc(100% + 8px);
   left: 50%;
   transform: translateX(-50%);
+  width: max-content;
   display: flex;
   align-items: center;
   gap: var(--hc-space-2);

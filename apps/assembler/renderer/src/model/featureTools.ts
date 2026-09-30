@@ -1380,6 +1380,8 @@ export function draftBadges(draft: FeatureDraft): DraftBadge[] {
         },
       ];
     case 'offsetFace':
+      // Move Face (Move/Rotate on a face) is a plain drag; no clearance presets there.
+      if (draft.viaMove) return [];
       // Printing clearances: remove 0.1-0.4 mm from mating faces (a hole wall grows, a peg shrinks).
       return [
         {

@@ -2148,6 +2148,8 @@ export function Viewport(props: ViewportProps): JSX.Element {
         handleChips,
         screen: project(tip),
         distance: activeTool.distance,
+        // Through All / To Object: the distance only gives the direction (no value chip).
+        showDistance: (activeTool.extent ?? 'distance') === 'distance',
       };
     }
     if (activeTool?.kind === 'move' && moveAnchor) {
@@ -2325,7 +2327,7 @@ export function Viewport(props: ViewportProps): JSX.Element {
           />
         );
       })}
-      {overlay?.kind === 'extrude' && overlay.screen && (
+      {overlay?.kind === 'extrude' && overlay.screen && overlay.showDistance && (
         <DimensionLabel
           label="Extrude distance"
           value={overlay.distance}

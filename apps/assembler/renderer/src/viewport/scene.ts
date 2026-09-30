@@ -968,15 +968,16 @@ export function buildScene(input: SceneInput): BuiltScene {
         base[1] + u[1] * a + v[1] * b,
         base[2] + u[2] * a + v[2] * b,
       ];
-      const scaleMm = worldPerPixel(Math.hypot(...sub3(eye, base))) * 26;
-      const lo = scaleMm * 0.45;
+      const scaleMm = worldPerPixel(Math.hypot(...sub3(eye, base))) * 36;
+      const lo = scaleMm * 0.4;
       const hi = scaleMm;
       const quad: [Vec3, Vec3, Vec3, Vec3] = [at(lo, lo), at(hi, lo), at(hi, hi), at(lo, hi)];
       const hovered = input.moveHandle.hoveredTile === plane;
       const color = hovered ? input.colors.hover : axisColors[plane];
+      const alpha = hovered ? 0.8 : 0.6;
       const fill = { positions: [] as number[], colors: [] as number[] };
-      pushFlatQuad(fill, quad, color, hovered ? 0.7 : 0.45);
-      pushFlatQuad(fill, [quad[0], quad[3], quad[2], quad[1]], color, hovered ? 0.7 : 0.45);
+      pushFlatQuad(fill, quad, color, alpha);
+      pushFlatQuad(fill, [quad[0], quad[3], quad[2], quad[1]], color, alpha);
       const tris = new Float32Array(fill.positions);
       flat.push({
         positions: tris,

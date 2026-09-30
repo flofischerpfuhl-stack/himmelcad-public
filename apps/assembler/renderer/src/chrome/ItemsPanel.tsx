@@ -85,7 +85,8 @@ const FILTER_LABEL: Record<TypeFilter, string> = {
   bodies: 'Bodies',
   sketches: 'Sketches',
   meshes: 'Meshes',
-  construction: 'Planes & axes',
+  // Short enough for the segmented filter row (planes and axes).
+  construction: 'Datums',
 };
 
 const DRAG_MIME = 'application/x-hcasm-items';

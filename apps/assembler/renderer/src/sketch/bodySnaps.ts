@@ -82,8 +82,11 @@ export function bodySnapTargets(
     return [u, v];
   };
   const seen = new Set<string>();
+  // Mesh samples are single precision: targets are rounded to 0.01 µm (no 40.0000002 points).
+  const round = (v: number) => Math.round(v * 1e5) / 1e5;
   const add = (p: Vec3, kind: BodySnapKind) => {
-    const pos = uv(p);
+    const raw = uv(p);
+    const pos: Vec2 = [round(raw[0]), round(raw[1])];
     const key = `${kind}:${pos[0].toFixed(4)}:${pos[1].toFixed(4)}`;
     if (seen.has(key)) return;
     seen.add(key);

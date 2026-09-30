@@ -344,7 +344,7 @@ const RAW_COMMANDS: readonly Command[] = [
         return;
       }
       for (const item of ctx.selection) {
-        if (item.kind === 'feature' || item.kind === 'sketchProfile') {
+        if (item.kind === 'feature' || item.kind === 'sketchProfile' || item.kind === 'datum') {
           ctx.deleteFeature(item.featureId);
         } else if (item.kind === 'body') {
           const body = ctx.evaluation.bodies.find((b) => b.id === item.bodyId);

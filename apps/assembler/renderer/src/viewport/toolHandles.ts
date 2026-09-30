@@ -207,14 +207,6 @@ function extrudeHandles(state: AssemblerState): ToolHandleSet {
       at: [base[0] + dir[0] * length, base[1] + dir[1] * length, base[2] + dir[2] * length],
     });
   }
-  out.chips.push({
-    handle: 'extrudeStart',
-    label: 'Start offset',
-    prefix: 'Start',
-    unit: 'mm',
-    value: s,
-    at: samples.center,
-  });
   return out;
 }
 

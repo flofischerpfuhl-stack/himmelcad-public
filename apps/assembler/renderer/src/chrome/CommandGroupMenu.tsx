@@ -62,6 +62,7 @@ export function CommandGroupMenu({
       ref={buttonRef}
       type="button"
       className={triggerClassName ? `${styles.trigger} ${triggerClassName}` : styles.trigger}
+      aria-label={label}
       aria-haspopup="menu"
       aria-expanded={open}
       onClick={() => {

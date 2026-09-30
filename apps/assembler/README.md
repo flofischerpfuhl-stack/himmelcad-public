@@ -164,11 +164,37 @@ the rows when a behaviour changes. Behaviours added from it (2026-09-30):
 - **History card**: Breakpoint after this step, Zoom to, Duplicate, expand/
   collapse all; focused card: Del suppresses, Shift+Del deletes.
 - **Snapping** (right dock magnet): Grid, Points, Midpoints, Guidelines, On
-  curves, Auto-constrain, Show snap hints; the grid resolution follows the
+  curves, Body points, Far edges, Auto-constrain, New constraints keep, Show
+  snap hints; the grid resolution follows the
   zoom (read-out + lock, `model/gridResolution.ts`).
 - **Settings**: custom shortcuts (`commands/shortcutOverrides.ts`), Selection
   extension. Saved views keep the section state; Nearest ortho view; quick
   measurement in the status strip.
+
+Parity round 2 (branch `asm/parity2-20260930`):
+
+- **Extrude**: New/Join/Cut/Intersect; extent Distance / To Object (click a
+  face, construction plane or body) / Through All; One side / Symmetric / Two
+  sides (second handle); start offset — pill badges and History card
+  (`kernel/features/extrudeExtent.ts`).
+- **Construct** flyout (`constructCommands.ts`, `model/construction.ts`):
+  planes (offset, angle about an edge/axis, 3 points, midplane, tangent to a
+  cylinder) and axes (edge, two points, cylinder, plane intersection) as
+  History steps and Items rows; usable as sketch, mirror, split and section
+  planes and as revolve/pattern/rotate/mirror axes.
+- **Tool before selection** (`model/pickSession.ts`): a command started
+  without its selection asks for each reference in the pill; picks become
+  badges (× removes, Swap), Next/Start.
+- **Move/Rotate**: plane tiles, Auto-orient (the gizmo follows the face/edge
+  the centre is dropped on; World axes resets); a face moves along its normal
+  (Offset Face step), a sketch region moves in its plane; edges are refused
+  with the reason (no face replacement in this kernel build).
+- **History Fix…** (`model/fixReference.ts`): the missing reference's last
+  place as a red ghost; pick a replacement, one undo step each.
+- **Booleans** Keep target; **Mirror** sketches, faces and about an axis;
+  **History filter** uses the isolated objects when nothing is selected.
+- Sketch additions (3D snaps, arc ends-then-bulge, 3-point rectangle, First/
+  Last selected, continue previous sketch): `assembler/SKETCHING.md`.
 
 ## 3D printing (Print mode, build plate, exports, slicer handoff)
 
@@ -318,30 +344,32 @@ installed from `renderer/src/devtools/automationHook.ts` behind
 of the product contract** (agents use the agent API above). Screen positions are CSS pixels relative to the page
 viewport, directly usable with `page.mouse`.
 
-| Member                            | Returns                                                                                                                                                                                                                              |
-| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `store`                           | The zustand store (`getState()`, actions).                                                                                                                                                                                           |
-| `project([x, y, z])`              | `{ x, y }` of a world point (mm), or `null` behind the camera.                                                                                                                                                                       |
-| `faceAnchor({ bodyId, faceKey })` | A visible, unoccluded pixel of the face, found in the picking id buffer (largest clearance to other ids), or `null` if hidden/occluded.                                                                                              |
-| `edgeAnchor({ bodyId, edgeKey })` | Same for an edge (its pick ribbon).                                                                                                                                                                                                  |
-| `handleAnchor(kind)`              | Same for a drag handle: `'extrude' \| 'blend' \| 'shell' \| 'section'`, a feature-tool handle `'feature:<id>'` (`angle`, `offset`, `spacing`, `distance`, `length`), a Move/Rotate ring `'ring:0..2'` or the gizmo centre `'pivot'`. |
-| `bodies()`                        | Displayed bodies (the active tool's preview if any): `id`, `name`, `volume`, `min`, `max`.                                                                                                                                           |
-| `faces(bodyId)` / `edges(bodyId)` | Stable references (`faceKey`/`edgeKey`) with readable names (`"Extrude 1 end · plane +Z at …"`, `"Circle Ø6 at …"`) plus geometry.                                                                                                   |
-| `waitForKernelIdle()`             | Resolves when no document/preview evaluation is outstanding and that state has been drawn (so anchors are current).                                                                                                                  |
-| `sketchToScreen([u, v], id?)`     | Page pixel of sketch coordinates in the open sketch session (or in the evaluated sketch `id`), `null` if not visible.                                                                                                                |
-| `sketchSession()`                 | Open session summary: feature id, tool, DOF, problem message, constraint kinds, dimensions (`id`, `name`, `kind`, `value`), selection.                                                                                               |
-| `dimensionChip(name)`             | Centre of the value chip of dimension `name` (e.g. `"d1"`), or `null`.                                                                                                                                                               |
-| `waitForSketchIdle()`             | Resolves when no sketch edit/drag solve is pending, the document settled and the frame is drawn.                                                                                                                                     |
-| `sketchStore`                     | The sketch-mode zustand store (`begin`, `dispatch`, `setTool`, …).                                                                                                                                                                   |
-| `workspaceStore`                  | Workspace view state: Select Through, saved views, `sendCamera({ kind: 'home' \| 'fitAll' \| 'fitSelection' \| 'direction' \| 'roll' \| 'pose' \| 'lookAtFace' })`, overlays.                                                        |
-| `itemsStore` / `preferences`      | Item names and folders; user preferences (theme, units, navigation preset, projection, `animateCamera` — set `false` for deterministic shots).                                                                                       |
-| `cameraPose()`                    | The live camera pose (`yaw`, `pitch`, `roll`, `fov`, `target`, `distance`).                                                                                                                                                          |
-| `printStore`                      | Print mode: `setEnabled`, `settings`/`updateSettings`, `status`/`progress`/`report`, `focusFinding`, `startPlacePicking`, `startAutoOrient`/`applyOrientation` (`D:\AgentWork\HimmelCAD-Assembler\shots\pr-shots.mjs`).              |
-| `viewportStats(finish?)`          | Renderer counters: frames drawn (idle check), last frame CPU ms, uploads, draw calls, AO/shadow state; `finish` syncs the GPU after each frame.                                                                                      |
-| `viewportBenchmark(frames)`       | Mean ms per frame over `frames` back-to-back renders while orbiting (scene build + GPU, no vsync).                                                                                                                                   |
-| `measureStore`                    | Measure panel state: pins, picked points, Points tool.                                                                                                                                                                               |
-| `commands`                        | The command registry as the UI sees it: `list()`, `adaptive()` (order + recommendation for the selection), `search(query)`, `run(id)` (`D:\AgentWork\HimmelCAD-Assembler\shots\g-probe.mjs`, `g-shots.mjs`).                         |
-| `projectStore`                    | Project file state: `newFromTemplate(id)`, `requestTemplate`, `checkRecovery`/`restoreRecovery`, `dirty`, `busyMessage`; Home is `workspaceStore.setHomeOpen` (`D:\AgentWork\HimmelCAD-Assembler\shots\h-shots.mjs`).                |
+| Member                                | Returns                                                                                                                                                                                                                              |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `store`                               | The zustand store (`getState()`, actions).                                                                                                                                                                                           |
+| `project([x, y, z])`                  | `{ x, y }` of a world point (mm), or `null` behind the camera.                                                                                                                                                                       |
+| `faceAnchor({ bodyId, faceKey })`     | A visible, unoccluded pixel of the face, found in the picking id buffer (largest clearance to other ids), or `null` if hidden/occluded.                                                                                              |
+| `edgeAnchor({ bodyId, edgeKey })`     | Same for an edge (its pick ribbon).                                                                                                                                                                                                  |
+| `handleAnchor(kind)`                  | Same for a drag handle: `'extrude' \| 'blend' \| 'shell' \| 'section'`, a feature-tool handle `'feature:<id>'` (`angle`, `offset`, `spacing`, `distance`, `length`), a Move/Rotate ring `'ring:0..2'` or the gizmo centre `'pivot'`. |
+| `bodies()`                            | Displayed bodies (the active tool's preview if any): `id`, `name`, `volume`, `min`, `max`.                                                                                                                                           |
+| `faces(bodyId)` / `edges(bodyId)`     | Stable references (`faceKey`/`edgeKey`) with readable names (`"Extrude 1 end · plane +Z at …"`, `"Circle Ø6 at …"`) plus geometry.                                                                                                   |
+| `waitForKernelIdle()`                 | Resolves when no document/preview evaluation is outstanding and that state has been drawn (so anchors are current).                                                                                                                  |
+| `sketchToScreen([u, v], id?)`         | Page pixel of sketch coordinates in the open sketch session (or in the evaluated sketch `id`), `null` if not visible.                                                                                                                |
+| `sketchSession()`                     | Open session summary: feature id, tool, DOF, problem message, constraint kinds, dimensions (`id`, `name`, `kind`, `value`), selection.                                                                                               |
+| `dimensionChip(name)`                 | Centre of the value chip of dimension `name` (e.g. `"d1"`), or `null`.                                                                                                                                                               |
+| `waitForSketchIdle()`                 | Resolves when no sketch edit/drag solve is pending, the document settled and the frame is drawn.                                                                                                                                     |
+| `sketchStore`                         | The sketch-mode zustand store (`begin`, `dispatch`, `setTool`, …).                                                                                                                                                                   |
+| `workspaceStore`                      | Workspace view state: Select Through, saved views, `sendCamera({ kind: 'home' \| 'fitAll' \| 'fitSelection' \| 'direction' \| 'roll' \| 'pose' \| 'lookAtFace' })`, overlays.                                                        |
+| `itemsStore` / `preferences`          | Item names and folders; user preferences (theme, units, navigation preset, projection, `animateCamera` — set `false` for deterministic shots).                                                                                       |
+| `cameraPose()`                        | The live camera pose (`yaw`, `pitch`, `roll`, `fov`, `target`, `distance`).                                                                                                                                                          |
+| `printStore`                          | Print mode: `setEnabled`, `settings`/`updateSettings`, `status`/`progress`/`report`, `focusFinding`, `startPlacePicking`, `startAutoOrient`/`applyOrientation` (`D:\AgentWork\HimmelCAD-Assembler\shots\pr-shots.mjs`).              |
+| `viewportStats(finish?)`              | Renderer counters: frames drawn (idle check), last frame CPU ms, uploads, draw calls, AO/shadow state; `finish` syncs the GPU after each frame.                                                                                      |
+| `viewportBenchmark(frames)`           | Mean ms per frame over `frames` back-to-back renders while orbiting (scene build + GPU, no vsync).                                                                                                                                   |
+| `measureStore`                        | Measure panel state: pins, picked points, Points tool.                                                                                                                                                                               |
+| `commands`                            | The command registry as the UI sees it: `list()`, `adaptive()` (order + recommendation for the selection), `search(query)`, `run(id)` (`D:\AgentWork\HimmelCAD-Assembler\shots\g-probe.mjs`, `g-shots.mjs`).                         |
+| `projectStore`                        | Project file state: `newFromTemplate(id)`, `requestTemplate`, `checkRecovery`/`restoreRecovery`, `dirty`, `busyMessage`; Home is `workspaceStore.setHomeOpen` (`D:\AgentWork\HimmelCAD-Assembler\shots\h-shots.mjs`).                |
+| `datums()` / `datumAnchor(featureId)` | Displayed construction planes/axes (`featureId`, `kind`, `center`, `size`) and a clickable pixel of one (`p2-shots.mjs`).                                                                                                            |
+| `fixStore`                            | History "Fix…" session (`session`, `end`).                                                                                                                                                                                           |
 
 The view cube's cells carry `data-cell="<face>:<i>:<j>"` (e.g. `front:1:1` =
 the Front-Right-Top corner) for DOM-anchored clicks. Example (see

@@ -23,6 +23,7 @@ import { currentCameraPose, useWorkspaceStore } from '../model/workspace.js';
 import { usePrintStore } from '../print/printStore.js';
 import type { CameraPose } from '../viewport/camera.js';
 import { getViewportProbe, type ScreenPoint, type ViewportProbe } from '../viewport/automation.js';
+import { useFixStore } from '../model/fixReference.js';
 import { useMeasureStore } from '../model/measureStore.js';
 import { useProjectStore } from '../model/project/projectStore.js';
 import type { ToolHandleKind } from '../viewport/picking.js';
@@ -100,6 +101,12 @@ export interface AssemblerAutomation {
     /** Runs a command if it is enabled; returns whether it ran. */
     run(id: string): boolean;
   };
+  /** Construction planes/axes as evaluated (`EvaluatedDatum`) — the shown evaluation. */
+  datums(): { featureId: string; kind: 'plane' | 'axis'; center: number[]; size: number }[];
+  /** A visible pixel of a construction plane's/axis' outline (pick ribbon), or `null`. */
+  datumAnchor(featureId: string): ScreenPoint | null;
+  /** History `Fix…` session (`model/fixReference.ts`): `session`, `end`. */
+  fixStore: typeof useFixStore;
 }
 
 declare global {
@@ -230,6 +237,16 @@ export function installAutomationHook(store: typeof useAssemblerStore): void {
     viewportBenchmark: (frames) => getViewportProbe()?.benchmark?.(frames) ?? null,
     measureStore: useMeasureStore,
     projectStore: useProjectStore,
+    datums: () =>
+      (displayed().datums ?? []).map((d) => ({
+        featureId: d.featureId,
+        kind: d.kind,
+        center: [...d.center],
+        size: d.size,
+      })),
+    datumAnchor: (featureId) =>
+      getViewportProbe()?.anchor((t) => t.kind === 'datum' && t.featureId === featureId) ?? null,
+    fixStore: useFixStore,
     commands: {
       list: () =>
         COMMANDS.map((c) => ({

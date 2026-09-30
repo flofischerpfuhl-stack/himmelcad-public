@@ -91,7 +91,7 @@ function toolMeta(tool: ToolSessionState): ToolMeta {
       return {
         label: 'Boolean',
         shortcut: '',
-        prompt: `Keeps the target body; ${tool.toolBodyIds.length === 1 ? '1 tool body' : `${tool.toolBodyIds.length} tool bodies`} ${tool.keepTools ? 'kept' : 'consumed'}. Click bodies to add or remove tools.`,
+        prompt: `${tool.keepTarget ? 'Keeps the target unchanged, the result is a new body' : 'Changes the target body'}; ${tool.toolBodyIds.length === 1 ? '1 tool body' : `${tool.toolBodyIds.length} tool bodies`} ${tool.keepTools ? 'kept' : 'consumed'}. Click bodies to add or remove tools.`,
       };
   }
 }
@@ -521,6 +521,15 @@ function ToolBadge({
             ]}
             onChange={(value) => state.setBooleanKeepTools(value === 'keep')}
           />
+          <Badge
+            ariaLabel="Target body"
+            value={tool.keepTarget ? 'keep' : 'modify'}
+            options={[
+              { value: 'modify', label: 'Modify target' },
+              { value: 'keep', label: 'Keep target' },
+            ]}
+            onChange={(value) => state.setBooleanKeepTarget(value === 'keep')}
+          />
           <Tooltip content="Swap target and tool">
             <Button
               variant="secondary"
@@ -642,14 +651,14 @@ export function ToolSession({ state }: { state: AssemblerState }): JSX.Element |
             <LoaderCircle size={13} />
           </span>
         ) : null}
+        {error ? (
+          <div className={styles.error} role="alert">
+            <AlertTriangle size={13} aria-hidden />
+            <span>{error}</span>
+            <span className={styles.errorHint}>Showing the last valid preview.</span>
+          </div>
+        ) : null}
       </div>
-      {error ? (
-        <div className={styles.error} role="alert">
-          <AlertTriangle size={13} aria-hidden />
-          <span>{error}</span>
-          <span className={styles.errorHint}>Showing the last valid preview.</span>
-        </div>
-      ) : null}
       <div className={styles.actions}>
         <Tooltip content="Cancel (Esc)">
           <Button

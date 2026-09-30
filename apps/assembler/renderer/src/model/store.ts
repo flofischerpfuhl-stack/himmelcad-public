@@ -213,6 +213,8 @@ export interface BooleanTool extends ToolSessionBase, KernelPreviewFields {
   toolBodyIds: string[];
   /** Keep the tool bodies instead of consuming them. */
   keepTools?: boolean;
+  /** Keep the target as it was; the result becomes a new body. */
+  keepTarget?: boolean;
 }
 
 /**
@@ -534,6 +536,8 @@ export interface AssemblerState {
   toggleShellFace: (bodyId: string, faceKey: string) => void;
   /** Keep or consume the tool bodies of the running boolean tool. */
   setBooleanKeepTools: (keep: boolean) => void;
+  /** Keep the target unchanged (result as a new body) in the running boolean tool. */
+  setBooleanKeepTarget: (keep: boolean) => void;
   /** Swaps the target with the first tool body of the running boolean tool. */
   swapBooleanTarget: () => void;
   /** Adds/removes a tool body while the boolean tool runs. */
@@ -974,6 +978,7 @@ function buildProvisional(tool: PreviewTool): Feature | null {
         targetBodyId: tool.targetBodyId,
         toolBodyIds: tool.toolBodyIds,
         ...(tool.keepTools ? { keepTools: true } : {}),
+        ...(tool.keepTarget ? { keepTarget: true } : {}),
       };
     case 'feature':
       return draftToFeature(tool.draft, { id: PREVIEW_FEATURE_ID, name: 'Preview' });
@@ -1777,6 +1782,13 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
       if (!keep) delete next.keepTools;
       updatePreviewTool(next);
     },
+    setBooleanKeepTarget: (keep) => {
+      const tool = get().activeTool;
+      if (tool?.kind !== 'boolean') return;
+      const next: BooleanTool = { ...tool, keepTarget: keep };
+      if (!keep) delete next.keepTarget;
+      updatePreviewTool(next);
+    },
     swapBooleanTarget: () => {
       const tool = get().activeTool;
       if (tool?.kind !== 'boolean' || tool.toolBodyIds.length === 0) return;
@@ -1978,6 +1990,8 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
       }
 
       if (tool.kind === 'extrude') {
+        // "To Object" without its object (or a zero distance) has nothing to commit yet.
+        if (!extrudeReady(tool)) return;
         const provisional = buildProvisionalExtrude(tool);
         const id = createFeatureId('extrude');
         const feature: ExtrudeFeature = {
