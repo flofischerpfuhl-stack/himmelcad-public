@@ -10,7 +10,7 @@ import { useEffect } from 'react';
 import { registerEscapeRung } from '@himmelcad/ui';
 
 import { shortcutSections, type ShortcutRow } from '../../foundation/commands/shortcutSheet.js';
-import { usePreferences } from './preferences.js';
+import { usePreferences } from '../../platform/input/preferences.js';
 import { useWorkspaceStore } from './workspace.js';
 import { describeBindings, navigationPreset } from '../../platform/input/navigation.js';
 import styles from './ShortcutOverlay.module.css';

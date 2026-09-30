@@ -14,7 +14,7 @@ import {
   DEFAULT_IMAGE_EXPORT,
   usePreferences,
   type ImageExportPreference,
-} from '../interface/shell-ui/preferences.js';
+} from '../platform/input/preferences.js';
 import { useAssemblerStore } from '../foundation/commands/store.js';
 import { currentViewportSize, renderViewportImage, useViewportUi } from '../model/viewportUi.js';
 import { useWorkspaceStore } from '../interface/shell-ui/workspace.js';

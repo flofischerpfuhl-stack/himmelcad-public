@@ -10,7 +10,7 @@ import { sectionNormal } from '../../viewport/toolAnchors.js';
 import { displayBodyName, useItemsStore } from '../../foundation/commands/items.js';
 import { currentRefs } from '../measure.js';
 import { useMeasureStore } from '../measureStore.js';
-import { usePreferences } from '../../interface/shell-ui/preferences.js';
+import { usePreferences } from '../../platform/input/preferences.js';
 import {
   findFace,
   isPlanarFace,

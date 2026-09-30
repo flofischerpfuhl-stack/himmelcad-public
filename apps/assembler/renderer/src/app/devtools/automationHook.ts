@@ -22,7 +22,7 @@ import {
   searchCommands,
 } from '../../foundation/commands/registry.js';
 import { useItemsStore } from '../../foundation/commands/items.js';
-import { usePreferences } from '../../interface/shell-ui/preferences.js';
+import { usePreferences } from '../../platform/input/preferences.js';
 import { isPreviewTool, useAssemblerStore } from '../../foundation/commands/store.js';
 import { currentCameraPose, useWorkspaceStore } from '../../interface/shell-ui/workspace.js';
 import { usePrintStore } from '../../modules/print/printStore.js';

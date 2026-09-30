@@ -11,7 +11,7 @@ import {
   type AssemblerState,
   type SelectionItem,
 } from '../../foundation/commands/store.js';
-import { usePreferences } from './preferences.js';
+import { usePreferences } from '../../platform/input/preferences.js';
 import { viewDirection } from '../../platform/viewport/camera.js';
 import {
   MAX_SAVED_VIEWS,

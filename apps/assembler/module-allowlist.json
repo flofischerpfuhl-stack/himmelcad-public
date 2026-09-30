@@ -79,14 +79,9 @@
       "rule": "upward",
       "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
       "edges": [
-        "renderer/src/chrome/AnalysisLegend.tsx -> renderer/src/interface/shell-ui/preferences.ts",
         "renderer/src/chrome/ColourDialog.tsx -> renderer/src/interface/shell-ui/workspace.ts",
-        "renderer/src/chrome/DisplayMenu.tsx -> renderer/src/interface/shell-ui/preferences.ts",
-        "renderer/src/chrome/ExportImageDialog.tsx -> renderer/src/interface/shell-ui/preferences.ts",
         "renderer/src/chrome/ExportImageDialog.tsx -> renderer/src/interface/shell-ui/workspace.ts",
-        "renderer/src/model/commands/displayCommands.ts -> renderer/src/interface/shell-ui/preferences.ts",
-        "renderer/src/model/commands/displayCommands.ts -> renderer/src/interface/shell-ui/workspace.ts",
-        "renderer/src/viewport/imageExport.ts -> renderer/src/interface/shell-ui/preferences.ts"
+        "renderer/src/model/commands/displayCommands.ts -> renderer/src/interface/shell-ui/workspace.ts"
       ]
     },
     {
@@ -115,10 +110,7 @@
       "rule": "upward",
       "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
       "edges": [
-        "renderer/src/chrome/MeasurePanel.tsx -> renderer/src/interface/shell-ui/preferences.ts",
-        "renderer/src/chrome/MeasurePanel.tsx -> renderer/src/interface/shell-ui/workspace.ts",
-        "renderer/src/model/measureLive.ts -> renderer/src/interface/shell-ui/preferences.ts",
-        "renderer/src/model/measureStore.ts -> renderer/src/interface/shell-ui/preferences.ts"
+        "renderer/src/chrome/MeasurePanel.tsx -> renderer/src/interface/shell-ui/workspace.ts"
       ]
     },
     {
@@ -159,31 +151,11 @@
       ]
     },
     {
-      "from": "modeling",
-      "to": "shell-ui",
-      "rule": "upward",
-      "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
-      "edges": [
-        "renderer/src/chrome/FeatureParams.tsx -> renderer/src/interface/shell-ui/HistoryPanel.module.css",
-        "renderer/src/chrome/PrintFeatureParams.tsx -> renderer/src/interface/shell-ui/HistoryPanel.module.css"
-      ]
-    },
-    {
       "from": "sketching",
       "to": "display",
       "rule": "cross-domain",
       "reason": "Known at the start of the ADR 0032 restructure (phase A): domain modules talk through foundation contracts and registrations, not directly.",
       "edges": ["renderer/src/sketch/ui/SketchOverlay.tsx -> renderer/src/model/viewportUi.ts"]
-    },
-    {
-      "from": "sketching",
-      "to": "shell-ui",
-      "rule": "upward",
-      "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
-      "edges": [
-        "renderer/src/sketch/session.ts -> renderer/src/interface/shell-ui/preferences.ts",
-        "renderer/src/sketch/ui/SketchOverlay.tsx -> renderer/src/interface/shell-ui/preferences.ts"
-      ]
     },
     {
       "from": "viewport",
@@ -228,9 +200,7 @@
       "rule": "upward",
       "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
       "edges": [
-        "renderer/src/platform/viewport/DimensionLabel.tsx -> renderer/src/interface/shell-ui/preferences.ts",
         "renderer/src/platform/viewport/Viewport.tsx -> renderer/src/interface/shell-ui/fixReference.ts",
-        "renderer/src/platform/viewport/Viewport.tsx -> renderer/src/interface/shell-ui/preferences.ts",
         "renderer/src/platform/viewport/Viewport.tsx -> renderer/src/interface/shell-ui/workspace.ts"
       ]
     },

@@ -20,7 +20,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { registerEscapeRung } from '@himmelcad/ui';
 
 import { effectiveGridStep } from '../../platform/viewport/gridResolution.js';
-import { usePreferences } from '../../interface/shell-ui/preferences.js';
+import { usePreferences } from '../../platform/input/preferences.js';
 import { useAssemblerStore } from '../../foundation/commands/store.js';
 import { useViewportUi } from '../../model/viewportUi.js';
 import { boxModeFor, normalizeRect } from '../../platform/viewport/boxSelect.js';

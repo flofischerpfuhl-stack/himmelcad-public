@@ -28,7 +28,7 @@ import type { AssemblerState, FeaturePatch } from '../foundation/commands/store.
 import { resolveParameterValues } from '../foundation/document/parameters.js';
 import { ExpressionField } from '../platform/widgets/ExpressionField.js';
 import { ParamExpressionField } from '../platform/widgets/ParamExpressionField.js';
-import styles from '../interface/shell-ui/HistoryPanel.module.css';
+import styles from '../platform/widgets/HistoryCard.module.css';
 
 const OPERATION_OPTIONS = [
   { value: 'new', label: 'New body' },

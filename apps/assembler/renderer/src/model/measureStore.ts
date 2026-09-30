@@ -11,7 +11,7 @@ import { create } from 'zustand';
 import type { KernelAdapter } from '../foundation/geometry-kernel/adapter.js';
 import type { DistanceTarget, EvaluationResult } from '../foundation/geometry-kernel/types.js';
 import type { Feature } from '../foundation/document/document.js';
-import { usePreferences } from '../interface/shell-ui/preferences.js';
+import { usePreferences } from '../platform/input/preferences.js';
 import { refKey, type DistanceResult, type MeasureRef, type Vec3 } from './measure.js';
 
 export interface PinnedMeasurement {

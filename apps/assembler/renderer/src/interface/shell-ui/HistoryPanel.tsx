@@ -60,7 +60,7 @@ import type { AssemblerState, FeaturePatch } from '../../foundation/commands/sto
 import type { ExtrudeOperation, Feature } from '../../foundation/document/document.js';
 import { useSketchStore } from '../../sketch/session.js';
 import panelStyles from '../../platform/widgets/Panel.module.css';
-import styles from './HistoryPanel.module.css';
+import styles from '../../platform/widgets/HistoryCard.module.css';
 
 export interface HistoryPanelProps {
   state: AssemblerState;

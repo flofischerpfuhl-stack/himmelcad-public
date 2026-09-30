@@ -37,7 +37,7 @@ import {
   featureZoomTargets,
   stepNamePrefix,
 } from '../../renderer/src/interface/shell-ui/historyTools.js';
-import { parsePreferences } from '../../renderer/src/interface/shell-ui/preferences.js';
+import { parsePreferences } from '../../renderer/src/platform/input/preferences.js';
 import {
   useAssemblerStore,
   type ToolSession,

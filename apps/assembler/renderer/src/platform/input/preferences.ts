@@ -7,8 +7,8 @@
  */
 import { create } from 'zustand';
 
-import { DEFAULT_SKETCH_SNAPS, type SketchSnapToggles } from '../../sketch/inference.js';
-import { NAVIGATION_PRESETS, type NavigationPresetId } from '../../platform/input/navigation.js';
+import { DEFAULT_SKETCH_SNAPS, type SketchSnapToggles } from './snapToggles.js';
+import { NAVIGATION_PRESETS, type NavigationPresetId } from './navigation.js';
 
 export type LengthUnit = 'mm' | 'in';
 export type ToolbarLabels = 'icons' | 'hover' | 'always';

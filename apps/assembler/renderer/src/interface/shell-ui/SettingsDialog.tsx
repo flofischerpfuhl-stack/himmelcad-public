@@ -10,7 +10,7 @@ import {
   type Projection,
   type ThemeName,
   type ToolbarLabels,
-} from './preferences.js';
+} from '../../platform/input/preferences.js';
 import { useWorkspaceStore } from './workspace.js';
 import {
   NAVIGATION_PRESETS,

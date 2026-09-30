@@ -69,7 +69,7 @@ import { SelectionBox } from './SelectionBox.js';
 import { SelectThroughChip } from './SelectThroughChip.js';
 import { boxSelectionIn, candidatesAt, type ViewportQueryContext } from './viewportQueries.js';
 import { isAmbiguous } from './pickCandidates.js';
-import { usePreferences } from '../../interface/shell-ui/preferences.js';
+import { usePreferences } from '../input/preferences.js';
 import {
   setCameraPoseProbe,
   useWorkspaceStore,

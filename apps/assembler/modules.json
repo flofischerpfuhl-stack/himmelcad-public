@@ -56,7 +56,7 @@
     {
       "id": "input",
       "layer": "platform",
-      "summary": "Input devices: mouse navigation presets, keyboard wiring, later touch/pen and SpaceMouse.",
+      "summary": "Input devices and user preferences: mouse navigation presets, snap switches, the preferences store (device/user-wide settings); later touch/pen and SpaceMouse.",
       "paths": ["renderer/src/platform/input/"]
     },
     {

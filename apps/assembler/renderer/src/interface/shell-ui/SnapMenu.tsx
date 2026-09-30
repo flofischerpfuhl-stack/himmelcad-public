@@ -17,10 +17,11 @@ import {
   formatGridStep,
   GRID_STEP_SERIES,
 } from '../../platform/viewport/gridResolution.js';
-import { usePreferences } from './preferences.js';
+import { usePreferences } from '../../platform/input/preferences.js';
 import type { AssemblerState } from '../../foundation/commands/store.js';
 import { useViewportUi } from '../../model/viewportUi.js';
-import type { SketchSnapToggles } from '../../sketch/inference.js';
+
+import type { SketchSnapToggles } from '../../platform/input/snapToggles.js';
 import menuStyles from '../../chrome/DisplayMenu.module.css';
 import styles from './RightDock.module.css';
 

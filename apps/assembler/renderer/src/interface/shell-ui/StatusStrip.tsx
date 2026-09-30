@@ -8,7 +8,7 @@
  */
 import { withDisplayNames, useItemsStore } from '../../foundation/commands/items.js';
 import { measureSelection } from '../../model/modeling.js';
-import { formatLength, usePreferences, type LengthUnit } from './preferences.js';
+import { formatLength, usePreferences, type LengthUnit } from '../../platform/input/preferences.js';
 import { referenceMeshWorldBounds } from '../../foundation/commands/referenceMesh.js';
 import { selectionSummary } from './format.js';
 import type { AssemblerState } from '../../foundation/commands/store.js';

@@ -36,7 +36,7 @@ import {
   relevantFeatureIds,
 } from '../../renderer/src/interface/shell-ui/historyTools.js';
 import { gizmoOps, gizmoTransformFields } from '../../renderer/src/model/moveGizmo.js';
-import { usePreferences } from '../../renderer/src/interface/shell-ui/preferences.js';
+import { usePreferences } from '../../renderer/src/platform/input/preferences.js';
 import { loadProjectFile, saveProjectFile } from '../../renderer/src/foundation/document/format.js';
 import {
   makeFaceRef,

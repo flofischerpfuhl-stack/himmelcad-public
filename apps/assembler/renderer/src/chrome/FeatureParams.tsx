@@ -16,7 +16,7 @@ import { OFFSET_FACE_MODE_LABEL } from '../model/offsetFaceModes.js';
 import type { AssemblerState, FeaturePatch } from '../foundation/commands/store.js';
 import { ExpressionField } from '../platform/widgets/ExpressionField.js';
 import { PrintFeatureParams } from './PrintFeatureParams.js';
-import styles from '../interface/shell-ui/HistoryPanel.module.css';
+import styles from '../platform/widgets/HistoryCard.module.css';
 
 const OPERATION_OPTIONS = [
   { value: 'new', label: 'New body' },

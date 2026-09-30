@@ -27,7 +27,7 @@ import {
   useLiveMeasurements,
 } from '../model/measureLive.js';
 import { useMeasureStore } from '../model/measureStore.js';
-import { usePreferences, type LengthUnit } from '../interface/shell-ui/preferences.js';
+import { usePreferences, type LengthUnit } from '../platform/input/preferences.js';
 import type { AssemblerState } from '../foundation/commands/store.js';
 import { useWorkspaceStore } from '../interface/shell-ui/workspace.js';
 import { measurePanelPlacement } from './measurePlacement.js';

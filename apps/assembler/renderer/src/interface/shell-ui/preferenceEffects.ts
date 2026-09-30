@@ -5,7 +5,7 @@
  * from `main.tsx`.
  */
 import { applyShortcutOverrides } from '../../foundation/commands/shortcutOverrides.js';
-import { usePreferences, type ThemeName } from './preferences.js';
+import { usePreferences, type ThemeName } from '../../platform/input/preferences.js';
 import { useAssemblerStore } from '../../foundation/commands/store.js';
 
 export function applyThemeClass(theme: ThemeName): void {

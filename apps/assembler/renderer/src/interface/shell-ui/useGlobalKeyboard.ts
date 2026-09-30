@@ -23,7 +23,7 @@ import {
   type EscapeLayer,
 } from '../../foundation/commands/shortcuts.js';
 import { useFixStore } from './fixReference.js';
-import { usePreferences } from './preferences.js';
+import { usePreferences } from '../../platform/input/preferences.js';
 import type { AssemblerState } from '../../foundation/commands/store.js';
 import { useWorkspaceStore } from './workspace.js';
 import { useSketchStore } from '../../sketch/session.js';

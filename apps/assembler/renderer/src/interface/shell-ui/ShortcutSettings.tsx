@@ -17,7 +17,7 @@ import {
   defaultShortcut,
   effectiveShortcut,
 } from '../../foundation/commands/shortcutOverrides.js';
-import { usePreferences } from './preferences.js';
+import { usePreferences } from '../../platform/input/preferences.js';
 import styles from './SettingsDialog.module.css';
 
 export function ShortcutSettings(): JSX.Element {

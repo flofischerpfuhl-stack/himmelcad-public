@@ -14,7 +14,7 @@ import { Menu, MenuItem, Tooltip } from '@himmelcad/ui';
 
 import { resolveAdaptive, type Command } from '../../foundation/commands/registry.js';
 import { adaptiveCapacity, splitAdaptive } from './adaptiveLayout.js';
-import { usePreferences } from './preferences.js';
+import { usePreferences } from '../../platform/input/preferences.js';
 import { commandIcon } from './icons.js';
 import type { AssemblerState } from '../../foundation/commands/store.js';
 import styles from './AdaptiveToolbar.module.css';

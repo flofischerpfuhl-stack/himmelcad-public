@@ -10,7 +10,7 @@ import { Tooltip } from '@himmelcad/ui';
 
 import { findCommand } from '../../foundation/commands/registry.js';
 import { registeredModeButtons } from '../../platform/widgets/moduleUi.js';
-import { usePreferences } from './preferences.js';
+import { usePreferences } from '../../platform/input/preferences.js';
 
 type SketchIconType = (typeof GROUP_ICON)['sketch'];
 import { AdaptiveToolbar } from './AdaptiveToolbar.js';

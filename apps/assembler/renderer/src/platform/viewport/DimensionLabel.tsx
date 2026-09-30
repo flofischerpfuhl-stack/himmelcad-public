@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 
 import { registerEscapeRung } from '@himmelcad/ui';
 
-import { usePreferences } from '../../interface/shell-ui/preferences.js';
+import { usePreferences } from '../input/preferences.js';
 import { parseExpression } from './expr.js';
 import styles from './DimensionLabel.module.css';
 

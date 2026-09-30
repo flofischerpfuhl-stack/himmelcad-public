@@ -33,7 +33,7 @@ import {
   formatLength,
   fromDisplayUnit,
   parsePreferences,
-} from '../../renderer/src/interface/shell-ui/preferences.js';
+} from '../../renderer/src/platform/input/preferences.js';
 import { loadProjectFile, saveProjectFile } from '../../renderer/src/foundation/document/format.js';
 import {
   MAX_SAVED_VIEWS,

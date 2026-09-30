@@ -10,7 +10,7 @@ import { create } from 'zustand';
 
 import type { CameraPose } from '../../platform/viewport/camera.js';
 import type { CameraCommand } from '../../platform/viewport/cameraChannel.js';
-import { usePreferences } from './preferences.js';
+import { usePreferences } from '../../platform/input/preferences.js';
 
 export const MAX_SAVED_VIEWS = 8;
 

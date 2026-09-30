@@ -23,7 +23,7 @@ import {
   formatVolume,
   usePreferences,
   type LengthUnit,
-} from '../interface/shell-ui/preferences.js';
+} from '../platform/input/preferences.js';
 import { useAssemblerStore, type AssemblerState } from '../foundation/commands/store.js';
 
 export interface LiveMeasurement {
