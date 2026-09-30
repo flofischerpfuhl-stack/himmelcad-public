@@ -7,7 +7,7 @@ domain modules in parallel. The machine-readable module map is
 [`apps/assembler/modules.json`](../apps/assembler/modules.json); the known
 violations still to remove are
 [`apps/assembler/module-allowlist.json`](../apps/assembler/module-allowlist.json)
-(53 at the end of phase A, 157 at its start). `pnpm check:assembler-modules`
+(53 at the end of phase A, 157 at its start, 38 after agent C of phase B). `pnpm check:assembler-modules`
 enforces both; it also runs in `pnpm lint` and at the start of the
 Assembler `test` script.
 
@@ -116,7 +116,7 @@ status over IPC so hardware tiers are confirmed rather than `unknown`, and
 
 **Proposed addition to the shared package (not implemented; additive, no
 change for Builder or PhotoLab):** what Assembler needs most is a
-*compute* budget per machine class for OCCT in WebAssembly, which the
+_compute_ budget per machine class for OCCT in WebAssembly, which the
 package does not model yet (`computeBudgetScale` in the quirk registry is
 the only compute knob; the package and the Rust crate
 `himmelcad-hardware-profile` validate it, no consumer applies it). Proposal:
@@ -125,9 +125,9 @@ the only compute knob; the package and the Rust crate
 /** Facts the host knows about the machine (Electron main or renderer). */
 export interface ComputeFacts {
   readonly os: HardwareOperatingSystem;
-  readonly logicalCores: number;          // navigator.hardwareConcurrency / os.cpus()
+  readonly logicalCores: number; // navigator.hardwareConcurrency / os.cpus()
   readonly deviceMemoryGiB: number | null; // os.totalmem() or navigator.deviceMemory
-  readonly wasm64: boolean;                // memory64 available
+  readonly wasm64: boolean; // memory64 available
   readonly quirks: readonly HardwareQuirkRule[]; // computeBudgetScale applies
 }
 
@@ -174,14 +174,49 @@ The parts in detail:
 - **`install(host)`** — runtime wiring with `{ kernel, workers }` (workers, kernel adapter); runs only in the desktop renderer (`startModules` in `main.tsx`).
 - **UI** — panels in the `rightStack` (below the right dock, ordered, with `isOpen(state)`) or as `overlay` (floating chrome and dialogs that hide themselves); `modeButtons` in the left dock's mode group; `historyCards` (feature kinds → editor of the expanded History card); `viewportOverlays` (`{ id, order, batches(input), subscribe? }` GL batches drawn after the bodies).
 
-Not built in phase A, planned for phase B with the modules that need them:
-`tools` (the generic feature tool's `createDraft`/`draftToFeature` per kind,
-now one switch in `model/featureTools.ts`), `fileFormatFields` (project-level
-data such as items, pinned measurements, reference meshes, with
-`validate/save/load`, now fixed fields in `document/format.ts`), DOM
-overlays of the viewport (sketch overlay, dimension labels, measure
-overlay, now JSX in `Viewport.tsx`) and a tool-handle provider (now
-`viewport/toolHandles.ts` called from `Viewport.tsx`/`scene.ts`).
+Added in phase B (agent C, interop/measure/display):
+
+- **`fileFormatFields`** — project-level data besides the features, in two
+  halves. File side (`document/format.ts`): `registerProjectFileField({ key,
+module, order, validate, include? })` for a top-level field (typed by
+  augmenting `ProjectFileFields`; strict validator, a problem rejects the
+  whole file) and `registerViewStatePart({ key, module, order })` for a part
+  of the lenient `viewState` (typed by augmenting `ProjectViewState` /
+  `ProjectSectionView`); `saveProjectFile` writes both in registered order,
+  so the bytes stay as before (`test/model/project/fileFields.test.ts`).
+  Runtime side (`document/projectSections.ts`): a `ProjectSection` with
+  `save()` (fields and view-state parts, merged in section `order`),
+  `load(project | null)` and `subscribe(onChange)` (unsaved flag), listed in
+  `defineAssemblerModule({ fileFormatFields })`. In use: `referenceMeshes`
+  (field order 100) and `items` (300, section 150) in
+  `commands/projectFields.ts`; `viewState` itself is core (200); view-state
+  parts displayMode 100 / display 110 (display), camera 200 / section 300 /
+  grid 500 / panels 600 (the store; section 100 in the project store),
+  measurements 400 (measure), savedViews 700 (shell-ui). The project store
+  (`shell-ui/project/projectStore.ts`) only collects and applies sections.
+- **`api.handlers`** (`commands/api/registry.ts`) — handlers of methods
+  whose schema another block still publishes (interop's `import.*`,
+  `interop.formats`, `export.dxf`, `mesh.toSolid`; measure's `measure.*`).
+  One handler per method; registered handlers run before the session's
+  `switch`. Moving the specs into the modules' `api.methods` blocks is the
+  schema owner's step (published order must not change).
+- **Project persistence** (`document/projectPersistence.ts`) — the open
+  project's lifecycle (unsaved flag, open/new/text, `requestOpen` with the
+  unsaved-changes dialog) for code below the shell; the shell installs the
+  project store's `PROJECT_PERSISTENCE`. Agent-api's app session host and
+  interop's dropped `.hcasm` use it.
+- **`ModuleUi.install`** (`platform/widgets/moduleUi.ts`) — desktop-only
+  wiring that needs the browser, run once by `installModuleUis` (display's
+  GPU probe).
+- `COMMAND_ORDER.measureTools` (1150) — Pin measurement / Measure points,
+  right after the display block they used to end.
+
+Still planned for phase B (agents A/B): `tools` (the generic feature tool's
+`createDraft`/`draftToFeature` per kind, now one switch in
+`model/featureTools.ts`), DOM overlays of the viewport (sketch overlay,
+dimension labels, measure overlay, now JSX in `Viewport.tsx`) and a
+tool-handle provider (now `viewport/toolHandles.ts` called from
+`Viewport.tsx`/`scene.ts`).
 
 Compositions (`renderer/src/app`):
 
@@ -201,9 +236,10 @@ Compositions (`renderer/src/app`):
 `headless` and `electron` belongs to exactly one module by longest path
 prefix, so a file can belong to its target module before it moves. Phase A
 moved foundation, platform and interface into their folders and migrated
-`parameters`, `print` and `printers` completely. What remains under
-`renderer/src/{model,chrome,sketch,interop,templates,viewport,kernel,api}` is
-domain code waiting for phase B (§6).
+`parameters`, `print` and `printers` completely; phase B agent C migrated
+`interop`, `measure` and `display`. What remains under
+`renderer/src/{model,chrome,sketch,templates,viewport,kernel,api}` is domain
+code waiting for the other phase-B agents (§6).
 
 ## 5. How to move a module (phase B checklist)
 
@@ -333,6 +369,46 @@ second wave after the parallel moves.
   (`store.ts → workspace.ts`, B), `agent-api → shell-ui`
   (`automationStore.ts → projectStore.ts`).
 - Interop's runner moves onto `jobs/SingleJobWorker` like print's.
+
+_Result (branch `asm/modC-20260930`)_: interop, measure and display are
+migrated (folders `modules/{interop,measure,display}`, registered commands,
+API handlers, UI panels, runtime `install`, file sections); `.hcasm` bytes
+unchanged. Allowlist 53 → 38 (removed: `agent-api → shell-ui`,
+`interop → shell-ui` ×3, `measure → shell-ui`, `display → shell-ui` ×3,
+`display → measure` ×2, `display → modeling` ×2, `sketching → display`,
+`viewport → display` ×2). Deviations from the list above: `viewportUi.ts`
+(section-face prompt, live grid step, image renderer) and `imageExport.ts`
+(PNG encoding) moved **down** to `platform/viewport/` instead of into
+display (the viewport and the sketch overlay use them); the colour dialog's
+bodies and the Export image… flag moved to `modules/display/dialogs.ts`;
+the project store's STL/3MF exports moved to `modules/interop/meshExports.ts`
+(the File commands stay in the shell's block, order unchanged), its unused
+STEP export/STEP+STL import and unit-hint dialog were removed.
+
+Second wave, notes to the owners of the hot files:
+
+- **B (`store.ts`)**: `commands → display` — apply the display parts in
+  display's `DISPLAY_PROJECT_SECTION.load` (`modules/display/projectFile.ts`)
+  instead of `applyViewState` → `viewDisplayFromProject`; `commands →
+shell-ui` — `setSectionAccess` (saved views' section state) can become a
+  section-state accessor in the viewport platform or commands.
+- **B (`Viewport.tsx`/`scene.ts`)**: `viewport → display` is now only
+  `sectionAtFace` (Section › Face pick); `viewport → measure` ×3 is the
+  measure overlay, point snapping and the Points tool — both belong in the
+  DOM-overlay/pick registration. `platform/viewport/viewGeometry.ts` has
+  `visibleBodyBounds` and `sectionPlaneNormal`; `model/modeling.ts`
+  `visibleBounds` and `toolAnchors.ts` `sectionNormal` duplicate them and
+  can delegate.
+- **B (`schema.ts`)**: move `INTEROP_METHODS` (order `API_ORDER.methods.
+interop`) into interop's `api.methods` (`modules/interop/interopApi.ts`
+  `INTEROP_API`, then drop its `handlers`), and the five `measure.*` specs
+  (head of `METHODS_TAIL`) into a measure block ordered between
+  `parameters` (200) and `coreTail` (300); `MeasureTarget` needs a def block
+  between `EdgeInput` and `SketchShape`. `api:schema` must give no diff.
+- **A (`session.ts`)**: the `measure.*`, `import.*`, `interop.formats`,
+  `export.dxf` and `mesh.toSolid` cases are dead (module handlers run
+  first) and can go, with the `runMeasureQuery`/interop imports;
+  `export.step`/`export.iges` stay with the session's `exportBodies`.
 
 Order: the three agents move their files and registrations in parallel
 (only their own files, plus one line each in the app compositions and their
