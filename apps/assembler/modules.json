@@ -1,0 +1,317 @@
+{
+  "$comment": "Module map of HimmelCAD Assembler (ADR 0032, assembler/MODULES.md). Every source file under renderer/src, headless and electron belongs to exactly one module: the longest matching path prefix wins. Layers are listed bottom-up; inside foundation, platform and interface a module may import only the modules listed before it; domain modules never import each other. Checked by scripts/check-assembler-modules.mjs against module-allowlist.json.",
+  "version": 1,
+  "layers": ["foundation", "platform", "domain", "interface", "product"],
+  "externalOnly": {
+    "replicad": ["geometry-kernel"],
+    "replicad-opencascadejs": ["geometry-kernel"],
+    "@salusoft89/planegcs": ["sketch-solver"]
+  },
+  "desktopProcessPaths": ["electron/"],
+  "externalForbidden": {
+    "foundation": ["react", "react-dom", "lucide-react", "electron"],
+    "platform": ["electron"],
+    "domain": ["electron"],
+    "interface": ["electron"]
+  },
+  "modules": [
+    {
+      "id": "jobs",
+      "layer": "foundation",
+      "summary": "Background work: worker job runners, progress, cancellation, budgets, timeouts.",
+      "paths": ["renderer/src/foundation/jobs/"]
+    },
+    {
+      "id": "document",
+      "layer": "foundation",
+      "summary": "Feature document: value types and references, the feature-kind registry, core kinds, parameters and expressions, .hcasm format, per-kind validators and migrations, persistence.",
+      "paths": [
+        "renderer/src/foundation/document/",
+        "renderer/src/model/document.ts",
+        "renderer/src/model/blendOptions.ts",
+        "renderer/src/model/parameters.ts",
+        "renderer/src/model/project/format.ts",
+        "renderer/src/model/project/meshCodec.ts",
+        "renderer/src/model/project/persistence.ts"
+      ]
+    },
+    {
+      "id": "sketch-solver",
+      "layer": "foundation",
+      "summary": "Sketch data model and the sketch kind, planeGCS solver (worker + in-process), regions, projections model, sketch migrations and validation, text outlines.",
+      "paths": [
+        "renderer/src/foundation/sketch-solver/",
+        "renderer/src/sketch/builders.ts",
+        "renderer/src/sketch/edits.ts",
+        "renderer/src/sketch/expressions.ts",
+        "renderer/src/sketch/geometry.ts",
+        "renderer/src/sketch/measure.ts",
+        "renderer/src/sketch/migration.ts",
+        "renderer/src/sketch/moveRegion.ts",
+        "renderer/src/sketch/planegcsSolver.ts",
+        "renderer/src/sketch/projection.ts",
+        "renderer/src/sketch/regionMemory.ts",
+        "renderer/src/sketch/regions.ts",
+        "renderer/src/sketch/solver.worker.ts",
+        "renderer/src/sketch/solverProvider.ts",
+        "renderer/src/sketch/solverTypes.ts",
+        "renderer/src/sketch/spline.ts",
+        "renderer/src/sketch/splineTangent.ts",
+        "renderer/src/sketch/text/",
+        "renderer/src/sketch/types.ts",
+        "renderer/src/sketch/validation.ts",
+        "renderer/src/sketch/workerSolver.ts",
+        "headless/nodeSolver.ts",
+        "headless/nodeFonts.ts"
+      ]
+    },
+    {
+      "id": "geometry-kernel",
+      "layer": "foundation",
+      "summary": "The only place that knows OCCT: adapter, worker, evaluator with the per-kind evaluator registry, caches, naming, tessellation, STEP/IGES/mesh-solid exchange, OCCT module loader.",
+      "paths": [
+        "renderer/src/foundation/geometry-kernel/",
+        "renderer/src/kernel/",
+        "renderer/src/kernel/features/index.ts",
+        "renderer/src/kernel/features/kit.ts",
+        "renderer/src/kernel/features/refs.ts",
+        "renderer/src/kernel/features/rigid.ts",
+        "renderer/src/kernel/features/occRigid.ts",
+        "renderer/src/kernel/features/extrudeExtent.ts",
+        "renderer/src/kernel/features/blendRules.ts",
+        "renderer/src/kernel/features/faceOps.ts",
+        "renderer/src/kernel/features/exactFaceOps.ts",
+        "renderer/src/interop/meshSolid.ts",
+        "renderer/src/interop/step/",
+        "headless/nodeKernel.ts",
+        "headless/occtModule.ts"
+      ]
+    },
+    {
+      "id": "commands",
+      "layer": "foundation",
+      "summary": "The command gate: application store core (document state, undo transactions, evaluation, selection, tool sessions, installable slices), command registry, availability, shortcuts, pick sessions, the agent-API contract kit (method registry, schema helpers, errors, validation, reference inputs).",
+      "paths": [
+        "renderer/src/foundation/commands/",
+        "renderer/src/model/store.ts",
+        "renderer/src/model/pickSession.ts",
+        "renderer/src/model/toolFinish.ts",
+        "renderer/src/model/commands/registry.ts",
+        "renderer/src/model/commands/shortcutOverrides.ts",
+        "renderer/src/model/commands/shortcutSheet.ts",
+        "renderer/src/model/commands/shortcuts.ts",
+        "renderer/src/api/errors.ts",
+        "renderer/src/api/references.ts",
+        "renderer/src/api/validate.ts"
+      ]
+    },
+    {
+      "id": "input",
+      "layer": "platform",
+      "summary": "Input devices: mouse navigation presets, keyboard wiring, later touch/pen and SpaceMouse.",
+      "paths": ["renderer/src/platform/input/", "renderer/src/viewport/navigation.ts"]
+    },
+    {
+      "id": "viewport",
+      "layer": "platform",
+      "summary": "WebGL2 viewport: scene, camera, picking, selection boxes, grid, display-mode rendering, overlay host.",
+      "paths": [
+        "renderer/src/platform/viewport/",
+        "renderer/src/viewport/",
+        "renderer/src/model/gridResolution.ts"
+      ]
+    },
+    {
+      "id": "sketching",
+      "layer": "domain",
+      "summary": "Sketch mode: session, drawing tools, inference/snapping, sketch commands, sketch overlay and chrome, sketch agent API.",
+      "paths": [
+        "renderer/src/modules/sketching/",
+        "renderer/src/sketch/",
+        "renderer/src/model/commands/sketchCommands.ts",
+        "renderer/src/api/sketchApi.ts",
+        "renderer/src/api/sketchAdvancedApi.ts"
+      ]
+    },
+    {
+      "id": "modeling",
+      "layer": "domain",
+      "summary": "Solid modelling features and tools: revolve, sweep, loft, mirror, pattern, split, transform, align, hole, emboss, draft, rib, thicken; their tools, history cards, commands, handles and API schemas.",
+      "paths": [
+        "renderer/src/modules/modeling/",
+        "renderer/src/kernel/features/",
+        "renderer/src/model/features.ts",
+        "renderer/src/model/featureTools.ts",
+        "renderer/src/model/printFeatures.ts",
+        "renderer/src/model/printFeatureTools.ts",
+        "renderer/src/model/modeling.ts",
+        "renderer/src/model/moveGizmo.ts",
+        "renderer/src/model/project/featureFormat.ts",
+        "renderer/src/model/project/printFeatureFormat.ts",
+        "renderer/src/model/commands/featureCommands.ts",
+        "renderer/src/model/commands/blendCommands.ts",
+        "renderer/src/chrome/FeatureParams.tsx",
+        "renderer/src/chrome/PrintFeatureParams.tsx",
+        "renderer/src/chrome/featureIcons.ts",
+        "renderer/src/api/printSchema.ts",
+        "renderer/src/viewport/toolAnchors.ts",
+        "renderer/src/viewport/toolHandles.ts"
+      ]
+    },
+    {
+      "id": "direct-edit",
+      "layer": "domain",
+      "summary": "Direct face edits: Offset Face (value modes), Delete Face, move face.",
+      "paths": ["renderer/src/modules/direct-edit/", "renderer/src/model/offsetFaceModes.ts"]
+    },
+    {
+      "id": "construction",
+      "layer": "domain",
+      "summary": "Construction planes and axes: definitions, tools, commands, evaluation.",
+      "paths": [
+        "renderer/src/modules/construction/",
+        "renderer/src/model/construction.ts",
+        "renderer/src/model/constructionTools.ts",
+        "renderer/src/model/commands/constructCommands.ts",
+        "renderer/src/kernel/features/construction.ts"
+      ]
+    },
+    {
+      "id": "parameters",
+      "layer": "domain",
+      "summary": "Document parameters UI and edits: planning/committing parameter changes, the Parameters panel, parameter API methods.",
+      "paths": [
+        "renderer/src/modules/parameters/",
+        "renderer/src/model/parameterEdits.ts",
+        "renderer/src/chrome/ParametersPanel"
+      ]
+    },
+    {
+      "id": "measure",
+      "layer": "domain",
+      "summary": "Measure mode: measurements, pinned dimensions, Measure panel and overlay, measure API.",
+      "paths": [
+        "renderer/src/modules/measure/",
+        "renderer/src/model/measure.ts",
+        "renderer/src/model/measureLive.ts",
+        "renderer/src/model/measureStore.ts",
+        "renderer/src/chrome/MeasurePanel",
+        "renderer/src/chrome/measurePlacement.ts",
+        "renderer/src/viewport/MeasureOverlay.tsx",
+        "renderer/src/api/measureApi.ts"
+      ]
+    },
+    {
+      "id": "display",
+      "layer": "domain",
+      "summary": "Display features: appearance/colour, display-mode and section commands and menus, analysis legend, image export, persisted view display.",
+      "paths": [
+        "renderer/src/modules/display/",
+        "renderer/src/model/appearance.ts",
+        "renderer/src/model/viewDisplay.ts",
+        "renderer/src/model/viewportUi.ts",
+        "renderer/src/model/commands/displayCommands.ts",
+        "renderer/src/chrome/AnalysisLegend",
+        "renderer/src/chrome/ColourDialog",
+        "renderer/src/chrome/DisplayMenu",
+        "renderer/src/chrome/ExportImageDialog",
+        "renderer/src/chrome/SectionControls",
+        "renderer/src/viewport/imageExport.ts"
+      ]
+    },
+    {
+      "id": "interop",
+      "layer": "domain",
+      "summary": "Import/export: STEP/IGES/DXF/STL/3MF/OBJ, reference meshes, mesh to solid, import worker, interop API.",
+      "paths": [
+        "renderer/src/modules/interop/",
+        "renderer/src/interop/",
+        "renderer/src/model/referenceMesh.ts",
+        "renderer/src/kernel/stlExport.ts",
+        "renderer/src/kernel/stlImport.ts",
+        "renderer/src/kernel/threeMf.ts",
+        "renderer/src/kernel/zipWriter.ts",
+        "renderer/src/api/interopApi.ts"
+      ]
+    },
+    {
+      "id": "templates",
+      "layer": "domain",
+      "summary": "Project templates of the Home screen.",
+      "paths": ["renderer/src/modules/templates/", "renderer/src/templates/"]
+    },
+    {
+      "id": "print",
+      "layer": "domain",
+      "summary": "3D printing: printability analysis, orientation and placement, print exports, Print mode panel and overlays, print API.",
+      "paths": [
+        "renderer/src/modules/print/",
+        "renderer/src/print/",
+        "renderer/src/api/printApi.ts"
+      ]
+    },
+    {
+      "id": "printers",
+      "layer": "domain",
+      "summary": "Printer side: registered slicers (renderer view and desktop discovery), later printer profiles, build volumes, direct send.",
+      "paths": [
+        "renderer/src/modules/printers/",
+        "renderer/src/print/slicerStore.ts",
+        "electron/slicerIpc.ts",
+        "electron/slicerPaths.ts"
+      ]
+    },
+    {
+      "id": "agent-api",
+      "layer": "interface",
+      "summary": "hcasm.agent-api@1: session and dispatch, composed schema, JSON-RPC framing, read-model projections, in-app endpoint bridge.",
+      "paths": [
+        "renderer/src/interface/agent-api/",
+        "renderer/src/api/",
+        "renderer/src/chrome/AgentAccessIndicator"
+      ]
+    },
+    {
+      "id": "shell-ui",
+      "layer": "interface",
+      "summary": "The application shell: layout, docks, panels host, History and Items panels, command search, menus, dialogs, project lifecycle UI.",
+      "paths": [
+        "renderer/src/interface/shell-ui/",
+        "renderer/src/App",
+        "renderer/src/chrome/",
+        "renderer/src/model/commands/workspaceCommands.ts",
+        "renderer/src/model/fixReference.ts",
+        "renderer/src/model/historyTools.ts",
+        "renderer/src/model/items.ts",
+        "renderer/src/model/preferences.ts",
+        "renderer/src/model/workspace.ts",
+        "renderer/src/model/project/projectStore.ts",
+        "renderer/src/model/project/thumbnail.ts"
+      ]
+    },
+    {
+      "id": "app",
+      "layer": "product",
+      "summary": "Desktop renderer composition root: module list, startup wiring, dev tooling.",
+      "paths": [
+        "renderer/src/app/",
+        "renderer/src/main.tsx",
+        "renderer/src/assembler.css",
+        "renderer/src/global.d.ts",
+        "renderer/src/devtools/"
+      ]
+    },
+    {
+      "id": "headless",
+      "layer": "product",
+      "summary": "assembler-headless CLI composition (JSON-RPC over stdio).",
+      "paths": ["headless/"]
+    },
+    {
+      "id": "desktop-host",
+      "layer": "product",
+      "summary": "Electron main/preload process: windows, files, recent files, automation endpoint.",
+      "paths": ["electron/"]
+    }
+  ]
+}
