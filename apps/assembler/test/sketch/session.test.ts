@@ -294,3 +294,23 @@ void test('editing an existing sketch: changes commit as one undo step; unchange
   store.getState().undo();
   assert.equal(store.getState().features, before);
 });
+
+void test('re-entering a sketch: the constraint state is unknown until the analysis reports (never "fully constrained" early)', async () => {
+  await reset();
+  await drawL();
+  await sketch.getState().finish();
+  await store.getState().whenSettled();
+  const id = store.getState().features[0]!.id;
+
+  assert.ok(sketch.getState().begin({ featureId: id }));
+  // Synchronously after entry the asynchronous analysis has not reported yet.
+  assert.equal(session().dof, null, 'no analysis result yet');
+  await sketch.getState().whenIdle();
+  assert.equal(session().dof, 4, 'the L keeps four free lengths');
+  await sketch.getState().finish();
+
+  // A new, empty sketch needs no analysis.
+  assert.ok(sketch.getState().begin({ plane: 'XY', tool: 'line' }));
+  assert.equal(session().dof, 0);
+  sketch.getState().discard();
+});

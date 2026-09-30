@@ -118,6 +118,7 @@ void test('a determined dimension is offered as a reference; references follow a
   close(session().sketch.dimensions.find((d) => d.id === reference.id)!.value, 42, 1e-6);
   // The width can become a reference (the rectangle loses that constraint).
   const dof = session().dof;
+  assert.ok(dof !== null, 'analysed');
   assert.ok(await sketch.getState().toggleReference(width.id));
   s = session();
   assert.equal(s.sketch.dimensions.find((d) => d.id === width.id)!.driven, true);

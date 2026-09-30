@@ -109,19 +109,51 @@ export function isPinned(raw: object | null | undefined): boolean {
   return raw ? pinned.has(raw) : false;
 }
 
+/** Identifies an open arena (returned by {@link openArena}). */
+export type ArenaToken = object;
+
+let interleavings = 0;
+
+/**
+ * How many arenas were closed out of order so far (interleaved asynchronous
+ * users of one OCCT instance). Must stay 0; the fuzzer and tests check it.
+ */
+export function arenaInterleavings(): number {
+  return interleavings;
+}
+
 /** Opens a nested arena; every replicad object registered until `closeArena` is recorded. */
-export function openArena(): void {
+export function openArena(): ArenaToken {
   stack.push(current);
   current = [];
+  return current;
 }
 
 /**
- * Closes the innermost arena and deletes every recorded object that is not
- * pinned. Returns the number of objects deleted.
+ * Closes the innermost arena (or the arena `token`) and deletes every
+ * recorded object that is not pinned. Returns the number of objects deleted.
+ *
+ * Arenas are a stack; two asynchronous users that interleave (evaluator A
+ * opens, awaits, evaluator B opens, A resumes and closes) used to close the
+ * wrong arena — B's objects, still in use, were deleted (use-after-delete
+ * inside OCCT). With a token, an out-of-order close releases only its own
+ * arena and unlinks it, leaving the still-open inner arena intact
+ * (`assembler/ROBUSTNESS.md`, native-crash hardening).
  */
-export function closeArena(): number {
-  const entries = current ?? [];
-  current = stack.pop() ?? null;
+export function closeArena(token?: ArenaToken): number {
+  let entries: Entry[];
+  if (token !== undefined && token !== current) {
+    const index = stack.indexOf(token as Entry[]);
+    if (index < 0) return 0; // already closed
+    interleavings += 1;
+    entries = token as Entry[];
+    // `stack[index]` is the arena opened right after `token` recording `token` as its parent:
+    // unlinked, that arena returns to `token`'s own parent when it closes.
+    stack.splice(index, 1);
+  } else {
+    entries = current ?? [];
+    current = stack.pop() ?? null;
+  }
   let released = 0;
   for (const entry of entries) {
     if (pinned.has(entry.held) || isDeleted(entry.held)) continue;
@@ -138,21 +170,25 @@ export function closeArena(): number {
 
 /** Runs `fn` inside an arena (closed also when `fn` throws). */
 export function inArena<T>(fn: () => T): T {
-  openArena();
+  const arena = openArena();
   try {
     return fn();
   } finally {
-    closeArena();
+    closeArena(arena);
   }
 }
 
-/** Async variant of {@link inArena}; callers must not interleave two async arenas. */
+/**
+ * Async variant of {@link inArena}. Interleaved async arenas no longer
+ * delete each other's objects (see {@link closeArena}), but an object one
+ * user creates while another's arena is innermost is recorded there.
+ */
 export async function inArenaAsync<T>(fn: () => Promise<T>): Promise<T> {
-  openArena();
+  const arena = openArena();
   try {
     return await fn();
   } finally {
-    closeArena();
+    closeArena(arena);
   }
 }
 

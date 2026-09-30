@@ -391,10 +391,11 @@ Limits (with the OCCT reason):
   0.02 mm) belongs to no rule. Rule edges' round faces are numbered in shape
   order, so an edit that adds edges may renumber `:round:i` of rule edges.
 - **Variable fillet** is linear per edge chain (OCCT `Law_Linear`). OCCT
-  builds some variable fillets / asymmetric chamfers that do not fit instead
-  of failing; their results are checked with `BRepCheck_Analyzer` and an
-  invalid one is reported as an error on the edge (15 → 3 mm on a 10 mm
-  block). Some oversized ones still pass the check (2 → 12 mm on a 10 mm
+  builds some blends that do not fit instead of failing — variable fillets,
+  asymmetric chamfers, and (fuzzer finding F1, `ROBUSTNESS.md`) plain
+  chamfers/fillets larger than a neighbouring face; every blend result is
+  checked with `BRepCheck_Analyzer` and an invalid one is reported as an
+  error on the edge (15 → 3 mm on a 10 mm block). Some oversized ones still pass the check (2 → 12 mm on a 10 mm
   block builds a valid but visibly wrong solid) — the preview shows it.
 
 ## Incremental evaluation, memory and robustness (2026-09-29)
@@ -432,7 +433,10 @@ sketch prisms (~650 KB without non-destructive mode), `BRepCheck_Analyzer` ~72 K
 ~16 KB per face, `BRepFilletAPI_MakeFillet` ~9 KB, `BRepPrimAPI_MakePrism`
 ~3 KB, `BRepBuilderAPI_MakeWire` ~1.4 KB, ~27 B per shape returned by an
 explorer). Therefore: previews check validity by closure only, validity is
-per new face after the first full check, and the adapters **recycle** the
+per new face after the first full check (every mode includes the closure /
+manifold test, so full and incremental checks agree on non-manifold edges —
+`ROBUSTNESS.md` F4; an invalid body gets a warning on the step that last
+changed it), and the adapters **recycle** the
 kernel when its wasm heap passes 1 GiB (restart when idle, warm up with the
 last document; not in a loop for documents that need a big heap).
 

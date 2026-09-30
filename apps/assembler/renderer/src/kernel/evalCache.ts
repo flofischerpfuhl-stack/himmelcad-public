@@ -89,6 +89,8 @@ export interface BodySnapshot {
   readonly faces: KeyedFace[];
   /** Assembly folder path of an imported part (`Body.itemPath`). */
   readonly itemPath?: readonly string[];
+  /** The feature that last changed `shape` (absent: `createdBy`). */
+  readonly changedBy?: string;
 }
 
 /** The replay state after feature `index` of a document whose prefix hashes to `hash`. */

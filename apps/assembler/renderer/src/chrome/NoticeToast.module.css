@@ -6,6 +6,10 @@
   z-index: var(--hc-z-toast);
   max-width: min(560px, calc(100vw - 48px));
   pointer-events: auto;
+  /* A load error and a notice can show together: stacked, never overlapping. */
+  display: flex;
+  flex-direction: column;
+  gap: var(--hc-space-2);
 }
 
 /* Above KernelActivity's islands (bottom 64px, ~40px each incl. gap). */

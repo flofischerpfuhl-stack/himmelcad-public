@@ -178,6 +178,8 @@ interface BodyState {
   faces: KeyedFace[];
   /** Assembly folder path of an imported part (`Body.itemPath`). */
   itemPath?: readonly string[];
+  /** The feature that last changed `shape` (absent: `createdBy`); an invalid result is reported there. */
+  changedBy?: string;
 }
 
 /** Tessellation settings per quality: chordal deflection relative to the body diagonal. */
@@ -1035,12 +1037,21 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
         edgeKeys: failing.length > 0 ? keys : unique.map((i) => edgeKeys[i]!),
       });
     }
-    // OCCT builds some variable fillets / asymmetric chamfers that do not fit (a self-intersecting
-    // result instead of an error): check those results.
-    if ((options.size2 !== undefined || options.chamfer) && !isValidShape(oc, built.shape)) {
+    // OCCT builds blends that do not fit (a self-intersecting result instead of an error): a
+    // variable fillet / asymmetric chamfer, but also a plain chamfer or fillet larger than a
+    // neighbouring face (fuzzer finding F1, `assembler/ROBUSTNESS.md`). Check every result.
+    if (!isValidShape(oc, built.shape)) {
       built.history.delete();
+      const what =
+        options.size2 !== undefined || options.chamfer
+          ? feature.kind === 'fillet'
+            ? 'an end radius'
+            : 'a distance'
+          : feature.kind === 'fillet'
+            ? 'the radius'
+            : 'the distance';
       throw new FeatureError(
-        `${label} failed: ${feature.kind === 'fillet' ? 'an end radius' : 'a distance'} does not fit the faces next to the edge; try smaller values`,
+        `${label} failed: ${what} does not fit the faces next to the edge; try ${options.size2 !== undefined || options.chamfer ? 'smaller values' : 'a smaller value'}`,
         { bodyId: body.id, edgeKeys: unique.map((i) => edgeKeys[i]!) },
       );
     }
@@ -1860,7 +1871,7 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
       if (!feature.suppressed) {
         const snapshot = snapshotBodies(ctx.bodies);
         featureInfos = [];
-        openArena();
+        const arena = openArena();
         try {
           const t = now();
           await applyFeature(feature, ctx);
@@ -1869,7 +1880,7 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
               (phases[`feature:${feature.kind}`] ?? 0) + now() - t;
         } catch (error) {
           if (isFatalKernelError(error)) {
-            closeArena();
+            closeArena(arena);
             throw error instanceof KernelFatalError
               ? error
               : new KernelFatalError(`CAD kernel failure: ${describeError(error)}`);
@@ -1879,13 +1890,17 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
             replay.errorRefs[feature.id] = error.refs;
           restoreBodies(ctx, snapshot);
         }
+        const before = new Map(snapshot.entries.map(([id, saved]) => [id, saved.shape]));
+        for (const body of ctx.bodies.values()) {
+          if (before.get(body.id) !== body.shape) body.changedBy = feature.id;
+        }
         // Keep the bodies' shapes, release everything else the feature created.
         for (const body of ctx.bodies.values()) pin(body.shape.wrapped);
         for (const shape of featureInfos) {
           if (!isPinned(shape.wrapped)) dropInfo(shape);
         }
         featureInfos = [];
-        timed('release', () => closeArena());
+        timed('release', () => closeArena(arena));
         for (const id of ctx.order)
           if (!replay.creationOrder.includes(id)) replay.creationOrder.push(id);
       }
@@ -1964,6 +1979,13 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
           try {
             const out = tessellate(state, q, cache.holds(state.shape));
             bodies.push(out.body);
+            // Never an invalid body silently: the step that produced it says so.
+            if (!out.body.valid) {
+              const by = state.changedBy ?? state.createdBy;
+              const message = `"${state.name}" is not a valid solid after this step (self-intersecting, open or non-manifold); it may not export or print correctly`;
+              if (!errors[by])
+                warnings[by] = warnings[by] ? `${warnings[by]}; ${message}` : message;
+            }
             triangles += out.triangles;
             if (out.reused) reusedBodies += 1;
           } catch (error) {
@@ -2082,7 +2104,7 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
         // Raw OCCT objects (not tracked by the arena) are deleted explicitly;
         // the arena releases the replicad vertex of a point target.
         const made: { delete(): void }[] = [];
-        openArena();
+        const arena = openArena();
         try {
           const shapeOf = (target: DistanceTarget): RawShape => {
             if (target.kind === 'point') {
@@ -2127,7 +2149,7 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
           };
         } finally {
           for (const object of made) object.delete();
-          closeArena();
+          closeArena(arena);
           releaseTransient(replay);
         }
       });
