@@ -18,6 +18,7 @@ import { useEffect } from 'react';
 import { installEscapeLadder, registerEscapeRung } from '@himmelcad/ui';
 
 import { handleEscape, resolveShortcut } from '../model/commands/shortcuts.js';
+import { useFixStore } from '../model/fixReference.js';
 import { usePreferences } from '../model/preferences.js';
 import type { AssemblerState } from '../model/store.js';
 import { useWorkspaceStore } from '../model/workspace.js';
@@ -43,7 +44,8 @@ export function useGlobalKeyboard(
     () =>
       registerEscapeRung('tool', () => {
         const state = getState();
-        if (!state.activeTool) return false;
+        // A History "Fix…" session is a mode like a tool: Esc ends it even with nothing selected.
+        if (!state.activeTool && !useFixStore.getState().session) return false;
         handleEscape(state);
         return true;
       }),

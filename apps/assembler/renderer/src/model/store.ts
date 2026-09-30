@@ -468,6 +468,12 @@ export interface AssemblerState {
   whenSettled: () => Promise<void>;
 
   history: { canUndo: boolean; canRedo: boolean };
+  /**
+   * Bumped by every {@link AssemblerState.loadDocument} (New, Open, template, recovery):
+   * sessions tied to steps of the previous document (History "Fix…") end on a change —
+   * feature ids are sequential, so the next document may reuse them.
+   */
+  documentGeneration: number;
   undo: () => void;
   redo: () => void;
 
@@ -1523,6 +1529,7 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
       }),
 
     history: { canUndo: false, canRedo: false },
+    documentGeneration: 0,
     undo: () => {
       if (historyDelegate) {
         historyDelegate.undo();
@@ -2465,6 +2472,7 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
       set({
         projectName: options?.projectName ?? previous.projectName,
         history: { canUndo: false, canRedo: false },
+        documentGeneration: previous.documentGeneration + 1,
         activeTool: null,
         selection: [],
         hover: null,

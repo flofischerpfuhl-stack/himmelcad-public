@@ -319,6 +319,20 @@ export const useFixStore = create<FixState>((set) => ({
   end: () => set({ session: null }),
 }));
 
+// A session belongs to one step of one document: it ends when another document is loaded
+// (ids are sequential and may recur there) or when its step is gone (undo, delete).
+useAssemblerStore.subscribe((state, previous) => {
+  const session = useFixStore.getState().session;
+  if (!session) return;
+  if (
+    state.documentGeneration !== previous.documentGeneration ||
+    (state.features !== previous.features &&
+      !state.features.some((f) => f.id === session.featureId))
+  ) {
+    useFixStore.getState().end();
+  }
+});
+
 /** The ghost of the running Fix session's missing reference (drawn by the viewport). */
 export function fixGhost(): FixGhost | null {
   return useFixStore.getState().session?.missing.ghost ?? null;

@@ -277,6 +277,20 @@ void test('Fix…: the ghost of a deleted construction plane is drawn where the 
     store.getState().evaluation.errors[sketch.id],
     'Missing reference: construction plane of a deleted step',
   );
+  // A Fix session belongs to this document: another document (even one reusing the step id)
+  // or losing the step ends it.
+  assert.equal(startFix(sketch.id), null);
+  assert.ok(useFixStore.getState().session);
+  await load([...twoBoxes().slice(0, 2), { ...sketch, name: 'Other document' }]);
+  assert.equal(useFixStore.getState().session, null, 'a loaded document ends the session');
+  await load([...twoBoxes().slice(0, 2), plane, sketch]);
+  store.getState().deleteFeature(plane.id);
+  await store.getState().whenSettled();
+  assert.equal(startFix(sketch.id), null);
+  store.getState().deleteFeature(sketch.id);
+  assert.equal(useFixStore.getState().session, null, 'deleting the step ends the session');
+  store.getState().undo();
+  await store.getState().whenSettled();
   // The saved reference keeps where it was shown.
   const text = saveProjectFile({
     projectName: 'x',
