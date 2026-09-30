@@ -3,8 +3,8 @@
  * assembly, every Items folder a sub-assembly (nested like in the Items
  * panel), every exported body a part in its folder.
  */
-import type { StepAssemblyTree } from '../foundation/geometry-kernel/stepExport.js';
-import { bodyRowKey, folderRowKey, type ItemsMeta } from '../foundation/commands/items.js';
+import type { StepAssemblyTree } from '../../foundation/geometry-kernel/stepExport.js';
+import { bodyRowKey, folderRowKey, type ItemsMeta } from '../../foundation/commands/items.js';
 
 export function stepAssemblyFromItems(
   projectName: string,

@@ -194,28 +194,6 @@ export function TopBar({ state }: { state: AssemblerState }): JSX.Element {
       </Dialog>
 
       <Dialog
-        open={project.unitHintOffer !== null}
-        onClose={() => useProjectStore.getState().resolveUnitHint(false)}
-        title="Check the imported mesh's units"
-      >
-        <p>
-          {project.unitHintOffer
-            ? `This STL's bounding box looks like it may be in ${
-                project.unitHintOffer.hint === 'm' ? 'metres' : 'inches'
-              } rather than millimetres. Rescale it to millimetres (×${project.unitHintOffer.scaleToMm}), or keep the coordinates as imported?`
-            : ''}
-        </p>
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
-          <button type="button" onClick={() => useProjectStore.getState().resolveUnitHint(false)}>
-            Keep as imported
-          </button>
-          <button type="button" onClick={() => useProjectStore.getState().resolveUnitHint(true)}>
-            Rescale to millimetres
-          </button>
-        </div>
-      </Dialog>
-
-      <Dialog
         open={project.recoveryOffer !== null && !homeOpen}
         onClose={() => useProjectStore.getState().dismissRecovery()}
         title="Recover unsaved changes?"

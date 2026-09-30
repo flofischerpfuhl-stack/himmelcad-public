@@ -173,12 +173,7 @@
       "id": "interop",
       "layer": "domain",
       "summary": "Import/export: STEP/IGES/DXF/STL/3MF/OBJ, reference meshes, mesh to solid, import worker, interop API.",
-      "paths": [
-        "renderer/src/modules/interop/",
-        "renderer/src/interop/",
-        "renderer/src/kernel/stlImport.ts",
-        "renderer/src/api/interopApi.ts"
-      ]
+      "paths": ["renderer/src/modules/interop/"]
     },
     {
       "id": "templates",

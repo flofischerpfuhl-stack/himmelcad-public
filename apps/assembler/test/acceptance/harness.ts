@@ -24,7 +24,7 @@ import {
 import { useAssemblerStore } from '../../renderer/src/foundation/commands/store.js';
 import { manifoldStats } from '../../renderer/src/modules/print/meshTools.js';
 import { weldMesh } from '../../renderer/src/foundation/geometry-kernel/meshWeld.js';
-import { parseStl } from '../../renderer/src/kernel/stlImport.js';
+import { parseStl } from '../../renderer/src/modules/interop/stlImport.js';
 import { setSketchSolverFactory } from '../../renderer/src/foundation/sketch-solver/solverProvider.js';
 import { createNodeKernelAdapter } from '../kernel/nodeKernel.js';
 import { validateThreeMf, type ParsedModel } from '../kernel/threeMfValidator.js';

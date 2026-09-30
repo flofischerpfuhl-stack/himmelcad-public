@@ -29,7 +29,7 @@ import {
   INTEROP_METHODS,
   STEP_EXPORT_PARAMS,
   STEP_IMPORT_STRUCTURE,
-} from '../../api/interopApi.js';
+} from '../../modules/interop/interopApi.js';
 import {
   BLEND_OPTION_PARAMS,
   PRINT_DEFS,

@@ -1,7 +1,7 @@
 /** Messages between the UI thread (`importRunner.ts`) and the import worker. */
 import type { DxfDrawing } from './dxf.js';
 import type { MeshImportResult } from './meshObjects.js';
-import type { MeshCheck, WeldedMesh } from '../foundation/geometry-kernel/meshSolidPayload.js';
+import type { MeshCheck, WeldedMesh } from '../../foundation/geometry-kernel/meshSolidPayload.js';
 
 export type ImportWorkerRequest =
   | { type: 'mesh'; jobId: number; bytes: Uint8Array; fileName: string }

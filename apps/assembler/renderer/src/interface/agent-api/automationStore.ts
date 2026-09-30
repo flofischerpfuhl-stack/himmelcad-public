@@ -7,7 +7,7 @@
 import { create } from 'zustand';
 
 import type { KernelAdapter } from '../../foundation/geometry-kernel/adapter.js';
-import { currentProjectText, useProjectStore } from '../shell-ui/project/projectStore.js';
+import { projectPersistence } from '../../foundation/document/projectPersistence.js';
 import { useAssemblerStore } from '../../foundation/commands/store.js';
 import { agentPrintability, usePrintStore } from '../../modules/print/printStore.js';
 import { handleJsonRpcText } from './jsonRpc.js';
@@ -71,23 +71,25 @@ function methodOf(body: string): string | null {
 
 /** The app's side of an agent session: unsaved-work guard and project open/new/save. */
 export function appSessionHost(): SessionHost {
+  // The shell's project lifecycle (`foundation/document/projectPersistence.ts`); without a
+  // shell the session works on the bare document.
+  const project = projectPersistence();
   return {
     server: 'app',
     capabilities: APP_CAPABILITIES,
-    // The project store's dirty flag (features, Items, saved views, reference meshes
-    // since the last New/Open/Save; tracked from startup).
-    hasUnsavedChanges: () => useProjectStore.getState().dirty,
-    // Open/New/Save go through the app's project handling, like the File menu.
-    project: {
-      open: async (text) => {
-        const ok = await useProjectStore.getState().openFromResult({ path: null, text });
-        if (!ok) {
-          throw new Error(useProjectStore.getState().loadError ?? 'Could not open the project');
+    ...(project
+      ? {
+          // The project's dirty flag (features, Items, saved views, pins, reference meshes
+          // since the last New/Open/Save; tracked from startup).
+          hasUnsavedChanges: () => project.hasUnsavedChanges(),
+          // Open/New/Save go through the app's project handling, like the File menu.
+          project: {
+            open: (text) => project.open(text),
+            newProject: (name) => project.newProject(name),
+            text: (projectName) => project.text(projectName),
+          },
         }
-      },
-      newProject: (name) => useProjectStore.getState().newProject(name),
-      text: (projectName) => currentProjectText(projectName),
-    },
+      : {}),
     // Printability queries run in the print worker; defaults are the user's panel settings.
     printability: agentPrintability,
     printSettings: () => usePrintStore.getState().settings,

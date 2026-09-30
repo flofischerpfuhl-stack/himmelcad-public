@@ -7,13 +7,13 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { buildThreeMf } from '../../renderer/src/foundation/geometry-kernel/threeMf.js';
-import { importFormatOf, parseMeshFile } from '../../renderer/src/interop/importParsers.js';
-import { referenceMeshesFromImport } from '../../renderer/src/interop/importActions.js';
+import { importFormatOf, parseMeshFile } from '../../renderer/src/modules/interop/importParsers.js';
+import { referenceMeshesFromImport } from '../../renderer/src/modules/interop/importActions.js';
 import {
   signedVolume,
   weldMesh,
 } from '../../renderer/src/foundation/geometry-kernel/meshSolidPayload.js';
-import type { ParsedStl } from '../../renderer/src/kernel/stlImport.js';
+import type { ParsedStl } from '../../renderer/src/modules/interop/stlImport.js';
 import { interopFixture } from './fixtures.js';
 
 function volumeOf(mesh: ParsedStl): number {

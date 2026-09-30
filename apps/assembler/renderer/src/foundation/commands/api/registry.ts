@@ -25,6 +25,13 @@ export interface ApiContribution {
   methods?: readonly { order: number; methods: Readonly<Record<string, ApiMethod>> }[];
   defs?: readonly { order: number; defs: Readonly<Record<string, JsonSchema>> }[];
   featureKinds?: readonly { order: number; kinds: Readonly<Record<string, FeatureKindSpec>> }[];
+  /**
+   * Handlers of methods whose schema another module's block still publishes
+   * (phase B: a module takes over the handlers first; the schema's owner
+   * hands the specs over later without changing the published order). A
+   * method has at most one handler.
+   */
+  handlers?: Readonly<Record<string, ApiHandler>>;
 }
 
 /**
@@ -62,6 +69,7 @@ export const API_DEFS: Record<string, JsonSchema> = {};
 /** Every feature-kind parameter schema, in contract order (live). */
 export const API_FEATURE_KINDS: Record<string, FeatureKindSpec> = {};
 const handlers = new Map<string, ApiHandler>();
+const handlerOwners = new Map<string, string>();
 
 function merge<T, R>(
   blocks: Block<T>[],
@@ -109,10 +117,20 @@ export function registerApiContribution(module: string, contribution: ApiContrib
   merge(methodBlocks, API_METHODS, 'method', (m) => m.spec);
   merge(defBlocks, API_DEFS, '$defs entry', (d) => d);
   merge(kindBlocks, API_FEATURE_KINDS, 'feature kind', (k) => k);
+  const setHandler = (name: string, handler: ApiHandler) => {
+    const owner = handlerOwners.get(name);
+    if (owner !== undefined && owner !== module)
+      throw new Error(`API method "${name}" has two handlers (${owner}, ${module})`);
+    handlerOwners.set(name, module);
+    handlers.set(name, handler);
+  };
   for (const block of contribution.methods ?? []) {
     for (const [name, method] of Object.entries(block.methods)) {
-      if (method.handler) handlers.set(name, method.handler);
+      if (method.handler) setHandler(name, method.handler);
     }
+  }
+  for (const [name, handler] of Object.entries(contribution.handlers ?? {})) {
+    setHandler(name, handler);
   }
 }
 

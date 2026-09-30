@@ -3,15 +3,6 @@
   "version": 1,
   "violations": [
     {
-      "from": "agent-api",
-      "to": "shell-ui",
-      "rule": "layer-order",
-      "reason": "Known at the start of the ADR 0032 restructure (phase A): lower foundation/platform/interface modules must not depend on later ones.",
-      "edges": [
-        "renderer/src/interface/agent-api/automationStore.ts -> renderer/src/interface/shell-ui/project/projectStore.ts"
-      ]
-    },
-    {
       "from": "commands",
       "to": "display",
       "rule": "upward",
@@ -91,17 +82,6 @@
       "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
       "edges": [
         "renderer/src/foundation/geometry-kernel/features/faceOps.ts -> renderer/src/model/features.ts"
-      ]
-    },
-    {
-      "from": "interop",
-      "to": "shell-ui",
-      "rule": "upward",
-      "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
-      "edges": [
-        "renderer/src/interop/interopStore.ts -> renderer/src/interface/shell-ui/project/projectStore.ts",
-        "renderer/src/interop/interopStore.ts -> renderer/src/interface/shell-ui/workspace.ts",
-        "renderer/src/interop/ui/InteropChrome.tsx -> renderer/src/interface/shell-ui/workspace.ts"
       ]
     },
     {

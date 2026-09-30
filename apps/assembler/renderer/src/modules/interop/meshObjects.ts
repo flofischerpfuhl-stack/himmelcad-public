@@ -5,7 +5,7 @@
  * STL import already uses (a reference mesh is shown, measured and
  * exported, never a kernel input; "Mesh to Solid" converts one on request).
  */
-import type { ParsedStl } from '../kernel/stlImport.js';
+import type { ParsedStl } from './stlImport.js';
 
 export interface ImportedMeshObject {
   name: string;

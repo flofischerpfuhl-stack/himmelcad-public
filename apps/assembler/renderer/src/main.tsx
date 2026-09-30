@@ -13,9 +13,6 @@ import { App } from './interface/shell-ui/App.js';
 import { installPreferenceEffects } from './interface/shell-ui/preferenceEffects.js';
 import { installAutomationBridge } from './interface/agent-api/automationStore.js';
 import { installAutomationHook } from './app/devtools/automationHook.js';
-import { installAssemblyFolderSync } from './interop/importFolders.js';
-import { ImportRunner, setImportRunner } from './interop/importRunner.js';
-import { setInteropKernel } from './interop/interopStore.js';
 import { WorkerKernelAdapter } from './foundation/geometry-kernel/workerAdapter.js';
 import { useMeasureStore } from './model/measureStore.js';
 import { useProjectStore } from './interface/shell-ui/project/projectStore.js';
@@ -47,17 +44,8 @@ useProjectStore.getState().attachKernelAdapter(kernelAdapter);
 useMeasureStore.getState().attachKernel(kernelAdapter);
 // Agent access (desktop only, off until the user enables it): canonical command layer on this document.
 installAutomationBridge(kernelAdapter);
-// The modules' runtime wiring (Print mode: its worker and the kernel for exports).
+// The modules' runtime wiring (Print mode and interop: their workers and the kernel for exports).
 startModules(ASSEMBLER_MODULES, { kernel: kernelAdapter, workers: true });
-// Import/export: file parsing in its own worker (Cancel = terminate); STEP export on the kernel;
-// imported STEP assemblies are filed into Items folders when their parts appear.
-setImportRunner(
-  new ImportRunner(
-    () => new Worker(new URL('./interop/import.worker.ts', import.meta.url), { type: 'module' }),
-  ),
-);
-setInteropKernel(kernelAdapter);
-installAssemblyFolderSync(useAssemblerStore);
 // The sketch solver (planeGCS, WebAssembly) gets its own worker, started on first use.
 setSketchSolverFactory(
   () =>

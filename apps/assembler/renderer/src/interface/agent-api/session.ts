@@ -47,8 +47,8 @@ import {
   interopFormats,
   meshToSolid,
   stepExportOptions,
-} from '../../api/interopApi.js';
-import { stepAssemblyFromItems } from '../../interop/stepTree.js';
+} from '../../modules/interop/interopApi.js';
+import { stepAssemblyFromItems } from '../../modules/interop/stepTree.js';
 import { useItemsStore } from '../../foundation/commands/items.js';
 import {
   ProjectFormatError,

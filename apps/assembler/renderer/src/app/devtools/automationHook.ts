@@ -35,7 +35,7 @@ import {
 import { useFixStore } from '../../interface/shell-ui/fixReference.js';
 import { useMeasureStore } from '../../model/measureStore.js';
 import { useProjectStore } from '../../interface/shell-ui/project/projectStore.js';
-import { useInteropStore } from '../../interop/interopStore.js';
+import { useInteropStore } from '../../modules/interop/interopStore.js';
 import type { ToolHandleKind } from '../../platform/viewport/picking.js';
 import { sketchAutomation, type SketchAutomation } from './sketchAutomation.js';
 

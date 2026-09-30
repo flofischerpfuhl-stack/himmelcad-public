@@ -9,7 +9,7 @@ import {
   type Command,
   type CommandAvailability,
   type CommandContext,
-} from '../foundation/commands/registry.js';
+} from '../../foundation/commands/registry.js';
 import { dxfExportTarget, kernelFormatCapabilities, useInteropStore } from './interopStore.js';
 
 const IGES_REASON =

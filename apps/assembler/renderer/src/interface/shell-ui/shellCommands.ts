@@ -11,6 +11,7 @@ import {
   type CommandAvailability,
   type CommandContext,
 } from '../../foundation/commands/registry.js';
+import { export3mf, exportStlAll, exportStlBody } from '../../modules/interop/meshExports.js';
 import { useProjectStore } from './project/projectStore.js';
 import { useWorkspaceStore } from './workspace.js';
 
@@ -110,7 +111,7 @@ export const FILE_COMMANDS: readonly Command[] = [
       ctx.evaluation.bodies.length > 0
         ? alwaysEnabled
         : { enabled: false, reason: 'No bodies to export.' },
-    run: () => void useProjectStore.getState().exportStlAll(),
+    run: () => void useProjectStore.getState().runBusy('Exporting STL…', exportStlAll),
   },
   {
     id: 'file.exportStlBody',
@@ -125,7 +126,9 @@ export const FILE_COMMANDS: readonly Command[] = [
     },
     run: (ctx) => {
       const bodies = selected(ctx, 'body');
-      if (bodies.length === 1) void useProjectStore.getState().exportStlBody(bodies[0]!.bodyId);
+      const bodyId = bodies.length === 1 ? bodies[0]!.bodyId : null;
+      if (bodyId)
+        void useProjectStore.getState().runBusy('Exporting STL…', () => exportStlBody(bodyId));
     },
   },
   {
@@ -137,6 +140,6 @@ export const FILE_COMMANDS: readonly Command[] = [
       ctx.evaluation.bodies.length > 0
         ? alwaysEnabled
         : { enabled: false, reason: 'No bodies to export.' },
-    run: () => void useProjectStore.getState().export3mf(),
+    run: () => void useProjectStore.getState().runBusy('Exporting 3MF…', export3mf),
   },
 ];

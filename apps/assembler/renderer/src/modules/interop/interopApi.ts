@@ -6,7 +6,7 @@
  * the other commands. The document edits themselves are shared with the UI
  * (`interop/importActions.ts`).
  */
-import { parseDxfBytes, parseMeshFile, prepareMeshForSolid } from '../interop/importParsers.js';
+import { parseDxfBytes, parseMeshFile, prepareMeshForSolid } from './importParsers.js';
 import {
   bytesToBase64,
   describeMeshCheck,
@@ -16,27 +16,28 @@ import {
   meshSolidFeature,
   referenceMeshWorldPositions,
   referenceMeshesFromImport,
-} from '../interop/importActions.js';
-import { writeDxf, type DxfVersion } from '../interop/dxf.js';
-import { faceOutlineToDxfEntities, sketchToDxfEntities } from '../interop/dxfSketch.js';
-import { fileRowsIntoFolders, notifyAssemblyImported } from '../interop/importFolders.js';
-import { STEP_EXPORT_FORMATS, INTEROP_FORMATS } from '../interop/formats.js';
-import { suggestStlUnitHint } from '../kernel/stlImport.js';
-import type { StepExportOptions } from '../foundation/geometry-kernel/stepExport.js';
+} from './importActions.js';
+import { writeDxf, type DxfVersion } from './dxf.js';
+import { faceOutlineToDxfEntities, sketchToDxfEntities } from './dxfSketch.js';
+import { fileRowsIntoFolders, notifyAssemblyImported } from './importFolders.js';
+import { STEP_EXPORT_FORMATS, INTEROP_FORMATS } from './formats.js';
+import { suggestStlUnitHint } from './stlImport.js';
+import type { StepExportOptions } from '../../foundation/geometry-kernel/stepExport.js';
 import type {
   EvaluationResult,
   KernelFormatCapabilities,
-} from '../foundation/geometry-kernel/types.js';
-import type { Feature, SketchPlaneRef } from '../foundation/document/document.js';
-import { meshRowKey } from '../foundation/commands/items.js';
-import { referenceMeshBodyId, referenceMeshIdOf } from '../foundation/commands/referenceMesh.js';
-import type { AssemblerState, SelectionItem } from '../foundation/commands/store.js';
-import { detectRegions } from '../foundation/sketch-solver/regions.js';
-import { ApiError } from '../foundation/commands/api/errors.js';
-import { resolveFaceInput } from '../foundation/commands/api/references.js';
+} from '../../foundation/geometry-kernel/types.js';
+import type { Feature, SketchPlaneRef } from '../../foundation/document/document.js';
+import { meshRowKey } from '../../foundation/commands/items.js';
+import { referenceMeshBodyId, referenceMeshIdOf } from '../../foundation/commands/referenceMesh.js';
+import type { AssemblerState, SelectionItem } from '../../foundation/commands/store.js';
+import { detectRegions } from '../../foundation/sketch-solver/regions.js';
+import { ApiError } from '../../foundation/commands/api/errors.js';
+import { resolveFaceInput } from '../../foundation/commands/api/references.js';
 
-import type { MethodSpec } from '../foundation/commands/api/contract.js';
-import type { JsonSchema } from '../foundation/commands/api/validate.js';
+import type { MethodSpec } from '../../foundation/commands/api/contract.js';
+import type { ApiContribution } from '../../foundation/commands/api/registry.js';
+import type { JsonSchema } from '../../foundation/commands/api/validate.js';
 
 type Json = Record<string, unknown>;
 
@@ -570,3 +571,22 @@ export function stepExportOptions(
     ...(assembly ? { assembly } : {}),
   };
 }
+
+/**
+ * The interop module's agent-API contribution: the handlers of the import /
+ * export methods, on the session services (`ApiContext` provides every
+ * {@link InteropContext} service). Their schemas are still published by the
+ * agent-api block (`INTEROP_METHODS` and `import.step` in `schema.ts`), in
+ * the published order.
+ */
+export const INTEROP_API: ApiContribution = {
+  handlers: {
+    'import.step': (ctx, p) => importStep(ctx, p),
+    'import.iges': (ctx, p) => importIges(ctx, p),
+    'interop.formats': (ctx) => interopFormats(ctx),
+    'import.mesh': (ctx, p) => importMesh(ctx, p),
+    'import.dxf': (ctx, p) => importDxf(ctx, p),
+    'export.dxf': (ctx, p) => exportDxf(ctx, p),
+    'mesh.toSolid': (ctx, p) => meshToSolid(ctx, p),
+  },
+};

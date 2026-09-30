@@ -9,8 +9,8 @@ import { useEffect, useState } from 'react';
 
 import { Button, Checkbox, Dialog, NumberInput, ProgressBar, Select, Tooltip } from '@himmelcad/ui';
 
-import { useAssemblerStore } from '../../foundation/commands/store.js';
-import { useWorkspaceStore } from '../../interface/shell-ui/workspace.js';
+import { useAssemblerStore } from '../../../foundation/commands/store.js';
+import { notify } from '../../../foundation/commands/notices.js';
 import { INTEROP_FORMATS } from '../formats.js';
 import {
   dxfExportTarget,
@@ -319,9 +319,7 @@ function StepExportDialog(): JSX.Element {
       const written = await useInteropStore.getState().exportStep(settings);
       if (written > 0) {
         close();
-        useWorkspaceStore
-          .getState()
-          .notify(written === 1 ? 'STEP exported.' : `${written} STEP files exported.`);
+        notify(written === 1 ? 'STEP exported.' : `${written} STEP files exported.`);
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -452,7 +450,7 @@ function IgesExportDialog(): JSX.Element {
     try {
       if (await useInteropStore.getState().exportIges(settings)) {
         close();
-        useWorkspaceStore.getState().notify('IGES exported.');
+        notify('IGES exported.');
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -552,7 +550,7 @@ function DxfExportDialog(): JSX.Element {
         .exportDxf({ version, includeConstruction: construction });
       if (ok) {
         close();
-        useWorkspaceStore.getState().notify('DXF exported.');
+        notify('DXF exported.');
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));

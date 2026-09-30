@@ -16,28 +16,32 @@
  */
 import { create } from 'zustand';
 
-import type { KernelAdapter } from '../foundation/geometry-kernel/adapter.js';
-import type { IgesLengthUnit, IgesWriteMode } from '../foundation/geometry-kernel/igesExchange.js';
+import type { KernelAdapter } from '../../foundation/geometry-kernel/adapter.js';
+import type {
+  IgesLengthUnit,
+  IgesWriteMode,
+} from '../../foundation/geometry-kernel/igesExchange.js';
 import type {
   StepExportOptions,
   StepLengthUnit,
   StepSchema,
-} from '../foundation/geometry-kernel/stepExport.js';
-import { suggestStlUnitHint } from '../kernel/stlImport.js';
-import type { Body, KernelFormatCapabilities } from '../foundation/geometry-kernel/types.js';
-import type { Feature, SketchPlaneRef } from '../foundation/document/document.js';
-import type { SketchFeature } from '../foundation/sketch-solver/sketchFeature.js';
-import { meshRowKey, useItemsStore, withDisplayNames } from '../foundation/commands/items.js';
-import * as io from '../foundation/document/persistence.js';
-import { useProjectStore } from '../interface/shell-ui/project/projectStore.js';
-import type { ReferenceMesh } from '../foundation/commands/referenceMesh.js';
+} from '../../foundation/geometry-kernel/stepExport.js';
+import { suggestStlUnitHint } from './stlImport.js';
+import type { Body, KernelFormatCapabilities } from '../../foundation/geometry-kernel/types.js';
+import type { Feature, SketchPlaneRef } from '../../foundation/document/document.js';
+import type { SketchFeature } from '../../foundation/sketch-solver/sketchFeature.js';
+import { meshRowKey, useItemsStore, withDisplayNames } from '../../foundation/commands/items.js';
+import * as io from '../../foundation/document/persistence.js';
+import { projectPersistence } from '../../foundation/document/projectPersistence.js';
+import { notify } from '../../foundation/commands/notices.js';
+import type { ReferenceMesh } from '../../foundation/commands/referenceMesh.js';
 import {
   nextFeatureName,
   shownFeatures,
   useAssemblerStore,
   type SelectionItem,
-} from '../foundation/commands/store.js';
-import { useWorkspaceStore } from '../interface/shell-ui/workspace.js';
+} from '../../foundation/commands/store.js';
+import { sendCamera } from '../../platform/viewport/cameraChannel.js';
 import { writeDxf, type DxfDrawing, type DxfVersion } from './dxf.js';
 import { faceOutlineToDxfEntities, sketchToDxfEntities } from './dxfSketch.js';
 import {
@@ -288,13 +292,13 @@ export const useInteropStore = create<InteropState>((set, get) => {
     const warning = state.evaluation.warnings[id];
     state.clearSelection();
     parts.forEach((b, i) => state.select({ kind: 'body', bodyId: b.id }, { additive: i > 0 }));
-    useWorkspaceStore.getState().sendCamera({ kind: 'fitAll' });
+    sendCamera({ kind: 'fitAll' });
     const summary = `Imported ${parts.length} part${parts.length === 1 ? '' : 's'}${
       folders.size > 0 ? ` into ${folders.size} Items folder${folders.size === 1 ? '' : 's'}` : ''
     } (one History step).`;
     if (warning)
       set({ report: { title: `Imported "${name}"`, tone: 'warning', lines: [summary, warning] } });
-    else useWorkspaceStore.getState().notify(summary);
+    else notify(summary);
   };
 
   const importMeshes = async (name: string, bytes: Uint8Array) => {
@@ -324,7 +328,7 @@ export const useInteropStore = create<InteropState>((set, get) => {
         store.select({ kind: 'mesh', meshId: mesh.id }, { additive: i > 0 }),
       );
     }
-    useWorkspaceStore.getState().sendCamera({ kind: 'fitAll' });
+    sendCamera({ kind: 'fitAll' });
     const triangles = meshes.reduce((sum, m) => sum + m.mesh.indices.length / 3, 0);
     const lines = [
       `${meshes.length} reference mesh${meshes.length === 1 ? '' : 'es'}, ${formatSize(triangles)} triangles.`,
@@ -350,7 +354,7 @@ export const useInteropStore = create<InteropState>((set, get) => {
     }
     if (parsed.warnings.length > 0) {
       set({ report: { title: `Imported "${name}"`, tone: 'warning', lines } });
-    } else useWorkspaceStore.getState().notify(`Imported ${lines[0]}`);
+    } else notify(`Imported ${lines[0]}`);
   };
 
   const importDxf = async (name: string, bytes: Uint8Array) => {
@@ -435,7 +439,7 @@ export const useInteropStore = create<InteropState>((set, get) => {
         switch (format) {
           case 'hcasm': {
             const text = new TextDecoder().decode(file.bytes);
-            useProjectStore.getState().requestOpenFile(() => Promise.resolve({ path: null, text }));
+            projectPersistence()?.requestOpen(() => Promise.resolve({ path: null, text }));
             // Opening a project replaces the document: files dropped with it are not imported into it.
             return;
           }
@@ -472,7 +476,7 @@ export const useInteropStore = create<InteropState>((set, get) => {
       set({ job: null });
       if (job.stage === 'worker') importRunner().cancel();
       else useAssemblerStore.getState().cancelKernelWork();
-      useWorkspaceStore.getState().notify('Import cancelled; the document is unchanged.');
+      notify('Import cancelled; the document is unchanged.');
     },
 
     confirmDxf: (options) => {
@@ -505,7 +509,7 @@ export const useInteropStore = create<InteropState>((set, get) => {
         return;
       }
       addStep(built.feature, [{ kind: 'sketchProfile', featureId: id }]);
-      useWorkspaceStore.getState().sendCamera({ kind: 'fitAll' });
+      sendCamera({ kind: 'fitAll' });
       const skipped = Object.entries(pending.drawing.skipped).map(([t, n]) => `${n} × ${t}`);
       const lines = [
         `${plural(built.stats.curves, 'curve')} and ${plural(built.stats.points, 'point')} in "${built.feature.name}"; ${plural(built.stats.connected, 'end point')} connected. Units: ${units.label}.`,
@@ -526,7 +530,7 @@ export const useInteropStore = create<InteropState>((set, get) => {
           if (warning) lines.push(warning);
           if (lines.length > 1 || units.source === 'unitless') {
             set({ report: { title: `Imported "${pending.fileName}"`, tone: 'warning', lines } });
-          } else useWorkspaceStore.getState().notify(lines[0]!);
+          } else notify(lines[0]!);
         });
     },
     dismissDxf: () => set({ dxfPending: null }),
@@ -547,7 +551,7 @@ export const useInteropStore = create<InteropState>((set, get) => {
           offer.meshIds.includes(m.id) ? scale(m) : m,
         ),
       }));
-      useWorkspaceStore.getState().sendCamera({ kind: 'fitAll' });
+      sendCamera({ kind: 'fitAll' });
     },
 
     convertMeshToSolid: async (meshId) => {
@@ -594,11 +598,9 @@ export const useInteropStore = create<InteropState>((set, get) => {
         return;
       }
       state.setReferenceMeshHidden(mesh.id, true);
-      useWorkspaceStore
-        .getState()
-        .notify(
-          `Converted "${mesh.name}" to a solid: ${describeMeshCheck(prepared.check)}. The mesh is hidden.`,
-        );
+      notify(
+        `Converted "${mesh.name}" to a solid: ${describeMeshCheck(prepared.check)}. The mesh is hidden.`,
+      );
     },
 
     setStepExportOpen: (open) => set({ stepExportOpen: open }),
