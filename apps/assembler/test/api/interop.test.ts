@@ -85,7 +85,7 @@ void test('interop.formats lists what each format keeps and what the loaded OCCT
   assert.ok(formats.import.some((f) => f.format === 'dxf' && f.available === true));
 });
 
-void test('import.iges / export.iges are refused with "unsupported" on the default OCCT build', async (t) => {
+void test('import.iges / export.iges are refused with "unsupported" on the replicad OCCT build', async (t) => {
   if (himmelcad) {
     t.skip('the HimmelCAD OCCT build supports IGES');
     return;

@@ -91,7 +91,9 @@ installed app, replace the `assets/himmelcad_occt-<hash>.{js,wasm}` pair
 
 `HIMMELCAD_OCCT=himmelcad` selects it, `HIMMELCAD_OCCT=replicad` the npm
 module; unset means `DEFAULT_OCCT_MODULE` in
-`apps/assembler/headless/occtModule.ts` (currently `replicad`). The same
+`apps/assembler/headless/occtModule.ts` (`himmelcad` since the Block-6 A/B
+benchmark, 2026-09-30; CI sets `HIMMELCAD_OCCT=replicad` because it has no
+cache). The same
 resolver serves `apps/assembler/vite.config.ts` (app build: aliases
 `replicad-opencascadejs` and its `/wasm` to the cache directory) and the
 headless CLI, tests and `bench:kernel`. The kernel detects the extra classes

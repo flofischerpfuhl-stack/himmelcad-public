@@ -52,15 +52,23 @@ node:typecheck:
   script:
     - pnpm typecheck
 
+# The Assembler's default OCCT module (HimmelCAD build, vendor/occt-wasm) lives in a
+# per-machine artifact cache that CI does not have (owner decision 2026-09-30: no
+# hosting); jobs that load or bundle the kernel use the replicad module explicitly.
+# The HimmelCAD module is covered on the Windows host (assembler/OCCT-BUILD-SPIKE.md).
 node:test:
   extends: .node
   stage: test
+  variables:
+    HIMMELCAD_OCCT: replicad
   script:
     - pnpm test
 
 python:automation-sdk:
   extends: .python
   stage: test
+  variables:
+    HIMMELCAD_OCCT: replicad
   script:
     - python -m unittest discover -s sdk/python/tests
 
@@ -185,6 +193,8 @@ rust:build-wasm:
 node:build:
   extends: .node
   stage: build
+  variables:
+    HIMMELCAD_OCCT: replicad
   script:
     - pnpm build
 

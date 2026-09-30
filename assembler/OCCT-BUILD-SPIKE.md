@@ -1,9 +1,11 @@
 # Assembler — own OCCT WebAssembly build (spike, 2026-09-30)
 
-Status: **integrated behind a build flag** (`HIMMELCAD_OCCT=himmelcad`,
-default stays `replicad-opencascadejs` 1.1.0), merged into
-`feat/assembler-phase0-20260929` together with the interop work (IGES and the
-XCAF STEP reader are wired, see "Integration"). Recipe and records:
+Status: **the default OCCT module** since the Block-6 integration
+(2026-09-30, after the quiet-host A/B benchmark in "Switching the default");
+`HIMMELCAD_OCCT=replicad` selects `replicad-opencascadejs` 1.1.0 (CI does, it
+has no cache). Merged into `feat/assembler-phase0-20260929` together with the
+interop work (IGES and the XCAF STEP reader are wired, see "Integration").
+Recipe and records:
 `vendor/occt-wasm/` (README, `build.sh`, `artifacts.sha256`),
 `LICENSES/THIRD_PARTY.md` ("`@himmelcad/occt-wasm` 8.0.1-hc.2"),
 `scripts/check-licenses.mjs`. The built module lives in a local artifact cache
@@ -170,7 +172,13 @@ The whole assembler suite passes on both modules (see "Verification").
 
 ## Not done (follow-up)
 
-- **Default switch**: prepared, not done (see "Switching the default").
+- **Default switch**: done in Block 6 (see "Default switch (Block 6)").
+- CI covers only the replicad module (`HIMMELCAD_OCCT=replicad` in
+  `.gitlab-ci.yml`); the default module is tested on the Windows host and dev
+  machines with the cache. Option (a) below (build in CI on a cache miss)
+  remains open for the owner.
+- The browser-side wasm load of each module was not timed separately (the
+  browser bench times interactions after the kernel is up).
 - IGES keeps geometry only (`IGESCAFControl_Writer/Reader` are not bound):
   names/colours through IGES would need those classes in the recipe.
 - Offset Face with tangent neighbours still uses the slab route; offering the
@@ -188,8 +196,8 @@ The module lives in a local cache per machine, is SHA-256-verified against
 `vendor/occt-wasm/artifacts.sha256`, and a missing or wrong module fails
 loudly; `HIMMELCAD_OCCT=replicad` stays the explicit opt-out. The default is
 switched in the final Block-6 integration after an A/B benchmark on a quiet
-host — **not in this integration** (`DEFAULT_OCCT_MODULE` is still
-`replicad`).
+host — done, see "Default switch (Block 6)" below (the rest of this memo is
+the record of what the switch needed).
 
 **Ready now:** the resolver and its checks
 (`apps/assembler/headless/occtModule.ts`, used by the app build and the
@@ -258,6 +266,77 @@ agents; median and range):
   thinner than the shell), IGES import/export, OCCT's XCAF STEP reader
   (instance colours; structures the text parser does not follow).
 
+## Default switch (Block 6, 2026-09-30)
+
+**Quiet-host A/B benchmark.** `bench:kernel` and `bench:interactive --browser`
+(Node part and the Chromium part against the Vite dev server) as **6
+interleaved A/B pairs of fresh processes per module** (order alternated per
+pair: R-H, H-R, …), on the merged tree after `asm/robust-20260930`, HimmelCAD
+module 8.0.1-hc.2 from the verified cache. Host: no other agents; the owner's
+Firefox/ChatGPT/ProtonDrive open; Windows Search was indexing at the start
+(idle load 24–63 % over 10 s before the runs, 34 % of which SearchIndexer/
+Defender); **5–28 % busy (median 8 %) in the 3 s before each run**. Driver
+and raw JSON: `D:\AgentWork\HimmelCAD-Assembler\ab\` (not in git). Dev-server
+fix found on the way: switching `HIMMELCAD_OCCT` invalidated Vite's shared
+dependency cache and reloaded the page mid-run; `vite.config.ts` now keeps
+one cache per module (`node_modules/.vite` / `.vite-himmelcad`).
+
+Criterion: no median regression > 20 % beyond the run-to-run spread (the
+HimmelCAD median above the replicad maximum) on any metric ≥ 5 ms; wasm load
+≤ +25 %. Medians (min–max) of 6 runs each, ms:
+
+| Metric                                      | replicad           | HimmelCAD            | Δ               |
+| ------------------------------------------- | ------------------ | -------------------- | --------------- |
+| wasm load (`bench:kernel`, incl. SHA-256)   | 318 (313–364)      | 371 (363–376)        | +17 %           |
+| wasm load (`bench:interactive`)             | 330 (325–460)      | 374 (367–394)        | +13 %           |
+| demo bracket full / edit #2 / last edit     | 124 / 82.4 / 24.9  | 132 / 82.0 / 25.4    | +6 / −0 / +2 %  |
+| demo bracket preview                        | 28.1 (26.3–30.5)   | 29.7 (28.0–35.0)     | +6 %            |
+| features part full / edit #2 / last edit    | 119 / 107 / 28.4   | 119 / 106 / 27.7     | −0 / −0 / −3 %  |
+| features part preview                       | 17.1               | 16.3                 | −4 %            |
+| plate full / edit #2 / last edit            | 2997 / 2912 / 87.9 | 3004 / 2901 / 87.1   | +0 / −0 / −1 %  |
+| plate preview                               | 54.5               | 54.3                 | −0 %            |
+| Node: engrave "HC" preview / commit         | 154 / 217          | 154 / 216            | −0 / −0 %       |
+| Node: label "HIMMELCAD 26" preview / commit | 791 / 977          | 791 / 971            | −0 / −1 %       |
+| Node: hole M4 cbore preview / commit        | 35.2 / 1.8         | 35.9 / 1.6           | +2 % / (< 5 ms) |
+| Node: fillet drag step / 60-entity drag     | 19.0 / 1.3         | 18.7 / 1.3           | −2 % / (< 5 ms) |
+| Browser: emboss preview / engrave preview   | 316 / 175          | 307 / 169            | −3 / −4 %       |
+| Browser: engrave commit                     | 94.5 (47–220)      | 103 (47–213)         | +9 %            |
+| Browser: hole preview (size M4) / commit    | 118 / 43.1         | 130 (118–175) / 42.8 | +10 / −1 %      |
+| Browser: fillet drag step / 60-entity drag  | 30.0 / 12.6        | 29.5 / 12.4          | −2 / −2 %       |
+
+All 60 compared metrics pass (the full table has every step of both benches);
+the largest median differences are browser steps whose runs are bimodal
+(e.g. the engrave commit re-evaluates in some runs and reuses a checkpoint in
+others, on both modules). **Decision: criterion met — `DEFAULT_OCCT_MODULE =
+'himmelcad'`** (`apps/assembler/headless/occtModule.ts`); `HIMMELCAD_OCCT=replicad`
+stays the opt-out.
+
+**CI** (`.gitlab-ci.yml`): the assembler tests run in `node:test` (`pnpm -r
+test`), the app is bundled in `node:build`, and `python:automation-sdk` can
+start the headless CLI (it skips without node). CI has no module cache (no
+hosting), so these three jobs set `HIMMELCAD_OCCT=replicad` explicitly (the
+replicad suite is the same one that passes here, see "Verification"). The
+HimmelCAD module's own tests run on the Windows host and dev machines.
+
+**Installer** (`pnpm package:win`): the build bundles the default module as
+`assets/himmelcad_occt-<hash>.{js,wasm}`; `electron-builder.win.yml` unpacks
+both next to `app.asar` (like the replicad pair), so they stay replaceable
+files.
+Verified 2026-09-30 on this host: `pnpm package:win` (default module)
+→ installer 114 MB; silent per-user install (`/S /D=<dir>`, 18 s, 375 MB);
+`resources/app.asar.unpacked/dist/renderer/assets/` holds
+`himmelcad_occt-<hash>.wasm` (25 349 649 B) and `himmelcad_occt-<hash>.js`
+(60 279 B) next to the planeGCS pair, no replicad files. The installed app
+(Playwright `_electron`, own `--user-data-dir`), driven through its Agent
+Access endpoint turned on from the command search, reports
+`igesRead/igesWrite/stepXcafRead: true`, and a **true Offset Face** works:
+trapezoid prism, top +2 mm → 1 680 mm³, 6 faces, valid (the replicad slab route
+gives 1 700). Replaceable: a truncated `.wasm` in that directory makes the
+installed app report "CAD kernel failed to load: … CompileError …"; the
+original restored. Silent uninstall removed the app and left no uninstall
+entry or `.hcasm` association (none existed before). Scripts:
+`D:\AgentWork\HimmelCAD-Assembler\installer-check.mjs`, `installer-replace.mjs`.
+
 ## Risks
 
 - **Toolchain source**: the recipe links against the published opencascade.js
@@ -320,6 +399,20 @@ Integration run 2 (2026-09-30, after merging `asm/latency-20260930` and
 | `bench:kernel` last-feature edit (ms)                     | 25.1 / 26.2 / 51.6                         | 21.0 / 27.2 / 51.7                                    |
 | `bench:interactive` (Node) engrave "HC" commit / hole M4  | 216 / 33.5 ms                              | 217 / 33.2 ms                                         |
 | `dev:web` smoke (`shots/k8-*.png`, `k8-smoke.mjs`)        |                                            | plane → sketch → To Object, Move Face, Radius, Fix, … |
+
+Integration run 3 (Block 6, 2026-09-30: `asm/robust-20260930` merged, default
+switched, commit check, Block-6 fuzz fixes; no other agents on the host):
+
+| Check                                                      | HimmelCAD (default)                                                          | replicad (`HIMMELCAD_OCCT=replicad`) |
+| ---------------------------------------------------------- | ---------------------------------------------------------------------------- | ------------------------------------ |
+| typecheck, eslint (`--max-warnings 0`), prettier (changed) | pass                                                                         | (same sources)                       |
+| `build`                                                    | pass (`assets/himmelcad_occt-<hash>.{js,wasm}`)                              | pass                                 |
+| `test`                                                     | 620: 618 pass, 2 skipped (replicad-only)                                     | 620: 608 pass, 12 skipped            |
+| `test:electron` / `test:acceptance`                        | 9/9, 14/14                                                                   | 9/9, 14/14                           |
+| `test:fuzz`                                                | budget (3 min, seed 2): 58 sequences clean; 2 × 15 min (seeds 808/909) clean | —                                    |
+| Python `test_assembler*` + `test_printing`                 | 31/31                                                                        | 26/26 (`test_assembler*`)            |
+| license check                                              | pass (236 packages)                                                          |                                      |
+| `package:win` + install + launch                           | pass (see "Default switch (Block 6)")                                        |                                      |
 
 The emboss label face-name pins (`embossText.test.ts`) are per module; hc.2
 names the batched label's split faces exactly like replicad 1.1.0.

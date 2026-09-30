@@ -234,7 +234,7 @@ void test(
 );
 
 void test(
-  'default OCCT build: IGES import and export say "not in this build"',
+  'replicad OCCT build (HIMMELCAD_OCCT=replicad): IGES import and export say "not in this build"',
   { skip: skipOnHimmelcad },
   async () => {
     const { evaluator } = await loadNodeKernel();

@@ -98,6 +98,11 @@ function occtCacheFiles(): Plugin {
 export default defineConfig({
   root: 'renderer',
   base: './',
+  // One dependency cache per OCCT module: switching `HIMMELCAD_OCCT` changes the aliases, and a
+  // shared cache would be re-optimized (and the open page reloaded) on every switch.
+  cacheDir: fileURLToPath(
+    new URL(occtSelection ? 'node_modules/.vite-himmelcad' : 'node_modules/.vite', import.meta.url),
+  ),
   plugins: [react(), kernelWorkerCsp(), occtCacheFiles()],
   resolve: { alias: occtSelection?.aliases ?? [] },
   server: {

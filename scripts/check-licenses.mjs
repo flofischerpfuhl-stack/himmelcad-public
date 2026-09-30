@@ -63,7 +63,8 @@ const ADMITTED_LGPL = [
   },
   {
     // The HimmelCAD build of the same OCCT 8.0.1 / opencascade.js toolchain
-    // with extra bindings (vendor/occt-wasm, opt-in via HIMMELCAD_OCCT=himmelcad);
+    // with extra bindings (vendor/occt-wasm, the Assembler's default module;
+    // HIMMELCAD_OCCT=replicad opts out);
     // same runtime-loaded worker module, not an npm dependency.
     name: '@himmelcad/occt-wasm',
     version: '8.0.1-hc.2',

@@ -8,8 +8,8 @@
  *   classes (`vendor/occt-wasm`, built by `vendor/occt-wasm/build.sh`).
  *
  * Selected with `HIMMELCAD_OCCT=replicad|himmelcad`; unset means
- * {@link DEFAULT_OCCT_MODULE}. `HIMMELCAD_OCCT=replicad` stays an explicit
- * opt-out once the default is switched.
+ * {@link DEFAULT_OCCT_MODULE} (`himmelcad`). `HIMMELCAD_OCCT=replicad` is the explicit
+ * opt-out.
  *
  * The HimmelCAD module is never stored in git. Its files live in a local
  * artifact cache outside the repository (owner decision 2026-09-30):
@@ -40,11 +40,12 @@ export type OpenCascadeModule = Awaited<ReturnType<OcctInit>>;
 export type OcctModuleId = 'replicad' | 'himmelcad';
 
 /**
- * The module used when `HIMMELCAD_OCCT` is unset. Switching the default is
- * this one line (plus `artifacts.sha256`/cache on every machine and CI); see
- * `assembler/OCCT-BUILD-SPIKE.md` "Switching the default".
+ * The module used when `HIMMELCAD_OCCT` is unset: the HimmelCAD build
+ * (switched after the quiet-host A/B benchmark, Block 6, 2026-09-30;
+ * `assembler/OCCT-BUILD-SPIKE.md` "Switching the default"). Machines without
+ * the verified cache (CI) set `HIMMELCAD_OCCT=replicad`.
  */
-export const DEFAULT_OCCT_MODULE: OcctModuleId = 'replicad';
+export const DEFAULT_OCCT_MODULE: OcctModuleId = 'himmelcad';
 
 /** The files the loader needs; both are hash-checked. */
 export const HIMMELCAD_OCCT_FILES = ['himmelcad_occt.js', 'himmelcad_occt.wasm'] as const;

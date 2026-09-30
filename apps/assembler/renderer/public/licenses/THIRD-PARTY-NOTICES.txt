@@ -53,8 +53,9 @@ the extent needed to debug such modifications. The corresponding source
 code is available from the URLs above; Himmel:CAD makes no modifications to
 it.
 
-Builds made with the HimmelCAD OCCT module (build option
-HIMMELCAD_OCCT=himmelcad) ship instead
+Builds made with the HimmelCAD OCCT module (the default since 2026-09-30;
+builds made with the option HIMMELCAD_OCCT=replicad ship the files above)
+ship instead
 
   assets/himmelcad_occt-<hash>.wasm    (HimmelCAD build "@himmelcad/occt-wasm"
                                         8.0.1-hc.2: the same OCCT 8.0.1,

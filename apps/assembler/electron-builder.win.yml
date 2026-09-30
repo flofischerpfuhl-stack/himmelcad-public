@@ -40,6 +40,10 @@ asar: true
 asarUnpack:
   - dist/renderer/assets/replicad_single-*.wasm
   - dist/renderer/assets/replicad_single-*.js
+  # The HimmelCAD OCCT build (default module, `vendor/occt-wasm`, LGPL-2.1 modified build):
+  # the same separately replaceable pair.
+  - dist/renderer/assets/himmelcad_occt-*.wasm
+  - dist/renderer/assets/himmelcad_occt-*.js
   - dist/renderer/assets/planegcs-*.wasm
   - dist/renderer/assets/planegcs-*.js
   - dist/renderer/licenses/**

@@ -45,8 +45,14 @@ function fixture(): { root: string; vendor: string; good: string; cleanup: () =>
   return { root, vendor, good, cleanup: () => rmSync(root, { recursive: true, force: true }) };
 }
 
-void test('selection: unset is the default module, replicad stays an explicit opt-out', () => {
+void test('selection: unset is the default module (HimmelCAD), replicad stays an explicit opt-out', () => {
+  assert.equal(
+    DEFAULT_OCCT_MODULE,
+    'himmelcad',
+    'default switched after the Block-6 A/B benchmark',
+  );
   assert.equal(selectedOcctModule({}), DEFAULT_OCCT_MODULE);
+  assert.equal(selectedOcctModule({ HIMMELCAD_OCCT: '' }), 'himmelcad');
   assert.equal(selectedOcctModule({ HIMMELCAD_OCCT: 'replicad' }), 'replicad');
   assert.equal(selectedOcctModule({ HIMMELCAD_OCCT: ' HimmelCAD ' }), 'himmelcad');
   assert.throws(

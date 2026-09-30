@@ -71,8 +71,9 @@ admitted LGPL components"):
   worker; admitted 2026-09-29 with an exception in `scripts/check-licenses.mjs`.
 - `@himmelcad/occt-wasm` 8.0.1-hc.2 (`vendor/occt-wasm`: the same OCCT 8.0.1
   opencascade.js build relinked with extra bindings, LGPL-2.1-only with the
-  Open CASCADE exception), the same runtime-loaded module slot, opt-in with
-  `HIMMELCAD_OCCT=himmelcad`; recorded 2026-09-30 with an exception in
+  Open CASCADE exception), the same runtime-loaded module slot, the Assembler's
+  default module since 2026-09-30 (`HIMMELCAD_OCCT=replicad` opts out);
+  recorded 2026-09-30 with an exception in
   `scripts/check-licenses.mjs`. A modified build: a release that ships it
   publishes `vendor/occt-wasm` (condition 3).
 
