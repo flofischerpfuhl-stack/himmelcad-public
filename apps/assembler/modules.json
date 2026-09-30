@@ -60,6 +60,12 @@
       "paths": ["renderer/src/platform/input/"]
     },
     {
+      "id": "widgets",
+      "layer": "platform",
+      "summary": "The shell's building blocks module UIs use: panel chrome styles, expression fields with name completion, anchored menus.",
+      "paths": ["renderer/src/platform/widgets/"]
+    },
+    {
       "id": "viewport",
       "layer": "platform",
       "summary": "WebGL2 viewport: scene, camera, picking, selection boxes, grid, display-mode rendering, overlay host.",
@@ -127,11 +133,7 @@
       "id": "parameters",
       "layer": "domain",
       "summary": "Document parameters UI and edits: planning/committing parameter changes, the Parameters panel, parameter API methods.",
-      "paths": [
-        "renderer/src/modules/parameters/",
-        "renderer/src/model/parameterEdits.ts",
-        "renderer/src/chrome/ParametersPanel"
-      ]
+      "paths": ["renderer/src/modules/parameters/"]
     },
     {
       "id": "measure",

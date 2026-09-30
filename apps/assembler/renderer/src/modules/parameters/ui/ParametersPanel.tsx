@@ -19,11 +19,11 @@ import {
   resolveParameterValues,
   type Parameter,
   type ParameterUnit,
-} from '../foundation/document/parameters.js';
-import type { AssemblerState } from '../foundation/commands/store.js';
-import { parameterCandidates } from '../interface/shell-ui/expressionSuggest.js';
-import { ExpressionSuggestInput } from '../interface/shell-ui/ExpressionSuggestInput.js';
-import panelStyles from '../interface/shell-ui/Panel.module.css';
+} from '../../../foundation/document/parameters.js';
+import type { AssemblerState } from '../../../foundation/commands/store.js';
+import { parameterCandidates } from '../../../platform/widgets/expressionSuggest.js';
+import { ExpressionSuggestInput } from '../../../platform/widgets/ExpressionSuggestInput.js';
+import panelStyles from '../../../platform/widgets/Panel.module.css';
 import styles from './ParametersPanel.module.css';
 
 const UNIT_OPTIONS: { value: ParameterUnit; label: string }[] = [

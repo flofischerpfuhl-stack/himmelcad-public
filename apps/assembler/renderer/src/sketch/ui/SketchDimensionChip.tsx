@@ -13,8 +13,8 @@ import { useEffect, useRef, useState } from 'react';
 
 import { registerEscapeRung } from '@himmelcad/ui';
 
-import type { SuggestionCandidate } from '../../interface/shell-ui/expressionSuggest.js';
-import { ExpressionSuggestInput } from '../../interface/shell-ui/ExpressionSuggestInput.js';
+import type { SuggestionCandidate } from '../../platform/widgets/expressionSuggest.js';
+import { ExpressionSuggestInput } from '../../platform/widgets/ExpressionSuggestInput.js';
 import labelStyles from '../../platform/viewport/DimensionLabel.module.css';
 import styles from './SketchOverlay.module.css';
 

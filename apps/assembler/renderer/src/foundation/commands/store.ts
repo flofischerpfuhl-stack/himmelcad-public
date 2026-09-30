@@ -94,21 +94,11 @@ import {
 } from '../../model/modeling.js';
 import {
   expressionFieldsOf,
-  findParameterDependents,
-  findParameterUsages,
   resolveFieldExpression,
   resolveParameterValues,
   type Parameter,
-  type ParameterUnit,
-  type ParameterUsage,
 } from '../document/parameters.js';
 import { setParameterValuesProvider } from '../sketch-solver/solverProvider.js';
-import {
-  planParameterChange,
-  type ParameterChange,
-  type ParameterEditResult,
-  type ParameterPlan,
-} from '../../model/parameterEdits.js';
 
 /** One selectable/hoverable thing in the viewport or a panel. */
 export type SelectionItem =
@@ -437,9 +427,15 @@ export type FeaturePatch = {
   [K in Feature['kind']]: Partial<Omit<Extract<Feature, { kind: K }>, 'id' | 'kind'>>;
 }[Feature['kind']];
 
-export type { ParameterChange, ParameterEditResult, ParameterPlan };
+/**
+ * State and actions the modules add to the store (`installStoreSlice`),
+ * declared by each module with a module augmentation:
+ * `declare module '…/store.js' { interface AssemblerStateExtensions extends MySlice {} }`.
+ */
+// eslint-disable-next-line @typescript-eslint/no-empty-interface, @typescript-eslint/no-empty-object-type
+export interface AssemblerStateExtensions {}
 
-export interface AssemblerState {
+export interface AssemblerState extends AssemblerStateExtensions {
   projectName: string;
   /** Sets the project's display name (not undo-tracked). Blank input is ignored. */
   setProjectName: (name: string) => void;
@@ -638,44 +634,6 @@ export interface AssemblerState {
    * it feeds re-resolves in the same commit).
    */
   parameters: Parameter[];
-  /**
-   * Plans a parameter change (create/edit/rename/delete) against the current
-   * document without changing it: the new parameters, every sketch whose
-   * dimensions read a changed value re-solved, every `*Expression` field
-   * re-resolved (`model/parameterEdits.ts`). Refusals are all-or-nothing.
-   */
-  planParameterChange: (change: ParameterChange) => Promise<ParameterPlan>;
-  /**
-   * Commits a plan as exactly one undo step (parameters + re-solved
-   * sketches + re-resolved features). Refused when a tool is active or the
-   * document changed since the plan was made. `evaluation` (the agent API
-   * validated the plan's features already) seeds the result cache.
-   */
-  applyParameterPlan: (
-    plan: ParameterPlan,
-    options?: { evaluation?: EvaluationResult },
-  ) => ParameterEditResult;
-  /** Plans and commits one parameter change (UI entry point; re-plans if the document moved). */
-  editParameter: (change: ParameterChange) => Promise<ParameterEditResult>;
-  /**
-   * Creates (`id` omitted) or edits (`id` given) one parameter via
-   * {@link AssemblerState.editParameter}: a formula wins over `value`; a
-   * `value` alone replaces a formula.
-   */
-  upsertParameter: (input: {
-    id?: string;
-    name: string;
-    unit: ParameterUnit;
-    value?: number;
-    expression?: string;
-  }) => Promise<ParameterEditResult>;
-  /** Renames a parameter and rewrites every expression that references it (by name, not value). */
-  renameParameter: (id: string, name: string) => Promise<ParameterEditResult>;
-  /** Refused (`ok: false`, `usages`) when any sketch dimension or feature field still references it. */
-  deleteParameter: (
-    id: string,
-  ) => Promise<ParameterEditResult>; /** Every place in the document that reads `paramId`'s name, for a "used by" listing before delete. */
-  parameterUsages: (paramId: string) => ParameterUsage[];
 
   viewState: ViewState;
   setDisplayMode: (mode: DisplayMode) => void;
@@ -1035,6 +993,50 @@ export function setLongOperationDelay(ms: number): void {
   LONG_OPERATION_MS = ms;
 }
 
+/** What the store core offers a module's slice (see {@link installStoreSlice}). */
+export interface StoreCore {
+  getState: () => AssemblerState;
+  /** Whether a kernel is attached. */
+  hasKernel(): boolean;
+  /**
+   * Commits a complete next document (features, and parameters when given)
+   * as exactly one undo step, through the path every tool's Done uses.
+   */
+  commitDocument(next: {
+    features: Feature[];
+    parameters?: Parameter[];
+    selection?: SelectionItem[];
+  }): void;
+  /** Records `evaluation` as the kernel result of exactly `features` (no re-evaluation on commit). */
+  seedEvaluation(features: Feature[], evaluation: EvaluationResult): void;
+  /**
+   * Evaluates `features` on the kernel's preview channel without touching the
+   * document (retried while UI previews supersede it).
+   */
+  evaluateCheck(
+    features: Feature[],
+  ): Promise<
+    | { kind: 'done'; result: EvaluationResult }
+    | { kind: 'failed'; message: string }
+    | { kind: 'busy' }
+  >;
+}
+
+type SetState = (partial: Partial<AssemblerState>) => void;
+
+/** A module's slice: its initial state and actions, merged into the store once. */
+export type StoreSliceCreator<T = Partial<AssemblerState>> = (
+  set: SetState,
+  get: () => AssemblerState,
+  core: StoreCore,
+) => T;
+
+let storeCore: StoreCore | null = null;
+const installedSlices = new Set<string>();
+
+/** The core part of the state: everything but the modules' slices. */
+type CoreState = Omit<AssemblerState, keyof AssemblerStateExtensions>;
+
 export const useAssemblerStore = create<AssemblerState>((set, get) => {
   /**
    * Undo/redo snapshots of `features` + `parameters` (one committed tool
@@ -1244,52 +1246,6 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
       }
       commitFeatures(next, selection, undefined, result ?? undefined);
     })();
-  }
-
-  /**
-   * Evaluates a parameter plan before it is committed and refuses it when a
-   * feature that evaluates cleanly now would fail with the new values — the
-   * same rule as the agent API's `parameter.edit` (`featureFailed`). Only the
-   * steps above the History rollback bar are checked (what the viewport
-   * shows); the returned evaluation is reusable only without a rollback.
-   */
-  async function checkParameterPlan(
-    plan: Extract<ParameterPlan, { ok: true }>,
-  ): Promise<{ ok: true; evaluation: EvaluationResult | null } | { ok: false; message: string }> {
-    if (!kernel) return { ok: true, evaluation: null };
-    await get().whenSettled();
-    const state = get();
-    const before = state.evaluation;
-    const marker = state.rollbackBefore
-      ? plan.features.findIndex((f) => f.id === state.rollbackBefore)
-      : -1;
-    const active = marker >= 0 ? plan.features.slice(0, marker) : plan.features;
-    let result: EvaluationResult | null = null;
-    for (let attempt = 0; attempt < 20 && !result; attempt += 1) {
-      planCheckRevision += 1;
-      const outcome = await kernel.evaluate({
-        channel: 'preview',
-        revision: planCheckRevision,
-        features: active,
-      }).outcome;
-      if (outcome.kind === 'done') result = outcome.result;
-      else if (outcome.kind === 'failed') {
-        return { ok: false, message: `The CAD kernel failed: ${outcome.message}` };
-      }
-      // superseded by a tool preview: try again.
-    }
-    if (!result) return { ok: false, message: 'The CAD kernel is busy; try again.' };
-    const evaluated = result;
-    const failing = active.filter((f) => evaluated.errors[f.id] && !before.errors[f.id]);
-    if (failing.length > 0) {
-      const first = failing[0]!;
-      const more = failing.length > 1 ? ` (and ${failing.length - 1} more)` : '';
-      return {
-        ok: false,
-        message: `${first.name} would fail: ${evaluated.errors[first.id]}${more}. Nothing was changed.`,
-      };
-    }
-    return { ok: true, evaluation: marker >= 0 ? null : evaluated };
   }
 
   /** Requests evaluation of the current `features`. Stale results (older revisions) are dropped. */
@@ -1503,7 +1459,29 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
     commitFeatures([...get().features, feature], [{ kind: 'feature', featureId: feature.id }]);
   }
 
-  return {
+  storeCore = {
+    getState: get,
+    hasKernel: () => kernel !== null,
+    commitDocument: (next) => commitFeatures(next.features, next.selection, next.parameters),
+    seedEvaluation: (features, evaluation) => resultCache.set(features, evaluation),
+    evaluateCheck: async (features) => {
+      if (!kernel) return { kind: 'busy' };
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        planCheckRevision += 1;
+        const outcome = await kernel.evaluate({
+          channel: 'preview',
+          revision: planCheckRevision,
+          features,
+        }).outcome;
+        if (outcome.kind === 'done') return { kind: 'done', result: outcome.result };
+        if (outcome.kind === 'failed') return { kind: 'failed', message: outcome.message };
+        // superseded by a tool preview: try again.
+      }
+      return { kind: 'busy' };
+    },
+  };
+
+  const core: CoreState = {
     projectName: 'Bracket',
     setProjectName: (name) => {
       const trimmed = name.trim();
@@ -2331,73 +2309,6 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
     },
 
     parameters: [],
-    parameterUsages: (paramId) => {
-      const state = get();
-      const param = state.parameters.find((p) => p.id === paramId);
-      if (!param) return [];
-      return [
-        ...findParameterDependents(state.parameters, param.name),
-        ...findParameterUsages(state.features, param.name),
-      ];
-    },
-    planParameterChange: (change) => {
-      const state = get();
-      return planParameterChange(
-        { features: state.features, parameters: state.parameters },
-        change,
-        () => {
-          const taken = new Set(get().parameters.map((p) => p.id));
-          let id = `param-${Math.random().toString(36).slice(2, 10)}`;
-          while (taken.has(id)) id = `param-${Math.random().toString(36).slice(2, 10)}`;
-          return id;
-        },
-      );
-    },
-    applyParameterPlan: (plan, options) => {
-      if (!plan.ok) return plan;
-      const state = get();
-      if (state.activeTool !== null) {
-        return { ok: false, message: 'Finish or cancel the active tool first.' };
-      }
-      if (state.features !== plan.base.features || state.parameters !== plan.base.parameters) {
-        return { ok: false, message: 'The document changed meanwhile; try again.' };
-      }
-      if (options?.evaluation) resultCache.set(plan.features, options.evaluation);
-      // Same length: the History rollback bar stays where it is.
-      commitFeatures(plan.features, undefined, plan.parameters);
-      return {
-        ok: true,
-        id: plan.id,
-        resolvedSketchIds: plan.resolvedSketchIds,
-        changedFeatureIds: plan.changedFeatureIds,
-      };
-    },
-    editParameter: async (change) => {
-      // A concurrent edit (another panel field, an agent) makes the plan stale: plan again.
-      for (let attempt = 0; attempt < 3; attempt += 1) {
-        const plan = await get().planParameterChange(change);
-        if (!plan.ok) return plan;
-        // Like `parameter.edit` in the agent API: a feature that newly fails refuses the edit.
-        const check = await checkParameterPlan(plan);
-        if (!check.ok) return check;
-        const applied = get().applyParameterPlan(
-          plan,
-          check.evaluation ? { evaluation: check.evaluation } : undefined,
-        );
-        if (applied.ok || !/changed meanwhile/.test(applied.message)) return applied;
-      }
-      return { ok: false, message: 'The document keeps changing; try again.' };
-    },
-    upsertParameter: (input) =>
-      get().editParameter({
-        ...(input.id !== undefined ? { id: input.id } : {}),
-        name: input.name,
-        unit: input.unit,
-        ...(input.value !== undefined ? { value: input.value } : {}),
-        ...(input.expression !== undefined ? { expression: input.expression } : {}),
-      }),
-    renameParameter: (id, name) => get().editParameter({ id, name }),
-    deleteParameter: (id) => get().editParameter({ delete: id }),
     viewState: {
       displayMode: 'shaded',
       sectionEnabled: false,
@@ -2582,7 +2493,25 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
       return id;
     },
   };
+  // The modules' slices are merged in by `installStoreSlice` (the product composition).
+  return core as AssemblerState;
 });
+
+/**
+ * Merges a module's slice (state and actions) into the store, once per
+ * module (`defineAssemblerModule({ storeSlice })`, installed by the product
+ * composition before anything reads it).
+ */
+export function installStoreSlice(module: string, creator: StoreSliceCreator): void {
+  if (installedSlices.has(module)) return;
+  installedSlices.add(module);
+  const slice = creator(
+    (partial) => useAssemblerStore.setState(partial),
+    useAssemblerStore.getState,
+    storeCore!,
+  );
+  useAssemblerStore.setState(slice);
+}
 
 // Saved views carry the section state (`workspace.ts` `SavedSection`).
 setSectionAccess({

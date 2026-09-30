@@ -7,6 +7,7 @@ import '@himmelcad/theme/reset.css';
 import './assembler.css';
 
 import './app/composition.js';
+import './app/uiComposition.js';
 import { App } from './interface/shell-ui/App.js';
 import { installPreferenceEffects } from './interface/shell-ui/preferenceEffects.js';
 import { installAutomationBridge } from './interface/agent-api/automationStore.js';

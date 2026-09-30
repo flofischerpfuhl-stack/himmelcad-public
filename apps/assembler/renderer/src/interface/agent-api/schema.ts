@@ -316,21 +316,6 @@ const DEFS_MID: Record<string, JsonSchema> = {
   ),
 };
 
-/** Moves to the parameters module with its methods. */
-const DEFS_PARAMETER: Record<string, JsonSchema> = {
-  Parameter: obj(
-    {
-      id: str,
-      name: { type: 'string', pattern: '^[A-Za-z_][A-Za-z0-9_]*$' },
-      unit: { enum: ['mm', 'deg', ''] },
-      value: num,
-      expression: str,
-    },
-    ['id', 'name', 'unit', 'value'],
-    'Document parameter ("variable"): `value` is always the last resolved value; `expression` (e.g. "wall * 2") is the source formula when the value is computed from other parameters. Usable from sketch dimension expressions and the numeric fields of extrude (distance), fillet (radius, radius2), chamfer (distance, distance2), shell/rib/thicken (thickness), hole (diameter) and draft (angle) via `<field>Expression`.',
-  ),
-};
-
 const DEFS_TAIL: Record<string, JsonSchema> = {
   SketchPlane: {
     oneOf: [
@@ -941,10 +926,6 @@ const meshExportParams = (extra: Record<string, JsonSchema>) =>
     ...extra,
   });
 
-/** Result of parameter.create / parameter.edit. */
-const RESULT_PARAMETER_EDIT =
-  '{parameter: Parameter, revision, committed, resolvedSketchIds (sketches re-solved), changedFeatureIds, errors, warnings, bodies}';
-
 const METHODS_HEAD: Record<string, MethodSpec> = {
   'api.hello': {
     kind: 'meta',
@@ -1046,60 +1027,6 @@ const METHODS_HEAD: Record<string, MethodSpec> = {
     summary: 'Replaces the UI selection (view state, not undoable).',
     params: obj({ items: { type: 'array', items: ref('SelectionItem') } }, ['items']),
     result: '{selection}',
-  },
-};
-
-/** Moves to the parameters module with its handlers. */
-const METHODS_PARAMETERS: Record<string, MethodSpec> = {
-  'parameters.list': {
-    kind: 'query',
-    capability: 'document.read',
-    summary: 'Document parameters ("variables"), in creation order.',
-    params: obj({}),
-    result: '[Parameter]',
-  },
-  'parameter.create': {
-    kind: 'command',
-    capability: 'document.write',
-    summary:
-      'Adds a document parameter (one undo step; not inside a transaction). Exactly one of `value`/`expression` is normally given; `expression` is resolved immediately (cycle/unknown-name errors reject with nothing changed).',
-    params: obj(
-      {
-        name: { type: 'string', pattern: '^[A-Za-z_][A-Za-z0-9_]*$' },
-        unit: { enum: ['mm', 'deg', ''], default: 'mm' },
-        value: num,
-        expression: str,
-        expectedRevision: revision,
-      },
-      ['name'],
-    ),
-    result: RESULT_PARAMETER_EDIT,
-  },
-  'parameter.edit': {
-    kind: 'command',
-    capability: 'document.write',
-    summary:
-      "Changes a parameter's name, unit, value and/or expression as ONE undo step (not inside a transaction). A new value re-solves every sketch whose dimensions use the parameter (directly or through other parameters) and re-resolves every feature `*Expression` field; dependent features re-evaluate. All-or-nothing: a sketch the solver cannot satisfy rejects with `sketchConflict` (details.conflicts), a feature that newly fails in the kernel with `featureFailed` — nothing changes. `value` alone replaces a formula; `expression: null` removes it. Renaming rewrites every expression that references it.",
-    params: obj(
-      {
-        parameterId: str,
-        name: str,
-        unit: { enum: ['mm', 'deg', ''] },
-        value: num,
-        expression: { anyOf: [str, { type: 'null' }] },
-        expectedRevision: revision,
-      },
-      ['parameterId'],
-    ),
-    result: RESULT_PARAMETER_EDIT,
-  },
-  'parameter.delete': {
-    kind: 'command',
-    capability: 'document.write',
-    summary:
-      'Removes a parameter. Refused with `conflict` and the list of users when a sketch dimension or feature field still references it by name.',
-    params: obj({ parameterId: str, expectedRevision: revision }, ['parameterId']),
-    result: '{parameterId, revision, committed, errors, warnings, bodies}',
   },
 };
 
@@ -1688,7 +1615,6 @@ registerApiContribution('agent-api', {
     { order: API_ORDER.defs.coreHead, defs: DEFS_HEAD },
     { order: API_ORDER.defs.printSettings, defs: { PrintSettings: PRINT_SETTINGS_SCHEMA } },
     { order: API_ORDER.defs.coreMid, defs: DEFS_MID },
-    { order: API_ORDER.defs.parameter, defs: DEFS_PARAMETER },
     { order: API_ORDER.defs.coreTail, defs: DEFS_TAIL },
     { order: API_ORDER.defs.printFeatures, defs: PRINT_DEFS },
   ],
@@ -1698,7 +1624,6 @@ registerApiContribution('agent-api', {
   ],
   methods: [
     { order: API_ORDER.methods.coreHead, methods: spec(METHODS_HEAD) },
-    { order: API_ORDER.methods.parameters, methods: spec(METHODS_PARAMETERS) },
     { order: API_ORDER.methods.coreTail, methods: spec(METHODS_TAIL) },
     { order: API_ORDER.methods.print, methods: spec(PRINT_METHODS) },
     { order: API_ORDER.methods.interop, methods: spec(INTEROP_METHODS) },

@@ -13,7 +13,7 @@ import { Button, Select, Tooltip } from '@himmelcad/ui';
 
 import { edgeRuleLabel } from '../../foundation/document/blendOptions.js';
 import { PRINT_CLEARANCES } from '../../model/printFeatures.js';
-import { evaluateExpression } from './expression.js';
+import { evaluateExpression } from '../../platform/widgets/expression.js';
 
 import {
   isPreviewTool,

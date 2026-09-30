@@ -38,10 +38,10 @@ import {
   revertEscapeField,
 } from '@himmelcad/ui';
 
-import { anchoredMenuStyle } from './anchoredMenu.js';
+import { anchoredMenuStyle } from '../../platform/widgets/anchoredMenu.js';
 import { featureKindIcon } from './icons.js';
-import { ExpressionField } from './ExpressionField.js';
-import { ParamExpressionField } from './ParamExpressionField.js';
+import { ExpressionField } from '../../platform/widgets/ExpressionField.js';
+import { ParamExpressionField } from '../../platform/widgets/ParamExpressionField.js';
 import { ModelingFeatureParams } from '../../chrome/FeatureParams.js';
 import { BlendParams, BooleanParams, ShellParams } from '../../chrome/PrintFeatureParams.js';
 import { isModelingFeature } from '../../model/features.js';
@@ -62,7 +62,7 @@ import type { AssemblerState, FeaturePatch } from '../../foundation/commands/sto
 import type { ExtrudeOperation, Feature } from '../../foundation/document/document.js';
 import { useSketchStore } from '../../sketch/session.js';
 import { SketchParams } from '../../sketch/ui/SketchParams.js';
-import panelStyles from './Panel.module.css';
+import panelStyles from '../../platform/widgets/Panel.module.css';
 import styles from './HistoryPanel.module.css';
 
 export interface HistoryPanelProps {

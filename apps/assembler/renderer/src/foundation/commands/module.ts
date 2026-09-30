@@ -18,8 +18,9 @@
  * structurally ({@link UiComponent}) so this file needs no React.
  */
 import type { KernelAdapter } from '../geometry-kernel/adapter.js';
+import { registerApiContribution, type ApiContribution } from './api/registry.js';
 import { registerCommands, type Command } from './registry.js';
-import type { AssemblerState } from './store.js';
+import { installStoreSlice, type AssemblerState, type StoreSliceCreator } from './store.js';
 
 /** A block of commands; blocks of all modules are ordered by `order` (the adaptive-toolbar and search tie-break). */
 export interface CommandBlock {
@@ -39,6 +40,10 @@ export interface AssemblerModule {
   /** Module id, as in `apps/assembler/modules.json`. */
   id: string;
   commands?: readonly CommandBlock[];
+  /** Agent-API methods (with handlers), schema `$defs` and feature-kind schemas (`api/registry.ts`). */
+  api?: ApiContribution;
+  /** State and actions merged into the one application store (`store.ts` `installStoreSlice`). */
+  storeSlice?: StoreSliceCreator;
   /**
    * Registration-time hooks into the gate (a modal-session probe, the notice
    * toast): run once by {@link installModules}, in every program that
@@ -98,6 +103,8 @@ export function installModules(modules: readonly AssemblerModule[]): void {
     installed.add(module.id);
     for (const block of module.commands ?? [])
       registerCommands(block.order, block.commands, module.id);
+    if (module.api) registerApiContribution(module.id, module.api);
+    if (module.storeSlice) installStoreSlice(module.id, module.storeSlice);
     module.onInstall?.();
   }
 }

@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useState, type ComponentType } from 'react';
 
 import { AgentAccessIndicator } from '../agent-api/ui/AgentAccessIndicator.js';
 import { AnalysisLegend } from '../../chrome/AnalysisLegend.js';
@@ -7,15 +7,14 @@ import { MeasurePanel } from '../../chrome/MeasurePanel.js';
 import { ColourDialog } from '../../chrome/ColourDialog.js';
 import { CommandContextMenu } from './ContextMenu.js';
 import { CommandSearch } from './CommandSearch.js';
-import { HistoryPanel } from './HistoryPanel.js';
 import { HomeScreen } from './HomeScreen.js';
 import { ItemsPanel } from './ItemsPanel.js';
 import { KernelActivity } from './KernelActivity.js';
 import { LeftDock } from './LeftDock.js';
 import { NoticeToast } from './NoticeToast.js';
-import { ParametersPanel } from '../../chrome/ParametersPanel.js';
+import { registeredPanels, type PanelProps } from '../../foundation/commands/module.js';
 import { RightDock } from './RightDock.js';
-import panelStyles from './Panel.module.css';
+import panelStyles from '../../platform/widgets/Panel.module.css';
 import { SectionControls } from '../../chrome/SectionControls.js';
 import { SettingsDialog } from './SettingsDialog.js';
 import { ShortcutOverlay } from './ShortcutOverlay.js';
@@ -58,6 +57,9 @@ export function App(): JSX.Element {
   const openContextMenuAt = useCallback((x: number, y: number) => {
     setContextMenu({ x, y });
   }, []);
+  const rightStack = registeredPanels('rightStack').filter(
+    (panel) => panel.isOpen?.(state) ?? true,
+  );
 
   const handleViewportContextMenu = useCallback(
     (event: { clientX: number; clientY: number; target: SelectionItem | null }) => {
@@ -83,13 +85,14 @@ export function App(): JSX.Element {
       <LeftDock state={state} onOpenSearch={() => openSearch()} />
       <RightDock state={state} />
       {state.panels.items ? <ItemsPanel state={state} onContextMenu={openContextMenuAt} /> : null}
-      {state.panels.parameters || state.panels.history ? (
-        // Parameters above History in one column below the right dock: they stack, never overlap.
+      {rightStack.length > 0 ? (
+        // The modules' panels (Parameters) above History in one column below the right dock:
+        // they stack, never overlap. Registered with `defineModuleUi` (`app/uiComposition.ts`).
         <div className={panelStyles.rightStack}>
-          {state.panels.parameters ? <ParametersPanel state={state} /> : null}
-          {state.panels.history ? (
-            <HistoryPanel state={state} onContextMenu={openContextMenuAt} />
-          ) : null}
+          {rightStack.map((panel) => {
+            const Panel = panel.component as unknown as ComponentType<PanelProps>;
+            return <Panel key={panel.id} state={state} onContextMenu={openContextMenuAt} />;
+          })}
         </div>
       ) : null}
       <ToolSession state={state} />

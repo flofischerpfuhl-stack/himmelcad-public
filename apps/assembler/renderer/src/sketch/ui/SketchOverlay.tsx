@@ -75,7 +75,7 @@ import {
 } from '../../foundation/sketch-solver/types.js';
 import { chipSize, layoutBadges, layoutChips, nextChipText, type Rect } from './declutter.js';
 import { SketchDimensionChip } from './SketchDimensionChip.js';
-import { sketchDimensionCandidates } from '../../interface/shell-ui/expressionSuggest.js';
+import { sketchDimensionCandidates } from '../../platform/widgets/expressionSuggest.js';
 import { ToolValueChip } from './ToolValueChip.js';
 import styles from './SketchOverlay.module.css';
 

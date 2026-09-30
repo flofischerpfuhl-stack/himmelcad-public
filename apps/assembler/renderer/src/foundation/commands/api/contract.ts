@@ -51,6 +51,14 @@ export const schemaString: JsonSchema = { type: 'string', minLength: 1 };
 export const schemaNumber: JsonSchema = { type: 'number' };
 export const schemaPositive: JsonSchema = { type: 'number', exclusiveMinimum: 0 };
 
+/** The optimistic-concurrency parameter every document write accepts. */
+export const schemaRevision: JsonSchema = {
+  type: 'integer',
+  minimum: 0,
+  description:
+    'Optimistic concurrency: the command fails with `conflict` unless the document revision still equals this value.',
+};
+
 /** A closed object schema (`additionalProperties: false`). */
 export function schemaObject(
   properties: Record<string, JsonSchema>,

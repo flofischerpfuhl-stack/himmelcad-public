@@ -35,7 +35,7 @@ import { useEffect, useRef } from 'react';
 
 import { Button, NumberInput, Tooltip } from '@himmelcad/ui';
 
-import fieldStyles from '../../interface/shell-ui/ExpressionField.module.css';
+import fieldStyles from '../../platform/widgets/ExpressionField.module.css';
 import { findCommand } from '../../foundation/commands/registry.js';
 import { useAssemblerStore } from '../../foundation/commands/store.js';
 import { CONSTRAINT_INFO } from '../constraintRules.js';

@@ -14,10 +14,10 @@ import {
   revertEscapeField,
 } from '@himmelcad/ui';
 
-import { ExpressionField } from '../../interface/shell-ui/ExpressionField.js';
-import { sketchDimensionCandidates } from '../../interface/shell-ui/expressionSuggest.js';
-import { ExpressionSuggestInput } from '../../interface/shell-ui/ExpressionSuggestInput.js';
-import fieldStyles from '../../interface/shell-ui/ExpressionField.module.css';
+import { ExpressionField } from '../../platform/widgets/ExpressionField.js';
+import { sketchDimensionCandidates } from '../../platform/widgets/expressionSuggest.js';
+import { ExpressionSuggestInput } from '../../platform/widgets/ExpressionSuggestInput.js';
+import fieldStyles from '../../platform/widgets/ExpressionField.module.css';
 
 import type { SketchFeature } from '../../foundation/sketch-solver/sketchFeature.js';
 import { useAssemblerStore, type AssemblerState } from '../../foundation/commands/store.js';

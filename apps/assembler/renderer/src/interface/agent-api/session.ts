@@ -66,7 +66,6 @@ import { candidateJson, printReportJson } from '../../api/printApi.js';
 import { resolveFaceInput } from '../../foundation/commands/api/references.js';
 import { consumedSketchIds } from '../../model/modeling.js';
 import { resolveParameterValues } from '../../foundation/document/parameters.js';
-import type { ParameterChange } from '../../model/parameterEdits.js';
 import { runMeasureQuery } from '../../api/measureApi.js';
 import {
   exportDxf,
@@ -207,22 +206,6 @@ function isRecord(value: unknown): value is Json {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function describeParameter(p: {
-  id: string;
-  name: string;
-  unit: string;
-  value: number;
-  expression?: string;
-}): Json {
-  return {
-    id: p.id,
-    name: p.name,
-    unit: p.unit,
-    value: p.value,
-    ...(p.expression !== undefined ? { expression: p.expression } : {}),
-  };
-}
-
 function toBase64(bytes: Uint8Array): string {
   let binary = '';
   const chunk = 0x8000;
@@ -339,14 +322,6 @@ export class AgentSession {
           features: this.activeFeatures(p),
           kernel: this.kernel,
         });
-      case 'parameters.list':
-        return this.store.getState().parameters.map(describeParameter);
-      case 'parameter.create':
-        return this.createParameter(p);
-      case 'parameter.edit':
-        return this.editParameter(p);
-      case 'parameter.delete':
-        return this.deleteParameter(p);
       case 'feature.create':
         return this.write('feature.create', (f, e) => this.createFeature(p, f, e));
       case 'feature.edit':
@@ -689,113 +664,6 @@ export class AgentSession {
     if (items.length === 0) state.clearSelection();
     items.forEach((item, i) => this.store.getState().select(item, { additive: i > 0 }));
     return { selection: this.store.getState().selection };
-  }
-
-  // ---- parameters --------------------------------------------------------------------
-
-  /**
-   * One parameter change through the store's planner (`model/parameterEdits.ts`,
-   * the same path as the Parameters panel): dependent sketches re-solved,
-   * `*Expression` fields re-resolved, kernel-validated, committed as ONE undo
-   * step. Refused as a whole (nothing changes) on an invalid name/expression,
-   * a sketch the solver cannot satisfy (`sketchConflict`), a feature that
-   * newly fails in the kernel (`featureFailed`), or inside a transaction
-   * (parameters are not staged; `transactionState`).
-   */
-  private async changeParameter(change: ParameterChange): Promise<{ id: string; result: Json }> {
-    if (this.tx) {
-      throw new ApiError('transactionState', 'Parameters cannot be changed inside a transaction', {
-        hint: 'Commit or roll back the transaction first; a parameter edit is one undo step on its own.',
-      });
-    }
-    this.ensureWritable();
-    const store = this.store.getState();
-    const plan = await store.planParameterChange(change);
-    if (!plan.ok) {
-      if (plan.conflicts) {
-        throw new ApiError('sketchConflict', plan.message, {
-          hint: 'Choose a value the dependent sketches can satisfy; nothing was changed.',
-          details: { conflicts: plan.conflicts, committed: false },
-        });
-      }
-      if (plan.usages) {
-        throw new ApiError('conflict', plan.message, { details: { usages: plan.usages } });
-      }
-      if (/^No parameter/.test(plan.message)) {
-        throw new ApiError('notFound', plan.message, {
-          hint: 'parameters.list returns every parameter with its id and name.',
-        });
-      }
-      throw new ApiError('invalidParams', plan.message);
-    }
-    const before = await this.committedEvaluation();
-    const evaluation = await this.evaluate(plan.features);
-    const newlyFailing = plan.features
-      .map((f) => f.id)
-      .filter((id) => evaluation.errors[id] && !before.errors[id]);
-    this.assertNoFeatureErrors(newlyFailing, evaluation);
-    const applied = this.store.getState().applyParameterPlan(plan, { evaluation });
-    if (!applied.ok) {
-      throw new ApiError('conflict', applied.message, { hint: 'Re-read the document and retry.' });
-    }
-    await this.store.getState().whenSettled();
-    return {
-      id: applied.id,
-      result: {
-        committed: true,
-        revision: this.revision,
-        resolvedSketchIds: applied.resolvedSketchIds,
-        changedFeatureIds: applied.changedFeatureIds,
-        ...this.evaluationSummary(this.store.getState().evaluation),
-      },
-    };
-  }
-
-  private async createParameter(p: Json): Promise<Json> {
-    const { id, result } = await this.changeParameter({
-      name: String(p.name),
-      unit: (typeof p.unit === 'string' ? p.unit : 'mm') as 'mm' | 'deg' | '',
-      ...(typeof p.value === 'number' ? { value: p.value } : {}),
-      ...(typeof p.expression === 'string' ? { expression: p.expression } : {}),
-    });
-    return { parameter: describeParameter(this.findParameter(id)), ...result };
-  }
-
-  /** Rename, unit, value and formula in one call are one undo step. */
-  private async editParameter(p: Json): Promise<Json> {
-    const existing = this.findParameter(String(p.parameterId));
-    const { id, result } = await this.changeParameter({
-      id: existing.id,
-      ...(typeof p.name === 'string' ? { name: p.name } : {}),
-      ...(typeof p.unit === 'string' ? { unit: p.unit as 'mm' | 'deg' | '' } : {}),
-      ...(typeof p.value === 'number' ? { value: p.value } : {}),
-      ...(typeof p.expression === 'string' ? { expression: p.expression } : {}),
-      ...(p.expression === null ? { expression: null } : {}),
-    });
-    return { parameter: describeParameter(this.findParameter(id)), ...result };
-  }
-
-  private async deleteParameter(p: Json): Promise<Json> {
-    const existing = this.findParameter(String(p.parameterId));
-    const { result } = await this.changeParameter({ delete: existing.id });
-    return { parameterId: existing.id, ...result };
-  }
-  private findParameter(parameterId: string): {
-    id: string;
-    name: string;
-    unit: 'mm' | 'deg' | '';
-    value: number;
-    expression?: string;
-  } {
-    const parameter = this.store
-      .getState()
-      .parameters.find((p) => p.id === parameterId || p.name === parameterId);
-    if (!parameter) {
-      throw new ApiError('notFound', `No parameter "${parameterId}"`, {
-        hint: 'parameters.list returns every parameter with its id and name.',
-      });
-    }
-    return parameter;
   }
 
   // ---- writes ----------------------------------------------------------------------

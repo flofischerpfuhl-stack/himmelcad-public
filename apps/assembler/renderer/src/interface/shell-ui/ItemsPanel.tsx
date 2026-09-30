@@ -58,8 +58,8 @@ import { consumedSketchIds, isSketchVisible } from '../../model/modeling.js';
 import type { AssemblerState, SelectionItem } from '../../foundation/commands/store.js';
 import { useWorkspaceStore } from './workspace.js';
 import { useSketchStore } from '../../sketch/session.js';
-import { anchoredMenuStyle } from './anchoredMenu.js';
-import panelStyles from './Panel.module.css';
+import { anchoredMenuStyle } from '../../platform/widgets/anchoredMenu.js';
+import panelStyles from '../../platform/widgets/Panel.module.css';
 import styles from './ItemsPanel.module.css';
 
 type TypeFilter = 'all' | 'bodies' | 'sketches' | 'meshes' | 'construction';

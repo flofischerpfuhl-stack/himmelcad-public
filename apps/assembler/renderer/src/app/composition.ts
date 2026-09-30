@@ -16,6 +16,7 @@ import { displayModule } from '../modules/display/module.js';
 import { interopModule } from '../modules/interop/module.js';
 import { measureModule } from '../modules/measure/module.js';
 import { modelingModule } from '../modules/modeling/module.js';
+import { parametersModule } from '../modules/parameters/module.js';
 import { printModule } from '../modules/print/module.js';
 import { printersModule } from '../modules/printers/module.js';
 import { sketchingModule } from '../modules/sketching/module.js';
@@ -27,6 +28,7 @@ export const ASSEMBLER_MODULES: readonly AssemblerModule[] = [
   modelingModule,
   directEditModule,
   constructionModule,
+  parametersModule,
   measureModule,
   displayModule,
   interopModule,

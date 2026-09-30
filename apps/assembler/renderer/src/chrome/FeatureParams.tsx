@@ -14,7 +14,7 @@ import type { ExtrudeOperation, Plane, AxisRef } from '../foundation/document/do
 import type { ModelingFeature } from '../model/features.js';
 import { OFFSET_FACE_MODE_LABEL } from '../model/offsetFaceModes.js';
 import type { AssemblerState, FeaturePatch } from '../foundation/commands/store.js';
-import { ExpressionField } from '../interface/shell-ui/ExpressionField.js';
+import { ExpressionField } from '../platform/widgets/ExpressionField.js';
 import { PrintFeatureParams } from './PrintFeatureParams.js';
 import styles from '../interface/shell-ui/HistoryPanel.module.css';
 

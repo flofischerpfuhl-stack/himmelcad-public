@@ -40,13 +40,6 @@
     },
     {
       "from": "commands",
-      "to": "parameters",
-      "rule": "upward",
-      "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
-      "edges": ["renderer/src/foundation/commands/store.ts -> renderer/src/model/parameterEdits.ts"]
-    },
-    {
-      "from": "commands",
       "to": "shell-ui",
       "rule": "upward",
       "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
@@ -100,7 +93,6 @@
         "renderer/src/chrome/DisplayMenu.tsx -> renderer/src/interface/shell-ui/preferences.ts",
         "renderer/src/chrome/ExportImageDialog.tsx -> renderer/src/interface/shell-ui/preferences.ts",
         "renderer/src/chrome/ExportImageDialog.tsx -> renderer/src/interface/shell-ui/workspace.ts",
-        "renderer/src/chrome/SectionControls.tsx -> renderer/src/interface/shell-ui/ExpressionField.tsx",
         "renderer/src/model/commands/displayCommands.ts -> renderer/src/interface/shell-ui/items.ts",
         "renderer/src/model/commands/displayCommands.ts -> renderer/src/interface/shell-ui/preferences.ts",
         "renderer/src/model/commands/displayCommands.ts -> renderer/src/interface/shell-ui/workspace.ts",
@@ -201,22 +193,8 @@
       "rule": "upward",
       "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
       "edges": [
-        "renderer/src/chrome/FeatureParams.tsx -> renderer/src/interface/shell-ui/ExpressionField.tsx",
         "renderer/src/chrome/FeatureParams.tsx -> renderer/src/interface/shell-ui/HistoryPanel.module.css",
-        "renderer/src/chrome/PrintFeatureParams.tsx -> renderer/src/interface/shell-ui/ExpressionField.tsx",
-        "renderer/src/chrome/PrintFeatureParams.tsx -> renderer/src/interface/shell-ui/HistoryPanel.module.css",
-        "renderer/src/chrome/PrintFeatureParams.tsx -> renderer/src/interface/shell-ui/ParamExpressionField.tsx"
-      ]
-    },
-    {
-      "from": "parameters",
-      "to": "shell-ui",
-      "rule": "upward",
-      "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
-      "edges": [
-        "renderer/src/chrome/ParametersPanel.tsx -> renderer/src/interface/shell-ui/ExpressionSuggestInput.tsx",
-        "renderer/src/chrome/ParametersPanel.tsx -> renderer/src/interface/shell-ui/Panel.module.css",
-        "renderer/src/chrome/ParametersPanel.tsx -> renderer/src/interface/shell-ui/expressionSuggest.ts"
+        "renderer/src/chrome/PrintFeatureParams.tsx -> renderer/src/interface/shell-ui/HistoryPanel.module.css"
       ]
     },
     {
@@ -260,8 +238,7 @@
         "renderer/src/print/printCommands.ts -> renderer/src/interface/shell-ui/workspace.ts",
         "renderer/src/print/printStore.ts -> renderer/src/interface/shell-ui/items.ts",
         "renderer/src/print/printStore.ts -> renderer/src/interface/shell-ui/workspace.ts",
-        "renderer/src/print/ui/PrintDialogs.tsx -> renderer/src/interface/shell-ui/workspace.ts",
-        "renderer/src/print/ui/PrintPanel.tsx -> renderer/src/interface/shell-ui/ExpressionField.tsx"
+        "renderer/src/print/ui/PrintDialogs.tsx -> renderer/src/interface/shell-ui/workspace.ts"
       ]
     },
     {
@@ -292,15 +269,7 @@
       "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
       "edges": [
         "renderer/src/sketch/session.ts -> renderer/src/interface/shell-ui/preferences.ts",
-        "renderer/src/sketch/ui/SketchChrome.tsx -> renderer/src/interface/shell-ui/ExpressionField.module.css",
-        "renderer/src/sketch/ui/SketchDimensionChip.tsx -> renderer/src/interface/shell-ui/ExpressionSuggestInput.tsx",
-        "renderer/src/sketch/ui/SketchDimensionChip.tsx -> renderer/src/interface/shell-ui/expressionSuggest.ts",
-        "renderer/src/sketch/ui/SketchOverlay.tsx -> renderer/src/interface/shell-ui/expressionSuggest.ts",
-        "renderer/src/sketch/ui/SketchOverlay.tsx -> renderer/src/interface/shell-ui/preferences.ts",
-        "renderer/src/sketch/ui/SketchParams.tsx -> renderer/src/interface/shell-ui/ExpressionField.module.css",
-        "renderer/src/sketch/ui/SketchParams.tsx -> renderer/src/interface/shell-ui/ExpressionField.tsx",
-        "renderer/src/sketch/ui/SketchParams.tsx -> renderer/src/interface/shell-ui/ExpressionSuggestInput.tsx",
-        "renderer/src/sketch/ui/SketchParams.tsx -> renderer/src/interface/shell-ui/expressionSuggest.ts"
+        "renderer/src/sketch/ui/SketchOverlay.tsx -> renderer/src/interface/shell-ui/preferences.ts"
       ]
     },
     {
