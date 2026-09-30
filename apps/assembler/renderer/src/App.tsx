@@ -9,6 +9,7 @@ import { ItemsPanel } from './chrome/ItemsPanel.js';
 import { KernelActivity } from './chrome/KernelActivity.js';
 import { LeftDock } from './chrome/LeftDock.js';
 import { NoticeToast } from './chrome/NoticeToast.js';
+import { ParametersPanel } from './chrome/ParametersPanel.js';
 import { RightDock } from './chrome/RightDock.js';
 import { SectionControls } from './chrome/SectionControls.js';
 import { SettingsDialog } from './chrome/SettingsDialog.js';
@@ -78,6 +79,7 @@ export function App(): JSX.Element {
       {state.panels.history ? (
         <HistoryPanel state={state} onContextMenu={openContextMenuAt} />
       ) : null}
+      {state.panels.parameters ? <ParametersPanel state={state} /> : null}
       <ToolSession state={state} />
       <SketchChrome />
       {state.viewState.sectionEnabled ? <SectionControls state={state} /> : null}

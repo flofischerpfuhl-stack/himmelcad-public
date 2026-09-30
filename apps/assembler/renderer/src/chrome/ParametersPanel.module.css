@@ -1,0 +1,76 @@
+.row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px var(--hc-space-2);
+  border-radius: var(--hc-radius-sm);
+}
+
+.row:hover {
+  background: var(--hc-hover-bg);
+}
+
+.nameInput {
+  flex: 1 1 76px;
+  min-width: 0;
+  font-family: var(--hc-font-ui);
+  font-size: 12px;
+  font-weight: 600;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--hc-radius-sm);
+  color: var(--hc-fg-strong);
+  padding: 2px 4px;
+}
+
+.valueInput {
+  flex: 1 1 64px;
+  min-width: 0;
+  font-family: var(--hc-font-ui);
+  font-size: 12px;
+  background: var(--hc-bg-inset);
+  border: 1px solid var(--hc-border-subtle);
+  border-radius: var(--hc-radius-sm);
+  color: var(--hc-fg-default);
+  padding: 2px 4px;
+}
+
+.nameInput:focus,
+.valueInput:focus {
+  outline: 2px solid var(--hc-focus-ring);
+  outline-offset: 1px;
+}
+
+.unitSelect {
+  flex: 0 0 44px;
+  width: 44px;
+}
+
+.deleteButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  border: none;
+  border-radius: var(--hc-radius-sm);
+  background: transparent;
+  color: var(--hc-fg-muted);
+  cursor: pointer;
+}
+
+.deleteButton:hover {
+  background: var(--hc-hover-bg);
+  color: var(--hc-danger, #d94848);
+}
+
+.rowError,
+.docError {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: var(--hc-space-2) var(--hc-space-3);
+  font-size: 11px;
+  color: var(--hc-warning);
+}

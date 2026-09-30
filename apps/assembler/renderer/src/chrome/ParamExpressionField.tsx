@@ -1,0 +1,157 @@
+/**
+ * Editable numeric field for a feature's size (extrude distance, fillet
+ * radius, chamfer distance, shell thickness) that additionally accepts an
+ * expression over document parameters (`model/parameters.ts`, the
+ * Parameters panel) — `"wall * 2"`, not just `"3 + 2"`. A plain number
+ * commits `value` (and clears any stored expression, like typing over a
+ * sketch dimension's formula); a name-referencing expression commits the
+ * formula itself, which the store resolves and keeps re-resolving whenever
+ * a parameter changes.
+ *
+ * Autocomplete is the browser's own `<datalist>` (every parameter name),
+ * which is enough for a short, flat list and needs no extra UI; hovering a
+ * resolved field shows the source formula in the title tooltip, and typing a
+ * formula shows its live resolved value the same way (Shapr3D "numerical
+ * values" pattern, extended with named references).
+ */
+import { useEffect, useId, useRef, useState } from 'react';
+
+import {
+  consumeEscapeBlurCommitSuppression,
+  registerEscapeRung,
+  revertEscapeField,
+} from '@himmelcad/ui';
+
+import { formatExpressionValue } from './expression.js';
+import type { Parameter } from '../model/parameters.js';
+import { resolveFeatureExpression } from '../model/parameters.js';
+import { isPlainNumber } from '../sketch/expressions.js';
+import styles from './ExpressionField.module.css';
+
+export interface ParamExpressionFieldProps {
+  label: string;
+  value: number;
+  /** The stored source formula, if the value is currently computed rather than typed directly. */
+  expression?: string | undefined;
+  unit?: string;
+  parameters: readonly Parameter[];
+  paramValues: ReadonlyMap<string, number>;
+  onCommitValue: (value: number) => void;
+  onCommitExpression: (expression: string) => void;
+  precision?: number;
+}
+
+export function ParamExpressionField({
+  label,
+  value,
+  expression,
+  unit,
+  parameters,
+  paramValues,
+  onCommitValue,
+  onCommitExpression,
+  precision = 3,
+}: ParamExpressionFieldProps): JSX.Element {
+  const initial = expression ?? formatExpressionValue(value, precision);
+  const [draft, setDraft] = useState(initial);
+  const [committedText, setCommittedText] = useState(initial);
+  const [invalid, setInvalid] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const messageId = useId();
+  const listId = useId();
+
+  useEffect(() => {
+    if (focused) return;
+    const text = expression ?? formatExpressionValue(value, precision);
+    setCommittedText(text);
+    setDraft(text);
+  }, [value, expression, focused, precision]);
+
+  useEffect(() => {
+    if (!focused) return;
+    return registerEscapeRung('fieldRevert', () => {
+      const input = inputRef.current;
+      if (!input || document.activeElement !== input) return false;
+      revertEscapeField(input, committedText);
+      setDraft(committedText);
+      setInvalid(false);
+      return true;
+    });
+  }, [committedText, focused]);
+
+  const commit = (): void => {
+    const text = draft.trim();
+    if (text === '') {
+      setInvalid(true);
+      return;
+    }
+    if (isPlainNumber(text)) {
+      const parsed = Number(text.replace(/\s*(mm|°|deg)\s*$/i, '').replace(',', '.'));
+      setInvalid(false);
+      const formatted = formatExpressionValue(parsed, precision);
+      setCommittedText(formatted);
+      setDraft(formatted);
+      if (parsed !== value || expression !== undefined) onCommitValue(parsed);
+      return;
+    }
+    const resolved = resolveFeatureExpression(text, paramValues);
+    if (!resolved.ok) {
+      setInvalid(true);
+      return;
+    }
+    setInvalid(false);
+    setCommittedText(text);
+    if (text !== expression) onCommitExpression(text);
+  };
+
+  return (
+    <div className={styles.field}>
+      <span className={styles.label}>{label}</span>
+      <div className={`${styles.wrap} ${invalid ? styles.wrapInvalid : ''}`}>
+        <input
+          ref={inputRef}
+          className={styles.input}
+          value={draft}
+          list={listId}
+          aria-label={label}
+          aria-invalid={invalid || undefined}
+          aria-describedby={invalid ? messageId : undefined}
+          title={
+            expression !== undefined
+              ? `${expression} = ${formatExpressionValue(value, precision)}${unit ?? ''}`
+              : undefined
+          }
+          onFocus={() => setFocused(true)}
+          onChange={(event) => {
+            consumeEscapeBlurCommitSuppression(event.currentTarget);
+            setDraft(event.currentTarget.value);
+            setInvalid(false);
+          }}
+          onBlur={(event) => {
+            setFocused(false);
+            if (consumeEscapeBlurCommitSuppression(event.currentTarget)) return;
+            commit();
+          }}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') {
+              event.preventDefault();
+              event.currentTarget.blur();
+            }
+          }}
+        />
+        {unit ? <span className={styles.unit}>{unit}</span> : null}
+      </div>
+      <datalist id={listId}>
+        {parameters.map((p) => (
+          <option key={p.id} value={p.name} />
+        ))}
+      </datalist>
+      {invalid ? (
+        <span id={messageId} role="alert" className={styles.message}>
+          Enter a number or an expression (numbers, parameters, + - * /).
+        </span>
+      ) : null}
+    </div>
+  );
+}

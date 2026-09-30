@@ -36,9 +36,11 @@ import {
 import { anchoredMenuStyle } from './anchoredMenu.js';
 import { featureKindIcon } from './icons.js';
 import { ExpressionField } from './ExpressionField.js';
+import { ParamExpressionField } from './ParamExpressionField.js';
 import { ModelingFeatureParams } from './FeatureParams.js';
 import { isModelingFeature } from '../model/features.js';
 import { checkMove, moveFeature, relevantFeatureIds } from '../model/historyTools.js';
+import { resolveParameterValues } from '../model/parameters.js';
 import { useWorkspaceStore } from '../model/workspace.js';
 import type { AssemblerState, FeaturePatch } from '../model/store.js';
 import type { ExtrudeOperation, Feature } from '../model/document.js';
@@ -468,6 +470,8 @@ function FeatureParams({
   state: AssemblerState;
 }): JSX.Element {
   const edit = (patch: FeaturePatch) => state.editFeatureParams(feature.id, patch);
+  const paramResolved = resolveParameterValues(state.parameters);
+  const paramValues = paramResolved.ok ? paramResolved.values : new Map<string, number>();
 
   if (feature.kind === 'sketch') {
     return (
@@ -483,11 +487,15 @@ function FeatureParams({
   if (feature.kind === 'extrude') {
     return (
       <div className={styles.params}>
-        <ExpressionField
+        <ParamExpressionField
           label="Distance"
           value={feature.distance}
+          expression={feature.distanceExpression}
           unit="mm"
-          onCommit={(v) => edit({ distance: v })}
+          parameters={state.parameters}
+          paramValues={paramValues}
+          onCommitValue={(v) => edit({ distance: v, distanceExpression: undefined })}
+          onCommitExpression={(expr) => edit({ distanceExpression: expr })}
         />
         <div>
           <span className={styles.paramLabel}>Direction</span>
@@ -525,11 +533,27 @@ function FeatureParams({
   if (feature.kind === 'fillet' || feature.kind === 'chamfer') {
     return (
       <div className={styles.params}>
-        <ExpressionField
+        <ParamExpressionField
           label={feature.kind === 'fillet' ? 'Radius' : 'Distance'}
           value={feature.kind === 'fillet' ? feature.radius : feature.distance}
+          expression={
+            feature.kind === 'fillet' ? feature.radiusExpression : feature.distanceExpression
+          }
           unit="mm"
-          onCommit={(v) => edit(feature.kind === 'fillet' ? { radius: v } : { distance: v })}
+          parameters={state.parameters}
+          paramValues={paramValues}
+          onCommitValue={(v) =>
+            edit(
+              feature.kind === 'fillet'
+                ? { radius: v, radiusExpression: undefined }
+                : { distance: v, distanceExpression: undefined },
+            )
+          }
+          onCommitExpression={(expr) =>
+            edit(
+              feature.kind === 'fillet' ? { radiusExpression: expr } : { distanceExpression: expr },
+            )
+          }
         />
         <span className={styles.paramNote}>
           {feature.edges.length} {feature.edges.length === 1 ? 'edge' : 'edges'}
@@ -541,11 +565,15 @@ function FeatureParams({
   if (feature.kind === 'shell') {
     return (
       <div className={styles.params}>
-        <ExpressionField
+        <ParamExpressionField
           label="Thickness"
           value={feature.thickness}
+          expression={feature.thicknessExpression}
           unit="mm"
-          onCommit={(v) => edit({ thickness: v })}
+          parameters={state.parameters}
+          paramValues={paramValues}
+          onCommitValue={(v) => edit({ thickness: v, thicknessExpression: undefined })}
+          onCommitExpression={(expr) => edit({ thicknessExpression: expr })}
         />
         <span className={styles.paramNote}>
           {feature.faces.length} open {feature.faces.length === 1 ? 'face' : 'faces'}

@@ -57,6 +57,7 @@ export function ShortcutOverlay(): JSX.Element | null {
     ...(singleKeys ? [{ label: 'Command search', keys: 'X' }] : []),
     { label: 'Items panel', keys: 'Ctrl+Alt+S' },
     { label: 'History panel', keys: 'Ctrl+Alt+H' },
+    { label: 'Parameters panel', keys: 'Ctrl+Alt+P' },
   ];
 
   return (

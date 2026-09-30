@@ -7,7 +7,7 @@
  *   model's {@link handleEscape} so the layering (numeric editing -> tool
  *   cancel -> selection/hover clear) lives in exactly one place.
  * - A single bubble-phase `keydown` listener handles everything else:
- *   panel toggles (Ctrl+Alt+S / Ctrl+Alt+H), opening command search
+ *   panel toggles (Ctrl+Alt+S / Ctrl+Alt+H / Ctrl+Alt+P), opening command search
  *   (Ctrl+F or the single-key `X` hotkey; with single-key hotkeys turned
  *   off in Settings, typing any letter starts the search), the shortcut
  *   overlay (`?`, or holding Ctrl), committing the active tool (Enter), and
@@ -129,6 +129,11 @@ export function useGlobalKeyboard(
         if (key === 'h') {
           event.preventDefault();
           state.togglePanel('history');
+          return;
+        }
+        if (key === 'p') {
+          event.preventDefault();
+          state.togglePanel('parameters');
           return;
         }
       }
