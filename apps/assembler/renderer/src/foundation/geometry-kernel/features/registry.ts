@@ -52,6 +52,8 @@ export function applyRegisteredFeature(
   kit: FeatureKit,
 ): void | Promise<void> {
   const evaluate = evaluators.get(feature.kind)?.evaluate;
+  // A kind without an evaluator: unknown, or its module's kernel part was not loaded
+  // (programs that create an evaluator load `app/kernelModules.ts`).
   if (!evaluate) kit.fail(`Unknown feature kind "${feature.kind}"`);
   return evaluate(feature, ctx, kit);
 }
