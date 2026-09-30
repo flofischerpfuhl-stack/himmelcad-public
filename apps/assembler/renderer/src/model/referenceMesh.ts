@@ -89,6 +89,19 @@ export function referenceMeshWorldBounds(mesh: ReferenceMesh): {
  * `expandBody`'s single full-mesh face range.
  */
 export function referenceMeshToBody(mesh: ReferenceMesh): Body {
+  // Memoized per (immutable) mesh record: the viewport keys its GPU buffers and
+  // derived data by the body's mesh identity, so a new body every frame would
+  // re-upload and re-derive a large STL on every redraw.
+  const cached = bodyCache.get(mesh);
+  if (cached) return cached;
+  const body = buildReferenceMeshBody(mesh);
+  bodyCache.set(mesh, body);
+  return body;
+}
+
+const bodyCache = new WeakMap<ReferenceMesh, Body>();
+
+function buildReferenceMeshBody(mesh: ReferenceMesh): Body {
   const { dx, dy, dz } = mesh.transform;
   const positions =
     dx === 0 && dy === 0 && dz === 0 ? mesh.positions : translateFlat(mesh.positions, dx, dy, dz);

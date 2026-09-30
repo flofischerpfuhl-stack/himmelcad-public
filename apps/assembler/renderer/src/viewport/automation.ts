@@ -19,6 +19,24 @@ export interface ViewportProbe {
   anchor(predicate: (target: PickTarget) => boolean): ScreenPoint | null;
   /** Resolves after the next drawn frame (id buffer and pick table up to date). */
   nextFrame(): Promise<void>;
+  /**
+   * Renderer counters (frames drawn, last frame's CPU time, uploads, draw
+   * calls). With `finish` the renderer waits for the GPU after every frame,
+   * so `lastCpuMs` includes GPU time (measurement only).
+   */
+  stats?(finish?: boolean): {
+    frames: number;
+    lastCpuMs: number;
+    uploadsLastFrame: number;
+    cachedBuffers: number;
+    cachedBytes: number;
+    drawCalls: number;
+    ambientOcclusion: boolean;
+    shadowMap: boolean;
+    sceneMs: number;
+  };
+  /** Renders `frames` frames back to back and returns the mean ms per frame (GPU included). */
+  benchmark?(frames: number): number | null;
 }
 
 let probe: ViewportProbe | null = null;

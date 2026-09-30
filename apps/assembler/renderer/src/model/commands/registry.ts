@@ -9,6 +9,7 @@
  * whether a command is enabled.
  */
 import { useAutomationStore } from '../../api/app/automationStore.js';
+import { DISPLAY_COMMANDS } from './displayCommands.js';
 import { useProjectStore } from '../project/projectStore.js';
 import { FEATURE_COMMANDS } from './featureCommands.js';
 import { isPlanarFace, makeFaceRef, type AssemblerState, type SelectionItem } from '../store.js';
@@ -27,6 +28,7 @@ export type CommandGroup =
   | 'modes'
   | 'edit'
   | 'view'
+  | 'display'
   | 'file';
 
 export interface CommandAvailability {
@@ -324,6 +326,7 @@ export const COMMANDS: readonly Command[] = [
     run: (ctx) => ctx.requestCamera('fit'),
   },
   ...WORKSPACE_COMMANDS,
+  ...DISPLAY_COMMANDS,
   {
     id: 'modes.section',
     label: 'Section View',

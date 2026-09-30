@@ -84,3 +84,10 @@
 .offset {
   width: 112px;
 }
+
+.prompt {
+  align-self: center;
+  font-size: 11px;
+  color: var(--hc-accent-base);
+  white-space: nowrap;
+}

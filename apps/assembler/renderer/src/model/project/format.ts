@@ -38,7 +38,14 @@ export const CURRENT_SCHEMA_VERSION = 2;
 
 /** View-only state worth restoring on Open; never affects geometry or undo history. */
 export interface ProjectViewState {
-  displayMode?: 'shaded' | 'wireframe' | 'xray';
+  /** Unknown modes (from newer apps) are ignored on load. */
+  displayMode?: 'shaded' | 'wireframe' | 'xray' | 'visualized' | 'zebra' | 'curvature';
+  /** Display toggles (`model/viewDisplay.ts`); absent = defaults. */
+  display?: {
+    edges?: boolean;
+    hiddenEdges?: boolean;
+    axes?: boolean;
+  };
   camera?: {
     /** Last requested camera preset (e.g. `"iso"`, `"top"`); re-applied on Open. */
     preset?: string;
@@ -48,7 +55,13 @@ export interface ProjectViewState {
     axis?: 'X' | 'Y' | 'Z';
     offset?: number;
     flipped?: boolean;
+    /** Face-aligned plane (overrides `axis`). */
+    plane?: { normal: [number, number, number]; origin: [number, number, number]; label: string };
+    /** 2D "section only" view. */
+    sectionOnly?: boolean;
   };
+  /** Pinned measurements (`model/measure.ts` `PinnedMeasurement`); malformed entries are dropped on load. */
+  measurements?: unknown[];
   grid?: {
     visible?: boolean;
     snap?: boolean;
@@ -310,6 +323,12 @@ function validateFeature(v: unknown, index: number): Feature {
       if (!isString(r.bodyId)) fail(`${path}.bodyId`, 'expected a string');
       if (!isString(r.color) || !/^#[0-9a-fA-F]{6}$/.test(r.color)) {
         fail(`${path}.color`, 'expected a "#RRGGBB" string');
+      }
+      if (
+        r.material !== undefined &&
+        !['pla', 'petg', 'metal', 'resin'].includes(r.material as string)
+      ) {
+        fail(`${path}.material`, 'expected "pla", "petg", "metal" or "resin"');
       }
       return r as unknown as SetAppearanceFeature;
     }

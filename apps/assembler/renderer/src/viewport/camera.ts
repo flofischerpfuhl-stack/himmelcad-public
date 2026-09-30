@@ -148,20 +148,105 @@ function orthographicMat4(halfWidth: number, halfHeight: number, near: number, f
   ]);
 }
 
-export function projectionMatrix(aspect: number, distance: number, fovDeg?: number): Mat4 {
+/** Near/far clip distances along the viewing axis (orthographic `near` may be negative). */
+export interface DepthRange {
+  near: number;
+  far: number;
+}
+
+export function projectionMatrix(
+  aspect: number,
+  distance: number,
+  fovDeg?: number,
+  range?: DepthRange | null,
+): Mat4 {
   const fov = fovDeg ?? DEFAULT_FOV_DEG;
   if (fov <= 0) {
     const halfHeight = distance * Math.tan(FOV_Y_RADIANS / 2);
     // Depth range around the target, generous on both sides of the eye.
-    return orthographicMat4(halfHeight * aspect, halfHeight, -distance * 50, distance * 50);
+    return orthographicMat4(
+      halfHeight * aspect,
+      halfHeight,
+      range?.near ?? -distance * 50,
+      range?.far ?? distance * 50,
+    );
   }
-  const near = Math.max(0.01, distance * 0.002);
-  const far = Math.max(near + 1, distance * 50);
+  const near = range?.near ?? Math.max(0.01, distance * 0.002);
+  const far = range?.far ?? Math.max(near + 1, distance * 50);
   return perspectiveMat4((fov * Math.PI) / 180, aspect, near, far);
 }
 
-export function viewProjectionMatrix(pose: CameraPose, aspect: number): Mat4 {
-  return multiplyMat4(projectionMatrix(aspect, pose.distance, pose.fov), viewMatrix(pose));
+/**
+ * View-projection matrix. `range` (from {@link depthRange}) only changes
+ * depth precision, never where a point lands on screen, so picking/label
+ * code may keep calling this without it.
+ */
+export function viewProjectionMatrix(
+  pose: CameraPose,
+  aspect: number,
+  range?: DepthRange | null,
+): Mat4 {
+  return multiplyMat4(projectionMatrix(aspect, pose.distance, pose.fov, range), viewMatrix(pose));
+}
+
+/** Far/near ratio the depth buffer keeps precise (24-bit depth). */
+const MAX_DEPTH_RATIO = 1e5;
+
+/**
+ * Adaptive clip planes fitted to what is drawn: the bounding sphere of the
+ * visible model plus, when the grid is shown, the grid plane `z = 0` out to
+ * `gridExtent` around the target. Tight planes keep 24-bit depth precise for
+ * a 2 mm part and a 2 m part alike (WebGL2 has no clip control, so a
+ * reversed-Z float depth buffer would not help the default framebuffer).
+ */
+export function depthRange(
+  pose: CameraPose,
+  bounds: Bounds | null,
+  gridExtent: number | null,
+): DepthRange {
+  const eye = eyeOf(pose);
+  const back = viewDirection(pose);
+  const depthOf = (p: Vec3) =>
+    -((p[0] - eye[0]) * back[0] + (p[1] - eye[1]) * back[1] + (p[2] - eye[2]) * back[2]);
+  const ortho = isOrthographic(pose);
+  let near = Infinity;
+  let far = -Infinity;
+  if (bounds) {
+    // The box's corners bound the depth range of everything inside it.
+    for (const x of [bounds.min[0], bounds.max[0]])
+      for (const y of [bounds.min[1], bounds.max[1]])
+        for (const z of [bounds.min[2], bounds.max[2]]) {
+          const d = depthOf([x, y, z]);
+          near = Math.min(near, d);
+          far = Math.max(far, d);
+        }
+    const pad = Math.max(1e-3, (far - near) * 0.02);
+    near -= pad;
+    far += pad;
+    // Inside the box (zoomed into a part): keep a small but useful near plane;
+    // geometry closer than 0.5 % of the orbit distance is clipped.
+    if (!ortho && near < pose.distance * 0.005) near = pose.distance * 0.005;
+  }
+  if (gridExtent !== null) {
+    const t = depthOf(pose.target);
+    far = Math.max(far, t + gridExtent);
+    // The grid plane is never nearer than about half the eye's height above it
+    // inside the view frustum (rays at most ~45° off axis).
+    const height = Math.abs(eye[2]);
+    near = Math.min(near, ortho ? t - gridExtent : height * 0.5);
+  }
+  if (!Number.isFinite(near) || !Number.isFinite(far)) {
+    return ortho
+      ? { near: -pose.distance * 50, far: pose.distance * 50 }
+      : { near: Math.max(0.01, pose.distance * 0.002), far: Math.max(1, pose.distance * 50) };
+  }
+  if (ortho) {
+    const pad = Math.max(1e-3, (far - near) * 0.01);
+    return { near: near - pad, far: far + pad };
+  }
+  far = Math.max(far * 1.01, 1e-3);
+  const minNear = Math.max(far / MAX_DEPTH_RATIO, 1e-4);
+  return { near: Math.max(minNear, near), far };
 }
 
 function clamp(value: number, min: number, max: number): number {

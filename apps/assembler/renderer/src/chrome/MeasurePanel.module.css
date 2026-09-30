@@ -1,0 +1,254 @@
+.root {
+  position: absolute;
+  right: 176px;
+  bottom: 12px;
+  display: flex;
+  flex-direction: column;
+  width: 288px;
+  max-height: calc(100% - 128px);
+  background: var(--hc-bg-island);
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-lg);
+  box-shadow: var(--hc-shadow-island);
+  font-family: var(--hc-font-ui);
+  pointer-events: auto;
+  overflow: hidden;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: var(--hc-space-2);
+  padding: var(--hc-space-2) var(--hc-space-2) var(--hc-space-2) var(--hc-space-3);
+  border-bottom: 1px solid var(--hc-border-subtle);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.header:active {
+  cursor: grabbing;
+}
+
+.grip {
+  color: var(--hc-fg-subtle);
+}
+
+.title {
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--hc-fg-strong);
+}
+
+.spacer {
+  flex: 1;
+}
+
+.headerButton,
+.textButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 8px;
+  border: none;
+  border-radius: var(--hc-radius-sm);
+  background: transparent;
+  color: var(--hc-fg-default);
+  font-family: var(--hc-font-ui);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.headerButton:hover,
+.textButton:hover:not(:disabled) {
+  background: var(--hc-hover-bg);
+}
+
+.headerButtonActive,
+.headerButtonActive:hover {
+  background: var(--hc-accent-base);
+  color: var(--hc-fg-on-accent);
+}
+
+.textButton:disabled {
+  color: var(--hc-fg-subtle);
+  cursor: default;
+}
+
+.iconButton,
+.rowButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: var(--hc-radius-sm);
+  background: transparent;
+  color: var(--hc-fg-muted);
+  cursor: pointer;
+}
+
+.iconButton:hover,
+.rowButton:hover {
+  background: var(--hc-hover-bg);
+  color: var(--hc-fg-default);
+}
+
+.headerButton:focus-visible,
+.textButton:focus-visible,
+.iconButton:focus-visible,
+.rowButton:focus-visible {
+  outline: 2px solid var(--hc-focus-ring);
+  outline-offset: 1px;
+}
+
+.rowButton {
+  width: 20px;
+  height: 20px;
+  opacity: 0;
+}
+
+.valueRow:hover .rowButton,
+.rowButton:focus-visible {
+  opacity: 1;
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--hc-space-2);
+  padding: var(--hc-space-2) var(--hc-space-3) var(--hc-space-3);
+  overflow-y: auto;
+}
+
+.sectionHead {
+  display: flex;
+  align-items: center;
+  gap: var(--hc-space-1);
+}
+
+.sectionTitle {
+  font-size: 10px;
+  color: var(--hc-fg-subtle);
+}
+
+.count {
+  font-size: 10px;
+  color: var(--hc-fg-subtle);
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--hc-space-2);
+  border: 1px solid var(--hc-border-subtle);
+  border-radius: var(--hc-radius-md);
+  background: var(--hc-bg-island-hi);
+}
+
+.cardTitle {
+  display: flex;
+  align-items: center;
+  gap: var(--hc-space-2);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--hc-fg-strong);
+}
+
+.pending {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 400;
+  font-size: 11px;
+  color: var(--hc-fg-subtle);
+}
+
+.subject {
+  overflow: hidden;
+  font-size: 11px;
+  color: var(--hc-fg-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.values {
+  display: flex;
+  flex-direction: column;
+  margin: 2px 0 0;
+}
+
+.valueRow {
+  display: flex;
+  align-items: center;
+  gap: var(--hc-space-2);
+  min-height: 22px;
+}
+
+.valueLabel {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--hc-fg-muted);
+}
+
+.value {
+  margin: 0;
+  font-family: var(--hc-font-mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--hc-fg-strong);
+}
+
+.secondary .value {
+  font-size: 11px;
+  color: var(--hc-fg-default);
+}
+
+.approx {
+  padding: 0 4px;
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-sm);
+  font-size: 9px;
+  color: var(--hc-warning-fg);
+}
+
+.pins {
+  display: flex;
+  flex-direction: column;
+  gap: var(--hc-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pinHead {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.empty,
+.note {
+  margin: 0;
+  font-size: 11px;
+  color: var(--hc-fg-subtle);
+}
+
+@media (pointer: coarse) {
+  .iconButton,
+  .headerButton,
+  .textButton {
+    min-width: 36px;
+    height: 36px;
+  }
+
+  .rowButton {
+    opacity: 1;
+  }
+}

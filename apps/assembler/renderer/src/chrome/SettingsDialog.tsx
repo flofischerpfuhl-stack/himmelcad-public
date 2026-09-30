@@ -117,6 +117,18 @@ export function SettingsDialog(): JSX.Element {
           />
         </Row>
 
+        <h3 className={styles.section}>Rendering</h3>
+        <Row
+          label="High quality"
+          hint="Ambient occlusion and contact shadow; turn off on slow GPUs"
+        >
+          <Checkbox
+            aria-label="High quality rendering"
+            checked={prefs.renderQuality === 'high'}
+            onChange={(e) => set('renderQuality', e.currentTarget.checked ? 'high' : 'standard')}
+          />
+        </Row>
+
         <h3 className={styles.section}>Navigation</h3>
         <Row label="Mouse preset" hint={navigationPreset(prefs.navigationPreset).summary}>
           <Select

@@ -28,7 +28,9 @@ export type CameraCommand =
   | { kind: 'roll'; degrees: number }
   | { kind: 'pose'; pose: CameraPose }
   /** Looks straight at a face and frames it (Space over a face). */
-  | { kind: 'lookAtFace'; bodyId: string; faceKey: string };
+  | { kind: 'lookAtFace'; bodyId: string; faceKey: string }
+  /** Looks along `-direction` (eye on the `direction` side) and frames the visible model (Look at section). */
+  | { kind: 'lookAlong'; direction: Vec3 };
 
 /** Reads the viewport's live camera (registered by the mounted viewport). */
 type PoseProbe = () => CameraPose | null;

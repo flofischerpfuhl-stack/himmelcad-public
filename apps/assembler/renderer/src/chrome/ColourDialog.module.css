@@ -88,6 +88,46 @@
   border-radius: 2px;
 }
 
+.materialRow {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.materials {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.material {
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-sm);
+  background: var(--hc-bg-input);
+  color: var(--hc-fg-default);
+  font-family: var(--hc-font-ui);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.material:hover {
+  background: var(--hc-hover-bg);
+}
+
+.material:focus-visible {
+  outline: 2px solid var(--hc-focus-ring);
+  outline-offset: 1px;
+}
+
+.materialActive,
+.materialActive:hover {
+  border-color: var(--hc-accent-base);
+  background: var(--hc-active-bg);
+  color: var(--hc-accent-base);
+}
+
 .note {
   margin: 0;
   font-size: 11px;

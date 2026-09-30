@@ -15,7 +15,8 @@ import { usePreferences } from '../model/preferences.js';
 import { isPreviewTool, useAssemblerStore } from '../model/store.js';
 import { currentCameraPose, useWorkspaceStore } from '../model/workspace.js';
 import type { CameraPose } from '../viewport/camera.js';
-import { getViewportProbe, type ScreenPoint } from '../viewport/automation.js';
+import { getViewportProbe, type ScreenPoint, type ViewportProbe } from '../viewport/automation.js';
+import { useMeasureStore } from '../model/measureStore.js';
 import type { ToolHandleKind } from '../viewport/picking.js';
 import { sketchAutomation, type SketchAutomation } from './sketchAutomation.js';
 
@@ -67,6 +68,15 @@ export interface AssemblerAutomation {
   preferences: typeof usePreferences;
   /** The live camera pose. */
   cameraPose(): CameraPose | null;
+  /**
+   * Renderer counters (frames drawn, last frame's CPU ms, uploads, draw calls,
+   * scene build ms); `finish` makes every frame wait for the GPU (measurement).
+   */
+  viewportStats(finish?: boolean): ReturnType<NonNullable<ViewportProbe['stats']>> | null;
+  /** Mean ms per frame over `frames` back-to-back renders (GPU included; see `Viewport.tsx`). */
+  viewportBenchmark(frames: number): number | null;
+  /** Measure panel state (pins, points, Point tool). */
+  measureStore: typeof useMeasureStore;
 }
 
 declare global {
@@ -192,6 +202,9 @@ export function installAutomationHook(store: typeof useAssemblerStore): void {
     itemsStore: useItemsStore,
     preferences: usePreferences,
     cameraPose: () => currentCameraPose(),
+    viewportStats: (finish) => getViewportProbe()?.stats?.(finish) ?? null,
+    viewportBenchmark: (frames) => getViewportProbe()?.benchmark?.(frames) ?? null,
+    measureStore: useMeasureStore,
     waitForKernelIdle: async () => {
       await store.getState().whenSettled();
       // Let React commit and the viewport draw (and pick-render) the settled state.

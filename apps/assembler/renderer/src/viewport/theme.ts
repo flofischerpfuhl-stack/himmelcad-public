@@ -19,6 +19,10 @@ export interface ViewportColors {
   hover: [number, number, number];
   activePreview: [number, number, number];
   sketchOutline: [number, number, number];
+  /** Lines that must read on the background itself (wireframe, X-ray edges). */
+  wire: [number, number, number];
+  /** Light theme? (lighting and shadow strength differ slightly). */
+  light: boolean;
 }
 
 function hexToRgb01(hex: string): [number, number, number] {
@@ -56,5 +60,11 @@ export function readViewportColors(): ViewportColors {
     hover: readVar(styles, '--hc-geometry-hover', '#f0f1f3'),
     activePreview: readVar(styles, '--hc-geometry-active-preview', '#ffd166'),
     sketchOutline: readVar(styles, '--hc-accent-base', '#1597f2'),
+    wire: readVar(styles, '--hc-fg-default', '#c9ccd1'),
+    light: luminance(readVar(styles, '--hc-bg-void', '#101114')) > 0.5,
   };
+}
+
+function luminance(rgb: [number, number, number]): number {
+  return 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
 }

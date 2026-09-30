@@ -11,6 +11,7 @@ import { installPreferenceEffects } from './chrome/preferenceEffects.js';
 import { installAutomationBridge } from './api/app/automationStore.js';
 import { installAutomationHook } from './devtools/automationHook.js';
 import { WorkerKernelAdapter } from './kernel/workerAdapter.js';
+import { useMeasureStore } from './model/measureStore.js';
 import { useProjectStore } from './model/project/projectStore.js';
 import { useAssemblerStore } from './model/store.js';
 import { setSketchSolverFactory } from './sketch/solverProvider.js';
@@ -30,6 +31,8 @@ const kernelAdapter = new WorkerKernelAdapter(
 useAssemblerStore.getState().attachKernel(kernelAdapter);
 // Project export (STEP) shares the same adapter instance, see `model/project/projectStore.ts`.
 useProjectStore.getState().attachKernelAdapter(kernelAdapter);
+// Measure panel: exact minimum distances (`BRepExtrema`) from the same kernel.
+useMeasureStore.getState().attachKernel(kernelAdapter);
 // Agent access (desktop only, off until the user enables it): canonical command layer on this document.
 installAutomationBridge(kernelAdapter);
 // The sketch solver (planeGCS, WebAssembly) gets its own worker, started on first use.
