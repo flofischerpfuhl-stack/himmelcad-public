@@ -1,5 +1,9 @@
 /**
- * Module UI in the built app (assembler/MODULES.md §3): the Parameters panel\n * (parameters module) in the shell's right stack above History (Ctrl+Alt+P;\n * adding a parameter runs the module's store slice), the Print toggle in the\n * left dock's mode group (print module) and the Slicers… dialog (printers\n * module) — all registered with defineModuleUi, none named by the shell.
+ * Module UI in the built app (assembler/MODULES.md §3): the Parameters panel
+ * (parameters module) in the shell's right stack above History (Ctrl+Alt+P;
+ * adding a parameter runs the module's store slice), the Print toggle in the
+ * left dock's mode group (print module) and the Slicers… dialog (printers
+ * module) — all registered with `defineModuleUi`, none named by the shell.
  */
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -48,6 +52,12 @@ void test('built app: panels, mode buttons and dialogs come from the modules', a
 
   await page.keyboard.press('Control+Alt+P');
   await parameters.waitFor({ state: 'detached' });
+
+  // History cards: their editors come from the modules (sketching, modeling).
+  await history.getByRole('button', { name: 'Expand all steps' }).click();
+  await history.getByLabel('Fillet 1 radius law').waitFor();
+  await history.getByLabel('Plane offset').first().waitFor();
+  await history.getByRole('button', { name: 'Collapse all steps' }).click();
 
   // The print module's mode button sits in the left dock's mode group and opens its panel.
   const printButton = page.getByRole('button', { name: /^Print (On|Off)$/ });

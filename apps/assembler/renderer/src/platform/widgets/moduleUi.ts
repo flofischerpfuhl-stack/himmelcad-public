@@ -8,6 +8,7 @@
 import type { ComponentType } from 'react';
 
 import type { AssemblerState } from '../../foundation/commands/store.js';
+import type { Feature } from '../../foundation/document/document.js';
 import { registerViewportOverlay, type ViewportOverlayProvider } from '../viewport/overlays.js';
 
 export interface PanelProps {
@@ -43,11 +44,28 @@ export interface ModeButtonRegistration {
   component: ComponentType<ModeButtonProps>;
 }
 
+/** Props of a History card's parameter editor (the expanded card body). */
+export interface HistoryCardProps {
+  feature: Feature;
+  state: AssemblerState;
+  /** Grid container class of the card body. */
+  className: string | undefined;
+  /** Class of a full-width grid cell. */
+  fullClassName: string | undefined;
+}
+
+/** The parameter editor of History cards of these feature kinds. */
+export interface HistoryCardRegistration {
+  kinds: readonly string[];
+  component: ComponentType<HistoryCardProps>;
+}
+
 export interface ModuleUi {
   /** Module id, as in `apps/assembler/modules.json`. */
   id: string;
   panels?: readonly PanelRegistration[];
   modeButtons?: readonly ModeButtonRegistration[];
+  historyCards?: readonly HistoryCardRegistration[];
   viewportOverlays?: readonly ViewportOverlayProvider[];
 }
 
@@ -57,6 +75,7 @@ export function defineModuleUi(ui: ModuleUi): ModuleUi {
 
 const panels: PanelRegistration[] = [];
 const modeButtons: ModeButtonRegistration[] = [];
+const historyCards = new Map<string, HistoryCardRegistration>();
 const installed = new Set<string>();
 
 /** Registers the modules' UI parts (desktop renderer only), once per module. */
@@ -66,6 +85,13 @@ export function installModuleUis(uis: readonly ModuleUi[]): void {
     installed.add(ui.id);
     panels.push(...(ui.panels ?? []));
     modeButtons.push(...(ui.modeButtons ?? []));
+    for (const card of ui.historyCards ?? []) {
+      for (const kind of card.kinds) {
+        if (historyCards.has(kind))
+          throw new Error(`History card of "${kind}" is registered twice`);
+        historyCards.set(kind, card);
+      }
+    }
     for (const overlay of ui.viewportOverlays ?? []) registerViewportOverlay(overlay);
   }
   panels.sort((a, b) => a.order - b.order);
@@ -80,4 +106,9 @@ export function registeredPanels(slot: PanelRegistration['slot']): readonly Pane
 /** Registered mode buttons, in `order`. */
 export function registeredModeButtons(): readonly ModeButtonRegistration[] {
   return modeButtons;
+}
+
+/** The History-card editor a module registered for `kind`, or `undefined`. */
+export function historyCardFor(kind: string): HistoryCardRegistration | undefined {
+  return historyCards.get(kind);
 }

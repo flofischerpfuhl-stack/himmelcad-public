@@ -42,9 +42,7 @@ import { anchoredMenuStyle } from '../../platform/widgets/anchoredMenu.js';
 import { featureKindIcon } from './icons.js';
 import { ExpressionField } from '../../platform/widgets/ExpressionField.js';
 import { ParamExpressionField } from '../../platform/widgets/ParamExpressionField.js';
-import { ModelingFeatureParams } from '../../chrome/FeatureParams.js';
-import { BlendParams, BooleanParams, ShellParams } from '../../chrome/PrintFeatureParams.js';
-import { isModelingFeature } from '../../model/features.js';
+import { historyCardFor } from '../../platform/widgets/moduleUi.js';
 import {
   checkMove,
   duplicateStep,
@@ -61,7 +59,6 @@ import { useWorkspaceStore } from './workspace.js';
 import type { AssemblerState, FeaturePatch } from '../../foundation/commands/store.js';
 import type { ExtrudeOperation, Feature } from '../../foundation/document/document.js';
 import { useSketchStore } from '../../sketch/session.js';
-import { SketchParams } from '../../sketch/ui/SketchParams.js';
 import panelStyles from '../../platform/widgets/Panel.module.css';
 import styles from './HistoryPanel.module.css';
 
@@ -603,9 +600,12 @@ function FeatureParams({
   const paramResolved = resolveParameterValues(state.parameters);
   const paramValues = paramResolved.ok ? paramResolved.values : new Map<string, number>();
 
-  if (feature.kind === 'sketch') {
+  // Kinds whose module registered an editor (`defineModuleUi({ historyCards })`).
+  const card = historyCardFor(feature.kind);
+  if (card) {
+    const Card = card.component;
     return (
-      <SketchParams
+      <Card
         feature={feature}
         state={state}
         className={styles.params}
@@ -716,14 +716,6 @@ function FeatureParams({
     );
   }
 
-  if (feature.kind === 'fillet' || feature.kind === 'chamfer') {
-    return <BlendParams feature={feature} state={state} />;
-  }
-
-  if (feature.kind === 'shell') return <ShellParams feature={feature} state={state} />;
-
-  if (feature.kind === 'boolean') return <BooleanParams feature={feature} state={state} />;
-
   if (feature.kind === 'move') {
     return (
       <div className={styles.params}>
@@ -748,8 +740,6 @@ function FeatureParams({
       </div>
     );
   }
-
-  if (isModelingFeature(feature)) return <ModelingFeatureParams feature={feature} state={state} />;
 
   return <div className={styles.params}>No editable parameters.</div>;
 }
