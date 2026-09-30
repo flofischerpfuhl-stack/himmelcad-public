@@ -731,6 +731,23 @@ void test('shell: outward, per-face wall thickness', async () => {
   const t = only(thick, 'body:b');
   near(t.volume, 2000 - 16 * 8 * 9, 1e-3, 'left wall 3 mm, others 1 mm');
   assert.equal(t.valid, true);
+  // A case that fits over the block with a 0.2 mm printing gap on every face:
+  // cavity 20.4 x 10.4 x 10.4 (z -0.2..10.2), walls 1 mm, open at the (grown) top.
+  const caseResult = await evaluate([...block, shell({ direction: 'outside', clearance: 0.2 })]);
+  assert.deepEqual(caseResult.errors, {});
+  const shellCase = only(caseResult, 'body:b');
+  near(
+    shellCase.volume,
+    22.4 * 12.4 * 11.4 - 20.4 * 10.4 * 10.4,
+    1e-3,
+    'outward shell with clearance',
+  );
+  near(shellCase.min[0], -1.2, 1e-6, 'gap + wall outside the block');
+  assert.equal(shellCase.valid, true);
+  assert.match(
+    (await evaluate([...block, shell({ clearance: 0.2 })])).errors.s ?? '',
+    /clearance applies to outward shells/,
+  );
   const openWall = await evaluate([
     ...block,
     shell({ faceThickness: [{ face: top, thickness: 3 }] }),

@@ -114,9 +114,11 @@ Distance + angle (with Flip); **Fillet Face Edges** (selected faces),
 edges by rule, re-evaluated on every edit. A fillet that fails outlines the
 failing edge in the error colour (also when its History card is selected);
 the History card lists picked edges and rules, each removable. Shell has
-Inside/Outside and opens/closes faces clicked while it runs; its History card
-edits per-wall thickness. Booleans keep or consume their tools, Swap exchanges
-target and tool, clicking bodies adds/removes tools.
+Inside/Outside, a printing clearance for outward shells (+0.1…+0.4 mm: a case
+that fits over the part) and opens/closes faces clicked while it runs; its
+History card edits the clearance and per-wall thickness. Booleans keep or
+consume their tools, Swap exchanges target and tool, clicking bodies
+adds/removes tools.
 
 ## Selection, navigation and workspace
 

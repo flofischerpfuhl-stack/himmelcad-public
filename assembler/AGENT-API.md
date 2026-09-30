@@ -312,7 +312,7 @@ the 3MF files.
   tools' default) is not applied by the API: `operation` defaults to `new`.
 - **Print-part kinds** (hole, emboss, draft, rib, thicken) and the optional
   fillet/chamfer/shell/boolean params (`radius2`, `rules`, `mode`/`distance2`/
-  `angle`/`flip`, `direction`/`faceThickness`, `keepTools`) have closed
+  `angle`/`flip`, `direction`/`clearance`/`faceThickness`, `keepTools`) have closed
   schemas (`api/printSchema.ts`); selectors resolve in `face`, `faces`,
   `rules[].face`, `faceThickness[].face` and `source.faces`. Python:
   `doc.hole` (metric size + ISO or printed fit, counterbore/countersink,

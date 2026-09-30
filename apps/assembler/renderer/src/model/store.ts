@@ -157,6 +157,8 @@ export interface ShellTool extends ToolSessionBase, KernelPreviewFields {
   faces: FaceRef[];
   thickness: number;
   direction?: ShellDirection;
+  /** Outward only: gap between the body and the shell's cavity, mm. */
+  clearance?: number;
 }
 
 /** Union/Subtract/Intersect of the selected bodies; the first selected body is the target. */
@@ -351,6 +353,8 @@ export interface AssemblerState {
   }) => void;
   /** Inward/outward walls of the running shell tool. */
   setShellDirection: (direction: ShellDirection) => void;
+  /** Printing clearance of an outward shell (the cavity is the body grown by it); 0 removes it. */
+  setShellClearance: (clearance: number) => void;
   /** Adds/removes an open face while the shell tool runs. */
   toggleShellFace: (bodyId: string, faceKey: string) => void;
   /** Keep or consume the tool bodies of the running boolean tool. */
@@ -704,6 +708,7 @@ function buildProvisional(tool: PreviewTool): Feature | null {
         faces: tool.faces,
         thickness: tool.thickness,
         ...(tool.direction === 'outside' ? { direction: 'outside' as const } : {}),
+        ...(tool.direction === 'outside' && tool.clearance ? { clearance: tool.clearance } : {}),
       };
     case 'boolean':
       return {
@@ -1380,7 +1385,17 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
       const tool = get().activeTool;
       if (tool?.kind !== 'shell') return;
       const next: ShellTool = { ...tool, direction };
-      if (direction === 'inside') delete next.direction;
+      if (direction === 'inside') {
+        delete next.direction;
+        delete next.clearance; // a clearance only applies outwards
+      }
+      updatePreviewTool(next);
+    },
+    setShellClearance: (clearance) => {
+      const tool = get().activeTool;
+      if (tool?.kind !== 'shell' || !Number.isFinite(clearance)) return;
+      const next: ShellTool = { ...tool, direction: 'outside', clearance };
+      if (clearance <= 0) delete next.clearance;
       updatePreviewTool(next);
     },
     toggleShellFace: (bodyId, faceKey) => {

@@ -78,6 +78,7 @@ import {
   heapBytes,
   isValidShape,
   meshShapeEdges,
+  offsetWithHistory,
   shapeHash,
   shellWithHistory,
   type BlendOptions,
@@ -903,12 +904,22 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
     const body = ctx.bodies.get(feature.bodyId);
     if (!body) throw new FeatureError(`Missing reference: body "${feature.bodyId}"`);
     if (feature.faces.length === 0) throw new FeatureError('Select at least one face to open');
-    const removed = feature.faces.map((ref) => {
+    const removedRefs = feature.faces.map((ref) => {
       if (ref.bodyId !== body.id)
         throw new FeatureError('Shell faces must belong to the shelled body');
-      return resolveFace(body, ref, ctx.warn).face;
+      return resolveFace(body, ref, ctx.warn);
     });
+    let removed = removedRefs.map((r) => r.face);
     const outward = feature.direction === 'outside';
+    const clearance = feature.clearance ?? 0;
+    if (clearance !== 0 && !outward) {
+      throw new FeatureError(
+        'A clearance applies to outward shells (a case that fits over the body)',
+      );
+    }
+    if (!(clearance >= 0 && clearance <= 5)) {
+      throw new FeatureError('Clearance must be between 0 and 5 mm');
+    }
     // Per-face walls: validated before the (expensive) shell.
     const perFace = (feature.faceThickness ?? []).map((entry) => {
       if (entry.face.bodyId !== body.id) {
@@ -923,9 +934,50 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
       }
       return { key: baseFaceKey(resolved.geom.key), thickness: entry.thickness };
     });
+    // With a clearance the shell grows from the body offset by it (sharp edges): the cavity is
+    // the body plus the clearance, e.g. a case or sleeve that fits over the part when printed.
+    let source: { shape: Shape3D; faces: KeyedFace[] } = { shape: body.shape, faces: body.faces };
+    if (clearance > 0) {
+      let grown: HistoryResult;
+      try {
+        grown = offsetWithHistory(oc, body.shape, clearance);
+      } catch (error) {
+        if (isFatalKernelError(error)) throw error;
+        throw new FeatureError(
+          `Shell failed: the ${clearance} mm clearance offset could not be built`,
+        );
+      }
+      try {
+        // The offset faces keep the keys of the faces they were offset from (by geometry:
+        // this builder's history does not report them).
+        const faces = nameResult(
+          grown.shape,
+          grown.history,
+          [{ shape: body.shape, faces: body.faces }],
+          ctx.featureOrder,
+          (index) => {
+            const g = describeFace(topologyOf(grown.shape).faces[index]!);
+            const original = body.faces.find((f) => isOutwardOffsetOf(g.id, f.id, clearance));
+            return original ? baseFaceKey(original.key) : `${feature.id}:new`;
+          },
+        );
+        const grownTopology = topologyOf(grown.shape);
+        removed = removedRefs.map((r) => {
+          const key = baseFaceKey(r.geom.key);
+          const index = faces.findIndex((f) => baseFaceKey(f.key) === key);
+          if (index < 0) {
+            throw new FeatureError('Shell failed: an open face was lost by the clearance offset');
+          }
+          return grownTopology.faces[index]!;
+        });
+        source = { shape: grown.shape, faces };
+      } finally {
+        grown.history.delete();
+      }
+    }
     let built: HistoryResult;
     try {
-      built = shellWithHistory(oc, body.shape, removed, feature.thickness, outward);
+      built = shellWithHistory(oc, source.shape, removed, feature.thickness, outward);
     } catch (error) {
       if (isFatalKernelError(error)) throw error;
       throw new FeatureError(
@@ -934,16 +986,16 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
     }
     const t = feature.thickness;
     const role = outward ? 'outer' : 'inner';
-    const topology = topologyOf(body.shape);
+    const topology = topologyOf(source.shape);
     try {
       body.faces = nameResult(
         built.shape,
         built.history,
-        [{ shape: body.shape, faces: body.faces }],
+        [source],
         ctx.featureOrder,
         (index) => {
           const g = describeFace(topologyOf(built.shape).faces[index]!);
-          const original = body.faces.find((f) =>
+          const original = source.faces.find((f) =>
             outward ? isOutwardOffsetOf(g.id, f.id, t) : isOffsetOf(g.id, f.id, t),
           );
           return original
@@ -952,7 +1004,7 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
         },
         topology.faces.map((face, i) => ({
           raw: face.wrapped as RawShape,
-          role: `${feature.id}:${role}:${baseFaceKey(body.faces[i]!.key)}`,
+          role: `${feature.id}:${role}:${baseFaceKey(source.faces[i]!.key)}`,
         })),
       );
       body.shape = built.shape;

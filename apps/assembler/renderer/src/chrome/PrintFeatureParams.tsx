@@ -500,10 +500,20 @@ export function ShellParams({
             { value: 'outside', label: 'Outside' },
           ]}
           onChange={(event) =>
-            edit({ direction: event.currentTarget.value === 'outside' ? 'outside' : undefined })
+            event.currentTarget.value === 'outside'
+              ? edit({ direction: 'outside' })
+              : edit({ direction: undefined, clearance: undefined })
           }
         />
       </div>
+      {feature.direction === 'outside' ? (
+        <ExpressionField
+          label="Clearance"
+          value={feature.clearance ?? 0}
+          unit="mm"
+          onCommit={(v) => edit({ clearance: v > 0 ? v : undefined })}
+        />
+      ) : null}
       <span className={styles.paramsFull}>
         <span className={styles.paramNote}>
           {feature.faces.length} open {feature.faces.length === 1 ? 'face' : 'faces'}

@@ -113,6 +113,13 @@ export const BLEND_OPTION_PARAMS: Record<
   },
   shell: {
     direction: { enum: ['inside', 'outside'], default: 'inside' },
+    clearance: {
+      type: 'number',
+      minimum: 0,
+      maximum: 5,
+      description:
+        'Outward shells only: the cavity is the body grown by this gap (e.g. 0.2 mm for a printed case that fits over the part).',
+    },
     faceThickness: { type: 'array', items: ref('ShellFaceThickness') },
   },
   boolean: {

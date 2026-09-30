@@ -12,6 +12,7 @@ import { useEffect, useState } from 'react';
 import { Button, Select, Tooltip } from '@himmelcad/ui';
 
 import { edgeRuleLabel } from '../model/blendOptions.js';
+import { PRINT_CLEARANCES } from '../model/printFeatures.js';
 import { evaluateExpression } from './expression.js';
 
 import {
@@ -267,15 +268,29 @@ function ToolBadge({
       );
     case 'shell':
       return (
-        <Badge
-          ariaLabel="Shell direction"
-          value={tool.direction ?? 'inside'}
-          options={[
-            { value: 'inside', label: 'Inside' },
-            { value: 'outside', label: 'Outside' },
-          ]}
-          onChange={(direction) => state.setShellDirection(direction)}
-        />
+        <>
+          <Badge
+            ariaLabel="Shell direction"
+            value={tool.direction ?? 'inside'}
+            options={[
+              { value: 'inside', label: 'Inside' },
+              { value: 'outside', label: 'Outside' },
+            ]}
+            onChange={(direction) => state.setShellDirection(direction)}
+          />
+          {tool.direction === 'outside' ? (
+            // Printing clearance: a case/sleeve that fits over the body.
+            <Badge
+              ariaLabel="Clearance"
+              value={String(tool.clearance ?? 0)}
+              options={[
+                { value: '0', label: 'No gap' },
+                ...PRINT_CLEARANCES.map((c) => ({ value: String(c), label: `+${c}` })),
+              ]}
+              onChange={(value) => state.setShellClearance(Number(value))}
+            />
+          ) : null}
+        </>
       );
     case 'boolean':
       return (

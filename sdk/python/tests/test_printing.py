@@ -107,6 +107,10 @@ class PrintHelperTests(unittest.TestCase):
         self.assertEqual(self.rec.last()["params"]["rules"][0]["kind"], "faceEdges")
         self.doc.shell_walls(TOP, 1.2, outward=True, walls={TOP: 2})
         self.assertEqual(self.rec.last()["params"]["direction"], "outside")
+        self.doc.shell_walls(TOP, 1.2, outward=True, clearance=0.2)
+        self.assertEqual(self.rec.last()["params"]["clearance"], 0.2)
+        with self.assertRaises(ValueError):
+            self.doc.shell_walls(TOP, 1.2, clearance=0.2)
         self.doc.boolean("subtract", body, Body(self.doc, "body:t"), keep_tools=True)
         self.assertEqual(self.rec.last()["params"]["keepTools"], True)
         self.doc.draft(TOP, 3, neutral="XY")

@@ -237,13 +237,18 @@ class PrintToolsMixin:
             params["flip"] = True
         return self._feature(self.client.create_feature("chamfer", params, name=name))
 
-    def shell_walls(self, open_faces: Face | Iterable[Face], thickness: float, *, outward: bool = False, walls: Mapping[Face, float] | None = None, name: str | None = None) -> Feature:
-        """Shell with walls growing ``outward`` (the body becomes the cavity) and/or walls of their own
-        thickness (``walls={face: mm}``)."""
+    def shell_walls(self, open_faces: Face | Iterable[Face], thickness: float, *, outward: bool = False, clearance: float = 0.0, walls: Mapping[Face, float] | None = None, name: str | None = None) -> Feature:
+        """Shell with walls growing ``outward`` (the body becomes the cavity; ``clearance`` grows the
+        cavity by a printing gap, e.g. 0.2 for a case that fits over the part) and/or walls of their
+        own thickness (``walls={face: mm}``)."""
         faces = _face_list(open_faces)
         params: dict[str, Any] = {"bodyId": faces[0].body_id, "faces": [f.ref for f in faces], "thickness": thickness}
+        if clearance and not outward:
+            raise ValueError("a clearance applies to outward shells")
         if outward:
             params["direction"] = "outside"
+        if clearance:
+            params["clearance"] = clearance
         if walls:
             params["faceThickness"] = [{"face": f.ref, "thickness": t} for f, t in walls.items()]
         return self._feature(self.client.create_feature("shell", params, name=name))

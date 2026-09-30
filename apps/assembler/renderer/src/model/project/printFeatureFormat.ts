@@ -202,6 +202,7 @@ export function validateBlendOptions(r: Rec, path: string, h: FormatHelpers): bo
     }
     case 'shell': {
       if (r.direction !== undefined) c.oneOf('direction', ['inside', 'outside']);
+      c.optionalNum('clearance');
       if (r.faceThickness !== undefined) {
         if (!Array.isArray(r.faceThickness)) h.fail(`${path}.faceThickness`, 'expected an array');
         r.faceThickness.forEach((entry, i) => {

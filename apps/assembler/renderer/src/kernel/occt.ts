@@ -529,6 +529,32 @@ export function shellWithHistory(
   }
 }
 
+/** `shape` grown by `offset` on every face, sharp edges kept (`GeomAbs_Intersection`), with history. */
+export function offsetWithHistory(oc: OpenCascade, shape: Shape3D, offset: number): HistoryResult {
+  const builder = new oc.BRepOffsetAPI_MakeOffsetShape();
+  try {
+    builder.PerformByJoin(
+      shape.wrapped as never,
+      offset,
+      1e-3,
+      oc.BRepOffset_Mode.BRepOffset_Skin as never,
+      false,
+      false,
+      oc.GeomAbs_JoinType.GeomAbs_Intersection as never,
+      false,
+    );
+    const raw = builder.Shape() as RawShape;
+    try {
+      return { shape: castSolid(raw, 'Offset'), history: builder as never };
+    } finally {
+      raw.delete();
+    }
+  } catch (error) {
+    builder.delete();
+    throw error;
+  }
+}
+
 // ---- tessellation -----------------------------------------------------------------
 
 export interface RawMesh {

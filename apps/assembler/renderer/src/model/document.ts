@@ -168,6 +168,8 @@ export interface ShellFeature extends FeatureBase {
   direction?: ShellDirection;
   /** Walls with their own thickness (the wall that grows from each face). */
   faceThickness?: ShellFaceThickness[];
+  /** Outward only: the cavity is the body grown by this gap (a case that fits over it), mm. */
+  clearance?: Millimeters;
 }
 
 /** Body boolean; tool bodies are consumed unless `keepTools`. */
