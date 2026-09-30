@@ -11,58 +11,17 @@ import { Button, Dialog } from '@himmelcad/ui';
 
 import {
   BODY_PALETTE,
+  applyBodyColour,
+  applyBodyMaterial,
   normalizeHexColour,
-  withBodyColour,
-  withBodyMaterial,
 } from '../model/appearance.js';
 import { MATERIALS, bodyMaterials, type MaterialId } from '../viewport/displayModes.js';
-import { nextFeatureName, useAssemblerStore } from '../model/store.js';
+import { useAssemblerStore } from '../model/store.js';
 import { displayBodyName, useItemsStore } from '../model/items.js';
 import { useWorkspaceStore } from '../model/workspace.js';
 import styles from './ColourDialog.module.css';
 
-/** Applies `color` to `bodyIds` as one undo step; `false` if refused (a tool is running). */
-export function applyBodyColour(bodyIds: readonly string[], color: string): boolean {
-  const s = useAssemblerStore.getState();
-  const markerIndex = s.rollbackBefore
-    ? s.features.findIndex((f) => f.id === s.rollbackBefore)
-    : -1;
-  const activeCount = markerIndex >= 0 ? markerIndex : s.features.length;
-  const reserved = new Set<string>();
-  const base = nextFeatureName('Appearance', s.features);
-  const baseNumber = Number(base.split(' ').pop()) || 1;
-  const next = withBodyColour(s.features, activeCount, bodyIds, color, (index) => {
-    const id = s.allocateFeatureId('appearance', reserved);
-    reserved.add(id);
-    return { id, name: `Appearance ${baseNumber + index}` };
-  });
-  return s.commitDocumentChange(next, { keepRollback: true, selection: s.selection });
-}
-
-/** Sets the material of `bodyIds` (each keeps its colour) as one undo step; `false` if refused. */
-export function applyBodyMaterial(
-  bodyIds: readonly string[],
-  material: MaterialId | null,
-): boolean {
-  const s = useAssemblerStore.getState();
-  const markerIndex = s.rollbackBefore
-    ? s.features.findIndex((f) => f.id === s.rollbackBefore)
-    : -1;
-  const activeCount = markerIndex >= 0 ? markerIndex : s.features.length;
-  const reserved = new Set<string>();
-  const base = nextFeatureName('Appearance', s.features);
-  const baseNumber = Number(base.split(' ').pop()) || 1;
-  const targets = bodyIds.map((bodyId) => ({
-    bodyId,
-    color: s.evaluation.bodies.find((b) => b.id === bodyId)?.color.toUpperCase() ?? '#C9CDD3',
-  }));
-  const next = withBodyMaterial(s.features, activeCount, targets, material, (index) => {
-    const id = s.allocateFeatureId('appearance', reserved);
-    reserved.add(id);
-    return { id, name: `Appearance ${baseNumber + index}` };
-  });
-  return s.commitDocumentChange(next, { keepRollback: true, selection: s.selection });
-}
+export { applyBodyColour, applyBodyMaterial };
 
 export function ColourDialog(): JSX.Element | null {
   const bodyIds = useWorkspaceStore((s) => s.colourDialogBodyIds);

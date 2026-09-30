@@ -5,7 +5,9 @@ import {
   createDemoDocument,
   type SetAppearanceFeature,
 } from '../../renderer/src/model/document.js';
+import { applyBodyColour, applyBodyMaterial } from '../../renderer/src/model/appearance.js';
 import { moveFeature } from '../../renderer/src/model/historyTools.js';
+import { usePrintStore } from '../../renderer/src/print/printStore.js';
 import { useAssemblerStore } from '../../renderer/src/model/store.js';
 import { createEvaluator } from '../../renderer/src/kernel/evaluator.js';
 import type { EvaluationResult } from '../../renderer/src/kernel/types.js';
@@ -179,4 +181,59 @@ void test('rollback, edits above the bar, reorder and roll-forward never reuse s
   while (store.getState().history.canUndo) store.getState().undo();
   const original = await settled();
   assert.deepEqual(digest(original.evaluation), digest(full.evaluation));
+});
+
+void test('panel steps while rolled back (colour, material, Place on Plate) go in at the marker', async () => {
+  store.getState().loadDocument(createDemoDocument());
+  await settled();
+  store.getState().setRollback('feature-fillet-3');
+  const rolled = await settled();
+  const bodyId = rolled.evaluation.bodies[0]!.id;
+  const ids = () => store.getState().features.map((f) => f.id);
+  const tail = ['feature-fillet-3', 'feature-sketch-4', 'feature-extrude-5'];
+
+  // Colour dialog: a new setAppearance step directly above the bar, the bar stays.
+  assert.equal(applyBodyColour([bodyId], '#FF0000'), true);
+  const coloured = await settled();
+  const colourStep = coloured.features[4]!;
+  assert.equal(colourStep.kind, 'setAppearance');
+  assert.deepEqual(ids().slice(5), tail, 'rolled-back steps stay below the new step');
+  assert.equal(coloured.rollbackBefore, 'feature-fillet-3');
+  assert.equal(coloured.evaluation.bodies[0]!.color.toUpperCase(), '#FF0000');
+
+  // Material right after: the same step is updated (no new step, still above the bar).
+  assert.equal(applyBodyMaterial([bodyId], 'petg'), true);
+  const withMaterial = await settled();
+  assert.equal(withMaterial.features.length, 8);
+  const step = withMaterial.features[4]!;
+  assert.ok(step.kind === 'setAppearance' && step.material === 'petg' && step.id === colourStep.id);
+  assert.deepEqual(ids().slice(5), tail);
+
+  // Two bodies at once (one of them unknown to the model is still a step): both above the bar.
+  assert.equal(applyBodyColour([bodyId, 'body:other'], '#00FF00'), true);
+  const two = await settled();
+  assert.deepEqual(
+    two.features.slice(5, 7).map((f) => f.kind),
+    ['setAppearance', 'setAppearance'],
+  );
+  assert.deepEqual(ids().slice(7), tail);
+  assert.equal(two.rollbackBefore, 'feature-fillet-3');
+
+  // Print mode Place on Plate (a transform step created from the Printability panel).
+  const side = two.evaluation.bodies[0]!.faces.find(
+    (f) => f.normal && Math.abs(f.normal[0] + 1) < 1e-9,
+  );
+  assert.ok(side, 'a -X planar face');
+  assert.equal(usePrintStore.getState().placeOnPlate(bodyId, side.key), null);
+  const placed = await settled();
+  assert.equal(placed.features[7]!.kind, 'transform');
+  assert.deepEqual(ids().slice(8), tail);
+  assert.equal(placed.rollbackBefore, 'feature-fillet-3');
+
+  // Each was one undo step; undo keeps the bar.
+  store.getState().undo();
+  store.getState().undo();
+  const undone = await settled();
+  assert.equal(undone.features.length, 8);
+  assert.equal(undone.rollbackBefore, 'feature-fillet-3');
 });
