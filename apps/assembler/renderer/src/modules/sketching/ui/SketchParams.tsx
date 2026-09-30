@@ -14,16 +14,16 @@ import {
   revertEscapeField,
 } from '@himmelcad/ui';
 
-import { ExpressionField } from '../../platform/widgets/ExpressionField.js';
-import { sketchDimensionCandidates } from '../../platform/widgets/expressionSuggest.js';
-import { ExpressionSuggestInput } from '../../platform/widgets/ExpressionSuggestInput.js';
-import fieldStyles from '../../platform/widgets/ExpressionField.module.css';
+import { ExpressionField } from '../../../platform/widgets/ExpressionField.js';
+import { sketchDimensionCandidates } from '../../../platform/widgets/expressionSuggest.js';
+import { ExpressionSuggestInput } from '../../../platform/widgets/ExpressionSuggestInput.js';
+import fieldStyles from '../../../platform/widgets/ExpressionField.module.css';
 
-import type { SketchFeature } from '../../foundation/sketch-solver/sketchFeature.js';
-import { useAssemblerStore, type AssemblerState } from '../../foundation/commands/store.js';
+import type { SketchFeature } from '../../../foundation/sketch-solver/sketchFeature.js';
+import { useAssemblerStore, type AssemblerState } from '../../../foundation/commands/store.js';
 import { setSketchDimension } from '../featureOps.js';
 import { useSketchStore } from '../session.js';
-import type { SketchDimension } from '../../foundation/sketch-solver/types.js';
+import type { SketchDimension } from '../../../foundation/sketch-solver/types.js';
 
 const KIND_LABEL: Record<SketchDimension['kind'], string> = {
   distance: 'Length',

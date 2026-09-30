@@ -9,6 +9,12 @@ import type { ComponentType } from 'react';
 
 import type { AssemblerState } from '../../foundation/commands/store.js';
 import type { Feature } from '../../foundation/document/document.js';
+import {
+  registerViewportDomOverlay,
+  registerViewportMode,
+  type ViewportDomOverlay,
+  type ViewportMode,
+} from '../viewport/domOverlays.js';
 import { registerViewportOverlay, type ViewportOverlayProvider } from '../viewport/overlays.js';
 
 export interface PanelProps {
@@ -67,6 +73,10 @@ export interface ModuleUi {
   modeButtons?: readonly ModeButtonRegistration[];
   historyCards?: readonly HistoryCardRegistration[];
   viewportOverlays?: readonly ViewportOverlayProvider[];
+  /** React overlays over the canvas with the viewport's host services (`viewport/domOverlays.ts`). */
+  viewportDomOverlays?: readonly ViewportDomOverlay[];
+  /** What the module tells the viewport while its mode runs (`viewport/domOverlays.ts`). */
+  viewportModes?: readonly ViewportMode[];
 }
 
 export function defineModuleUi(ui: ModuleUi): ModuleUi {
@@ -93,6 +103,8 @@ export function installModuleUis(uis: readonly ModuleUi[]): void {
       }
     }
     for (const overlay of ui.viewportOverlays ?? []) registerViewportOverlay(overlay);
+    for (const overlay of ui.viewportDomOverlays ?? []) registerViewportDomOverlay(overlay);
+    for (const mode of ui.viewportModes ?? []) registerViewportMode(mode);
   }
   panels.sort((a, b) => a.order - b.order);
   modeButtons.sort((a, b) => a.order - b.order);

@@ -25,14 +25,14 @@ import {
   type Plane,
   type SketchFrame,
   type SketchPlaneRef,
-} from '../foundation/document/document.js';
-import type { SketchFeature } from '../foundation/sketch-solver/sketchFeature.js';
+} from '../../foundation/document/document.js';
+import type { SketchFeature } from '../../foundation/sketch-solver/sketchFeature.js';
 import {
   makeEdgeRef,
   makeFaceRef,
   nextFeatureName,
   useAssemblerStore,
-} from '../foundation/commands/store.js';
+} from '../../foundation/commands/store.js';
 import { initialAdvancedTool } from './advancedTools.js';
 import { constraintInfo, planConstraint } from './constraintRules.js';
 import {
@@ -40,25 +40,25 @@ import {
   SketchBuilder,
   toggleConstruction,
   type EditResult,
-} from '../foundation/sketch-solver/edits.js';
-import { isPlainNumber } from '../foundation/document/expressions.js';
+} from '../../foundation/sketch-solver/edits.js';
+import { isPlainNumber } from '../../foundation/document/expressions.js';
 import {
   addProjection,
   adoptProjectedEntities,
   edgeSampleFromSegments,
   projectSource,
   type EdgeSample,
-} from '../foundation/sketch-solver/projection.js';
-import { pointIdsOf } from '../foundation/sketch-solver/moveRegion.js';
-import { rememberRegions } from '../foundation/sketch-solver/regionMemory.js';
-import { usePreferences } from '../platform/input/preferences.js';
-import { getSketchSolver } from '../foundation/sketch-solver/solverProvider.js';
-import type { SolveResult } from '../foundation/sketch-solver/solverTypes.js';
+} from '../../foundation/sketch-solver/projection.js';
+import { pointIdsOf } from '../../foundation/sketch-solver/moveRegion.js';
+import { rememberRegions } from '../../foundation/sketch-solver/regionMemory.js';
+import { usePreferences } from '../../platform/input/preferences.js';
+import { getSketchSolver } from '../../foundation/sketch-solver/solverProvider.js';
+import type { SolveResult } from '../../foundation/sketch-solver/solverTypes.js';
 import {
   DEFAULT_SKETCH_FONT,
   loadSketchFont,
   textOutline,
-} from '../foundation/sketch-solver/text/fonts.js';
+} from '../../foundation/sketch-solver/text/fonts.js';
 import {
   initialTool,
   reduceTool,
@@ -77,7 +77,7 @@ import {
   type SketchDimension,
   type SketchProjection,
   type Vec2,
-} from '../foundation/sketch-solver/types.js';
+} from '../../foundation/sketch-solver/types.js';
 
 export interface SketchProblem {
   message: string;

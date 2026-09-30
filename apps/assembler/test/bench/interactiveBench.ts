@@ -47,11 +47,11 @@ import {
   bodyToPrintInput,
 } from '../../renderer/src/modules/print/analysis.js';
 import { DEFAULT_PRINT_SETTINGS } from '../../renderer/src/modules/print/settings.js';
-import { hitTest, infer } from '../../renderer/src/sketch/inference.js';
+import { hitTest, infer } from '../../renderer/src/modules/sketching/inference.js';
 import { detectRegions } from '../../renderer/src/foundation/sketch-solver/regions.js';
-import { useSketchStore } from '../../renderer/src/sketch/session.js';
+import { useSketchStore } from '../../renderer/src/modules/sketching/session.js';
 import { setSketchSolverFactory } from '../../renderer/src/foundation/sketch-solver/solverProvider.js';
-import { segmentStart } from '../../renderer/src/sketch/tools.js';
+import { segmentStart } from '../../renderer/src/modules/sketching/tools.js';
 import type { SketchData, Vec2 } from '../../renderer/src/foundation/sketch-solver/types.js';
 import { installNodeFonts } from '../sketch/nodeFont.js';
 import { loadNodeSolver } from '../sketch/nodeSolver.js';

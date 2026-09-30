@@ -8,9 +8,9 @@
  * its selection — the same source for toolbar, command search, context
  * menu and keyboard.
  */
-import { CONSTRAINT_INFO, planConstraint } from '../../sketch/constraintRules.js';
-import { useSketchStore, type BeginSketchOptions } from '../../sketch/session.js';
-import type { SketchToolKind } from '../../sketch/tools.js';
+import { CONSTRAINT_INFO, planConstraint } from './constraintRules.js';
+import { useSketchStore, type BeginSketchOptions } from './session.js';
+import type { SketchToolKind } from './tools.js';
 import { isPlanarFace, type SelectionItem } from '../../foundation/commands/store.js';
 import type {
   Command,

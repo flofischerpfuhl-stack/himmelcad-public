@@ -1,12 +1,14 @@
 /**
- * The sketching module (assembler/MODULES.md): sketch mode, drawing tools,
- * sketch commands, overlay and chrome, sketch agent API. Phase B moves its
- * files from `renderer/src/sketch/` into this folder.
+ * The sketching module (assembler/MODULES.md): sketch mode (`session.ts`),
+ * drawing tools and inference, sketch commands (`sketchCommands.ts`), the
+ * sketch agent API (`api.ts`); its UI part (chrome, overlay, History card,
+ * viewport mode) is `module.ui.tsx`. The sketch kind and the solver are
+ * foundation (`foundation/sketch-solver`).
  */
 import { COMMAND_ORDER, setModalSessionProbe } from '../../foundation/commands/registry.js';
 import { defineAssemblerModule } from '../../foundation/commands/module.js';
-import { SKETCH_COMMANDS } from '../../model/commands/sketchCommands.js';
-import { useSketchStore } from '../../sketch/session.js';
+import { SKETCH_COMMANDS } from './sketchCommands.js';
+import { useSketchStore } from './session.js';
 
 export const sketchingModule = defineAssemblerModule({
   id: 'sketching',

@@ -13,7 +13,7 @@ import { loadProjectFile } from '../../renderer/src/foundation/document/format.j
 import { currentProjectText } from '../../renderer/src/interface/shell-ui/project/projectStore.js';
 
 import type { SketchFeature } from '../../renderer/src/foundation/sketch-solver/sketchFeature.js';
-import { setSketchDimension } from '../../renderer/src/sketch/featureOps.js';
+import { setSketchDimension } from '../../renderer/src/modules/sketching/featureOps.js';
 
 import { projectTemplate } from '../../renderer/src/foundation/commands/projectTemplates.js';
 import { bodies, call, evidence, near, reset, store, type Json } from './harness.js';

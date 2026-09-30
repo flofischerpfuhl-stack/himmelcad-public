@@ -50,7 +50,7 @@ import {
   setCameraPoseProbe,
   useWorkspaceStore,
 } from '../../renderer/src/interface/shell-ui/workspace.js';
-import { infer } from '../../renderer/src/sketch/inference.js';
+import { infer } from '../../renderer/src/modules/sketching/inference.js';
 import { addRectangle } from '../../renderer/src/foundation/sketch-solver/builders.js';
 import { EMPTY_SKETCH } from '../../renderer/src/foundation/sketch-solver/types.js';
 import { createNodeKernelAdapter } from '../kernel/nodeKernel.js';

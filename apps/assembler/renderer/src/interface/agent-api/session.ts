@@ -57,7 +57,10 @@ import {
 } from '../../foundation/document/format.js';
 import type { SelectionItem } from '../../foundation/commands/store.js';
 import { rememberRegions } from '../../foundation/sketch-solver/regionMemory.js';
-import { ADVANCED_SKETCH_METHODS, advancedSketchEdit } from '../../api/sketchAdvancedApi.js';
+import {
+  ADVANCED_SKETCH_METHODS,
+  advancedSketchEdit,
+} from '../../modules/sketching/sketchAdvancedApi.js';
 import {
   describeBody,
   describeEdge,
@@ -81,7 +84,7 @@ import {
   solveSketch,
   type ShapeResult,
   type SketchShape,
-} from '../../api/sketchApi.js';
+} from '../../modules/sketching/sketchApi.js';
 import {
   buildEditedFeature,
   buildNewFeature,

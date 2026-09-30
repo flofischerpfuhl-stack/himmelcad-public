@@ -11,7 +11,7 @@ import {
   SketchBuilder,
   type EditResult,
   type SnapTarget,
-} from '../foundation/sketch-solver/edits.js';
+} from '../../foundation/sketch-solver/edits.js';
 import {
   dist,
   entityCurves,
@@ -19,7 +19,7 @@ import {
   sampleCurve,
   sub,
   type Curve2,
-} from '../foundation/sketch-solver/geometry.js';
+} from '../../foundation/sketch-solver/geometry.js';
 import type { Inference, SketchHit } from './inference.js';
 import {
   circularPattern,
@@ -43,7 +43,7 @@ import {
   pointPos,
   type SketchData,
   type Vec2,
-} from '../foundation/sketch-solver/types.js';
+} from '../../foundation/sketch-solver/types.js';
 
 /** Smallest size a tool creates, mm (same as the basic tools). */
 const MIN_SIZE = 0.1;

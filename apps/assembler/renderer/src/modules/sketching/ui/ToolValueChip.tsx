@@ -10,7 +10,7 @@ import { useEffect, useRef } from 'react';
 
 import { registerEscapeRung } from '@himmelcad/ui';
 
-import labelStyles from '../../platform/viewport/DimensionLabel.module.css';
+import labelStyles from '../../../platform/viewport/DimensionLabel.module.css';
 import styles from './SketchOverlay.module.css';
 
 export interface ToolValueChipProps {

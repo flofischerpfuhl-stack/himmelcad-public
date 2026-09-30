@@ -7,35 +7,24 @@
  * is the one a user would draw; the caller (`session.ts#editSketch`)
  * re-solves and commits it as one undo step.
  */
-import type { EvaluationResult } from '../foundation/geometry-kernel/types.js';
-import type { Feature } from '../foundation/document/document.js';
-import { SketchBuilder, type SnapTarget } from '../foundation/sketch-solver/edits.js';
-import {
-  circularPattern,
-  linearPattern,
-  mirrorGeometry,
-  roundCorner,
-} from '../sketch/operations.js';
+import type { EvaluationResult } from '../../foundation/geometry-kernel/types.js';
+import type { Feature } from '../../foundation/document/document.js';
+import { SketchBuilder, type SnapTarget } from '../../foundation/sketch-solver/edits.js';
+import { circularPattern, linearPattern, mirrorGeometry, roundCorner } from './operations.js';
 import {
   addProjection,
   edgeSampleFromSegments,
   projectSource,
-} from '../foundation/sketch-solver/projection.js';
-import {
-  buildArcSlot,
-  buildEllipse,
-  buildSlot,
-  buildSpline,
-  regularPolygon,
-} from '../sketch/shapes.js';
+} from '../../foundation/sketch-solver/projection.js';
+import { buildArcSlot, buildEllipse, buildSlot, buildSpline, regularPolygon } from './shapes.js';
 import {
   DEFAULT_SKETCH_FONT,
   fontInfo,
   textOutline,
-} from '../foundation/sketch-solver/text/fonts.js';
-import type { SketchData, SketchProjection, Vec2 } from '../foundation/sketch-solver/types.js';
-import { ApiError } from '../foundation/commands/api/errors.js';
-import { resolveEdgeInput, resolveFaceInput } from '../foundation/commands/api/references.js';
+} from '../../foundation/sketch-solver/text/fonts.js';
+import type { SketchData, SketchProjection, Vec2 } from '../../foundation/sketch-solver/types.js';
+import { ApiError } from '../../foundation/commands/api/errors.js';
+import { resolveEdgeInput, resolveFaceInput } from '../../foundation/commands/api/references.js';
 
 type Json = Record<string, unknown>;
 

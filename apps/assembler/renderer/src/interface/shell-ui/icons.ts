@@ -49,7 +49,7 @@ import {
 import type { Command, CommandGroup } from '../../foundation/commands/registry.js';
 import type { Feature } from '../../foundation/document/document.js';
 import type { SelectionItem } from '../../foundation/commands/store.js';
-import { SKETCH_COMMAND_ICONS } from '../../sketch/ui/sketchIcons.js';
+import { SKETCH_COMMAND_ICONS } from '../../modules/sketching/ui/sketchIcons.js';
 import { MODELING_COMMAND_ICON, MODELING_FEATURE_ICON } from '../../chrome/featureIcons.js';
 import { PRINT_COMMAND_ICONS } from '../../modules/print/printIcons.js';
 import { PRINTERS_COMMAND_ICONS } from '../../modules/printers/icons.js';

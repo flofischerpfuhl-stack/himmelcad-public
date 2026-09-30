@@ -6,9 +6,9 @@ import type {
   EvaluationResult,
 } from '../../foundation/geometry-kernel/types.js';
 import { MIN_FEATURE_SIZE_MM } from '../../foundation/document/document.js';
-import { useSketchStore } from '../../sketch/session.js';
-import { SketchOverlay } from '../../sketch/ui/SketchOverlay.js';
-import { useSketchViewport } from '../../sketch/ui/useSketchViewport.js';
+import { useSketchStore } from '../../modules/sketching/session.js';
+import { SketchOverlay } from '../../modules/sketching/ui/SketchOverlay.js';
+import { useSketchViewport } from '../../modules/sketching/ui/useSketchViewport.js';
 import {
   consumedSketchIds,
   isSketchVisible,

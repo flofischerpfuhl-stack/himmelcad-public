@@ -5,13 +5,13 @@
  * re-evaluate through the normal document evaluation.
  */
 
-import type { SketchFeature } from '../foundation/sketch-solver/sketchFeature.js';
-import { useAssemblerStore } from '../foundation/commands/store.js';
-import { isPlainNumber } from '../foundation/document/expressions.js';
-import { rememberRegions } from '../foundation/sketch-solver/regionMemory.js';
+import type { SketchFeature } from '../../foundation/sketch-solver/sketchFeature.js';
+import { useAssemblerStore } from '../../foundation/commands/store.js';
+import { isPlainNumber } from '../../foundation/document/expressions.js';
+import { rememberRegions } from '../../foundation/sketch-solver/regionMemory.js';
 import { describeProblem } from './session.js';
-import { getSketchSolver } from '../foundation/sketch-solver/solverProvider.js';
-import { sketchDataOf, type SketchData } from '../foundation/sketch-solver/types.js';
+import { getSketchSolver } from '../../foundation/sketch-solver/solverProvider.js';
+import { sketchDataOf, type SketchData } from '../../foundation/sketch-solver/types.js';
 
 /**
  * Sets dimension `dimensionId` of sketch `featureId` to `input` (a number

@@ -6,15 +6,15 @@
  */
 import { useEffect, useRef, type MutableRefObject } from 'react';
 
-import { framePoint, frameUv, type SketchFrame } from '../../foundation/document/document.js';
-import { isPlanarFace, useAssemblerStore } from '../../foundation/commands/store.js';
-import type { CameraPose } from '../../platform/viewport/camera.js';
-import { viewProjectionMatrix } from '../../platform/viewport/camera.js';
-import { projectToScreen, rayPlaneIntersect, type Vec3 } from '../../platform/viewport/math.js';
-import type { PickTarget } from '../../platform/viewport/picking.js';
+import { framePoint, frameUv, type SketchFrame } from '../../../foundation/document/document.js';
+import { isPlanarFace, useAssemblerStore } from '../../../foundation/commands/store.js';
+import type { CameraPose } from '../../../platform/viewport/camera.js';
+import { viewProjectionMatrix } from '../../../platform/viewport/camera.js';
+import { projectToScreen, rayPlaneIntersect, type Vec3 } from '../../../platform/viewport/math.js';
+import type { PickTarget } from '../../../platform/viewport/picking.js';
 import { useSketchStore, type SketchSession } from '../session.js';
 import { poseLookingAlong, sketchBounds, sketchViewDirection } from '../sketchCamera.js';
-import type { Vec2 } from '../../foundation/sketch-solver/types.js';
+import type { Vec2 } from '../../../foundation/sketch-solver/types.js';
 import type { SketchViewApi } from './SketchOverlay.js';
 
 export interface SketchViewportRefs {

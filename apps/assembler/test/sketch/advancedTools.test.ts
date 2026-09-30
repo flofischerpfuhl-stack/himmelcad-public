@@ -10,7 +10,7 @@ import test from 'node:test';
 
 import { addCircle, addRectangle } from '../../renderer/src/foundation/sketch-solver/builders.js';
 import { trimAt } from '../../renderer/src/foundation/sketch-solver/edits.js';
-import type { Inference, SketchHit } from '../../renderer/src/sketch/inference.js';
+import type { Inference, SketchHit } from '../../renderer/src/modules/sketching/inference.js';
 import { detectRegions } from '../../renderer/src/foundation/sketch-solver/regions.js';
 import {
   initialTool,
@@ -20,7 +20,7 @@ import {
   type SketchToolKind,
   type ToolEvent,
   type ValueField,
-} from '../../renderer/src/sketch/tools.js';
+} from '../../renderer/src/modules/sketching/tools.js';
 import {
   EMPTY_SKETCH,
   entityMap,

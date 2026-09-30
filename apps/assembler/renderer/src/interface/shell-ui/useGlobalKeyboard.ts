@@ -26,7 +26,7 @@ import { useFixStore } from './fixReference.js';
 import { usePreferences } from '../../platform/input/preferences.js';
 import type { AssemblerState } from '../../foundation/commands/store.js';
 import { useWorkspaceStore } from './workspace.js';
-import { useSketchStore } from '../../sketch/session.js';
+import { useSketchStore } from '../../modules/sketching/session.js';
 
 /** History "Fix…" is a mode of its own: Esc leaves it before touching the selection. */
 const FIX_ESCAPE: readonly EscapeLayer[] = [

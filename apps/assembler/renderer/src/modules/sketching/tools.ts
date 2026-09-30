@@ -15,7 +15,7 @@ import {
   trimAt,
   type EditResult,
   type SnapTarget,
-} from '../foundation/sketch-solver/edits.js';
+} from '../../foundation/sketch-solver/edits.js';
 import {
   circleThrough,
   dist,
@@ -25,7 +25,7 @@ import {
   sampleCurve,
   sub,
   type Curve2,
-} from '../foundation/sketch-solver/geometry.js';
+} from '../../foundation/sketch-solver/geometry.js';
 import {
   ADVANCED_TOOL_KINDS,
   advancedInProgress,
@@ -39,7 +39,7 @@ import {
   type AdvancedValueField,
 } from './advancedTools.js';
 import type { Inference, SketchHit } from './inference.js';
-import { measure } from '../foundation/sketch-solver/measure.js';
+import { measure } from '../../foundation/sketch-solver/measure.js';
 import { regularPolygon } from './shapes.js';
 import {
   entityMap,
@@ -49,7 +49,7 @@ import {
   type SketchData,
   type SketchDimensionKind,
   type Vec2,
-} from '../foundation/sketch-solver/types.js';
+} from '../../foundation/sketch-solver/types.js';
 
 /** Smallest size a tool creates (line length, radius, rectangle side), mm. */
 export const MIN_SKETCH_SIZE = 0.1;

@@ -8,7 +8,7 @@
  * relative to the segment start → alignment guides with other points →
  * on-curve → grid.
  */
-import { DEFAULT_SKETCH_SNAPS, type SketchSnapToggles } from '../platform/input/snapToggles.js';
+import { DEFAULT_SKETCH_SNAPS, type SketchSnapToggles } from '../../platform/input/snapToggles.js';
 import {
   closestOnCurve,
   dist,
@@ -16,16 +16,16 @@ import {
   normalize,
   sketchCurves,
   sub,
-} from '../foundation/sketch-solver/geometry.js';
+} from '../../foundation/sketch-solver/geometry.js';
 import type { BodySnapTargets } from './bodySnaps.js';
-import type { SnapTarget } from '../foundation/sketch-solver/edits.js';
+import type { SnapTarget } from '../../foundation/sketch-solver/edits.js';
 import {
   entityMap,
   isCurve,
   ORIGIN_ID,
   type SketchData,
   type Vec2,
-} from '../foundation/sketch-solver/types.js';
+} from '../../foundation/sketch-solver/types.js';
 
 export type InferenceHint =
   | 'endpoint'

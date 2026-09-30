@@ -10,21 +10,21 @@
  * rejected with the solver's diagnosis (`sketchConflict`) and nothing
  * changes.
  */
-import type { EvaluatedSketch } from '../foundation/geometry-kernel/types.js';
+import type { EvaluatedSketch } from '../../foundation/geometry-kernel/types.js';
 
-import type { SketchFeature } from '../foundation/sketch-solver/sketchFeature.js';
+import type { SketchFeature } from '../../foundation/sketch-solver/sketchFeature.js';
 import {
   addCircle,
   addPolyline,
   addRectangle,
   withConstraints,
-} from '../foundation/sketch-solver/builders.js';
-import { deleteItems } from '../foundation/sketch-solver/edits.js';
-import { isPlainNumber } from '../foundation/document/expressions.js';
-import { adoptProjectedEntities } from '../foundation/sketch-solver/projection.js';
-import { detectRegions } from '../foundation/sketch-solver/regions.js';
-import { describeProblem } from '../sketch/session.js';
-import { getSketchSolver } from '../foundation/sketch-solver/solverProvider.js';
+} from '../../foundation/sketch-solver/builders.js';
+import { deleteItems } from '../../foundation/sketch-solver/edits.js';
+import { isPlainNumber } from '../../foundation/document/expressions.js';
+import { adoptProjectedEntities } from '../../foundation/sketch-solver/projection.js';
+import { detectRegions } from '../../foundation/sketch-solver/regions.js';
+import { describeProblem } from './session.js';
+import { getSketchSolver } from '../../foundation/sketch-solver/solverProvider.js';
 import {
   idAllocator,
   nextDimensionName,
@@ -35,9 +35,9 @@ import {
   type SketchDimensionKind,
   type SketchEntity,
   type Vec2,
-} from '../foundation/sketch-solver/types.js';
-import { validateSketchData } from '../foundation/sketch-solver/validation.js';
-import { ApiError } from '../foundation/commands/api/errors.js';
+} from '../../foundation/sketch-solver/types.js';
+import { validateSketchData } from '../../foundation/sketch-solver/validation.js';
+import { ApiError } from '../../foundation/commands/api/errors.js';
 
 type Json = Record<string, unknown>;
 

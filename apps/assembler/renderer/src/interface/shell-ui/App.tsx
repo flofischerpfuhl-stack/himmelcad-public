@@ -25,7 +25,6 @@ import { TopBar } from './TopBar.js';
 import { useGlobalKeyboard } from './useGlobalKeyboard.js';
 import { InteropChrome } from '../../interop/ui/InteropChrome.js';
 import { useAssemblerStore, type SelectionItem } from '../../foundation/commands/store.js';
-import { SketchChrome } from '../../sketch/ui/SketchChrome.js';
 import { Viewport } from '../../platform/viewport/Viewport.js';
 import styles from './App.module.css';
 
@@ -97,10 +96,9 @@ export function App(): JSX.Element {
         </div>
       ) : null}
       <ToolSession state={state} />
-      <SketchChrome />
       {state.viewState.sectionEnabled ? <SectionControls state={state} /> : null}
       {overlayPanels.map((panel) => {
-        // The modules' floating chrome and dialogs (Print mode, Slicers…), registered with
+        // The modules' floating chrome and dialogs (sketch chrome, Print mode, Slicers…), registered with
         // defineModuleUi; each decides its own visibility.
         const Panel = panel.component;
         return <Panel key={panel.id} state={state} onContextMenu={openContextMenuAt} />;

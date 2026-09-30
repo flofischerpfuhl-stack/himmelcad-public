@@ -20,7 +20,7 @@ import {
 } from '../../foundation/document/parameters.js';
 import { ApiError } from '../../foundation/commands/api/errors.js';
 import { paramsOf } from '../../foundation/commands/api/describe.js';
-import { addShape, type ShapeResult, type SketchShape } from '../../api/sketchApi.js';
+import { addShape, type ShapeResult, type SketchShape } from '../../modules/sketching/sketchApi.js';
 import {
   resolveEdgeInput,
   resolveFaceInput,

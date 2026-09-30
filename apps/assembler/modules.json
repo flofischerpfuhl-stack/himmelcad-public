@@ -75,13 +75,7 @@
       "id": "sketching",
       "layer": "domain",
       "summary": "Sketch mode: session, drawing tools, inference/snapping, sketch commands, sketch overlay and chrome, sketch agent API.",
-      "paths": [
-        "renderer/src/modules/sketching/",
-        "renderer/src/sketch/",
-        "renderer/src/model/commands/sketchCommands.ts",
-        "renderer/src/api/sketchApi.ts",
-        "renderer/src/api/sketchAdvancedApi.ts"
-      ]
+      "paths": ["renderer/src/modules/sketching/"]
     },
     {
       "id": "modeling",

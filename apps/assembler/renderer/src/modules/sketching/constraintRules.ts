@@ -3,7 +3,7 @@
  * constraints valid for the current selection) and the constraints to add.
  * Pure; used by the sketch commands, the palette and tests.
  */
-import { splineTangentPoint } from '../foundation/sketch-solver/splineTangent.js';
+import { splineTangentPoint } from '../../foundation/sketch-solver/splineTangent.js';
 import {
   curveEnds,
   curvePointIds,
@@ -16,7 +16,7 @@ import {
   type SketchCurve,
   type SketchData,
   type SketchEntity,
-} from '../foundation/sketch-solver/types.js';
+} from '../../foundation/sketch-solver/types.js';
 
 export type ConstraintPlan =
   | { ok: true; constraints: Omit<SketchConstraint, 'id'>[] }

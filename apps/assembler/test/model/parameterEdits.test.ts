@@ -17,7 +17,7 @@ import {
   useAssemblerStore,
 } from '../../renderer/src/foundation/commands/store.js';
 import { addRectangle } from '../../renderer/src/foundation/sketch-solver/builders.js';
-import { setSketchDimension } from '../../renderer/src/sketch/featureOps.js';
+import { setSketchDimension } from '../../renderer/src/modules/sketching/featureOps.js';
 import { rememberRegions } from '../../renderer/src/foundation/sketch-solver/regionMemory.js';
 import { setSketchSolverFactory } from '../../renderer/src/foundation/sketch-solver/solverProvider.js';
 import { EMPTY_SKETCH } from '../../renderer/src/foundation/sketch-solver/types.js';

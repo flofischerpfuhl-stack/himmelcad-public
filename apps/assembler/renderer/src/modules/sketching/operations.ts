@@ -9,7 +9,7 @@ import {
   SketchBuilder,
   type EditResult,
   type SnapTarget,
-} from '../foundation/sketch-solver/edits.js';
+} from '../../foundation/sketch-solver/edits.js';
 import {
   add,
   cross,
@@ -18,7 +18,7 @@ import {
   normalize,
   scale,
   sub,
-} from '../foundation/sketch-solver/geometry.js';
+} from '../../foundation/sketch-solver/geometry.js';
 import { rotateAbout } from './shapes.js';
 import {
   curvePointIds,
@@ -31,7 +31,7 @@ import {
   type SketchData,
   type SketchEntity,
   type Vec2,
-} from '../foundation/sketch-solver/types.js';
+} from '../../foundation/sketch-solver/types.js';
 
 /** Curves and loose points of a selection (curves bring their defining points). */
 function selectionGeometry(
