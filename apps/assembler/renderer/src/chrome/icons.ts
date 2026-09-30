@@ -37,6 +37,7 @@ import {
   Scissors,
   Spline,
   SquareDashedMousePointer,
+  SunMedium,
   Trash2,
   FileInput,
   Triangle,
@@ -59,6 +60,7 @@ export const GROUP_ICON: Record<CommandGroup, LucideIcon> = {
   modes: Scan,
   edit: SquareDashedMousePointer,
   view: Axis3D,
+  display: SunMedium,
   file: Box,
 };
 

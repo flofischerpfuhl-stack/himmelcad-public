@@ -98,13 +98,36 @@ export interface SectionView {
   axis: SectionAxis;
   offset: number;
   flipped: boolean;
+  /**
+   * Face-aligned plane: replaces `axis`; `offset` is then the distance from
+   * `origin` along `normal` (unit).
+   */
+  plane?: { normal: Vec3; origin: Vec3 } | null;
+}
+
+/** Unit normal of the section's plane before Flip (the axis or the face normal). */
+function planeUnit(section: SectionView): Vec3 {
+  return section.plane ? section.plane.normal : AXIS_UNIT[section.axis];
 }
 
 /** Unit normal of the clip plane: material on its positive side is cut away. */
 export function sectionNormal(section: SectionView): Vec3 {
-  const unit = AXIS_UNIT[section.axis];
+  const unit = planeUnit(section);
   if (!section.flipped) return unit;
   return [-unit[0] || 0, -unit[1] || 0, -unit[2] || 0]; // no -0 components
+}
+
+/** `dot(p, planeUnit)` of points on the (unflipped) section plane. */
+export function sectionPlaneDistance(section: SectionView): number {
+  return section.plane
+    ? dot(section.plane.normal, section.plane.origin) + section.offset
+    : section.offset;
+}
+
+/** The clip for `gl.ts`: material with `dot(p, normal) > offset` is cut away. */
+export function sectionClip(section: SectionView): { normal: Vec3; offset: number } {
+  const sign = section.flipped ? -1 : 1;
+  return { normal: sectionNormal(section), offset: sectionPlaneDistance(section) * sign };
 }
 
 /** Handle at the centre of the (bounded) section plane, pointing to the removed side. */
@@ -116,7 +139,7 @@ export function sectionHandle(section: SectionView, bounds: Bounds3 | null): Axi
     base: centre,
     dir: sectionNormal(section),
     length: Math.max(12, extent * 0.22),
-    dragDir: AXIS_UNIT[section.axis],
+    dragDir: planeUnit(section),
     value: section.offset,
   };
 }
@@ -125,8 +148,30 @@ function sectionCentre(section: SectionView, bounds: Bounds3 | null): Vec3 {
   const centre: [number, number, number] = bounds
     ? [...boxCentre(bounds.min, bounds.max)]
     : [0, 0, 0];
+  if (section.plane) {
+    // The model centre projected onto the plane.
+    const n = section.plane.normal;
+    const d = sectionPlaneDistance(section) - dot(centre, n);
+    return [centre[0] + n[0] * d, centre[1] + n[1] * d, centre[2] + n[2] * d];
+  }
   centre[AXIS_INDEX[section.axis]] = section.offset;
   return centre;
+}
+
+/** Offsets the section handle may be dragged to: the model's extent along the plane normal plus a margin. */
+export function sectionOffsetRange(section: SectionView, bounds: Bounds3 | null): [number, number] {
+  if (!bounds) return [-100, 100];
+  const n = planeUnit(section);
+  const base = section.plane ? dot(section.plane.normal, section.plane.origin) : 0;
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (const corner of boxCorners(bounds)) {
+    const d = dot(corner, n) - base;
+    lo = Math.min(lo, d);
+    hi = Math.max(hi, d);
+  }
+  const margin = Math.max(1, (hi - lo) * 0.05);
+  return [lo - margin, hi + margin];
 }
 
 /**
@@ -138,6 +183,7 @@ export function sectionOutline(
   section: SectionView,
   bounds: Bounds3 | null,
 ): [Vec3, Vec3, Vec3, Vec3] {
+  if (section.plane) return planeOutline(section, bounds);
   const min: [number, number, number] = bounds ? [...bounds.min] : [-50, -50, -50];
   const max: [number, number, number] = bounds ? [...bounds.max] : [50, 50, 50];
   const largest = Math.max(max[0] - min[0], max[1] - min[1], max[2] - min[2]);
@@ -156,6 +202,50 @@ export function sectionOutline(
   const v0 = min[v] - margin;
   const v1 = max[v] + margin;
   return [corner(u0, v0), corner(u1, v0), corner(u1, v1), corner(u0, v1)];
+}
+
+/** Outline of a face-aligned plane: the model's box projected into the plane, plus a margin. */
+function planeOutline(section: SectionView, bounds: Bounds3 | null): [Vec3, Vec3, Vec3, Vec3] {
+  const n = section.plane!.normal;
+  const ref: Vec3 = Math.abs(n[2]) < 0.9 ? [0, 0, 1] : [1, 0, 0];
+  const u = normalize(cross(ref, n));
+  const v = cross(n, u);
+  const d = sectionPlaneDistance(section);
+  const corners = bounds ? boxCorners(bounds) : [[-50, -50, -50] as Vec3, [50, 50, 50] as Vec3];
+  let u0 = Infinity;
+  let u1 = -Infinity;
+  let v0 = Infinity;
+  let v1 = -Infinity;
+  for (const c of corners) {
+    u0 = Math.min(u0, dot(c, u));
+    u1 = Math.max(u1, dot(c, u));
+    v0 = Math.min(v0, dot(c, v));
+    v1 = Math.max(v1, dot(c, v));
+  }
+  const margin = Math.max(5, Math.max(u1 - u0, v1 - v0) * 0.1);
+  const at = (cu: number, cv: number): Vec3 => [
+    n[0] * d + u[0] * cu + v[0] * cv,
+    n[1] * d + u[1] * cu + v[1] * cv,
+    n[2] * d + u[2] * cu + v[2] * cv,
+  ];
+  return [
+    at(u0 - margin, v0 - margin),
+    at(u1 + margin, v0 - margin),
+    at(u1 + margin, v1 + margin),
+    at(u0 - margin, v1 + margin),
+  ];
+}
+
+function boxCorners(bounds: Bounds3): Vec3[] {
+  const out: Vec3[] = [];
+  for (const x of [bounds.min[0], bounds.max[0]])
+    for (const y of [bounds.min[1], bounds.max[1]])
+      for (const z of [bounds.min[2], bounds.max[2]]) out.push([x, y, z]);
+  return out;
+}
+
+function cross(a: Vec3, b: Vec3): Vec3 {
+  return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
 }
 
 /** Arrow tip (where the value chip sits). */

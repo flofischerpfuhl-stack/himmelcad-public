@@ -26,7 +26,9 @@ import {
   referenceMeshToBody,
   type ReferenceMesh,
 } from '../referenceMesh.js';
+import { parsePins, serializePins, useMeasureStore } from '../measureStore.js';
 import { useAssemblerStore } from '../store.js';
+import { viewDisplayToProject } from '../viewDisplay.js';
 import { parseSavedViews, useWorkspaceStore } from '../workspace.js';
 import {
   CURRENT_SCHEMA_VERSION,
@@ -157,15 +159,20 @@ function restoreExtras(project: ProjectFileV1 | null): void {
 /** Captures the current view-only state for persistence; never affects geometry or undo history. */
 function currentViewState(): ProjectViewState {
   const doc = useAssemblerStore.getState();
+  const display = viewDisplayToProject(doc.viewState);
+  const measurements = serializePins(useMeasureStore.getState().pins);
   return {
-    displayMode: doc.viewState.displayMode,
+    displayMode: display.displayMode,
+    display: display.display,
     camera: doc.viewState.cameraRequest ? { preset: doc.viewState.cameraRequest.preset } : {},
     section: {
       enabled: doc.viewState.sectionEnabled,
       axis: doc.viewState.sectionAxis,
       offset: doc.viewState.sectionOffset,
       flipped: doc.viewState.sectionFlipped,
+      ...display.sectionExtras,
     },
+    ...(measurements.length > 0 ? { measurements } : {}),
     grid: {
       visible: doc.viewState.gridVisible,
       snap: doc.viewState.snapToGrid,
@@ -256,6 +263,7 @@ async function currentProjectPayload(): Promise<string> {
 function applyProjectExtras(project: ProjectFileV1 | null): void {
   useItemsStore.getState().setItemsMeta(project?.items ?? EMPTY_ITEMS_META);
   useWorkspaceStore.getState().setSavedViews(parseSavedViews(project?.viewState?.savedViews));
+  useMeasureStore.getState().setPins(parsePins(project?.viewState?.measurements));
 }
 
 /** Node's `Timeout` (unlike the browser's numeric handle) exposes `unref()` so it never keeps a test process alive. */
@@ -312,6 +320,9 @@ function ensureSubscription(): void {
   });
   useWorkspaceStore.subscribe((state, prev) => {
     if (state.savedViews !== prev.savedViews) markDirty();
+  });
+  useMeasureStore.subscribe((state, prev) => {
+    if (state.pins !== prev.pins) markDirty();
   });
   ensureAutosave();
 }

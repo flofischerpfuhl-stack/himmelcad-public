@@ -12,6 +12,7 @@ const GROUP_TITLE: Record<CommandGroup, string> = {
   modes: 'Modes',
   edit: 'Edit & selection',
   view: 'View',
+  display: 'Display',
   file: 'File',
 };
 
@@ -21,6 +22,7 @@ const GROUP_ORDER: CommandGroup[] = [
   'sketch',
   'edit',
   'view',
+  'display',
   'modes',
   'file',
 ];

@@ -1,0 +1,54 @@
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 320px;
+  font-family: var(--hc-font-ui);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.label {
+  font-size: 11px;
+  color: var(--hc-fg-muted);
+}
+
+.custom {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.custom > * {
+  width: 96px;
+}
+
+.times,
+.unit {
+  width: auto;
+  font-size: 12px;
+  color: var(--hc-fg-muted);
+}
+
+.readout {
+  margin: 0;
+  font-family: var(--hc-font-mono);
+  font-size: 12px;
+  color: var(--hc-fg-default);
+}
+
+.note {
+  margin: 0;
+  font-size: 11px;
+  color: var(--hc-fg-subtle);
+}
+
+.error {
+  margin: 0;
+  font-size: 11px;
+  color: var(--hc-error-fg);
+}

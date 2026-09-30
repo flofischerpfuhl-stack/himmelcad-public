@@ -1,23 +1,18 @@
 /**
  * Right column: below the viewport-owned view-cube area (kept free —
  * top:12/right:12, ~150x150), a small strip with the snap-to-grid toggle +
- * grid-step readout and the Shaded/Wireframe/X-Ray display-mode menu;
- * below it, the History panel toggle.
+ * grid-step readout and the Display popover (modes, edge/grid/axes toggles,
+ * `DisplayMenu.tsx`); below it, the History panel toggle.
  */
 import { History as HistoryIcon, Magnet } from 'lucide-react';
 
 import { Select, Tooltip } from '@himmelcad/ui';
 
-import type { AssemblerState, DisplayMode } from '../model/store.js';
+import type { AssemblerState } from '../model/store.js';
+import { DisplayMenu } from './DisplayMenu.js';
 import styles from './RightDock.module.css';
 
 const GRID_STEPS = [1, 2, 5, 10, 20, 50];
-
-const DISPLAY_MODE_OPTIONS: { value: DisplayMode; label: string }[] = [
-  { value: 'shaded', label: 'Shaded' },
-  { value: 'wireframe', label: 'Wireframe' },
-  { value: 'xray', label: 'X-Ray' },
-];
 
 export function RightDock({ state }: { state: AssemblerState }): JSX.Element {
   return (
@@ -44,14 +39,8 @@ export function RightDock({ state }: { state: AssemblerState }): JSX.Element {
             onChange={(event) => state.setGridStep(Number(event.currentTarget.value))}
           />
         </div>
-        <span className={styles.label}>Display mode</span>
-        <Select
-          wrapClassName={styles.select}
-          aria-label="Display mode"
-          value={state.viewState.displayMode}
-          options={DISPLAY_MODE_OPTIONS}
-          onChange={(event) => state.setDisplayMode(event.currentTarget.value as DisplayMode)}
-        />
+        <span className={styles.label}>Display</span>
+        <DisplayMenu state={state} />
       </div>
       <Tooltip content="History (Ctrl+Alt+H)">
         <button

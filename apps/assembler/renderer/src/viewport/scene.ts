@@ -1,30 +1,64 @@
 /**
- * Turns document/view/selection state into the flat GL batches `gl.ts`
- * draws, plus the picking id table for the same frame. Kept separate from
+ * Turns document/view/selection state into the GL batches `gl.ts` draws,
+ * plus the picking id table for the same frame. Kept separate from
  * `Viewport.tsx` so the "what does the scene look like" logic is easy to
  * read without React/pointer-event noise. Not unit tested (feeds straight
- * into WebGL) but written as pure data-in/data-out.
+ * into WebGL) but written as pure data-in/data-out; the pure pieces it
+ * builds on (`bodyGeometry.ts`, `displayModes.ts`, `camera.ts#depthRange`,
+ * `toolAnchors.ts`) are.
+ *
+ * Body geometry is passed to the GPU as the kernel's own stable arrays
+ * (indexed mesh, concatenated edges, silhouette candidates), so a frame
+ * allocates almost nothing for bodies; per-frame arrays are limited to the
+ * grid, highlights and tool chrome.
  */
 import type { Body, EvaluatedSketch } from '../kernel/types.js';
 import type { Bounds3 } from '../model/modeling.js';
 import { referenceMeshIdOf } from '../model/referenceMesh.js';
-import type { DisplayMode, SectionAxis, SelectionItem } from '../model/store.js';
+import type { DisplayMode, SectionAxis, SectionPlane, SelectionItem } from '../model/store.js';
 import {
   billboardEye,
+  cameraBasis,
+  depthRange,
+  eyeOf,
+  isOrthographic,
+  viewHeightAt,
   viewProjectionMatrix,
   worldPerPixel as cameraWorldPerPixel,
   type CameraPose,
 } from './camera.js';
 import {
-  buildEdgeRibbon,
-  buildPolylineRibbon,
-  buildScreenRibbon,
-  expandBody,
-  translatePositions,
-} from './geometry.js';
-import { sectionNormal, sectionOutline, type AxisHandle } from './toolAnchors.js';
+  bodyGeometry,
+  sectionContour,
+  silhouetteCandidates,
+  vertexCurvature,
+} from './bodyGeometry.js';
+import {
+  curvatureRange,
+  materialPreset,
+  SHADED_MATERIAL,
+  type MaterialId,
+} from './displayModes.js';
+import { buildEdgeRibbon, buildPolylineRibbon, buildScreenRibbon } from './geometry.js';
+import {
+  sectionClip,
+  sectionOutline,
+  sectionPlaneDistance,
+  type AxisHandle,
+  type SectionView,
+} from './toolAnchors.js';
 import { PickTable, type PickTarget, type ToolHandleKind } from './picking.js';
-import type { FlatBatch, IdBatch, SceneFrame, TriBatch } from './gl.js';
+import type {
+  DrawBatch,
+  GroundShadow,
+  IdBatch,
+  LineBatch,
+  RGB,
+  SceneFrame,
+  SectionCaps,
+  Shading,
+  TriBatch,
+} from './gl.js';
 import type { ViewportColors } from './theme.js';
 import type { Vec3 } from './math.js';
 
@@ -35,6 +69,10 @@ export interface SectionState {
   flipped: boolean;
   /** Visible model bounds: the plane outline is limited to them (+ margin). */
   bounds: Bounds3 | null;
+  /** Face-aligned plane (overrides `axis`). */
+  plane?: SectionPlane | null;
+  /** 2D "section only": caps and cut outlines, no bodies. */
+  sectionOnly?: boolean;
 }
 
 /** A tool drag handle (fillet/chamfer size, shell thickness, section offset). */
@@ -121,19 +159,33 @@ export interface SceneInput {
   pivot?: { point: Vec3; hovered: boolean; pickable?: boolean } | null;
   /** Multiplies the edge pick widths (e.g. 2 for touch/coarse pointers). Default 1. */
   hitScale?: number;
+  /** B-rep edge lines on shaded bodies. Default `true`. */
+  edgesVisible?: boolean;
+  /** Hidden edges, dashed. Default `false`. */
+  hiddenEdgesVisible?: boolean;
+  /** World axes. Default `true`. */
+  axesVisible?: boolean;
+  /** Material per body id ("Visualized"). */
+  materials?: ReadonlyMap<string, MaterialId>;
+  /** Screen-space ambient occlusion and the ground contact shadow. Default `true`. */
+  highQuality?: boolean;
+  /** Measurement geometry of the Measure panel (pinned items, the current pick). */
+  measureLines?: readonly LineBatch[];
+  /** Image export: no picking data. */
+  forExport?: boolean;
+  /**
+   * Mode overlays on body surfaces (e.g. Print mode overhangs), drawn right
+   * after the shaded bodies — below edges and selection highlights.
+   */
+  extraOverlays?: readonly DrawBatch[];
+  /** Mode overlays drawn after everything else (e.g. the translucent build volume). */
+  extraOverlaysLast?: readonly DrawBatch[];
   /**
    * Geometry a feature error points at (the edge a fillet fails on, the
    * outline of a face a draft cannot tilt) as world line-segment pairs of
    * the committed model, drawn in the error colour.
    */
   errorHighlight?: { segments: readonly Float32Array[] } | null;
-  /**
-   * Mode overlays on body surfaces (e.g. Print mode overhangs), drawn right
-   * after the shaded bodies — below edges and selection highlights.
-   */
-  extraOverlays?: readonly FlatBatch[];
-  /** Mode overlays drawn after everything else (e.g. the translucent build volume). */
-  extraOverlaysLast?: readonly FlatBatch[];
 }
 
 /** An angle handle: arc about `axis` through `center`, from `ref` by `value` degrees. */
@@ -159,6 +211,12 @@ export interface BuiltScene {
 
 /** Width of selected/hovered edges, CSS pixels. */
 const HIGHLIGHT_EDGE_PX = 3;
+/** Width of body edges and silhouettes, CSS pixels. */
+const EDGE_PX = 1.25;
+/** Edge pick tolerance, CSS pixels (either side ≈ half). */
+const EDGE_HIT_PX = 8;
+/** Relative depth offset of lines towards the eye (see `SceneFrame.depth.lineBias`). */
+const LINE_DEPTH_BIAS = 5e-4;
 
 function isSelected(selection: readonly SelectionItem[], item: SelectionItem): boolean {
   return selection.some((s) => selectionEquals(s, item));
@@ -186,26 +244,14 @@ function selectionEquals(a: SelectionItem, b: SelectionItem): boolean {
   }
 }
 
-/** Concatenates line-segment lists (xyz pairs) into one array, optionally translated. */
-function concatSegments(
-  lists: readonly Float32Array[],
-  delta: readonly [number, number, number] | null,
-): Float32Array {
-  let length = 0;
-  for (const list of lists) length += list.length;
-  const out = new Float32Array(length);
-  let offset = 0;
-  for (const list of lists) {
-    out.set(list, offset);
-    offset += list.length;
-  }
-  return delta ? translatePositions(out, delta) : out;
-}
-
 function lineColors(vertexCount: number, color: readonly [number, number, number], alpha: number) {
   const colors = new Float32Array(vertexCount * 4);
   for (let i = 0; i < vertexCount; i += 1) colors.set([color[0], color[1], color[2], alpha], i * 4);
   return colors;
+}
+
+function rgba(color: readonly [number, number, number], alpha: number) {
+  return [color[0], color[1], color[2], alpha] as const;
 }
 
 function pushFlatLine(
@@ -231,47 +277,94 @@ function pushFlatQuad(
   for (let i = 0; i < 6; i += 1) target.colors.push(color[0], color[1], color[2], alpha);
 }
 
+const arraySerials = new WeakMap<object, number>();
+let nextArraySerial = 1;
+/** A stable small number per array object (shadow-map cache key). */
+function arraySerial(array: object): number {
+  let serial = arraySerials.get(array);
+  if (serial === undefined) {
+    serial = nextArraySerial++;
+    arraySerials.set(array, serial);
+  }
+  return serial;
+}
+
+function unionBounds(bodies: readonly Body[]): Bounds3 | null {
+  if (bodies.length === 0) return null;
+  const min: [number, number, number] = [Infinity, Infinity, Infinity];
+  const max: [number, number, number] = [-Infinity, -Infinity, -Infinity];
+  for (const b of bodies) {
+    for (let i = 0; i < 3; i += 1) {
+      min[i] = Math.min(min[i]!, b.min[i]!);
+      max[i] = Math.max(max[i]!, b.max[i]!);
+    }
+  }
+  return { min, max };
+}
+
+function expandBounds(bounds: Bounds3 | null, points: readonly Vec3[]): Bounds3 | null {
+  if (points.length === 0) return bounds;
+  const min: [number, number, number] = bounds ? [...bounds.min] : [...points[0]!];
+  const max: [number, number, number] = bounds ? [...bounds.max] : [...points[0]!];
+  for (const p of points) {
+    for (let i = 0; i < 3; i += 1) {
+      min[i] = Math.min(min[i]!, p[i]!);
+      max[i] = Math.max(max[i]!, p[i]!);
+    }
+  }
+  return { min, max };
+}
+
+function padBounds(bounds: Bounds3 | null): Bounds3 | null {
+  if (!bounds) return null;
+  const diag = Math.hypot(...sub3(bounds.max, bounds.min));
+  // Tool chrome is included explicitly (handle points); this only covers
+  // section-plane margins and line widths.
+  const pad = Math.max(1, diag * 0.12);
+  return {
+    min: [bounds.min[0] - pad, bounds.min[1] - pad, bounds.min[2] - pad],
+    max: [bounds.max[0] + pad, bounds.max[1] + pad, bounds.max[2] + pad],
+  };
+}
+
 /** Builds the full frame of GL batches plus the picking table for one render. */
 export function buildScene(input: SceneInput): BuiltScene {
   const pickTable = new PickTable();
-  const viewProj = viewProjectionMatrix(input.pose, input.aspect);
   // Orthographic views: a far eye along the view direction (parallel rays) for ribbons/billboards.
   const eye = billboardEye(input.pose);
   const hitScale = input.hitScale ?? 1;
   const edgeHitWidth = (distance: number): number => baseEdgeHitWidth(distance) * hitScale;
 
   const lit: TriBatch[] = [];
-  const flat: FlatBatch[] = [];
+  const underlay: DrawBatch[] = [];
+  const flat: DrawBatch[] = [];
   const idBatches: IdBatch[] = [];
   /** Highlights drawn after all bodies, so no later body pass paints over them. */
-  const overlays: FlatBatch[] = [];
+  const overlays: DrawBatch[] = [];
 
   const dpr = input.dpr ?? 1;
   const cssHeight = Math.max(1, input.viewportHeightPx / dpr);
   const worldPerPixel = (distance: number): number =>
     cameraWorldPerPixel(input.pose, distance, cssHeight);
+  /** A selection/hover highlight line: crisp where visible plus an "on top" ghost. */
+  const highlightLines = (
+    segments: Float32Array,
+    color: readonly [number, number, number],
+    widthPx = HIGHLIGHT_EDGE_PX,
+    range?: { first: number; count: number },
+    ghostAlpha = 0.4,
+  ): void => {
+    if (segments.length === 0) return;
+    const base = { kind: 'lines' as const, segments, widthPx, ...(range ?? {}) };
+    overlays.push({ ...base, color: rgba(color, 1), depthTest: true });
+    // "On top" ghost: the hidden part of a selected edge stays readable.
+    overlays.push({ ...base, color: rgba(color, ghostAlpha), depthTest: false });
+  };
   const thickEdges = (
     segments: Float32Array,
     color: readonly [number, number, number],
     widthPx = HIGHLIGHT_EDGE_PX,
-  ): void => {
-    if (segments.length === 0) return;
-    const ribbon = buildScreenRibbon(segments, eye, widthPx, worldPerPixel);
-    const vertexCount = ribbon.length / 3;
-    overlays.push({
-      positions: ribbon,
-      colors: lineColors(vertexCount, color, 1),
-      mode: 'triangles',
-      depthTest: true,
-    });
-    // "On top" ghost: the hidden part of a selected edge stays readable.
-    overlays.push({
-      positions: ribbon,
-      colors: lineColors(vertexCount, color, 0.4),
-      mode: 'triangles',
-      depthTest: false,
-    });
-  };
+  ): void => highlightLines(segments, color, widthPx);
   const accentBodies = new Set(input.previewAccentBodyIds ?? []);
   const newPreviewBodies = new Set(input.previewNewBodyIds ?? []);
 
@@ -282,14 +375,23 @@ export function buildScene(input: SceneInput): BuiltScene {
     if (isolatedSet && !isolatedSet.has(b.id)) return false;
     return true;
   });
+  const drawnBounds = unionBounds(visibleBodies);
 
-  const isWireframe = input.displayMode === 'wireframe';
-  const isXray = input.displayMode === 'xray';
+  const mode = input.displayMode;
+  const isWireframe = mode === 'wireframe';
+  const isXray = mode === 'xray';
+  const sectionOn = input.section.enabled;
+  const sectionOnly = sectionOn && (input.section.sectionOnly ?? false);
+  const edgesOn = isWireframe || (input.edgesVisible ?? true);
+  const shading: Shading = mode === 'zebra' ? 'zebra' : mode === 'curvature' ? 'curvature' : 'lit';
+  const highQuality = input.highQuality ?? true;
+  const lineInk = isWireframe || isXray ? input.colors.wire : input.colors.bodyEdge;
 
   // ---- Grid (XY plane, z = 0) ----------------------------------------------
-  if (input.gridVisible) {
+  const gridExtent = Math.min(20000, Math.max(200, input.pose.distance * 6));
+  if (input.gridVisible && !sectionOnly) {
     const step = Math.max(0.001, input.gridStep);
-    const extent = Math.min(20000, Math.max(200, input.pose.distance * 6));
+    const extent = gridExtent;
     const maxLines = 400;
     const count = Math.min(maxLines, Math.ceil(extent / step));
     const minor = { positions: [] as number[], colors: [] as number[] };
@@ -305,38 +407,26 @@ export function buildScene(input: SceneInput): BuiltScene {
         const d = Math.hypot(x - input.pose.target[0], y - input.pose.target[1]);
         return Math.max(0, 1 - d / fadeRadius) * (isMajor ? 0.55 : 0.28);
       };
-      const vA: Vec3 = [coord, -extent, 0];
-      const vB: Vec3 = [coord, extent, 0];
       pushFlatLine(
         target,
-        vA,
-        vB,
+        [coord, -extent, 0],
+        [coord, extent, 0],
         color,
         Math.min(fadeAt(coord, -extent), fadeAt(coord, extent)) || 0.05,
       );
-      const hA: Vec3 = [-extent, coord, 0];
-      const hB: Vec3 = [extent, coord, 0];
       pushFlatLine(
         target,
-        hA,
-        hB,
+        [-extent, coord, 0],
+        [extent, coord, 0],
         color,
         Math.min(fadeAt(-extent, coord), fadeAt(extent, coord)) || 0.05,
       );
     }
-    if (minor.positions.length > 0) {
-      flat.push({
-        positions: new Float32Array(minor.positions),
-        colors: new Float32Array(minor.colors),
-        mode: 'lines',
-        depthTest: true,
-        noClip: true,
-      });
-    }
-    if (major.positions.length > 0) {
-      flat.push({
-        positions: new Float32Array(major.positions),
-        colors: new Float32Array(major.colors),
+    for (const lines of [minor, major]) {
+      if (lines.positions.length === 0) continue;
+      underlay.push({
+        positions: new Float32Array(lines.positions),
+        colors: new Float32Array(lines.colors),
         mode: 'lines',
         depthTest: true,
         noClip: true,
@@ -345,177 +435,236 @@ export function buildScene(input: SceneInput): BuiltScene {
   }
 
   // ---- World axes (Shapr3D-style red/green/blue) ---------------------------
-  {
+  if ((input.axesVisible ?? true) && !sectionOnly) {
     const axisLen = Math.max(50, input.pose.distance * 0.6);
     const axes: { color: readonly [number, number, number]; to: Vec3 }[] = [
       { color: input.colors.axisX, to: [axisLen, 0, 0] },
       { color: input.colors.axisY, to: [0, axisLen, 0] },
       { color: input.colors.axisZ, to: [0, 0, axisLen] },
     ];
-    const positions: number[] = [];
-    const colors: number[] = [];
     for (const axis of axes) {
-      positions.push(0, 0, 0, axis.to[0], axis.to[1], axis.to[2]);
-      colors.push(
-        axis.color[0],
-        axis.color[1],
-        axis.color[2],
-        0.9,
-        axis.color[0],
-        axis.color[1],
-        axis.color[2],
-        0.9,
-      );
+      underlay.push({
+        kind: 'lines',
+        segments: new Float32Array([0, 0, 0, axis.to[0], axis.to[1], axis.to[2]]),
+        color: rgba(axis.color, 0.9),
+        widthPx: 1.5,
+        depthTest: true,
+        noClip: true,
+      });
     }
-    flat.push({
-      positions: new Float32Array(positions),
-      colors: new Float32Array(colors),
-      mode: 'lines',
-      depthTest: true,
-      noClip: true,
-    });
   }
 
   // ---- Section clip -----------------------------------------------------
   // Material on the positive side of `normal` (offset along it) is cut away;
   // Flip reverses the normal. The plane's outline covers the visible model's
   // extent plus a margin, not the whole screen.
-  const clipNormal = sectionNormal(input.section);
-  const flipSign = input.section.flipped ? -1 : 1;
-  const clip = {
-    enabled: input.section.enabled,
-    normal: clipNormal,
-    offset: input.section.offset * flipSign,
+  const sectionView: SectionView = {
+    axis: input.section.axis,
+    offset: input.section.offset,
+    flipped: input.section.flipped,
+    plane: input.section.plane ?? null,
   };
-  const sectionPlaneBatches: FlatBatch[] = [];
-  if (input.section.enabled) {
-    const corners = sectionOutline(input.section, input.section.bounds);
-    const outline = { positions: [] as number[], colors: [] as number[] };
-    for (let i = 0; i < 4; i += 1) {
-      pushFlatLine(outline, corners[i]!, corners[(i + 1) % 4]!, input.colors.sketchOutline, 0.85);
+  const clipPlane = sectionClip(sectionView);
+  const clip = { enabled: sectionOn, normal: clipPlane.normal, offset: clipPlane.offset };
+  const sectionPlaneBatches: DrawBatch[] = [];
+  let caps: SectionCaps | null = null;
+  if (sectionOn) {
+    const corners = sectionOutline(sectionView, input.section.bounds);
+    if (!sectionOnly) {
+      const outline = { positions: [] as number[], colors: [] as number[] };
+      for (let i = 0; i < 4; i += 1) {
+        pushFlatLine(outline, corners[i]!, corners[(i + 1) % 4]!, input.colors.sketchOutline, 0.85);
+      }
+      const fill = { positions: [] as number[], colors: [] as number[] };
+      pushFlatQuad(fill, corners, input.colors.sketchOutline, 0.07);
+      // Drawn after the bodies (depth-tested) so the model shows through the tint.
+      sectionPlaneBatches.push(
+        {
+          positions: new Float32Array(fill.positions),
+          colors: new Float32Array(fill.colors),
+          mode: 'triangles',
+          depthTest: true,
+          noClip: true,
+        },
+        {
+          positions: new Float32Array(outline.positions),
+          colors: new Float32Array(outline.colors),
+          mode: 'lines',
+          depthTest: false,
+          noClip: true,
+        },
+      );
     }
-    const fill = { positions: [] as number[], colors: [] as number[] };
-    pushFlatQuad(fill, corners, input.colors.sketchOutline, 0.07);
-    // Drawn after the bodies (depth-tested) so the model shows through the tint.
-    sectionPlaneBatches.push(
-      {
-        positions: new Float32Array(fill.positions),
-        colors: new Float32Array(fill.colors),
-        mode: 'triangles',
-        depthTest: true,
-        noClip: true,
-      },
-      {
-        positions: new Float32Array(outline.positions),
-        colors: new Float32Array(outline.colors),
-        mode: 'lines',
-        depthTest: false,
-        noClip: true,
-      },
-    );
+    if (!isWireframe && !isXray) {
+      caps = {
+        bodies: [],
+        plane: sectionOutline(sectionView, drawnBounds ?? input.section.bounds),
+        hatch: true,
+      };
+    }
   }
+  const contourNormal: Vec3 = sectionView.plane
+    ? sectionView.plane.normal
+    : input.section.axis === 'X'
+      ? [1, 0, 0]
+      : input.section.axis === 'Y'
+        ? [0, 1, 0]
+        : [0, 0, 1];
+  const contourOffset = sectionPlaneDistance(sectionView);
 
   // ---- Bodies ---------------------------------------------------------------
-  const bodyFlatStart = flat.length;
+  const bodyLines: DrawBatch[] = [];
+  const hiddenLines: DrawBatch[] = [];
+  const shadowCasters: Body[] = [];
   for (const body of visibleBodies) {
-    const isMovePreview = input.movePreview?.bodyId === body.id;
     const isExtrudePreview =
       input.extrudePreviewBodyId === body.id || newPreviewBodies.has(body.id);
-    const delta: [number, number, number] | null =
-      isMovePreview && input.movePreview
-        ? [input.movePreview.delta.dx, input.movePreview.delta.dy, input.movePreview.delta.dz]
-        : null;
-    const expanded = expandBody(body);
-    const positions = delta ? translatePositions(expanded.positions, delta) : expanded.positions;
-    const facePositions = (faceIndex: number): Float32Array => {
-      const face = body.faces[faceIndex]!;
-      return positions.subarray(
-        face.triangleStart * 9,
-        (face.triangleStart + face.triangleCount) * 9,
-      );
-    };
-    const edgeSegments = (edgeIndex: number): Float32Array => {
-      const segments = body.edges[edgeIndex]!.segments;
-      return delta ? translatePositions(segments, delta) : segments;
-    };
+    const geometry = bodyGeometry(body);
+    const { positions, normals, indices } = body.mesh;
     const rgb = hexToRgb01(body.color);
+    const edgeRange = (edgeIndex: number) => geometry.edgeRanges[edgeIndex]!;
 
-    if (!isWireframe) {
+    const opaque = !isXray && !isExtrudePreview;
+    if (!isWireframe && !sectionOnly) {
       const alpha = isXray ? 0.32 : isExtrudePreview ? 0.55 : 1;
+      const materialId = input.materials?.get(body.id);
       lit.push({
         positions,
-        normals: expanded.normals,
+        normals,
+        indices,
+        ...(shading === 'curvature' ? { curvature: vertexCurvature(body) } : {}),
         color: rgb,
         alpha,
         depthTest: true,
-        depthWrite: !isXray && !isExtrudePreview,
+        depthWrite: opaque,
         polygonOffset: true,
+        material:
+          mode === 'visualized' ? materialPreset(materialId ?? 'pla').params : SHADED_MATERIAL,
+        shading,
+      });
+      if (opaque) shadowCasters.push(body);
+    }
+    if (caps && opaque) {
+      caps.bodies.push({ positions, indices, color: capColor(rgb) });
+    }
+    if (sectionOn && !isWireframe) {
+      const contour = sectionContour(body, contourNormal, contourOffset);
+      if (contour.length > 0) {
+        bodyLines.push({
+          kind: 'lines',
+          segments: contour,
+          // Section only: the outline stands on the background, not on a body.
+          color: rgba(sectionOnly ? input.colors.wire : lineInk, 1),
+          widthPx: sectionOnly ? 1.75 : 1.5,
+          depthTest: true,
+          noClip: true,
+        });
+      }
+    }
+    // Per-face picking ids by naming key, one draw per body. In wireframe the
+    // triangles are invisible hit targets so face-click still works.
+    if (!sectionOnly && !input.forExport) {
+      const baseId = pickTable.addRange(
+        body.faces.map((face) => ({ kind: 'face', bodyId: body.id, faceKey: face.key })),
+      );
+      idBatches.push({
+        kind: 'mesh',
+        positions,
+        indices,
+        localIndex: geometry.faceIndex,
+        baseId,
       });
     }
-    // Per-face picking ids by naming key. In wireframe the triangles are
-    // invisible hit targets so face-click still works.
-    body.faces.forEach((face, faceIndex) => {
-      if (face.triangleCount === 0) return;
-      const id = pickTable.add({ kind: 'face', bodyId: body.id, faceKey: face.key });
-      idBatches.push({ positions: facePositions(faceIndex), id, mode: 'triangles' });
-    });
 
     const isAccentPreview = accentBodies.has(body.id);
-    const edgeColor = isExtrudePreview ? input.colors.activePreview : input.colors.bodyEdge;
+    const edgeColor = isExtrudePreview ? input.colors.activePreview : lineInk;
     // Faces the provisional feature created (fillet round, chamfer, shell walls)
     // get an accent tint and accent borders; the rest of the body stays as is.
     const prefix = input.previewFaceKeyPrefix;
     if (prefix && isAccentPreview) {
-      body.faces.forEach((face, faceIndex) => {
+      body.faces.forEach((face) => {
         if (!face.key.startsWith(prefix)) return;
-        const tris = facePositions(faceIndex);
         overlays.push({
-          positions: tris,
-          colors: lineColors(tris.length / 3, input.colors.activePreview, 0.42),
-          mode: 'triangles',
+          kind: 'meshRange',
+          positions,
+          indices,
+          firstTriangle: face.triangleStart,
+          triangleCount: face.triangleCount,
+          color: rgba(input.colors.activePreview, 0.42),
           depthTest: true,
         });
-        const border = concatSegments(face.edgeIndices.map(edgeSegments), null);
-        overlays.push({
-          positions: border,
-          colors: lineColors(border.length / 3, input.colors.activePreview, 0.95),
-          mode: 'lines',
-          depthTest: true,
-        });
+        for (const e of face.edgeIndices) {
+          overlays.push({
+            kind: 'lines',
+            segments: geometry.edgeSegments,
+            ...edgeRange(e),
+            color: rgba(input.colors.activePreview, 0.95),
+            widthPx: 1.5,
+            depthTest: true,
+          });
+        }
       });
     }
-    const allEdges = concatSegments(
-      body.edges.map((edge) => edge.segments),
-      delta,
-    );
-    flat.push({
-      positions: allEdges,
-      colors: lineColors(allEdges.length / 3, edgeColor, isXray ? 0.6 : 0.85),
-      mode: 'lines',
-      depthTest: true,
-    });
-    const hitWidth = edgeHitWidth(input.pose.distance);
-    body.edges.forEach((edge, edgeIndex) => {
-      if (edge.segments.length === 0) return;
-      const id = pickTable.add({ kind: 'edge', bodyId: body.id, edgeKey: edge.key });
-      idBatches.push({
-        positions: buildPolylineRibbon(edgeSegments(edgeIndex), eye, hitWidth),
-        id,
-        mode: 'triangles',
-      });
-    });
+    if (!sectionOnly && geometry.edgeSegments.length > 0) {
+      if (edgesOn || isExtrudePreview) {
+        bodyLines.push({
+          kind: 'lines',
+          segments: geometry.edgeSegments,
+          color: rgba(edgeColor, isXray ? 0.6 : 0.9),
+          widthPx: EDGE_PX,
+          depthTest: true,
+        });
+      }
+      if ((input.hiddenEdgesVisible ?? false) && !isXray && !isWireframe) {
+        hiddenLines.push({
+          kind: 'lines',
+          segments: geometry.edgeSegments,
+          color: rgba(edgeColor, 0.5),
+          widthPx: 1,
+          depthTest: true,
+          hiddenOnly: true,
+          dashPx: 4,
+        });
+      }
+      if (!input.forExport) {
+        const baseId = pickTable.addRange(
+          body.edges.map((edge) => ({ kind: 'edge', bodyId: body.id, edgeKey: edge.key })),
+        );
+        idBatches.push({
+          kind: 'lines',
+          segments: geometry.edgeSegments,
+          localIndex: geometry.edgeIndex,
+          baseId,
+          widthPx: EDGE_HIT_PX * hitScale,
+        });
+      }
+    }
+    // Outlines of curved faces (cylinders, fillets) that no B-rep edge describes.
+    if (!sectionOnly && (edgesOn || isWireframe || isXray)) {
+      const silhouettes = silhouetteCandidates(body);
+      if (silhouettes.length > 0) {
+        bodyLines.push({
+          kind: 'lines',
+          segments: silhouettes,
+          silhouette: true,
+          color: rgba(edgeColor, isXray ? 0.6 : 0.9),
+          widthPx: EDGE_PX,
+          depthTest: true,
+        });
+      }
+    }
 
     // Selection / hover highlight overlays (crisp + depth-test-off ghost pass).
     const bodyItem: SelectionItem = { kind: 'body', bodyId: body.id };
     if (isSelected(input.selection, bodyItem)) {
-      addHighlightEdges(flat, allEdges, input.colors.selection);
+      highlightLines(geometry.edgeSegments, input.colors.selection, 2, undefined, 0.28);
     } else if (input.hover?.kind === 'body' && input.hover.bodyId === body.id) {
-      addHighlightEdges(flat, allEdges, input.colors.hover);
+      highlightLines(geometry.edgeSegments, input.colors.hover, 2, undefined, 0.28);
     }
     // A reference mesh is selected/hovered as a whole (`{ kind: 'mesh' }`); its one
     // whole-mesh face carries the highlight.
     const meshId = referenceMeshIdOf(body.id);
-    body.faces.forEach((face, faceIndex) => {
+    body.faces.forEach((face) => {
       const faceItem: SelectionItem =
         meshId !== null
           ? { kind: 'mesh', meshId }
@@ -529,25 +678,25 @@ export function buildScene(input: SceneInput): BuiltScene {
             input.hover.bodyId === body.id &&
             input.hover.faceKey === face.key);
       if (!selected && !hovered) return;
-      const tris = facePositions(faceIndex);
       // Selected faces get a strong tint (always the selection-orange
       // token, regardless of body appearance) so selection is unmistakable
       // on every palette color; hover is a visibly lighter tint.
       const color = selected ? input.colors.selection : input.colors.hover;
-      const fillAlphaMain = selected ? 0.45 : 0.2;
-      const fillAlphaGhost = selected ? 0.18 : 0.08;
-      const colors = lineColors(tris.length / 3, color, fillAlphaMain);
-      flat.push({ positions: tris, colors, mode: 'triangles', depthTest: true });
-      flat.push({
-        positions: tris,
-        colors: fillAlpha(colors, fillAlphaGhost),
-        mode: 'triangles',
-        depthTest: false,
-      });
+      const range = {
+        kind: 'meshRange' as const,
+        positions,
+        indices,
+        firstTriangle: face.triangleStart,
+        triangleCount: face.triangleCount,
+      };
+      overlays.push({ ...range, color: rgba(color, selected ? 0.45 : 0.2), depthTest: true });
+      overlays.push({ ...range, color: rgba(color, selected ? 0.18 : 0.08), depthTest: false });
       // Selected/hovered faces also get their own border in the same
       // color as the fill, not just a translucent fill — the border reads
       // correctly even in wireframe/x-ray and against edge-ink neighbours.
-      addHighlightEdges(flat, concatSegments(face.edgeIndices.map(edgeSegments), null), color);
+      for (const e of face.edgeIndices) {
+        highlightLines(geometry.edgeSegments, color, 2, edgeRange(e), 0.28);
+      }
     });
     body.edges.forEach((edge, edgeIndex) => {
       const edgeItem: SelectionItem = { kind: 'edge', bodyId: body.id, edgeKey: edge.key };
@@ -559,7 +708,7 @@ export function buildScene(input: SceneInput): BuiltScene {
         input.hover.edgeKey === edge.key;
       if (!selected && !hovered) return;
       const color = selected ? input.colors.selection : input.colors.hover;
-      thickEdges(edgeSegments(edgeIndex), color);
+      highlightLines(geometry.edgeSegments, color, HIGHLIGHT_EDGE_PX, edgeRange(edgeIndex));
     });
   }
 
@@ -573,21 +722,24 @@ export function buildScene(input: SceneInput): BuiltScene {
 
   // ---- Ghosts (e.g. boolean tool bodies being consumed) ------------------
   for (const ghost of input.ghostBodies ?? []) {
-    const segments = concatSegments(
-      ghost.edges.map((edge) => edge.segments),
-      null,
-    );
+    const segments = bodyGeometry(ghost).edgeSegments;
+    if (segments.length === 0) continue;
     overlays.push({
-      positions: segments,
-      colors: lineColors(segments.length / 3, input.colors.support, 0.55),
-      mode: 'lines',
+      kind: 'lines',
+      segments,
+      color: rgba(input.colors.support, 0.55),
+      widthPx: 1.25,
       depthTest: false,
     });
   }
 
-  flat.splice(bodyFlatStart, 0, ...(input.extraOverlays ?? []));
+  // Mode overlays on the surfaces, then edges (the hidden-edge pass right
+  // after them, while only surfaces are in the depth buffer), measurement
+  // lines, highlights and the section plane.
+  flat.push(...(input.extraOverlays ?? []));
+  flat.push(...bodyLines, ...hiddenLines);
+  flat.push(...(input.measureLines ?? []));
   flat.push(...overlays, ...sectionPlaneBatches);
-
   // ---- Sketches ---------------------------------------------------------
   for (const sketch of input.sketches) {
     // A whole-sketch selection/hover (no region key) highlights every region.
@@ -974,48 +1126,126 @@ export function buildScene(input: SceneInput): BuiltScene {
 
   flat.push(...(input.extraOverlaysLast ?? []));
 
+  // ---- Camera-dependent frame parameters ------------------------------------
+  const handlePoints: Vec3[] = [];
+  for (const h of input.axisHandles ?? []) {
+    handlePoints.push(h.base, addScaled(h.base, h.dir, h.length, h.dir, 0));
+  }
+  for (const h of input.angleHandles ?? []) {
+    handlePoints.push(
+      addScaled(h.center, [1, 0, 0], h.radius, [0, 1, 0], h.radius),
+      addScaled(h.center, [-1, 0, 0], h.radius, [0, -1, 0], h.radius),
+      addScaled(h.center, [0, 0, 1], h.radius, [0, 0, 0], 0),
+      addScaled(h.center, [0, 0, -1], h.radius, [0, 0, 0], 0),
+    );
+  }
+  if (input.extrudeHandle) {
+    const { origin, normal, distance } = input.extrudeHandle;
+    handlePoints.push(
+      origin,
+      addScaled(
+        origin,
+        normal,
+        Math.max(Math.abs(distance), 12) * Math.sign(distance || 1),
+        normal,
+        0,
+      ),
+    );
+  }
+  if (input.moveHandle) handlePoints.push(input.moveHandle.origin);
+  for (const sketch of input.sketches) {
+    for (const profile of sketch.profiles) handlePoints.push(...profile.outline);
+    for (const curve of sketch.curves ?? []) handlePoints.push(...curve.points);
+  }
+  const depthBounds = padBounds(expandBounds(drawnBounds, handlePoints));
+  const range = depthRange(
+    input.pose,
+    depthBounds,
+    input.gridVisible || (input.axesVisible ?? true) ? gridExtent : null,
+  );
+  const viewProj = viewProjectionMatrix(input.pose, input.aspect, range);
+  const orthographic = isOrthographic(input.pose);
+  const basis = cameraBasis(input.pose);
+  const lightDir = (r: number, u: number, b: number): Vec3 =>
+    normalize3([
+      basis.right[0] * r + basis.up[0] * u + basis.back[0] * b,
+      basis.right[1] * r + basis.up[1] * u + basis.back[1] * b,
+      basis.right[2] * r + basis.up[2] * u + basis.back[2] * b,
+    ]);
+  const light = input.colors.light;
+
+  // Ground contact shadow: bodies resting on (or above) the grid plane, seen from above it.
+  let shadow: GroundShadow | null = null;
+  if (
+    highQuality &&
+    input.gridVisible &&
+    // The removed half of a section would still cast a shadow: none while cutting.
+    !sectionOn &&
+    shadowCasters.length > 0 &&
+    drawnBounds &&
+    drawnBounds.min[2] >= -1e-3 &&
+    eyeOf(input.pose)[2] > 0
+  ) {
+    const b = unionBounds(shadowCasters)!;
+    const size = Math.max(b.max[0] - b.min[0], b.max[1] - b.min[1], 1);
+    const margin = Math.max(4, size * 0.3);
+    shadow = {
+      z: 0,
+      min: [b.min[0] - margin, b.min[1] - margin],
+      max: [b.max[0] + margin, b.max[1] + margin],
+      top: Math.max(b.max[2], 1e-3),
+      casters: shadowCasters.map((c) => ({ positions: c.mesh.positions, indices: c.mesh.indices })),
+      key: shadowCasters.map((c) => arraySerial(c.mesh.positions)).join(','),
+      strength: light ? 0.45 : 0.7,
+      pool: light ? 0 : 0.07,
+    };
+  }
+
+  const diagonal = drawnBounds ? Math.hypot(...sub3(drawnBounds.max, drawnBounds.min)) : 100;
   const frame: SceneFrame = {
     viewProj,
     cameraPosition: eye,
     background: input.colors.background,
     lit,
+    underlay,
     flat,
     clip,
+    pxScale: dpr,
+    depth: {
+      near: range.near,
+      far: range.far,
+      orthographic,
+      worldPerPxAt1: orthographic
+        ? viewHeightAt(input.pose, input.pose.distance) / cssHeight
+        : viewHeightAt(input.pose, 1) / cssHeight,
+      // Lines are pulled towards the eye by 0.05 % of their depth (perspective)
+      // or of the orbit distance (orthographic): more than the tessellation's
+      // chordal error, far less than any wall thickness.
+      lineBias: orthographic
+        ? (2 * LINE_DEPTH_BIAS * input.pose.distance) / (range.far - range.near)
+        : (2 * LINE_DEPTH_BIAS * range.near * range.far) / (range.far - range.near),
+    },
+    lighting: {
+      keyDir: lightDir(-0.45, 0.65, 0.6),
+      fillDir: lightDir(0.75, -0.2, 0.45),
+      right: basis.right,
+      up: basis.up,
+      sky: light ? [0.9, 0.92, 0.96] : [0.8, 0.84, 0.9],
+      ground: light ? [0.5, 0.48, 0.46] : [0.36, 0.34, 0.32],
+    },
+    ao: highQuality && !isWireframe && !sectionOnly ? { radiusPx: 14, strength: 0.7 } : null,
+    shadow,
+    caps: caps && caps.bodies.length > 0 ? caps : null,
+    curvatureRange: curvatureRange(diagonal),
+    zebraStripes: 14,
   };
 
   return { frame, idBatches, pickTable };
 }
 
-function addHighlightEdges(
-  flat: FlatBatch[],
-  segments: Float32Array,
-  color: readonly [number, number, number],
-): void {
-  if (segments.length === 0) return;
-  const vertexCount = segments.length / 3;
-  flat.push({
-    positions: segments,
-    colors: lineColors(vertexCount, color, 0.95),
-    mode: 'lines',
-    depthTest: true,
-  });
-  flat.push({
-    positions: segments,
-    colors: lineColors(vertexCount, color, 0.28),
-    mode: 'lines',
-    depthTest: false,
-  });
-}
-
-function fillAlpha(colors: Float32Array, alpha: number): Float32Array {
-  const out = new Float32Array(colors.length);
-  for (let i = 0; i < colors.length; i += 4) {
-    out[i] = colors[i]!;
-    out[i + 1] = colors[i + 1]!;
-    out[i + 2] = colors[i + 2]!;
-    out[i + 3] = alpha;
-  }
-  return out;
+/** Cut-face colour of a body: its colour, a little darker (the hatch darkens it further). */
+function capColor(rgb: RGB): RGB {
+  return [rgb[0] * 0.82, rgb[1] * 0.82, rgb[2] * 0.82];
 }
 
 /** Fixed length (mm) of the move tool's axis arrows, matching `Viewport.tsx`'s `HANDLE_LENGTH_MM`. */
@@ -1057,7 +1287,7 @@ function arrowBasis(dir: Vec3): { u: Vec3; v: Vec3 } {
  * `Viewport.tsx` can hit-test drags against the actual rendered arrow.
  */
 function pushArrow(
-  flat: FlatBatch[],
+  flat: DrawBatch[],
   idBatches: IdBatch[],
   pickTable: PickTable,
   pickTarget: PickTarget,

@@ -10,6 +10,7 @@
  */
 import { useAutomationStore } from '../../api/app/automationStore.js';
 import { PRINT_COMMANDS } from '../../print/printCommands.js';
+import { DISPLAY_COMMANDS } from './displayCommands.js';
 import { useProjectStore } from '../project/projectStore.js';
 import { BLEND_RULE_COMMANDS } from './blendCommands.js';
 import { FEATURE_COMMANDS } from './featureCommands.js';
@@ -29,6 +30,7 @@ export type CommandGroup =
   | 'modes'
   | 'edit'
   | 'view'
+  | 'display'
   | 'file';
 
 export interface CommandAvailability {
@@ -338,6 +340,7 @@ export const COMMANDS: readonly Command[] = [
   },
   ...WORKSPACE_COMMANDS,
   ...PRINT_COMMANDS,
+  ...DISPLAY_COMMANDS,
   {
     id: 'modes.section',
     label: 'Section View',

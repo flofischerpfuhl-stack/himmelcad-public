@@ -32,6 +32,50 @@ export interface Preferences {
   fov: number;
   /** Animated camera transitions (also off when the OS asks for reduced motion). */
   animateCamera: boolean;
+  /** `high`: ambient occlusion and the ground contact shadow; `standard`: plain lighting (slow GPUs). */
+  renderQuality: RenderQuality;
+  /** Last "Export image…" settings. */
+  imageExport: ImageExportPreference;
+}
+
+export type RenderQuality = 'high' | 'standard';
+
+export interface ImageExportPreference {
+  /** `view` = the viewport's size × `scale`; else a fixed size. */
+  size: 'view' | '1920x1080' | '2560x1440' | '3840x2160' | 'custom';
+  scale: 1 | 2 | 3 | 4;
+  width: number;
+  height: number;
+  transparent: boolean;
+  grid: boolean;
+}
+
+export const DEFAULT_IMAGE_EXPORT: ImageExportPreference = {
+  size: 'view',
+  scale: 2,
+  width: 1920,
+  height: 1080,
+  transparent: false,
+  grid: true,
+};
+
+function parseImageExport(raw: unknown): ImageExportPreference {
+  if (typeof raw !== 'object' || raw === null) return { ...DEFAULT_IMAGE_EXPORT };
+  const r = raw as Record<string, unknown>;
+  const dim = (v: unknown, fallback: number) =>
+    typeof v === 'number' && Number.isInteger(v) && v >= 16 && v <= 16384 ? v : fallback;
+  return {
+    size: (['view', '1920x1080', '2560x1440', '3840x2160', 'custom'] as const).includes(
+      r.size as ImageExportPreference['size'],
+    )
+      ? (r.size as ImageExportPreference['size'])
+      : DEFAULT_IMAGE_EXPORT.size,
+    scale: ([1, 2, 3, 4] as const).includes(r.scale as 1) ? (r.scale as 1) : 2,
+    width: dim(r.width, DEFAULT_IMAGE_EXPORT.width),
+    height: dim(r.height, DEFAULT_IMAGE_EXPORT.height),
+    transparent: typeof r.transparent === 'boolean' ? r.transparent : false,
+    grid: typeof r.grid === 'boolean' ? r.grid : true,
+  };
 }
 
 export const DEFAULT_PREFERENCES: Preferences = {
@@ -45,6 +89,8 @@ export const DEFAULT_PREFERENCES: Preferences = {
   projection: 'perspective',
   fov: 45,
   animateCamera: true,
+  renderQuality: 'high',
+  imageExport: DEFAULT_IMAGE_EXPORT,
 };
 
 const STORAGE_KEY = 'himmelcad.assembler.preferences.v1';
@@ -87,6 +133,8 @@ export function parsePreferences(text: string | null): Preferences {
     projection: pick('projection', oneOf(['perspective', 'orthographic'])),
     fov: pick('fov', number(10, 90)),
     animateCamera: pick('animateCamera', bool),
+    renderQuality: pick('renderQuality', oneOf(['high', 'standard'])),
+    imageExport: parseImageExport(r.imageExport),
   };
 }
 

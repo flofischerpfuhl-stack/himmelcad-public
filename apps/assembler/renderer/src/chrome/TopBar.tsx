@@ -23,6 +23,7 @@ import { onCloseRequested, onOpenRequested } from '../model/project/persistence.
 import { useWorkspaceStore } from '../model/workspace.js';
 import { useProjectStore } from '../model/project/projectStore.js';
 import { CommandGroupMenu } from './CommandGroupMenu.js';
+import { DisplayMenuItems } from './DisplayMenu.js';
 import { RecentFilesMenu } from './RecentFilesMenu.js';
 import type { AssemblerState } from '../model/store.js';
 import styles from './TopBar.module.css';
@@ -132,7 +133,12 @@ export function TopBar({ state }: { state: AssemblerState }): JSX.Element {
           getState={() => state}
           trigger="View"
           triggerClassName={styles.menuTrigger}
-          extraItems={<SavedViewItems />}
+          extraItems={
+            <>
+              <DisplayMenuItems state={state} />
+              <SavedViewItems />
+            </>
+          }
         />
         <HelpMenu />
       </nav>

@@ -25,6 +25,8 @@
  */
 import type { Feature } from '../model/document.js';
 import type {
+  DistanceMeasurement,
+  DistanceTarget,
   EvaluationChannel,
   EvaluationOutcome,
   EvaluationProgress,
@@ -81,6 +83,17 @@ export interface KernelAdapter {
    * bypasses the evaluation queue.
    */
   exportMesh(features: readonly Feature[], options: MeshExportOptions): Promise<ExportMeshBody[]>;
+  /**
+   * Exact minimum distance between two references of the document
+   * `features` evaluates to (Measure panel). Like `exportStep` a one-off
+   * query outside the coalescing queue. Optional: adapters without it make
+   * the Measure panel fall back to a mesh estimate labelled "approx.".
+   */
+  measureDistance?(
+    features: readonly Feature[],
+    a: DistanceTarget,
+    b: DistanceTarget,
+  ): Promise<DistanceMeasurement>;
   dispose(): void;
 }
 
@@ -218,6 +231,14 @@ export abstract class QueuedKernelAdapter implements KernelAdapter {
     _options: MeshExportOptions,
   ): Promise<ExportMeshBody[]> {
     return Promise.reject(new Error('Mesh export is not supported by this kernel adapter'));
+  }
+
+  measureDistance(
+    _features: readonly Feature[],
+    _a: DistanceTarget,
+    _b: DistanceTarget,
+  ): Promise<DistanceMeasurement> {
+    return Promise.reject(new Error('Distance queries are not supported by this kernel adapter'));
   }
 
   /** Evaluates one request. Must not throw synchronously for kernel errors. */
@@ -434,5 +455,15 @@ export class InProcessKernelAdapter extends QueuedKernelAdapter {
     const evaluator = this.evaluator ?? (await this.ready);
     if (!evaluator.exportMesh) throw new Error('Mesh export is not supported by this kernel');
     return evaluator.exportMesh(features, options);
+  }
+
+  override async measureDistance(
+    features: readonly Feature[],
+    a: DistanceTarget,
+    b: DistanceTarget,
+  ): Promise<DistanceMeasurement> {
+    const evaluator = this.evaluator ?? (await this.ready);
+    if (!evaluator.measureDistance) return super.measureDistance(features, a, b);
+    return evaluator.measureDistance(features, a, b);
   }
 }

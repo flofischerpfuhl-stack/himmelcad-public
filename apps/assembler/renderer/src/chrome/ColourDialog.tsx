@@ -9,7 +9,13 @@ import { useEffect, useState } from 'react';
 
 import { Button, Dialog } from '@himmelcad/ui';
 
-import { BODY_PALETTE, normalizeHexColour, withBodyColour } from '../model/appearance.js';
+import {
+  BODY_PALETTE,
+  normalizeHexColour,
+  withBodyColour,
+  withBodyMaterial,
+} from '../model/appearance.js';
+import { MATERIALS, bodyMaterials, type MaterialId } from '../viewport/displayModes.js';
 import { nextFeatureName, useAssemblerStore } from '../model/store.js';
 import { displayBodyName, useItemsStore } from '../model/items.js';
 import { useWorkspaceStore } from '../model/workspace.js';
@@ -33,9 +39,36 @@ export function applyBodyColour(bodyIds: readonly string[], color: string): bool
   return s.commitDocumentChange(next, { keepRollback: true, selection: s.selection });
 }
 
+/** Sets the material of `bodyIds` (each keeps its colour) as one undo step; `false` if refused. */
+export function applyBodyMaterial(
+  bodyIds: readonly string[],
+  material: MaterialId | null,
+): boolean {
+  const s = useAssemblerStore.getState();
+  const markerIndex = s.rollbackBefore
+    ? s.features.findIndex((f) => f.id === s.rollbackBefore)
+    : -1;
+  const activeCount = markerIndex >= 0 ? markerIndex : s.features.length;
+  const reserved = new Set<string>();
+  const base = nextFeatureName('Appearance', s.features);
+  const baseNumber = Number(base.split(' ').pop()) || 1;
+  const targets = bodyIds.map((bodyId) => ({
+    bodyId,
+    color: s.evaluation.bodies.find((b) => b.id === bodyId)?.color.toUpperCase() ?? '#C9CDD3',
+  }));
+  const next = withBodyMaterial(s.features, activeCount, targets, material, (index) => {
+    const id = s.allocateFeatureId('appearance', reserved);
+    reserved.add(id);
+    return { id, name: `Appearance ${baseNumber + index}` };
+  });
+  return s.commitDocumentChange(next, { keepRollback: true, selection: s.selection });
+}
+
 export function ColourDialog(): JSX.Element | null {
   const bodyIds = useWorkspaceStore((s) => s.colourDialogBodyIds);
   const bodies = useAssemblerStore((s) => s.evaluation.bodies);
+  const features = useAssemblerStore((s) => s.features);
+  const rollbackBefore = useAssemblerStore((s) => s.rollbackBefore);
   const meta = useItemsStore();
   const [custom, setCustom] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -67,8 +100,19 @@ export function ColourDialog(): JSX.Element | null {
 
   const title =
     targets.length === 1
-      ? `Colour of ${displayBodyName(targets[0]!, meta)}`
-      : `Colour of ${targets.length} bodies`;
+      ? `Appearance of ${displayBodyName(targets[0]!, meta)}`
+      : `Appearance of ${targets.length} bodies`;
+  const markerIndex = rollbackBefore ? features.findIndex((f) => f.id === rollbackBefore) : -1;
+  const materials = bodyMaterials(features, markerIndex >= 0 ? markerIndex : features.length);
+  const targetMaterials = new Set(targets.map((b) => materials.get(b.id) ?? null));
+  const currentMaterial = targetMaterials.size === 1 ? [...targetMaterials][0]! : undefined;
+  const chooseMaterial = (material: MaterialId | null) => {
+    if (!applyBodyMaterial(bodyIds, material)) {
+      setError('Finish the running tool first.');
+      return;
+    }
+    setError(null);
+  };
 
   return (
     <Dialog
@@ -139,12 +183,37 @@ export function ColourDialog(): JSX.Element | null {
             Apply
           </Button>
         </form>
+        <div className={styles.materialRow}>
+          <span className={styles.customLabel} id="hc-material-label">
+            Material
+          </span>
+          <div className={styles.materials} role="radiogroup" aria-labelledby="hc-material-label">
+            {[{ id: null, label: 'None' }, ...MATERIALS].map((m) => {
+              const active = currentMaterial === m.id;
+              return (
+                <button
+                  key={m.id ?? 'none'}
+                  type="button"
+                  role="radio"
+                  aria-checked={active}
+                  className={`${styles.material} ${active ? styles.materialActive : ''}`}
+                  onClick={() => chooseMaterial(m.id)}
+                >
+                  {m.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
         {error ? (
           <p className={styles.error} role="alert">
             {error}
           </p>
         ) : (
-          <p className={styles.note}>Saved as a History step; exported to STEP and 3MF.</p>
+          <p className={styles.note}>
+            Saved as a History step. Colour is exported to STEP and 3MF; the material shows in the
+            Visualized display mode and sets the density for mass in Measure.
+          </p>
         )}
       </div>
     </Dialog>

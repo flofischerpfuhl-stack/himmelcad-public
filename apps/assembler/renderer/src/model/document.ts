@@ -197,6 +197,12 @@ export interface SetAppearanceFeature extends FeatureBase {
   bodyId: string;
   /** sRGB hex color, e.g. `"#5B8DEF"`. */
   color: string;
+  /**
+   * Visualisation material (`viewport/displayModes.ts` `MaterialId`: `pla`,
+   * `petg`, `metal`, `resin`): how "Visualized" renders the body and the
+   * density the Measure panel uses for mass. Optional; never affects geometry.
+   */
+  material?: 'pla' | 'petg' | 'metal' | 'resin';
 }
 
 /**

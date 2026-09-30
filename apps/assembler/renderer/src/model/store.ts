@@ -35,6 +35,7 @@ import type { KernelActivity, KernelAdapter, KernelJob } from '../kernel/adapter
 import { baseEdgeKey, baseFaceKey, edgeSignatureOf, faceSignatureOf } from '../kernel/naming.js';
 import type { ProjectViewState } from './project/format.js';
 import type { ReferenceMesh, ReferenceMeshTransform } from './referenceMesh.js';
+import { viewDisplayFromProject } from './viewDisplay.js';
 import {
   EMPTY_EVALUATION,
   type Body,
@@ -233,8 +234,20 @@ export const PREVIEW_FEATURE_ID = '__preview_feature__';
 export const DEFAULT_BLEND_SIZE_MM = 1;
 export const DEFAULT_SHELL_THICKNESS_MM = 1;
 
-export type DisplayMode = 'shaded' | 'wireframe' | 'xray';
+/** Viewport display mode (`viewport/displayModes.ts`); view state, never a geometry edit. */
+export type DisplayMode = 'shaded' | 'wireframe' | 'xray' | 'visualized' | 'zebra' | 'curvature';
 export type SectionAxis = 'X' | 'Y' | 'Z';
+/**
+ * A face-aligned section plane (picked from a planar face): replaces the
+ * X/Y/Z axis while set; `sectionOffset` is then measured from `origin`
+ * along `normal`.
+ */
+export interface SectionPlane {
+  normal: Vec3;
+  origin: Vec3;
+  /** What it was taken from, for the Section controls ("Top face of Body 1"). */
+  label: string;
+}
 export type CameraPreset = 'iso' | 'front' | 'back' | 'top' | 'bottom' | 'left' | 'right' | 'fit';
 
 export interface ViewState {
@@ -251,6 +264,16 @@ export interface ViewState {
   gridStep: number;
   /** Bumping `nonce` is the signal to (re-)apply `preset`. */
   cameraRequest: { preset: CameraPreset; nonce: number } | null;
+  /** B-rep edge lines on shaded bodies ("Shaded with edges"). */
+  edgesVisible: boolean;
+  /** Edges hidden behind geometry, dashed. */
+  hiddenEdgesVisible: boolean;
+  /** World axes through the origin. */
+  axesVisible: boolean;
+  /** Face-aligned section plane, or `null` for the X/Y/Z axis. */
+  sectionPlane: SectionPlane | null;
+  /** 2D "section only": just the cut regions and their outlines. */
+  sectionOnly: boolean;
 }
 
 export interface PanelsState {
@@ -445,6 +468,13 @@ export interface AssemblerState {
   setSectionOffset: (offset: number) => void;
   setSectionFlipped: (flipped: boolean) => void;
   setMeasureEnabled: (enabled: boolean) => void;
+  /** Display toggles (`ViewState.edgesVisible`, …); view state, not undo-tracked. */
+  setViewToggle: (
+    key: 'edgesVisible' | 'hiddenEdgesVisible' | 'axesVisible' | 'sectionOnly',
+    value: boolean,
+  ) => void;
+  /** Sets (or clears) the face-aligned section plane; the offset restarts at the face. */
+  setSectionPlane: (plane: SectionPlane | null) => void;
   /**
    * Explicit per-sketch viewport visibility (not undo-tracked). Sketches
    * without an entry are shown until an extrude consumes them.
@@ -1776,8 +1806,22 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
       snapToGrid: true,
       gridStep: 5,
       cameraRequest: null,
+      edgesVisible: true,
+      hiddenEdgesVisible: false,
+      axesVisible: true,
+      sectionPlane: null,
+      sectionOnly: false,
     },
     setDisplayMode: (mode) => set((s) => ({ viewState: { ...s.viewState, displayMode: mode } })),
+    setViewToggle: (key, value) => set((s) => ({ viewState: { ...s.viewState, [key]: value } })),
+    setSectionPlane: (plane) =>
+      set((s) => ({
+        viewState: {
+          ...s.viewState,
+          sectionPlane: plane,
+          sectionOffset: plane ? 0 : sectionOffsetFor(s.viewState.sectionAxis),
+        },
+      })),
     setSectionEnabled: (enabled) =>
       set((s) => ({
         viewState: {
@@ -1794,7 +1838,10 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
         viewState: {
           ...s.viewState,
           sectionAxis: axis,
-          ...(axis !== s.viewState.sectionAxis ? { sectionOffset: sectionOffsetFor(axis) } : {}),
+          sectionPlane: null,
+          ...(axis !== s.viewState.sectionAxis || s.viewState.sectionPlane
+            ? { sectionOffset: sectionOffsetFor(axis) }
+            : {}),
         },
       })),
     setSectionOffset: (offset) =>
@@ -1839,7 +1886,6 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
       set((s) => {
         const next: ViewState = {
           ...s.viewState,
-          ...(view.displayMode ? { displayMode: view.displayMode } : {}),
           ...(view.section?.enabled !== undefined ? { sectionEnabled: view.section.enabled } : {}),
           ...(view.section?.axis && validAxes.includes(view.section.axis)
             ? { sectionAxis: view.section.axis }
@@ -1851,6 +1897,7 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
           ...(view.grid?.visible !== undefined ? { gridVisible: view.grid.visible } : {}),
           ...(view.grid?.snap !== undefined ? { snapToGrid: view.grid.snap } : {}),
           ...(typeof view.grid?.step === 'number' ? { gridStep: view.grid.step } : {}),
+          ...viewDisplayFromProject(view),
         };
         const preset = view.camera?.preset;
         if (preset && (validPresets as readonly string[]).includes(preset)) {

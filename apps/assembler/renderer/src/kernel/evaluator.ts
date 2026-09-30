@@ -93,6 +93,8 @@ import {
 import { closeArena, inArena, isPinned, openArena, pin, release, unpin } from './occtArena.js';
 import type {
   Body,
+  DistanceMeasurement,
+  DistanceTarget,
   EdgeInfo,
   EvaluatedSketch,
   EvaluationProgress,
@@ -221,6 +223,15 @@ export interface KernelEvaluator {
    * test doubles of the evaluator need not implement it.
    */
   exportMesh?(features: readonly Feature[], options: MeshExportOptions): Promise<ExportMeshBody[]>;
+  /**
+   * Replays `features` (from the cache) and returns the exact minimum
+   * distance between two references (`BRepExtrema_DistShapeShape`).
+   */
+  measureDistance?(
+    features: readonly Feature[],
+    a: DistanceTarget,
+    b: DistanceTarget,
+  ): Promise<DistanceMeasurement>;
   /** Sizes of the incremental-evaluation caches and of the wasm heap. */
   cacheInfo(): KernelCacheInfo;
   /** Drops every cached checkpoint and mesh (frees their OCCT shapes). */
@@ -1747,6 +1758,63 @@ euseFrom (an operation's inputs) lends descriptions of unchanged edges. */
           if (out.length === 0) throw new Error('Nothing to export');
           return out;
         } finally {
+          releaseTransient(replay);
+        }
+      });
+    },
+
+    measureDistance(features, a, b) {
+      return serialized(async () => {
+        const replay = await replayFeatures(features, { cacheTail: true });
+        // Raw OCCT objects (not tracked by the arena) are deleted explicitly;
+        // the arena releases the replicad vertex of a point target.
+        const made: { delete(): void }[] = [];
+        openArena();
+        try {
+          const shapeOf = (target: DistanceTarget): RawShape => {
+            if (target.kind === 'point') {
+              const vertex = R.makeVertex(target.point);
+              return vertex.wrapped as RawShape;
+            }
+            const body = replay.ctx.bodies.get(target.bodyId);
+            if (!body) throw new Error(`Missing body "${target.bodyId}"`);
+            if (target.kind === 'body') return body.shape.wrapped as RawShape;
+            const topology = topologyOf(body.shape);
+            if (target.kind === 'face') {
+              const index = body.faces.findIndex(
+                (f) => f.key === target.faceKey || f.aliases.includes(target.faceKey),
+              );
+              const face = topology.faces[index];
+              if (!face) throw new Error(`Missing face "${target.faceKey}"`);
+              return face.wrapped as RawShape;
+            }
+            const index = edgeKeysOf(body).indexOf(target.edgeKey);
+            const edge = topology.edges[index];
+            if (!edge) throw new Error(`Missing edge "${target.edgeKey}"`);
+            return edge.wrapped as RawShape;
+          };
+          const dist = new oc.BRepExtrema_DistShapeShape(
+            shapeOf(a) as never,
+            shapeOf(b) as never,
+            1e-7,
+          );
+          made.push(dist);
+          if (!dist.IsDone() || dist.NbSolution() < 1) {
+            throw new Error('The distance could not be computed');
+          }
+          const point = (p: { X(): number; Y(): number; Z(): number; delete(): void }): Vec3 => {
+            const out: Vec3 = [p.X(), p.Y(), p.Z()];
+            p.delete();
+            return out;
+          };
+          return {
+            distance: dist.Value(),
+            pointA: point(dist.PointOnShape1(1)),
+            pointB: point(dist.PointOnShape2(1)),
+          };
+        } finally {
+          for (const object of made) object.delete();
+          closeArena();
           releaseTransient(replay);
         }
       });

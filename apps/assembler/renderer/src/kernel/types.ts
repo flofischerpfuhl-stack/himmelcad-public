@@ -205,6 +205,20 @@ export const EMPTY_EVALUATION: EvaluationResult = {
   stats: { modelMs: 0, tessellateMs: 0, triangles: 0 },
 };
 
+/** One side of a minimum-distance query (Measure panel), by stable reference. */
+export type DistanceTarget =
+  | { kind: 'body'; bodyId: string }
+  | { kind: 'face'; bodyId: string; faceKey: string }
+  | { kind: 'edge'; bodyId: string; edgeKey: string }
+  | { kind: 'point'; point: Vec3 };
+
+/** Exact minimum distance (`BRepExtrema_DistShapeShape`) and the closest points. */
+export interface DistanceMeasurement {
+  distance: number;
+  pointA: Vec3;
+  pointB: Vec3;
+}
+
 /** Evaluation channels: a newer request supersedes an older queued one on the same channel. */
 export type EvaluationChannel = 'document' | 'preview';
 

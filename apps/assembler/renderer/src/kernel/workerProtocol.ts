@@ -7,6 +7,8 @@ import type { Feature } from '../model/document.js';
 import type { ExportMeshBody } from './meshExport.js';
 import type {
   Body,
+  DistanceMeasurement,
+  DistanceTarget,
   EvaluationProgress,
   EvaluationResult,
   KernelStatusInfo,
@@ -23,6 +25,13 @@ export type WorkerRequest =
       bodyIds?: string[];
       tolerance: number;
       angularTolerance: number;
+    }
+  | {
+      type: 'measureDistance';
+      jobId: number;
+      features: Feature[];
+      a: DistanceTarget;
+      b: DistanceTarget;
     };
 
 /** A body whose mesh arrays were already sent with the previous result (`meshRef: true`). */
@@ -37,4 +46,6 @@ export type WorkerResponse =
   | { type: 'exportResult'; jobId: number; bytes: ArrayBuffer }
   | { type: 'exportFailed'; jobId: number; message: string }
   | { type: 'meshResult'; jobId: number; bodies: ExportMeshBody[] }
-  | { type: 'meshFailed'; jobId: number; message: string };
+  | { type: 'meshFailed'; jobId: number; message: string }
+  | { type: 'measureResult'; jobId: number; result: DistanceMeasurement }
+  | { type: 'measureFailed'; jobId: number; message: string };

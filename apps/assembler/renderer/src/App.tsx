@@ -1,6 +1,9 @@
 import { useCallback, useState } from 'react';
 
 import { AgentAccessIndicator } from './chrome/AgentAccessIndicator.js';
+import { AnalysisLegend } from './chrome/AnalysisLegend.js';
+import { ExportImageDialog } from './chrome/ExportImageDialog.js';
+import { MeasurePanel } from './chrome/MeasurePanel.js';
 import { ColourDialog } from './chrome/ColourDialog.js';
 import { CommandContextMenu } from './chrome/ContextMenu.js';
 import { CommandSearch } from './chrome/CommandSearch.js';
@@ -83,6 +86,8 @@ export function App(): JSX.Element {
       <SketchChrome />
       {state.viewState.sectionEnabled ? <SectionControls state={state} /> : null}
       <PrintChrome />
+      {state.viewState.measureEnabled ? <MeasurePanel state={state} /> : null}
+      <AnalysisLegend state={state} />
       <StatusStrip state={state} />
       <KernelActivity state={state} />
       <AgentAccessIndicator />
@@ -105,6 +110,7 @@ export function App(): JSX.Element {
       ) : null}
       <SettingsDialog />
       <ColourDialog />
+      <ExportImageDialog />
       <ShortcutOverlay />
     </div>
   );

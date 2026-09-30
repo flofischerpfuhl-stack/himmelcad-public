@@ -66,6 +66,17 @@ export class PickTable {
     return this.targets.length; // 1-based id
   }
 
+  /**
+   * Adds consecutive targets and returns the id of the first: target `i`
+   * gets `base + i` (one GPU draw can then encode a whole body's faces or
+   * edges from a per-vertex/per-segment local index).
+   */
+  addRange(targets: readonly PickTarget[]): number {
+    const base = this.targets.length + 1;
+    for (const target of targets) this.targets.push(target);
+    return base;
+  }
+
   resolve(id: number): PickTarget | null {
     if (id <= 0 || id > this.targets.length) return null;
     return this.targets[id - 1] ?? null;

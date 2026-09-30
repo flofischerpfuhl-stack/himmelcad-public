@@ -8,7 +8,6 @@ import { useSketchViewport } from '../sketch/ui/useSketchViewport.js';
 import {
   consumedSketchIds,
   isSketchVisible,
-  sectionRange,
   visibleBounds,
   type Bounds3,
 } from '../model/modeling.js';
@@ -20,6 +19,7 @@ import {
 } from '../model/referenceMesh.js';
 import {
   findFace,
+  isPlanarFace,
   isPreviewTool,
   PREVIEW_FEATURE_ID,
   useAssemblerStore,
@@ -78,15 +78,26 @@ import {
   type Vec3,
 } from './math.js';
 import type { PickTarget, ToolHandleKind } from './picking.js';
-import { buildScene, type BuiltScene } from './scene.js';
+import { buildScene, type BuiltScene, type SceneInput } from './scene.js';
+import { encodePng } from './imageExport.js';
+import { setImageRenderer, useViewportUi } from '../model/viewportUi.js';
+import { sectionAtFace } from '../model/commands/displayCommands.js';
 import { readViewportColors, type ViewportColors } from './theme.js';
 import {
   blendHandle,
   handleTip,
+  sectionClip,
   sectionHandle,
+  sectionOffsetRange,
   shellHandle,
   type AxisHandle,
+  type SectionView,
 } from './toolAnchors.js';
+import { bodyMaterials } from './displayModes.js';
+import { MeasureOverlay } from './MeasureOverlay.js';
+import { snapMeasurePoint, snapPoints, type Vec3 as MeasureVec3 } from '../model/measure.js';
+import { useMeasureStore } from '../model/measureStore.js';
+import { rayCastFaces } from './pickCandidates.js';
 import { ViewCube } from './ViewCube.js';
 import {
   ANGLE_SNAP_DEG,
@@ -263,17 +274,8 @@ function sceneModel(s: AssemblerState): SceneModel {
   }
   const toolHandles = toolHandleSet(s);
   handles.push(...toolHandles.axis);
-  if (s.viewState.sectionEnabled) {
-    handles.push(
-      sectionHandle(
-        {
-          axis: s.viewState.sectionAxis,
-          offset: s.viewState.sectionOffset,
-          flipped: s.viewState.sectionFlipped,
-        },
-        bounds,
-      ),
-    );
+  if (s.viewState.sectionEnabled && !s.viewState.sectionOnly) {
+    handles.push(sectionHandle(sectionViewOf(s), bounds));
   }
   return {
     bodies,
@@ -287,6 +289,22 @@ function sceneModel(s: AssemblerState): SceneModel {
     toolHandles,
     previewNewBodyIds,
   };
+}
+
+/** The section as `toolAnchors.ts` sees it (axis or face-aligned plane). */
+function sectionViewOf(s: AssemblerState): SectionView {
+  return {
+    axis: s.viewState.sectionAxis,
+    offset: s.viewState.sectionOffset,
+    flipped: s.viewState.sectionFlipped,
+    plane: s.viewState.sectionPlane,
+  };
+}
+
+/** Features before the History rollback marker (the ones evaluated). */
+function activeFeatureCount(s: AssemblerState): number {
+  const index = s.rollbackBefore ? s.features.findIndex((f) => f.id === s.rollbackBefore) : -1;
+  return index >= 0 ? index : s.features.length;
 }
 
 type DragMode =
@@ -420,7 +438,7 @@ function applyHandleValue(handle: ToolHandleKind, raw: number, snapDrag = true):
     s.setShellThickness(Math.max(MIN_FEATURE_SIZE_MM, snap(raw, HANDLE_STEP_MM)));
   else {
     const bounds = visibleBounds(s.evaluation.bodies, s.hiddenBodyIds, s.isolatedBodyIds);
-    const [lo, hi] = sectionRange(bounds, s.viewState.sectionAxis);
+    const [lo, hi] = sectionOffsetRange(sectionViewOf(s), bounds);
     s.setSectionOffset(Math.min(hi, Math.max(lo, snap(raw, HANDLE_STEP_MM))));
   }
 }
@@ -453,6 +471,8 @@ export function Viewport(props: ViewportProps): JSX.Element {
   const lastPickTableRef = useRef<BuiltScene['pickTable'] | null>(null);
   const didInitialFitRef = useRef(false);
   const frameWaitersRef = useRef<(() => void)[]>([]);
+  /** CPU time of the last `buildScene` (DEV frame-time measurement). */
+  const sceneMsRef = useRef(0);
   /** Handle hover state, set from the same hover-pick loop as body/face/edge hover but kept
    * out of the store (it's transient tool chrome, not a document selection concept). */
   const handleHoverRef = useRef<HandleHover | null>(null);
@@ -620,6 +640,9 @@ export function Viewport(props: ViewportProps): JSX.Element {
           // A saved view keeps its framing; the projection stays the one chosen in Settings.
           next = withFov({ ...command.pose }, current.fov ?? preferredFov());
           break;
+        case 'lookAlong':
+          next = fitPose(visibleBodies(), poseFromDirection(command.direction, current), aspect);
+          break;
         case 'lookAtFace': {
           const body = sceneModel(s).bodies.find((b) => b.id === command.bodyId);
           const face = body ? findFace(body, command.faceKey) : undefined;
@@ -655,6 +678,21 @@ export function Viewport(props: ViewportProps): JSX.Element {
     colorsRef.current = readViewportColors();
     dirtyRef.current = true;
   }, [theme]);
+  const renderQuality = usePreferences((p) => p.renderQuality);
+  useEffect(() => {
+    dirtyRef.current = true;
+  }, [renderQuality]);
+
+  /** World point → host-relative CSS px (overlays), `null` behind the camera. */
+  const projectHost = useCallback((point: readonly [number, number, number]) => {
+    const host = hostRef.current;
+    if (!host || host.clientWidth === 0 || host.clientHeight === 0) return null;
+    const vp = viewProjectionMatrix(
+      poseRef.current,
+      host.clientWidth / Math.max(1, host.clientHeight),
+    );
+    return projectToScreen(vp, point, host.clientWidth, host.clientHeight);
+  }, []);
 
   // The live camera, for "Save view".
   useEffect(() => {
@@ -679,27 +717,12 @@ export function Viewport(props: ViewportProps): JSX.Element {
   const activeTool = state.activeTool;
   const model = useMemo(() => sceneModel(state), [state]);
 
-  // ---- Render loop ----------------------------------------------------------
-  // Reads the store fresh on every dirty frame (no stale closures).
-  useEffect(() => {
-    let handle = 0;
-    const loop = (now: number) => {
-      handle = requestAnimationFrame(loop);
-      const anim = animRef.current;
-      if (anim) {
-        const t = Math.min(1, (now - anim.start) / Math.max(1, anim.duration));
-        const eased = 1 - Math.pow(1 - t, 3);
-        poseRef.current = lerpPose(anim.from, anim.to, eased);
-        dirtyRef.current = true;
-        if (t >= 1) animRef.current = null;
-      }
-      if (!dirtyRef.current) return;
-      dirtyRef.current = false;
-      const renderer = rendererRef.current;
-      const host = hostRef.current;
+  /** The scene input of the current state for a drawing buffer of `size` (device px). */
+  const sceneInputNow = useCallback(
+    (size: { width: number; height: number; dpr: number }): SceneInput | null => {
       const colors = colorsRef.current;
-      if (!renderer || !host || !colors) return;
-      const { width, height, dpr } = sizeRef.current;
+      if (!colors) return null;
+      const { width, height, dpr } = size;
       const aspect = width / Math.max(1, height);
       const current = useAssemblerStore.getState();
       const scene = sceneModel(current);
@@ -745,9 +768,10 @@ export function Viewport(props: ViewportProps): JSX.Element {
         current.hiddenBodyIds,
         current.isolatedBodyIds,
       );
-      const built = buildScene({
+      return {
         extraOverlays: printOverlays.surface,
         extraOverlaysLast: printOverlays.last,
+        errorHighlight: errorHighlightOf(current),
         colors,
         pose: poseRef.current,
         aspect,
@@ -764,7 +788,14 @@ export function Viewport(props: ViewportProps): JSX.Element {
           offset: current.viewState.sectionOffset,
           flipped: current.viewState.sectionFlipped,
           bounds: scene.bounds,
+          plane: current.viewState.sectionPlane,
+          sectionOnly: current.viewState.sectionOnly,
         },
+        edgesVisible: current.viewState.edgesVisible,
+        hiddenEdgesVisible: current.viewState.hiddenEdgesVisible,
+        axesVisible: current.viewState.axesVisible,
+        materials: bodyMaterials(current.features, activeFeatureCount(current)),
+        highQuality: usePreferences.getState().renderQuality === 'high',
         gridVisible: current.viewState.gridVisible,
         gridStep: current.viewState.gridStep,
         selection: current.selection,
@@ -800,10 +831,45 @@ export function Viewport(props: ViewportProps): JSX.Element {
             }
           : null,
         hitScale: coarseRef.current ? 2 : 1,
-        errorHighlight: errorHighlightOf(current),
-      });
+      };
+    },
+    [],
+  );
+
+  // ---- Render loop ----------------------------------------------------------
+  // Reads the store fresh on every dirty frame (no stale closures).
+  useEffect(() => {
+    let handle = 0;
+    const loop = (now: number) => {
+      handle = requestAnimationFrame(loop);
+      const anim = animRef.current;
+      if (anim) {
+        const t = Math.min(1, (now - anim.start) / Math.max(1, anim.duration));
+        const eased = 1 - Math.pow(1 - t, 3);
+        poseRef.current = lerpPose(anim.from, anim.to, eased);
+        dirtyRef.current = true;
+        if (t >= 1) animRef.current = null;
+      }
+      if (!dirtyRef.current) return;
+      dirtyRef.current = false;
+      const renderer = rendererRef.current;
+      const host = hostRef.current;
+      const colors = colorsRef.current;
+      if (!renderer || !host || !colors) return;
+      const sceneStart = performance.now();
+      const input = sceneInputNow(sizeRef.current);
+      if (!input) return;
+      const built = buildScene(input);
+      const { dpr } = sizeRef.current;
+      sceneMsRef.current = performance.now() - sceneStart;
       renderer.render(built.frame);
-      renderer.renderPicking(built.frame.viewProj, built.idBatches, built.frame.clip);
+      renderer.renderPicking(
+        built.frame.viewProj,
+        built.idBatches,
+        built.frame.clip,
+        dpr,
+        built.frame.depth?.lineBias ?? 5e-5,
+      );
       lastPickTableRef.current = built.pickTable;
       setTick((v) => (v + 1) % 1_000_000);
       const waiters = frameWaitersRef.current;
@@ -812,7 +878,54 @@ export function Viewport(props: ViewportProps): JSX.Element {
     };
     handle = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(handle);
-  }, []);
+  }, [sceneInputNow]);
+
+  // ---- Export image (File > Export image…) -------------------------------------
+  useEffect(() => {
+    setImageRenderer(
+      async (request) => {
+        const renderer = rendererRef.current;
+        const host = hostRef.current;
+        if (!renderer || !host) throw new Error('The 3D view is not available.');
+        const max = renderer.maxImageSize();
+        if (request.width > max || request.height > max) {
+          throw new Error(`This graphics driver renders images up to ${max} × ${max} pixels.`);
+        }
+        // Line widths and handles keep their on-screen proportions: the image's
+        // height is `dpr` × the viewport's height in CSS pixels.
+        const dpr = request.height / Math.max(1, host.clientHeight);
+        const input = sceneInputNow({ width: request.width, height: request.height, dpr });
+        if (!input) throw new Error('The 3D view is not ready.');
+        const built = buildScene({
+          ...input,
+          forExport: true,
+          hover: null,
+          gridVisible: input.gridVisible && request.grid,
+          axesVisible: (input.axesVisible ?? true) && request.grid,
+          extrudeHandle: null,
+          moveHandle: null,
+          axisHandles: [],
+          angleHandles: [],
+          guides: null,
+          pivot: null,
+        });
+        const pixels = renderer.renderImage(
+          built.frame,
+          request.width,
+          request.height,
+          request.transparent,
+        );
+        dirtyRef.current = true;
+        return { png: await encodePng(pixels, request.width, request.height), ...request };
+      },
+      () => {
+        const { dpr } = sizeRef.current;
+        const host = hostRef.current;
+        return { width: host?.clientWidth ?? 0, height: host?.clientHeight ?? 0, dpr };
+      },
+    );
+    return () => setImageRenderer(null, null);
+  }, [sceneInputNow]);
 
   // ---- Picking helpers ------------------------------------------------------
   const pickAt = useCallback((clientX: number, clientY: number): PickTarget | null => {
@@ -1004,6 +1117,53 @@ export function Viewport(props: ViewportProps): JSX.Element {
 
   const [popupAdditive, setPopupAdditive] = useState(false);
 
+  /** Measure > Points: the snapped world point under the pointer becomes a measured point. */
+  const pickMeasurePoint = useCallback(
+    (clientX: number, clientY: number, touch: boolean) => {
+      const host = hostRef.current;
+      if (!host) return;
+      const rect = host.getBoundingClientRect();
+      const bodies = visibleBodies();
+      const vp = viewProjectionMatrix(poseRef.current, rect.width / Math.max(1, rect.height));
+      const project = (p: MeasureVec3): [number, number] | null => {
+        const s = projectToScreen(vp, p, rect.width, rect.height);
+        return s ? [s[0], s[1]] : null;
+      };
+      const ray = rayAtClient(clientX, clientY);
+      let surface: MeasureVec3 | null = null;
+      if (ray) {
+        const s = useAssemblerStore.getState();
+        const clip = s.viewState.sectionEnabled ? sectionClip(sectionViewOf(s)) : null;
+        for (const hit of rayCastFaces(bodies, ray)) {
+          const dir = ray.direction;
+          const p: MeasureVec3 = [
+            ray.origin[0] + dir[0] * hit.t,
+            ray.origin[1] + dir[1] * hit.t,
+            ray.origin[2] + dir[2] * hit.t,
+          ];
+          // Faces cut away by Section View are not there to click.
+          if (
+            clip &&
+            p[0] * clip.normal[0] + p[1] * clip.normal[1] + p[2] * clip.normal[2] > clip.offset
+          ) {
+            continue;
+          }
+          surface = p;
+          break;
+        }
+      }
+      const snapped = snapMeasurePoint(
+        snapPoints(bodies),
+        project,
+        [clientX - rect.left, clientY - rect.top],
+        touch ? 20 : 10,
+        surface,
+      );
+      if (snapped) useMeasureStore.getState().addPoint(snapped.point, snapped.label);
+    },
+    [visibleBodies, rayAtClient],
+  );
+
   /** A click (mouse/pen button 0, or a touch tap) in the viewport. */
   const handleClick = useCallback(
     (clientX: number, clientY: number, additive: boolean, touch: boolean) => {
@@ -1017,7 +1177,23 @@ export function Viewport(props: ViewportProps): JSX.Element {
 
       const store = useAssemblerStore.getState();
       const tool = store.activeTool;
+      // Measure > Points: clicks place measured points (snapped to vertices,
+      // midpoints and circle centres near the pointer, else on the face).
+      if (!tool && store.viewState.measureEnabled && useMeasureStore.getState().pointMode) {
+        pickMeasurePoint(clientX, clientY, touch);
+        return;
+      }
       const pick = pickAt(clientX, clientY);
+      // Section > Face: the clicked planar face becomes the section plane.
+      if (!tool && useViewportUi.getState().sectionFacePick) {
+        if (pick?.kind === 'face' && isPlanarFace(store.evaluation, pick.bodyId, pick.faceKey)) {
+          sectionAtFace(store, pick.bodyId, pick.faceKey);
+          useViewportUi.getState().setSectionFacePick(false);
+        } else {
+          useWorkspaceStore.getState().notify('Click a planar face for the section plane.');
+        }
+        return;
+      }
       if (tool?.kind === 'edgeBlend' || tool?.kind === 'shell' || tool?.kind === 'boolean') {
         // Adaptive tools: clicking empty space finishes (Shapr3D); edges add/remove.
         if (!pick) store.commit();
@@ -1131,7 +1307,15 @@ export function Viewport(props: ViewportProps): JSX.Element {
       if (!item) return;
       store.select(item, { additive });
     },
-    [pickAt, selectionFromPick, queryContext, candidateNames, facePickPoint, rayAtClient],
+    [
+      pickAt,
+      selectionFromPick,
+      queryContext,
+      candidateNames,
+      facePickPoint,
+      rayAtClient,
+      pickMeasurePoint,
+    ],
   );
 
   const contextMenuAt = useCallback(
@@ -1654,9 +1838,44 @@ export function Viewport(props: ViewportProps): JSX.Element {
           frameWaitersRef.current.push(resolve);
           dirtyRef.current = true;
         }),
+      stats: (finish) => {
+        const renderer = rendererRef.current;
+        if (renderer && finish !== undefined) renderer.finishEachFrame = finish;
+        const stats = renderer?.renderStats() ?? {
+          frames: 0,
+          lastCpuMs: 0,
+          uploadsLastFrame: 0,
+          cachedBuffers: 0,
+          cachedBytes: 0,
+          drawCalls: 0,
+          ambientOcclusion: false,
+          shadowMap: false,
+        };
+        return { ...stats, sceneMs: sceneMsRef.current };
+      },
+      benchmark: (frames) => {
+        // Back-to-back frames (scene build + render, orbiting 0.5° each) and
+        // one GPU sync at the end: the sustained cost per frame without vsync.
+        const renderer = rendererRef.current;
+        if (!renderer) return null;
+        const start = poseRef.current;
+        renderer.sync();
+        const t0 = performance.now();
+        for (let i = 0; i < frames; i += 1) {
+          poseRef.current = { ...start, yaw: start.yaw + (i * Math.PI) / 360 };
+          const input = sceneInputNow(sizeRef.current);
+          if (!input) break;
+          renderer.render(buildScene(input).frame);
+        }
+        renderer.sync();
+        const perFrame = (performance.now() - t0) / Math.max(1, frames);
+        poseRef.current = start;
+        dirtyRef.current = true;
+        return perFrame;
+      },
     });
     return () => setViewportProbe(null);
-  }, []);
+  }, [sceneInputNow]);
 
   // ---- Dimension chips (screen positions recomputed every drawn frame via `tick`) ----
   const overlay = useMemo(() => {
@@ -1818,6 +2037,7 @@ export function Viewport(props: ViewportProps): JSX.Element {
         />
       ) : null}
       {sketch.session ? <SketchOverlay api={sketch.api} tick={tick} /> : null}
+      {state.viewState.measureEnabled ? <MeasureOverlay tick={tick} project={projectHost} /> : null}
       {overlay?.handleChips.map(({ handle, screen }) => {
         if (!screen) return null;
         const label =
@@ -1830,7 +2050,9 @@ export function Viewport(props: ViewportProps): JSX.Element {
                 : 'Fillet radius';
         const prefix =
           handle.handle === 'section'
-            ? `${state.viewState.sectionAxis} =`
+            ? state.viewState.sectionPlane
+              ? 'Offset'
+              : `${state.viewState.sectionAxis} =`
             : handle.handle === 'blend' && activeTool?.kind === 'edgeBlend'
               ? activeTool.blend === 'fillet'
                 ? 'R'
