@@ -104,13 +104,20 @@ export function useSketchViewport(refs: SketchViewportRefs): {
   const host = hostRef.current;
   const width = host?.clientWidth ?? 0;
   const height = host?.clientHeight ?? 0;
+  // One view-projection matrix per camera pose (poses are replaced, never mutated): the
+  // overlay maps every sampled curve point of a render, e.g. thousands for glyph outlines.
+  let vpCache: { pose: CameraPose; vp: ReturnType<typeof viewProjectionMatrix> } | null = null;
   const api: SketchViewApi = {
     width,
     height,
     toScreen: (uv: Vec2) => {
       const s = useSketchStore.getState().session;
       if (!s || width === 0 || height === 0) return null;
-      const vp = viewProjectionMatrix(poseRef.current, width / Math.max(1, height));
+      const pose = poseRef.current;
+      if (vpCache?.pose !== pose) {
+        vpCache = { pose, vp: viewProjectionMatrix(pose, width / Math.max(1, height)) };
+      }
+      const vp = vpCache.vp;
       const screen = projectToScreen(vp, framePoint(s.frame, uv[0], uv[1]), width, height);
       return screen ? [screen[0], screen[1]] : null;
     },
