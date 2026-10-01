@@ -4,10 +4,21 @@
  * modes and the Move Face variant started from Move/Rotate on a face) and
  * Delete Face. Pure data + functions; no store access, no DOM.
  */
-import { baseFaceKey, faceSignatureOf } from '../../foundation/geometry-kernel/naming.js';
+import {
+  baseEdgeKey,
+  baseFaceKey,
+  edgeSignatureOf,
+  faceSignatureOf,
+} from '../../foundation/geometry-kernel/naming.js';
 import type { Body, EvaluationResult } from '../../foundation/geometry-kernel/types.js';
 import { PRINT_CLEARANCES } from '../../foundation/document/blendOptions.js';
-import type { FaceRef, Feature, Vec3 } from '../../foundation/document/document.js';
+import {
+  frameForFace,
+  type EdgeRef,
+  type FaceRef,
+  type Feature,
+  type Vec3,
+} from '../../foundation/document/document.js';
 import {
   defineDraftTool,
   type DraftPick as ToolPick,
@@ -340,7 +351,199 @@ export const DELETE_FACE_DRAFT_TOOL = defineDraftTool<DeleteFaceDraft>({
   modifiedBodyIds: (draft) => (draft.faces[0] ? [draft.faces[0].bodyId] : []),
 });
 
+// ---- Move Edge / Move Face (Move/Rotate on an edge or a planar face) ----------------------
+
+/** A straight edge moved by `vector` (its two planar faces tilt; `moveEdits.ts`). */
+export interface MoveEdgeDraft {
+  kind: 'moveEdge';
+  edge: EdgeRef;
+  vector: Vec3;
+}
+
+/** A planar face moved by `vector` in any direction (`moveEdits.ts`). */
+export interface MoveFaceDraft {
+  kind: 'moveFace';
+  face: FaceRef;
+  vector: Vec3;
+}
+
+declare module '../../foundation/commands/draftTools.js' {
+  interface DraftToolMap {
+    moveEdge: MoveEdgeDraft;
+    moveFace: MoveFaceDraft;
+  }
+}
+
+const WORLD: [Vec3, Vec3, Vec3] = [
+  [1, 0, 0],
+  [0, 1, 0],
+  [0, 0, 1],
+];
+
+function edgeOf(evaluation: EvaluationResult, bodyId: string, key: string) {
+  const body = evaluation.bodies.find((b) => b.id === bodyId);
+  return (
+    body?.edges.find((e) => e.key === key) ??
+    body?.edges.find((e) => baseEdgeKey(e.key) === baseEdgeKey(key))
+  );
+}
+
+function edgeRefOf(evaluation: EvaluationResult, bodyId: string, key: string): EdgeRef | null {
+  const edge = edgeOf(evaluation, bodyId, key);
+  return edge ? { bodyId, key: edge.key, signature: edgeSignatureOf(edge) } : null;
+}
+
+/** `vector` with its component along the unit `axis` set to `value`. */
+function withComponent(vector: Vec3, axis: Vec3, value: number): Vec3 {
+  const k = value - dot(vector, axis);
+  return [
+    roundMm(vector[0] + axis[0] * k),
+    roundMm(vector[1] + axis[1] * k),
+    roundMm(vector[2] + axis[2] * k),
+  ];
+}
+
+function moveHandles<D extends MoveEdgeDraft | MoveFaceDraft>(
+  draft: D,
+  base: Vec3,
+  axes: { dir: Vec3; label: string; prefix: string }[],
+): DraftToolHandle<D>[] {
+  // The arrows ride on the moved edge/face, like the Move/Rotate gizmo.
+  const moved = add(base, draft.vector);
+  return axes.map((axis, i) => {
+    const value = roundMm(dot(draft.vector, axis.dir));
+    return {
+      kind: 'linear',
+      id: `move${i}`,
+      label: axis.label,
+      prefix: axis.prefix,
+      unit: 'mm',
+      value,
+      base: moved,
+      dir: axis.dir,
+      length: STEM_MM * 1.5,
+      apply: (d, v) => ({ ...d, vector: withComponent(d.vector, axis.dir, v) }),
+    };
+  });
+}
+
+export const MOVE_EDGE_DRAFT_TOOL = defineDraftTool<MoveEdgeDraft>({
+  module: 'direct-edit',
+  kinds: ['moveEdge'],
+  createDraft: (_kind, ctx) => {
+    const edges = ctx.selection.filter(
+      (s): s is Extract<typeof s, { kind: 'edge' }> => s.kind === 'edge',
+    );
+    if (edges.length !== 1 || ctx.selection.length !== 1) {
+      return { ok: false, reason: 'Select one straight edge to move.' };
+    }
+    const ref = edgeRefOf(ctx.evaluation, edges[0]!.bodyId, edges[0]!.edgeKey);
+    if (!ref) return { ok: false, reason: 'The edge is not evaluated yet.' };
+    if (ref.signature.curve !== 'line') {
+      return {
+        ok: false,
+        reason: 'Only straight edges between two planar faces can be moved; move a face instead.',
+      };
+    }
+    return { ok: true, draft: { kind: 'moveEdge', edge: ref, vector: [0, 0, 0] } };
+  },
+  // A click on another straight edge of the body moves that edge instead.
+  acceptPick: (draft, pick, evaluation) => {
+    if (pick.kind !== 'edge' || pick.bodyId !== draft.edge.bodyId) return draft;
+    const ref = edgeRefOf(evaluation, pick.bodyId, pick.edgeKey);
+    return ref && ref.signature.curve === 'line' ? { ...draft, edge: ref } : draft;
+  },
+  toFeature: (draft, base) =>
+    draft.vector.every((c) => c === 0)
+      ? null
+      : {
+          id: base.id,
+          name: base.name,
+          suppressed: false,
+          kind: 'moveEdge',
+          edge: draft.edge,
+          vector: draft.vector,
+        },
+  meta: () => ({
+    label: 'Move Edge',
+    shortcut: 'M',
+    prompt:
+      'Drag an arrow or type a value: the two faces at the edge tilt about their far sides to follow it.',
+  }),
+  handles: (draft, evaluation) => {
+    const edge = edgeOf(evaluation, draft.edge.bodyId, draft.edge.key);
+    const mid = edge?.midpoint ?? draft.edge.signature.midpoint;
+    const dir = edge?.direction ?? draft.edge.signature.direction ?? [1, 0, 0];
+    // The two world axes most across the edge (moving along the edge changes nothing).
+    const across = [0, 1, 2]
+      .sort((a, b) => Math.abs(dot(WORLD[a]!, dir)) - Math.abs(dot(WORLD[b]!, dir)))
+      .slice(0, 2)
+      .sort((a, b) => a - b);
+    return moveHandles(
+      draft,
+      mid,
+      across.map((i) => ({ dir: WORLD[i]!, label: `${'XYZ'[i]} offset`, prefix: 'XYZ'[i]! })),
+    );
+  },
+  modifiedBodyIds: (draft) => [draft.edge.bodyId],
+  ghostsModifiedBodies: () => true,
+});
+
+export const MOVE_FACE_DRAFT_TOOL = defineDraftTool<MoveFaceDraft>({
+  module: 'direct-edit',
+  kinds: ['moveFace'],
+  createDraft: (_kind, ctx) => {
+    const faces = selectedFaceRefs(ctx);
+    if (faces.length !== 1 || ctx.selection.length !== 1) {
+      return { ok: false, reason: 'Select one planar face to move.' };
+    }
+    const face = faces[0]!;
+    if (face.signature.surface !== 'plane' || !face.signature.normal) {
+      return { ok: false, reason: 'Only planar faces move in any direction; use Offset Face.' };
+    }
+    return { ok: true, draft: { kind: 'moveFace', face, vector: [0, 0, 0] } };
+  },
+  acceptPick: (draft, pick, evaluation) => {
+    if (pick.kind !== 'face' || pick.bodyId !== draft.face.bodyId) return draft;
+    const ref = faceRefOf(evaluation, pick.bodyId, pick.faceKey);
+    return ref && ref.signature.surface === 'plane' ? { ...draft, face: ref } : draft;
+  },
+  toFeature: (draft, base) =>
+    draft.vector.every((c) => c === 0)
+      ? null
+      : {
+          id: base.id,
+          name: base.name,
+          suppressed: false,
+          kind: 'moveFace',
+          face: draft.face,
+          vector: draft.vector,
+        },
+  meta: () => ({
+    label: 'Move Face',
+    shortcut: 'M',
+    prompt:
+      'Drag an arrow or type a value: along the normal the face offsets, sideways its neighbours tilt to follow.',
+  }),
+  handles: (draft, evaluation) => {
+    const anchor = faceAnchor(evaluation, draft.face);
+    if (!anchor) return [];
+    const frame = frameForFace(anchor.normal, anchor.point);
+    return moveHandles(draft, anchor.point, [
+      { dir: anchor.normal, label: 'Normal offset', prefix: 'N' },
+      { dir: frame.u, label: 'Slide 1', prefix: '↔' },
+      { dir: frame.v, label: 'Slide 2', prefix: '↕' },
+    ]);
+  },
+  modifiedBodyIds: (draft) => [draft.face.bodyId],
+  ghostsModifiedBodies: () => true,
+});
+
 // ---- vector helpers ----------------------------------------------------------------------
+
+function dot(a: Vec3, b: Vec3): number {
+  return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+}
 
 function add(a: Vec3, b: Vec3): Vec3 {
   return [a[0] + b[0], a[1] + b[1], a[2] + b[2]];

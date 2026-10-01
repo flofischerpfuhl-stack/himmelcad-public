@@ -1026,8 +1026,11 @@ class Document(PrintToolsMixin, InteropMixin):
         params = {"bodyIds": [b.id for b in items], "from": [float(v) for v in start], "to": [float(v) for v in end], "copy": copy}
         return self._feature(self.client.create_feature("translate", params, name=name))
 
-    def _primitive(self, shape: str, sizes: dict[str, float], plane: str | Face | Datum | tuple[str, float], center: Sequence[float], op: str, target: Body | None, name: str | None) -> Body:
+    def _primitive(self, shape: str, sizes: dict[str, float], plane: str | Face | Datum | tuple[str, float], center: Sequence[float], op: str, target: Body | None, name: str | None, flip: bool | None = None) -> Body:
         params: dict[str, Any] = {"shape": shape, "plane": self._plane_ref(plane), "center": [float(v) for v in center], "operation": op, **sizes}
+        # Like the Add tools: a cut on a face goes into the face (a pocket/hole) unless told otherwise.
+        if flip if flip is not None else (op == "cut" and isinstance(plane, Face)):
+            params["flip"] = True
         if op != "new":
             target_id = target.id if target else (plane.body_id if isinstance(plane, Face) else None)
             if target_id:
@@ -1038,25 +1041,25 @@ class Document(PrintToolsMixin, InteropMixin):
             return Body(self, f"body:{feature.id}", feature)
         return Body(self, str(params.get("targetBodyId") or self._last_body_id(result)), feature)
 
-    def box(self, width: float, depth: float, height: float, *, plane: str | Face | Datum | tuple[str, float] = "XY", center: Sequence[float] = (0.0, 0.0, 0.0), op: str = "new", target: Body | None = None, name: str | None = None) -> Body:
+    def box(self, width: float, depth: float, height: float, *, plane: str | Face | Datum | tuple[str, float] = "XY", center: Sequence[float] = (0.0, 0.0, 0.0), op: str = "new", target: Body | None = None, name: str | None = None, flip: bool | None = None) -> Body:
         """A box standing on ``plane``, its base centred at ``center`` (``width`` along the plane's u, ``depth`` along v)."""
-        return self._primitive("box", {"width": width, "depth": depth, "height": height}, plane, center, op, target, name)
+        return self._primitive("box", {"width": width, "depth": depth, "height": height}, plane, center, op, target, name, flip)
 
-    def cylinder(self, radius: float, height: float, *, plane: str | Face | Datum | tuple[str, float] = "XY", center: Sequence[float] = (0.0, 0.0, 0.0), op: str = "new", target: Body | None = None, name: str | None = None) -> Body:
+    def cylinder(self, radius: float, height: float, *, plane: str | Face | Datum | tuple[str, float] = "XY", center: Sequence[float] = (0.0, 0.0, 0.0), op: str = "new", target: Body | None = None, name: str | None = None, flip: bool | None = None) -> Body:
         """A cylinder standing on ``plane`` (``op="cut"`` on a face makes a round pocket)."""
-        return self._primitive("cylinder", {"radius": radius, "height": height}, plane, center, op, target, name)
+        return self._primitive("cylinder", {"radius": radius, "height": height}, plane, center, op, target, name, flip)
 
-    def sphere(self, radius: float, *, plane: str | Face | Datum | tuple[str, float] = "XY", center: Sequence[float] = (0.0, 0.0, 0.0), op: str = "new", target: Body | None = None, name: str | None = None) -> Body:
+    def sphere(self, radius: float, *, plane: str | Face | Datum | tuple[str, float] = "XY", center: Sequence[float] = (0.0, 0.0, 0.0), op: str = "new", target: Body | None = None, name: str | None = None, flip: bool | None = None) -> Body:
         """A sphere resting on ``plane`` at ``center``."""
-        return self._primitive("sphere", {"radius": radius}, plane, center, op, target, name)
+        return self._primitive("sphere", {"radius": radius}, plane, center, op, target, name, flip)
 
-    def cone(self, radius: float, height: float, top_radius: float = 0.0, *, plane: str | Face | Datum | tuple[str, float] = "XY", center: Sequence[float] = (0.0, 0.0, 0.0), op: str = "new", target: Body | None = None, name: str | None = None) -> Body:
+    def cone(self, radius: float, height: float, top_radius: float = 0.0, *, plane: str | Face | Datum | tuple[str, float] = "XY", center: Sequence[float] = (0.0, 0.0, 0.0), op: str = "new", target: Body | None = None, name: str | None = None, flip: bool | None = None) -> Body:
         """A cone (``top_radius`` 0) or frustum standing on ``plane``."""
-        return self._primitive("cone", {"radius": radius, "radius2": top_radius, "height": height}, plane, center, op, target, name)
+        return self._primitive("cone", {"radius": radius, "radius2": top_radius, "height": height}, plane, center, op, target, name, flip)
 
-    def torus(self, radius: float, tube_radius: float, *, plane: str | Face | Datum | tuple[str, float] = "XY", center: Sequence[float] = (0.0, 0.0, 0.0), op: str = "new", target: Body | None = None, name: str | None = None) -> Body:
+    def torus(self, radius: float, tube_radius: float, *, plane: str | Face | Datum | tuple[str, float] = "XY", center: Sequence[float] = (0.0, 0.0, 0.0), op: str = "new", target: Body | None = None, name: str | None = None, flip: bool | None = None) -> Body:
         """A torus lying on ``plane``: ring ``radius``, ``tube_radius`` (smaller)."""
-        return self._primitive("torus", {"radius": radius, "radius2": tube_radius}, plane, center, op, target, name)
+        return self._primitive("torus", {"radius": radius, "radius2": tube_radius}, plane, center, op, target, name, flip)
 
     def move_edge(self, edge: Edge, vector: Sequence[float], *, name: str | None = None) -> Feature:
         """Moves a straight edge between two planar faces by ``vector`` (world mm): both faces

@@ -440,20 +440,24 @@ void test('Move/Rotate: rotations about an oriented gizmo become the same world 
   expected.t.forEach((v, i) => assert.ok(Math.abs(v - actual.t[i]!) < 1e-9));
 });
 
-void test('Move/Rotate on a face moves it along its normal (Offset Face); an edge explains why not', async () => {
+void test('Move/Rotate on a face moves it (Move Face); on a straight edge it moves the edge (Move Edge)', async () => {
   await load(twoBoxes().slice(0, 2));
   const body = store.getState().evaluation.bodies[0]!;
   const side = body.faces.find((f) => f.normal?.[0] === 1)!;
   store.getState().setSelection([{ kind: 'face', bodyId: body.id, faceKey: side.key }]);
   run('transform.moveRotate');
   const tool = store.getState().activeTool;
-  assert.ok(tool?.kind === 'feature' && tool.draft.kind === 'offsetFace' && tool.draft.viaMove);
+  assert.ok(tool?.kind === 'feature' && tool.draft.kind === 'moveFace');
   assert.equal(draftMeta(tool.draft).label, 'Move Face');
   store.getState().cancel();
   store.getState().setSelection([{ kind: 'edge', bodyId: body.id, edgeKey: body.edges[0]!.key }]);
   const availability = findCommand('transform.moveRotate')!.availability(store.getState());
-  assert.equal(availability.enabled, false);
-  assert.match(availability.reason ?? '', /Edges cannot be moved/);
+  assert.equal(availability.enabled, true);
+  run('transform.moveRotate');
+  const edgeTool = store.getState().activeTool;
+  assert.ok(edgeTool?.kind === 'feature' && edgeTool.draft.kind === 'moveEdge');
+  assert.equal(draftMeta(edgeTool.draft).label, 'Move Edge');
+  store.getState().cancel();
 });
 
 void test('Move Profile: a sketch region moves in its plane; position dimensions follow; a lock refuses', async () => {

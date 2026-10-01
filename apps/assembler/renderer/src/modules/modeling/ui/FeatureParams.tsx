@@ -279,6 +279,20 @@ export function ModelingFeatureParams({
               onCommit={(v) => edit({ [field]: v, [`${field}Expression`]: undefined })}
             />
           ))}
+          <div>
+            <span className={styles.paramLabel}>Side</span>
+            <Select
+              aria-label={`${feature.name} side`}
+              value={feature.flip ? 'in' : 'out'}
+              options={[
+                { value: 'out', label: feature.plane.kind === 'face' ? 'Outward' : 'Above' },
+                { value: 'in', label: feature.plane.kind === 'face' ? 'Into face' : 'Below' },
+              ]}
+              onChange={(event) =>
+                edit({ flip: event.currentTarget.value === 'in' ? true : undefined })
+              }
+            />
+          </div>
           <span className={styles.paramNote}>
             {PRIMITIVE_LABEL[feature.shape]} on{' '}
             {feature.plane.kind === 'plane'

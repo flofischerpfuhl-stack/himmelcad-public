@@ -309,6 +309,8 @@ type DragMode =
       last: number;
       /** Accumulated pointer rotation since the drag started (degrees). */
       turned: number;
+      /** Snapping step of the handle (degrees), when not the default. */
+      snapDeg?: number;
       start: number;
     }
   /** Left drag from empty canvas: box selection (Shift adds). */
@@ -1043,6 +1045,7 @@ export function Viewport(props: ViewportProps): JSX.Element {
           last: at,
           turned: 0,
           start: angle.value,
+          ...(angle.snapDeg !== undefined ? { snapDeg: angle.snapDeg } : {}),
         };
       }
       if (pick.kind === 'toolHandle') {
@@ -1610,7 +1613,7 @@ export function Viewport(props: ViewportProps): JSX.Element {
           mode.turned += step;
           mode.last = at;
           // 15° steps like Shapr3D's gizmo; Shift rotates freely (0.1°).
-          const snapStep = event.shiftKey ? 0.1 : ANGLE_SNAP_DEG;
+          const snapStep = event.shiftKey ? 0.1 : (mode.snapDeg ?? ANGLE_SNAP_DEG);
           const value = Math.round((mode.start + mode.turned) / snapStep) * snapStep;
           applyHandleValue(mode.handle, value, false);
           dirtyRef.current = true;
@@ -1940,7 +1943,14 @@ export function Viewport(props: ViewportProps): JSX.Element {
             label={label.label}
             {...(label.prefix ? { prefix: label.prefix } : {})}
             {...(label.unit
-              ? { unit: label.unit === 'deg' ? '°' : label.unit === 'count' ? '' : 'mm' }
+              ? {
+                  unit:
+                    label.unit === 'deg'
+                      ? '°'
+                      : label.unit === 'count' || label.unit === 'ratio'
+                        ? ''
+                        : 'mm',
+                }
               : {})}
             value={label.value}
             x={screen[0]}

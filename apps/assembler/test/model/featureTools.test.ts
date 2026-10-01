@@ -660,8 +660,9 @@ void test('Move Face on a part with inclined neighbours: true offset on the Himm
   const top = prism.faces.find((f) => f.normal?.[2] === 1)!;
   store.getState().select({ kind: 'face', bodyId: prism.id, faceKey: top.key });
   run('transform.moveRotate');
-  assert.ok(draft('offsetFace').viaMove);
-  const [arrow] = draftHandles(draft('offsetFace'), store.getState().evaluation);
+  // A planar face moves in any direction (Move Face); its first arrow is the normal.
+  const [arrow] = draftHandles(draft('moveFace'), store.getState().evaluation);
+  assert.equal(arrow!.label, 'Normal offset');
   store.getState().updateFeatureDraft((d) => arrow!.apply(d, 2));
   store.getState().commit();
   await store.getState().whenSettled();

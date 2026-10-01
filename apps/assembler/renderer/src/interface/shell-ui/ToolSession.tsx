@@ -6,12 +6,13 @@
  * centre. Rendered whenever `activeTool` is set; the viewport owns the
  * in-canvas handles and editable dimension chips this refers to.
  */
-import { AlertTriangle, ArrowLeftRight, Check, LoaderCircle, X } from 'lucide-react';
+import { AlertTriangle, ArrowLeftRight, Check, ChevronRight, LoaderCircle, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 import { Button, Select, Tooltip } from '@himmelcad/ui';
 
 import { edgeRuleLabel, PRINT_CLEARANCES } from '../../foundation/document/blendOptions.js';
+import { MAX_EXTRUDE_TAPER } from '../../foundation/document/document.js';
 
 import { evaluateExpression } from '../../platform/widgets/expression.js';
 
@@ -21,7 +22,7 @@ import {
   type ToolSession as ToolSessionState,
 } from '../../foundation/commands/store.js';
 
-import { draftBadges, draftMeta } from '../../foundation/commands/featureDrafts.js';
+import { draftBadges, draftMeta, draftSteps } from '../../foundation/commands/featureDrafts.js';
 import { useFixStore } from './fixReference.js';
 import { isWorldAxes } from '../../modules/modeling/moveGizmo.js';
 import { PICK_PLANS, removePick, swapPicks } from '../../foundation/commands/pickSession.js';
@@ -320,6 +321,60 @@ function ExtrudeControls({
         unit="mm"
         onCommit={(v) => state.setExtrudeOptions({ startOffset: v === 0 ? undefined : v })}
       />
+      {(tool.extent ?? 'distance') === 'distance' ? (
+        <PillNumber
+          label="Taper"
+          value={tool.taper ?? 0}
+          unit="°"
+          onCommit={(v) =>
+            state.setExtrudeOptions({
+              taper:
+                v === 0 ? undefined : Math.max(-MAX_EXTRUDE_TAPER, Math.min(MAX_EXTRUDE_TAPER, v)),
+            })
+          }
+        />
+      ) : null}
+    </>
+  );
+}
+
+/** Input steps of a feature tool with a Next step (Translate, Align, Rotate Around Axis). */
+function DraftStepBadges({
+  state,
+  tool,
+}: {
+  state: AssemblerState;
+  tool: Extract<ToolSessionState, { kind: 'feature' }>;
+}): JSX.Element | null {
+  const steps = draftSteps(tool.draft);
+  if (!steps) return null;
+  const last = steps.current >= steps.labels.length - 1;
+  return (
+    <>
+      <span className={styles.badge} role="group" aria-label="Tool steps">
+        {steps.labels.map((label, index) => (
+          <button
+            key={label}
+            type="button"
+            aria-current={index === steps.current ? 'step' : undefined}
+            className={`${styles.badgeOption} ${index === steps.current ? styles.badgeOptionActive : ''}`}
+            onClick={() => state.updateFeatureDraft((draft) => steps.go(draft, index))}
+          >
+            {index + 1} {label}
+          </button>
+        ))}
+      </span>
+      {last ? null : (
+        <Button
+          variant="secondary"
+          size="small"
+          icon={<ChevronRight size={13} />}
+          aria-label="Next step"
+          onClick={() => state.updateFeatureDraft((draft) => steps.go(draft, steps.current + 1))}
+        >
+          Next
+        </Button>
+      )}
     </>
   );
 }
@@ -585,6 +640,7 @@ function ToolBadge({
     case 'feature':
       return (
         <>
+          <DraftStepBadges state={state} tool={tool} />
           {draftBadges(tool.draft, state.evaluation).map((badge) => {
             const onChange = (value: string) =>
               state.updateFeatureDraft((draft, evaluation) =>

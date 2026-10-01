@@ -243,7 +243,7 @@ export const PRIMITIVE_SHAPES: readonly PrimitiveShape[] = [
 /**
  * A primitive solid standing on a plane (the "Add" menu): its base is
  * centred at `center` (a world point, projected onto the plane) and it
- * grows along the plane's normal. Sizes per shape — box: `width` (along
+ * grows along the plane's normal (`flip`: to the other side). Sizes per shape — box: `width` (along
  * the plane's u), `depth` (v), `height`; cylinder: `radius`, `height`;
  * cone: `radius` (base), `radius2` (top, 0 = pointed), `height`; sphere:
  * `radius` (resting on the plane); torus: `radius` (ring), `radius2`
@@ -259,6 +259,8 @@ export interface PrimitiveFeature extends FeatureBase {
   height?: Millimeters;
   radius?: Millimeters;
   radius2?: Millimeters;
+  /** Grows to the other side of the plane (into the face: a pocket or a hole when cutting). */
+  flip?: boolean;
   /** Source formulas of the sizes (document parameters), when set. */
   widthExpression?: string | undefined;
   depthExpression?: string | undefined;

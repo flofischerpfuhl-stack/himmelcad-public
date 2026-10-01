@@ -2417,6 +2417,11 @@
             "type": "number",
             "minimum": 0
           },
+          "flip": {
+            "type": "boolean",
+            "default": false,
+            "description": "Grow to the other side of the plane: into a face (a pocket or hole with operation cut)."
+          },
           "operation": {
             "enum": ["new", "join", "cut", "intersect"],
             "default": "new",

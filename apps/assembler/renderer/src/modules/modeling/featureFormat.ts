@@ -121,6 +121,7 @@ export function validateModelingFeature(r: Rec, path: string, h: FormatHelpers):
         optionalPositive(field);
         optionalStr(`${field}Expression`);
       }
+      if (r.flip !== undefined) bool('flip');
       for (const field of PRIMITIVE_SIZE_FIELDS[r.shape as PrimitiveShape]) {
         if (r[field] === undefined) h.fail(`${path}.${field}`, 'expected a number');
       }

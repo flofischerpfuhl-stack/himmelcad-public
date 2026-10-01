@@ -152,6 +152,8 @@ export const COMMAND_ORDER = {
   modelingFeatures: 400,
   directEdit: 410,
   modelingFeaturesTail: 420,
+  /** The Add menu's primitives (modeling). */
+  primitives: 430,
   construct: 500,
   booleans: 600,
   transform: 700,

@@ -303,6 +303,24 @@ void test('A primitive on a face joins or cuts the body like Extrude', async () 
   ]);
   noErrors(joined);
   near(only(joined, 'body:a').volume, 4000 + Math.PI * 9 * 5, 1e-2, 'boss');
+  // Into the face: a round pocket.
+  const pocket = await evaluate([
+    ...box('a', 0, 0, 20, 20, 10),
+    primitive(
+      'c',
+      'cylinder',
+      { radius: 3, height: 5 },
+      {
+        plane: { kind: 'face', face: top },
+        center: [10, 10, 10],
+        operation: 'cut',
+        targetBodyId: 'body:a',
+        flip: true,
+      },
+    ),
+  ]);
+  noErrors(pocket);
+  near(only(pocket, 'body:a').volume, 4000 - Math.PI * 9 * 5, 1e-2, 'pocket');
   const bad = await evaluate([primitive('t', 'torus', { radius: 2, radius2: 3 })]);
   assert.match(bad.errors['t'] ?? '', /smaller than the ring radius/);
 });

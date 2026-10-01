@@ -231,6 +231,8 @@ export interface AngleHandleState {
   ring: boolean;
   /** Ring colour; `null` = the tool accent. */
   color: readonly [number, number, number] | null;
+  /** Drag snapping step in degrees (default 15°, Shift: 0.1°). */
+  snapDeg?: number;
   hovered: boolean;
 }
 

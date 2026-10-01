@@ -171,7 +171,7 @@ const extrudeTool: ViewportToolProvider = {
     };
   },
   applyHandleValue: (handle, value, snapDrag) =>
-    handle === 'extrude2' || handle === 'extrudeStart'
+    handle === 'extrude2' || handle === 'extrudeStart' || handle === 'extrudeTaper'
       ? applyToolHandleValue(handle, value, snapDrag)
       : false,
   click: ({ state, item }) => {

@@ -37,6 +37,7 @@ export type ToolHandleKind =
   | 'section'
   | 'extrude2'
   | 'extrudeStart'
+  | 'extrudeTaper'
   | `feature:${string}`
   | `ring:${0 | 1 | 2}`
   | 'pivot';

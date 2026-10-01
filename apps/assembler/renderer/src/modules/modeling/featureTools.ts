@@ -59,7 +59,12 @@ import type {
   HandleBase,
   ToolPick,
 } from '../../foundation/commands/featureDrafts.js';
-import { MAX_PATTERN_COUNT, type PatternDefinition } from './features.js';
+import {
+  MAX_HELIX_TURNS,
+  MAX_PATTERN_COUNT,
+  type PatternDefinition,
+  type RevolveHelix,
+} from './features.js';
 import { findSketchContact, pointInsideBody } from './modeling.js';
 import type { SelectionItem } from '../../foundation/commands/store.js';
 
@@ -77,6 +82,8 @@ export type RevolveDraft = {
   profile: ProfileRef;
   axis: AxisRef | null;
   angle: number;
+  /** Helical revolve (springs, threads): pitch per turn, turns, hand. */
+  helix?: RevolveHelix;
 } & ProfileOperation;
 
 export type SweepDraft = { kind: 'sweep'; profile: ProfileRef; path: PathRef } & ProfileOperation;
@@ -117,6 +124,8 @@ export interface RotateAxisDraft {
   axis: AxisRef;
   angle: number;
   copy: boolean;
+  /** Input step (Next): 0 bodies, 1 axis; clicks go to it. Absent: by what is clicked. */
+  step?: 0 | 1;
 }
 
 export interface AlignDraft {
@@ -127,6 +136,8 @@ export interface AlignDraft {
   flip: boolean;
   center: boolean;
   offset: number;
+  /** Input step (Next): 0 the moving face, 1 the target face. Absent: by body. */
+  step?: 0 | 1;
 }
 
 /** The drafts of this file (the print drafts are in `printFeatureTools.ts`). */
@@ -657,7 +668,15 @@ export function createModelingDraft(
       }
       return {
         ok: true,
-        draft: { kind: 'rotateAxis', bodyIds, axis, angle: DEFAULT_ROTATE_ANGLE, copy: false },
+        // Started with its bodies: the axis step is current (Next/Back via the step badges).
+        draft: {
+          kind: 'rotateAxis',
+          bodyIds,
+          axis,
+          angle: DEFAULT_ROTATE_ANGLE,
+          copy: false,
+          step: 1,
+        },
       };
     }
     case 'align': {
@@ -683,6 +702,7 @@ export function createModelingDraft(
           flip: false,
           center: true,
           offset: 0,
+          step: 1,
         },
       };
     }
@@ -827,17 +847,29 @@ export function acceptModelingPick(
       if (faceRef && isPlanar(faceRef)) return { ...draft, plane: { kind: 'face', face: faceRef } };
       return draft;
     case 'rotateAxis':
+      // Bodies step: any click on a body (face, edge) adds or removes that body.
+      if (draft.step === 0) {
+        return pickedBody
+          ? { ...draft, bodyIds: toggle(draft.bodyIds, pickedBody, (a, b) => a === b) }
+          : draft;
+      }
       // An edge or sketch line is the axis; a body (or its face) is added or removed.
       if (edgeRef && (edgeRef.signature.curve === 'line' || edgeRef.signature.curve === 'circle')) {
         return { ...draft, axis: { kind: 'edge', edge: edgeRef } };
       }
       if (lineAxis) return { ...draft, axis: lineAxis };
-      if (pickedBody && pick.kind !== 'edge') {
+      if (pickedBody && pick.kind !== 'edge' && draft.step === undefined) {
         return { ...draft, bodyIds: toggle(draft.bodyIds, pickedBody, (a, b) => a === b) };
       }
       return draft;
     case 'align':
       if (faceRef && isPlanar(faceRef)) {
+        // With steps: the moving face (any body but the target's), then the target face.
+        if (draft.step === 0) {
+          if (faceRef.bodyId === draft.target.bodyId) return draft;
+          return { ...draft, face: faceRef, bodyId: faceRef.bodyId };
+        }
+        if (draft.step === 1 && faceRef.bodyId === draft.bodyId) return draft;
         if (faceRef.bodyId === draft.bodyId) return { ...draft, face: faceRef };
         return { ...draft, target: faceRef };
       }
@@ -872,7 +904,7 @@ function acceptDatumPick(
     case 'revolve':
       return axis ? { ...draft, axis } : draft;
     case 'rotateAxis':
-      return axis ? { ...draft, axis } : draft;
+      return axis && draft.step !== 0 ? { ...draft, axis } : draft;
     case 'pattern':
       if (!axis) return draft;
       return draft.pattern.kind === 'linear'
@@ -941,6 +973,7 @@ export function modelingDraftToFeature(
         profile: draft.profile,
         axis: draft.axis,
         angle: draft.angle,
+        ...(draft.helix ? { helix: draft.helix } : {}),
         ...op(draft),
       };
     case 'sweep':
@@ -1011,9 +1044,11 @@ export function modelingDraftMeta(draft: ModelingDraft): DraftMeta {
       return {
         label: 'Revolve',
         shortcut: 'V',
-        prompt: draft.axis
-          ? 'Drag the arc or type an angle. Click an edge or a sketch line to change the axis.'
-          : 'Pick the axis: a straight edge, a sketch line, or X/Y/Z.',
+        prompt: !draft.axis
+          ? 'Pick the axis: a straight edge, a sketch line, or X/Y/Z.'
+          : draft.helix
+            ? 'Helix: drag the arrow for the height or type the pitch and turns. Click an edge or a sketch line to change the axis.'
+            : 'Drag the arc or type an angle. Click an edge or a sketch line to change the axis.',
       };
     case 'sweep':
       return {
@@ -1125,6 +1160,39 @@ export function modelingDraftBadges(draft: ModelingDraft): DraftBadge[] {
     case 'revolve':
       return [
         { ...OPERATION_BADGE, value: draft.operation },
+        {
+          ariaLabel: 'Revolve path',
+          value: draft.helix ? 'helix' : 'revolve',
+          options: [
+            { value: 'revolve', label: 'Revolve' },
+            { value: 'helix', label: 'Helix' },
+          ],
+          apply: (d, value, evaluation) => {
+            if (d.kind !== 'revolve') return d;
+            if (value !== 'helix') {
+              const { helix: _helix, ...rest } = d;
+              return rest;
+            }
+            return d.helix ? d : { ...d, helix: defaultHelix(evaluation, d) };
+          },
+        },
+        ...(draft.helix
+          ? [
+              {
+                ariaLabel: 'Helix hand',
+                value: draft.helix.leftHanded ? 'left' : 'right',
+                options: [
+                  { value: 'right', label: 'Right-hand' },
+                  { value: 'left', label: 'Left-hand' },
+                ],
+                apply: (d: FeatureDraft, value: string): FeatureDraft => {
+                  if (d.kind !== 'revolve' || !d.helix) return d;
+                  const { leftHanded: _drop, ...rest } = d.helix;
+                  return { ...d, helix: value === 'left' ? { ...rest, leftHanded: true } : rest };
+                },
+              },
+            ]
+          : []),
         {
           ariaLabel: 'Revolve axis',
           value: draft.axis?.kind === 'world' ? draft.axis.axis : draft.axis ? 'edge' : '',
@@ -1410,6 +1478,7 @@ export function modelingDraftHandles(
       const line = axisLine(evaluation, draft.axis, features);
       const samples = profileSamples(evaluation, draft.profile);
       if (!line || !samples) return [];
+      if (draft.helix) return helixHandles(draft.helix, line, samples.center);
       const k = dot(sub(samples.center, line.point), line.dir);
       const center = add(line.point, scale(line.dir, k));
       const radial = sub(samples.center, center);
@@ -1596,6 +1665,86 @@ export function modelingDraftHandles(
     default:
       return [];
   }
+}
+
+// ---- helical revolve -----------------------------------------------------------------------
+
+/**
+ * A helix switched on in the tool: the pitch just over the profile's extent
+ * along the axis (turns cannot overlap; a coil spring's wire touches the
+ * next turn at 1 ×), rounded up to 0.5 mm, and 3 turns.
+ */
+function defaultHelix(evaluation: EvaluationResult, draft: RevolveDraft): RevolveHelix {
+  const line = axisLine(evaluation, draft.axis, []);
+  const samples = profileSamples(evaluation, draft.profile);
+  let extent = 1;
+  if (line && samples && samples.outline.length > 0) {
+    const along = samples.outline.map((p) => dot(sub(p, line.point), line.dir));
+    extent = Math.max(...along) - Math.min(...along);
+  }
+  return { pitch: Math.max(1, Math.ceil((extent * 1.5) / 0.5) * 0.5), turns: 3 };
+}
+
+/** Helix handles: the height arrow along the axis, pitch and turns chips. */
+function helixHandles(
+  helix: RevolveHelix,
+  line: { point: Vec3; dir: Vec3 },
+  centre: Vec3,
+): DraftHandle[] {
+  const up = helix.pitch < 0 ? scale(line.dir, -1) : line.dir;
+  const rise = Math.abs(helix.pitch);
+  const height = rise * helix.turns;
+  // On the axis, level with the profile: the coil grows from there.
+  const k = dot(sub(centre, line.point), line.dir);
+  const base = add(line.point, scale(line.dir, k));
+  const side = normalize(sub(centre, base));
+  const setHelix = (d: FeatureDraft, patch: Partial<RevolveHelix>): FeatureDraft =>
+    d.kind === 'revolve' && d.helix ? { ...d, helix: { ...d.helix, ...patch } } : d;
+  return [
+    {
+      kind: 'linear',
+      id: 'height',
+      label: 'Helix height',
+      unit: 'mm',
+      value: Math.round(height * 1000) / 1000,
+      base,
+      dir: up,
+      length: Math.max(height, STEM_MM),
+      apply: (d, value) =>
+        setHelix(d, {
+          turns: Math.min(
+            MAX_HELIX_TURNS,
+            Math.max(0.01, Math.round((value / rise) * 1000) / 1000),
+          ),
+        }),
+    },
+    {
+      kind: 'chip',
+      id: 'pitch',
+      label: 'Pitch',
+      prefix: 'P',
+      unit: 'mm',
+      value: helix.pitch,
+      at: add(add(base, scale(up, rise)), scale(side, -6)),
+      apply: (d, value) =>
+        Math.abs(value) < MIN_FEATURE_SIZE_MM
+          ? d
+          : setHelix(d, { pitch: Math.round(value * 1000) / 1000 }),
+    },
+    {
+      kind: 'chip',
+      id: 'turns',
+      label: 'Turns',
+      prefix: '×',
+      unit: 'ratio',
+      value: helix.turns,
+      at: add(add(base, scale(up, height)), scale(side, -6)),
+      apply: (d, value) =>
+        setHelix(d, {
+          turns: Math.min(MAX_HELIX_TURNS, Math.max(0.01, Math.round(value * 1000) / 1000)),
+        }),
+    },
+  ];
 }
 
 // ---- guides (axis lines, planes) -----------------------------------------------------------

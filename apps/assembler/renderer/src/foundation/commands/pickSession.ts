@@ -175,8 +175,12 @@ const booleanPlan = (label: string, shortcut: string): PickPlan => ({
   swap: [0, 1],
 });
 
-/** Pick plans of the commands that can start before their selection. */
-export const PICK_PLANS: Readonly<Record<string, PickPlan>> = {
+/**
+ * Pick plans of the commands that can start before their selection: the
+ * plans of the core-era commands below, plus the plans modules register
+ * for their own commands ({@link registerPickPlan}).
+ */
+const PLANS: Record<string, PickPlan> = {
   'tools.extrude': { label: 'Extrude', shortcut: 'E', steps: [profiles] },
   'tools.filletChamfer': {
     label: 'Fillet',
@@ -401,13 +405,16 @@ export const PICK_PLANS: Readonly<Record<string, PickPlan>> = {
     steps: [
       {
         role: 'Object',
-        prompt: 'Click a body (double-click), a face or a sketch profile to move.',
+        prompt: 'Click a body (double-click), a face, an edge or a sketch profile to move.',
         min: 1,
         max: 1,
         accept: (item) =>
-          item.kind === 'body' || item.kind === 'face' || item.kind === 'sketchProfile'
+          item.kind === 'body' ||
+          item.kind === 'face' ||
+          item.kind === 'edge' ||
+          item.kind === 'sketchProfile'
             ? null
-            : 'Click a body, a face or a sketch profile.',
+            : 'Click a body, a face, an edge or a sketch profile.',
       },
     ],
   },
@@ -449,6 +456,21 @@ export const PICK_PLANS: Readonly<Record<string, PickPlan>> = {
     ],
   },
 };
+
+/** Pick plans by command id (read-only view; modules add theirs with {@link registerPickPlan}). */
+export const PICK_PLANS: Readonly<Record<string, PickPlan>> = PLANS;
+
+/** Registers the pick plan of a module's command (once per command id). */
+export function registerPickPlan(commandId: string, plan: PickPlan): void {
+  const known = PLANS[commandId];
+  if (known && known !== plan) throw new Error(`Pick plan of "${commandId}" is registered twice`);
+  PLANS[commandId] = plan;
+}
+
+/** Accept rule of a body step: a body, or a face or edge standing for its body. */
+export const acceptAnyBody: PickStep['accept'] = anyBody;
+/** Normalizes a face or edge pick to its body. */
+export const normalizeToBody: NonNullable<PickStep['normalize']> = asBody;
 
 // ---- reducers ---------------------------------------------------------------------------
 

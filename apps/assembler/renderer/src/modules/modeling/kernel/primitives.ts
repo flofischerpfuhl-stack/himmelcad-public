@@ -24,6 +24,7 @@ import type {
   ReplayContextLike,
   Shape3D,
 } from '../../../foundation/geometry-kernel/features/kit.js';
+import { transformShape } from '../../../foundation/geometry-kernel/features/occRigid.js';
 import { resolvePlane } from '../../../foundation/geometry-kernel/features/refs.js';
 import { add, dot, scale, sub } from '../../../foundation/geometry-kernel/features/rigid.js';
 import { PRIMITIVE_LABEL, PRIMITIVE_SIZE_FIELDS, type PrimitiveFeature } from '../features.js';
@@ -64,13 +65,19 @@ export function applyPrimitive(
   let shape: Shape3D;
   try {
     shape = buildPrimitive(kit, feature, frame, base);
+    // Into the face: the same solid mirrored across the plane (a pocket, a hole).
+    if (feature.flip) {
+      shape = transformShape(kit.oc, shape, [
+        { kind: 'mirror', point: base, normal: frame.normal },
+      ]);
+    }
   } catch (error) {
     if (kit.isFailure(error)) throw error;
     kit.fail(`${label} failed: ${kit.describeError(error)}`);
   }
   if (!(R.measureVolume(shape) > 0)) kit.fail(`${label} failed: the result is not a closed solid`);
   const geoms = kit.describeShape(shape);
-  const n = frame.normal;
+  const n = feature.flip ? scale(frame.normal, -1) : frame.normal;
   const sides: [Vec3, string][] = [
     [frame.u, 'side:0'],
     [frame.v, 'side:1'],

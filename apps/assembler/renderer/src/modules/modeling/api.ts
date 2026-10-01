@@ -250,6 +250,12 @@ const BODY_KIND_SCHEMAS: Record<string, FeatureKindSpec> = {
         height: { type: 'number', exclusiveMinimum: 0 },
         radius: { type: 'number', exclusiveMinimum: 0 },
         radius2: { type: 'number', minimum: 0 },
+        flip: {
+          type: 'boolean',
+          default: false,
+          description:
+            'Grow to the other side of the plane: into a face (a pocket or hole with operation cut).',
+        },
         operation,
         targetBodyId: schemaString,
         resultBodyName: schemaString,

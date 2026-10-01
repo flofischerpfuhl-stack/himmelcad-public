@@ -48,7 +48,23 @@ declare module './draftTools.js' {
       evaluation: EvaluationResult,
       features: readonly Feature[],
     ): D;
+    /**
+     * Input steps with a Next button (Shapr3D Translate, Align, Rotate Around
+     * Axis: targets, Next, references): the step names, the current one,
+     * and the draft at another step (Next, or a click on a step's badge).
+     * Clicks go to the current step.
+     */
+    steps?(draft: D): DraftSteps<D> | null;
+    /** History name prefix of the committed step (default: the kind's label), e.g. "Box". */
+    namePrefix?(draft: D): string;
   }
+}
+
+/** A tool's input steps (see `DraftTool.steps`). */
+export interface DraftSteps<D> {
+  labels: readonly string[];
+  current: number;
+  go(draft: D, step: number): D;
 }
 
 /** A running feature tool's references and parameters (any registered kind). */
@@ -178,6 +194,22 @@ export function draftAcceptEmptyClick(
 ): FeatureDraft {
   const accept = toolOf(draft.kind).acceptEmptyClick;
   return accept ? accept(draft, ray, evaluation, features) : draft;
+}
+
+/** The running tool's input steps (Next), or `null` for a one-step tool. */
+export function draftSteps(draft: FeatureDraft): DraftSteps<FeatureDraft> | null {
+  const tool = toolOf(draft.kind);
+  const steps = tool.steps?.(draft) ?? null;
+  if (!steps) return null;
+  return {
+    ...steps,
+    go: (d, step) => (sameTool(tool, d) ? steps.go(d, step) : d),
+  };
+}
+
+/** History name prefix of the step a draft commits, `null` for the kind's own label. */
+export function draftNamePrefix(draft: FeatureDraft): string | null {
+  return toolOf(draft.kind).namePrefix?.(draft) ?? null;
 }
 
 /** Construction planes/axes a draft references (highlighted while the tool runs). */
