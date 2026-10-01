@@ -53,7 +53,7 @@ per coordinate, skipped above 120 points) and detection of solutions that
 collapse geometry (zero-length lines / radii are rejected as failures —
 planeGCS happily "solves" a line made both horizontal and vertical).
 
-## Data model (document schema v2)
+## Data model (since document schema v2; the file schema is 3)
 
 A `sketch` feature (`model/document.ts`, `sketch/types.ts`) stores:
 
@@ -64,8 +64,8 @@ A `sketch` feature (`model/document.ts`, `sketch/types.ts`) stores:
 - optional `projections` (projected body geometry with its source
   reference), `regionMemory` (region fingerprints) and `patterns`
   (editable pattern records, Block 8), all additive — the
-  schema stays 2; a file with the new entity kinds fails loudly ("unknown
-  entity kind") in older builds;
+  schema version does not change (3, oundation/document/format.ts); a file with the new entity kinds fails loudly ("unknown
+  entity kind") in older builds, while older builds ignore patterns (the pattern copies are plain entities, so the drawing is the same; only the editable record is lost);
 - **constraints** `{ id, kind, refs }`: coincident, horizontal, vertical,
   parallel, perpendicular, tangent, equal, fixed (lock), midpoint, symmetric,
   concentric, pointOnObject (the table in `types.ts` lists the refs per kind);

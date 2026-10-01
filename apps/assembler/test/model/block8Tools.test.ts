@@ -95,7 +95,15 @@ const body = (id: string) => store.getState().evaluation.bodies.find((b) => b.id
 void test('Add menu: five primitives in the Add group; Box on the grid is named "Box 1"', async () => {
   await load([]);
   const add = COMMANDS.filter((c) => c.group === 'add').map((c) => c.id);
-  assert.deepEqual(add, ['add.box', 'add.cylinder', 'add.sphere', 'add.cone', 'add.torus']);
+  // The primitives (modeling, order 430) come before the canvas module's Image… (1550).
+  assert.deepEqual(add, [
+    'add.box',
+    'add.cylinder',
+    'add.sphere',
+    'add.cone',
+    'add.torus',
+    'add.image',
+  ]);
   run('add.box');
   const d = draft('primitive');
   assert.equal(d.shape, 'box');

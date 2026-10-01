@@ -309,15 +309,23 @@ manifold objects, names, colours, item transforms) and Open in Slicer
 
 ## Files, reference meshes and the Windows installer
 
-- `.hcasm` projects (schema 2, `model/project/format.ts`) also carry the
+- `.hcasm` projects (schema 3, `foundation/document/format.ts`) also carry the
   view state (display mode, section, grid, panels, last camera preset, saved
   views), Items names/folders (`items`) and STL reference meshes
   (`referenceMeshes`, gzip+base64 via `meshCodec.ts`); all three are
   optional and additive, so no schema bump. Block 8 adds, also additive:
   `images` (reference-image pictures, base64, only those a step uses),
   `SketchData.patterns`, `SketchText.align`, `viewState.display.xrayOpacity`/
-  `gridPlane` (written only when not default) and the `referenceImage`
-  feature kind (older builds refuse a file containing one: unknown kind). Dirty tracking covers features,
+  `gridPlane` (written only when not default), the optional fields
+  `extrude.taper`, `revolve.helix`, the second direction and spacing modes
+  of `pattern`, `split.profile`/`keepOriginal`, and the feature kinds
+  `referenceImage`, `primitive`, `scale`, `translate`, `moveEdge` and
+  `moveFace`. Files without them read exactly as before, so the schema
+  stays 3 and there is no migration. Older builds refuse a file with a new
+  kind (unknown kind) but ignore unknown optional fields: a tapered
+  extrude, a helical revolve or a two-direction pattern opens there as the
+  plain feature (no released build is affected; decide on a version bump
+  or a minimum-reader field before the first release). Dirty tracking covers features,
   Items, saved views and reference meshes; the feature-id counter is reseeded
   from each loaded document.
 - STL import (File > Import STL…, binary or ASCII, `kernel/stlImport.ts`):

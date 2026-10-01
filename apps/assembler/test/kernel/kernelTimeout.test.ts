@@ -336,7 +336,19 @@ void test('kernel thread: the module kernel parts are registered as in the app (
       [...thread.evaluatorKinds].sort(),
       kinds.filter((kind) => featureEvaluator(kind) !== undefined).sort(),
     );
-    for (const kind of ['loft', 'offsetFace', 'deleteFace', 'constructionPlane']) {
+    for (const kind of [
+      'loft',
+      'offsetFace',
+      'deleteFace',
+      'constructionPlane',
+      // Block 8: modeling, direct-edit and canvas kinds.
+      'primitive',
+      'scale',
+      'translate',
+      'moveEdge',
+      'moveFace',
+      'referenceImage',
+    ]) {
       assert.ok(thread.evaluatorKinds.includes(kind), `${kind} evaluates on the thread`);
     }
   } finally {
