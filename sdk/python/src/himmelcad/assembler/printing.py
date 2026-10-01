@@ -8,7 +8,7 @@ exactly **one** ``feature.create`` and returns the editable history feature.
 The metric table holds **sizes only** (ISO 273 clearance holes, tap drills,
 DIN 974-1 counterbores, ISO 15065 countersinks); ``thread=True`` stores a
 cosmetic thread label, no thread geometry. Keep :data:`METRIC_HOLE_SIZES`
-in sync with ``apps/assembler/renderer/src/model/printFeatures.ts`` (a test
+in sync with ``apps/assembler/renderer/src/modules/modeling/printFeatures.ts`` (a test
 compares them).
 
 >>> with Document.headless() as doc:                        # doctest: +SKIP

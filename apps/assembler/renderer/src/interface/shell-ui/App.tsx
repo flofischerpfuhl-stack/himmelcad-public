@@ -29,7 +29,7 @@ interface ContextMenuState {
 
 /**
  * Application chrome shell: full-bleed 3D viewport (owned by the viewport
- * agent — see `renderer/src/viewport/Viewport.tsx`) with the top bar, left
+ * agent — see `renderer/src/platform/viewport/Viewport.tsx`) with the top bar, left
  * and right docks, Items/History panels, the adaptive toolbar, tool-session
  * pill, status strip, command search and context menu floating above it as
  * rounded islands (docs/DESIGN-SYSTEM.md "Visual language"), plus the

@@ -15,7 +15,7 @@ from typing import Any
 SDK_ROOT = Path(__file__).resolve().parents[1]
 REPOSITORY_ROOT = SDK_ROOT.parents[1]
 HEADLESS = REPOSITORY_ROOT / "apps/assembler/dist/headless/headless/cli.js"
-PRINT_FEATURES_TS = REPOSITORY_ROOT / "apps/assembler/renderer/src/model/printFeatures.ts"
+PRINT_FEATURES_TS = REPOSITORY_ROOT / "apps/assembler/renderer/src/modules/modeling/printFeatures.ts"
 
 sys.path.insert(0, str(SDK_ROOT / "src"))
 

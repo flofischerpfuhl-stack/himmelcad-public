@@ -302,7 +302,7 @@ manifold objects, names, colours, item transforms) and Open in Slicer
   menu of a selected mesh) turns a closed, manifold mesh into a B-rep body
   (one step; coplanar triangles merged into planar faces; open, non-manifold
   or too large meshes are refused with the reason).
-- **Import/export** (`renderer/src/interop/`, details, fidelity checks and
+- **Import/export** (`renderer/src/modules/interop/`, details, fidelity checks and
   limits: `assembler/INTEROP.md`): File › Import… (every format), drag & drop
   of files onto the window, progress with Cancel. STEP assemblies keep their
   product structure (nested Items folders, part names and colours, one Import

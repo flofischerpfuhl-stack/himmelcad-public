@@ -2,7 +2,7 @@
  * Main-process side of the in-app agent endpoint: the UI toggles the
  * loopback server (`automationServer.ts`) through IPC, and every accepted
  * request body is forwarded to the renderer, whose canonical command layer
- * (`renderer/src/api/`) executes it on the live document. The main process
+ * (`renderer/src/interface/agent-api/`) executes it on the live document. The main process
  * never interprets commands itself, so the endpoint cannot bypass the
  * renderer's validation, undo stack or the "UI tool active" rule.
  */

@@ -12,7 +12,7 @@ from typing import Any
 
 from ..errors import HimmelcadError
 
-#: Every contract error code (mirrors ``API_ERROR_CODES`` in ``renderer/src/api/errors.ts``).
+#: Every contract error code (mirrors ``API_ERROR_CODES`` in ``renderer/src/foundation/commands/api/errors.ts``).
 ERROR_CODES = (
     "invalidRequest",
     "methodNotFound",

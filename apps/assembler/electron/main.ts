@@ -85,7 +85,7 @@ const DOCUMENT_CSP =
 // `WebAssembly.instantiate` (found by the production smoke test: without
 // it, the packaged app's kernel fails to load with a CSP violation). Scoped
 // to only the kernel Web Worker script and the LGPL Emscripten glue chunk it
-// dynamically imports (`renderer/src/kernel/kernel.worker.ts`) — a worker
+// dynamically imports (`renderer/src/app/kernel.worker.ts`) — a worker
 // loaded from a URL takes the CSP of its own response, not the document's,
 // so this does not weaken the main document's CSP above. Still `'self'`-only
 // — no remote script origin is ever allowed, so this does not permit loading
@@ -102,7 +102,7 @@ const WORKER_CSP =
 // (the main document, the React app bundle, styles, fonts, the .wasm binary
 // itself) gets the strict `DOCUMENT_CSP`. Matched by filename prefix so a
 // content hash change across builds does not need this list updated.
-// The sketch-solver worker (`renderer/src/sketch/solver.worker.ts`) and the
+// The sketch-solver worker (`renderer/src/foundation/sketch-solver/solver.worker.ts`) and the
 // LGPL planeGCS glue chunk it imports (`planegcs-<hash>.js`) need the same
 // policy: planeGCS's Emscripten embind glue builds its invokers with
 // `new Function` (`Function.apply`), found when the worker failed to load

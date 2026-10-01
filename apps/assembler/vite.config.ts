@@ -11,7 +11,7 @@ import { resolveHimmelcadOcct, selectedOcctModule } from './headless/occtModule.
 // `<meta>` CSP in `index.html`) stays strict — no `unsafe-eval`, no
 // `wasm-unsafe-eval`, since the main thread never evals or instantiates
 // wasm. Only the CAD kernel Web Worker
-// (`renderer/src/kernel/kernel.worker.ts`) and the LGPL Emscripten glue it
+// (`renderer/src/app/kernel.worker.ts`) and the LGPL Emscripten glue it
 // dynamically imports (`replicad-opencascadejs`, package file
 // `replicad_single.js`) need `'unsafe-eval'`, because that glue calls
 // `eval`/`new Function` beyond plain `WebAssembly.instantiate`. A response
@@ -114,7 +114,7 @@ export default defineConfig({
       ? { fs: { allow: [fileURLToPath(new URL('../..', import.meta.url)), occtSelection.dir] } }
       : {}),
   },
-  // The CAD kernel worker is an ES module worker (see renderer/src/kernel/kernel.worker.ts).
+  // The CAD kernel worker is an ES module worker (see renderer/src/app/kernel.worker.ts).
   worker: {
     format: 'es',
     rollupOptions: {
