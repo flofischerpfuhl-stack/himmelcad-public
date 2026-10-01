@@ -810,6 +810,8 @@ export function SketchOverlay({
       event.stopPropagation();
       inkRef.current = null;
       setInkPath(null);
+      // The snap marker of the hover before the stroke is stale now.
+      setCursor(null);
       finishInk(ink);
       return;
     }
@@ -1084,7 +1086,10 @@ export function SketchOverlay({
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
-      onPointerLeave={() => {
+      onPointerLeave={(event) => {
+        // A lifted finger always "leaves"; the pen/mouse cursor it would clear is still in use
+        // (a finger tapping a value chip must not unmount the chip under it).
+        if (event.pointerType === 'touch') return;
         if (!dragRef.current) setCursor(null);
       }}
       onPointerCancel={(event) => {
