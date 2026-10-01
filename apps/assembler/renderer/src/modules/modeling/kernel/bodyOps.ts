@@ -13,6 +13,7 @@ import {
   frameForFace,
   framePoint,
   MIN_FEATURE_SIZE_MM,
+  type ProfileRef,
   type SketchFrame,
   type Vec3,
   extraBodyId,
@@ -55,6 +56,7 @@ import {
 } from '../../../foundation/geometry-kernel/features/occRigid.js';
 import {
   bodyOrFail,
+  profileSections,
   resolveAxis,
   resolvePlane,
 } from '../../../foundation/geometry-kernel/features/refs.js';
@@ -375,11 +377,81 @@ const GRID_ID_BASE = 1_000_000;
 
 export function applySplit(feature: SplitFeature, ctx: ReplayContextLike, kit: FeatureKit): void {
   const body = bodyOrFail(kit, ctx, feature.bodyId);
-  const plane = resolvePlane(kit, ctx, feature.plane);
   const [min, max] = body.shape.boundingBox.bounds as [Vec3, Vec3];
   const centre: Vec3 = scale(add(min, max), 0.5);
+  const what = feature.profile ? 'profile' : 'plane';
+  let positive: HistoryResult;
+  let negative: HistoryResult;
+  try {
+    const cutter = feature.profile
+      ? profileCutter(kit, ctx, feature.profile, body, centre)
+      : halfSpace(kit, ctx, feature, body, centre);
+    positive = booleanWithHistory(kit.oc, 'common', body.shape, cutter);
+    negative = booleanWithHistory(kit.oc, 'cut', body.shape, cutter);
+  } catch (error) {
+    if (kit.isFailure(error)) throw error;
+    kit.fail(`Split failed: ${kit.describeError(error)}`);
+  }
+  try {
+    const tiny = 1e-6 * Math.max(1, R.measureVolume(body.shape));
+    if (!(R.measureVolume(positive.shape) > tiny) || !(R.measureVolume(negative.shape) > tiny)) {
+      kit.fail(`The ${what} does not cut "${body.name}"`);
+    }
+    const keyed = (part: HistoryResult) =>
+      kit.nameResult(
+        part.shape,
+        part.history,
+        [{ shape: body.shape, faces: body.faces }],
+        ctx.featureOrder,
+        () => `${feature.id}:cut`,
+      );
+    const positiveFaces = keyed(positive);
+    const negativeFaces = keyed(negative);
+    if (feature.keepOriginal) {
+      // Keep Originals: the body stays, both parts are new.
+      kit.addBody(
+        ctx,
+        {
+          id: extraBodyId(feature.id, 0),
+          name: `${body.name} (split 1)`,
+          createdBy: feature.id,
+          shape: negative.shape,
+          faces: negativeFaces,
+        },
+        body.color,
+      );
+    } else {
+      body.shape = negative.shape;
+      body.faces = negativeFaces;
+      ctx.touch(body.id);
+    }
+    kit.addBody(
+      ctx,
+      {
+        id: bodyIdFor(feature.id),
+        name: feature.keepOriginal ? `${body.name} (split 2)` : `${body.name} (split)`,
+        createdBy: feature.id,
+        shape: positive.shape,
+        faces: positiveFaces,
+      },
+      body.color,
+    );
+  } finally {
+    positive.history.delete();
+    negative.history.delete();
+  }
+}
+
+/** The half-space on the plane's positive side: a large prism standing on the plane. */
+function halfSpace(
+  kit: FeatureKit,
+  ctx: ReplayContextLike,
+  feature: SplitFeature,
+  body: BodyStateLike,
+  centre: Vec3,
+): Shape3D {
+  const plane = resolvePlane(kit, ctx, feature.plane);
   const size = Math.max(10, kit.diagonalOf(body.shape) * 2 + length(sub(centre, plane.point)) * 2);
-  // Half-space on the plane's positive side: a large prism standing on the plane.
   const frame = frameForFace(plane.normal, plane.point);
   const onPlane = sub(centre, scale(plane.normal, dot(sub(centre, plane.point), plane.normal)));
   const uv = {
@@ -392,52 +464,49 @@ export function applySplit(feature: SplitFeature, ctx: ReplayContextLike, kit: F
     [1, 1],
     [-1, 1],
   ].map(([a, b]) => framePoint(frame, uv.u + a! * size, uv.v + b! * size));
-  let positive: HistoryResult;
-  let negative: HistoryResult;
+  const base = R.makePolygon(corners);
+  const vector = new R.Vector(scale(plane.normal, size * 2));
   try {
-    const base = R.makePolygon(corners);
-    const vector = new R.Vector(scale(plane.normal, size * 2));
-    const halfSpace = R.basicFaceExtrusion(base, vector);
-    vector.delete();
-    positive = booleanWithHistory(kit.oc, 'common', body.shape, halfSpace);
-    negative = booleanWithHistory(kit.oc, 'cut', body.shape, halfSpace);
-  } catch (error) {
-    if (kit.isFailure(error)) throw error;
-    kit.fail(`Split failed: ${kit.describeError(error)}`);
-  }
-  try {
-    const tiny = 1e-6 * Math.max(1, R.measureVolume(body.shape));
-    if (!(R.measureVolume(positive.shape) > tiny) || !(R.measureVolume(negative.shape) > tiny)) {
-      kit.fail(`The plane does not cut "${body.name}"`);
-    }
-    const keyed = (part: HistoryResult) =>
-      kit.nameResult(
-        part.shape,
-        part.history,
-        [{ shape: body.shape, faces: body.faces }],
-        ctx.featureOrder,
-        () => `${feature.id}:cut`,
-      );
-    const positiveFaces = keyed(positive);
-    const negativeFaces = keyed(negative);
-    body.shape = negative.shape;
-    body.faces = negativeFaces;
-    ctx.touch(body.id);
-    kit.addBody(
-      ctx,
-      {
-        id: bodyIdFor(feature.id),
-        name: `${body.name} (split)`,
-        createdBy: feature.id,
-        shape: positive.shape,
-        faces: positiveFaces,
-      },
-      body.color,
-    );
+    return R.basicFaceExtrusion(base, vector);
   } finally {
-    positive.history.delete();
-    negative.history.delete();
+    vector.delete();
   }
+}
+
+/**
+ * The profile's prism through the whole body along the profile normal
+ * (Shapr3D: the split element is projected through the body and need not
+ * touch it); several regions are joined.
+ */
+function profileCutter(
+  kit: FeatureKit,
+  ctx: ReplayContextLike,
+  profile: ProfileRef,
+  body: BodyStateLike,
+  centre: Vec3,
+): Shape3D {
+  const sections = profileSections(kit, ctx, profile);
+  let cutter: Shape3D | null = null;
+  for (const section of sections) {
+    const n = section.normal;
+    const reach = kit.diagonalOf(body.shape) + Math.abs(dot(sub(centre, section.center), n)) + 1;
+    const start = section.face.clone().translate(scale(n, -reach));
+    const vector = new R.Vector(scale(n, reach * 2));
+    let prism: Shape3D;
+    try {
+      prism = R.basicFaceExtrusion(start, vector);
+    } finally {
+      vector.delete();
+    }
+    if (!cutter) cutter = prism;
+    else {
+      const fused = booleanWithHistory(kit.oc, 'fuse', cutter, prism);
+      fused.history.delete();
+      cutter = fused.shape;
+    }
+  }
+  if (!cutter) kit.fail('The split profile is empty');
+  return cutter;
 }
 
 // ---- Transform (Move/Rotate gizmo) ---------------------------------------------------

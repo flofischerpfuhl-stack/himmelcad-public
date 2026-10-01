@@ -568,6 +568,40 @@ void test('Move Face turns a face about a line in its plane; the neighbours foll
   assert.match(tooFar.errors['m'] ?? '', /must lie in the face/);
 });
 
+// ---- Split (MOD-12) ------------------------------------------------------------------------------------
+
+void test('Split with a sketch profile through the body, and Keep Originals', async () => {
+  const features: Feature[] = [
+    ...box('a', 0, 0, 20, 20, 10),
+    // A circle above the body: projected through it (the profile need not touch the body).
+    sketch('c-s', 'XY', 30, circle(10, 10, 4)),
+    {
+      ...base('s'),
+      kind: 'split',
+      bodyId: 'body:a',
+      plane: { kind: 'plane', plane: 'XY', offset: 0 },
+      profile: { kind: 'sketch', featureId: 'c-s' },
+    } as Feature,
+  ];
+  const split = await evaluate(features);
+  noErrors(split);
+  near(only(split, 'body:s').volume, Math.PI * 16 * 10, 1e-2, 'the plug');
+  near(only(split, 'body:a').volume, 4000 - Math.PI * 16 * 10, 1e-2, 'the rest');
+  const kept = await evaluate([
+    ...features.slice(0, 3),
+    { ...(features[3] as object), keepOriginal: true } as Feature,
+  ]);
+  noErrors(kept);
+  near(only(kept, 'body:a').volume, 4000, 1e-6, 'original kept');
+  assert.equal(kept.bodies.length, 3);
+  const miss = await evaluate([
+    ...box('a', 0, 0, 20, 20, 10),
+    sketch('c-s', 'XY', 30, circle(50, 50, 4)),
+    { ...(features[3] as object) } as Feature,
+  ]);
+  assert.match(miss.errors['s'] ?? '', /profile does not cut/);
+});
+
 // ---- Pattern (MOD-20) ------------------------------------------------------------------------------
 
 void test('Pattern: two directions, total length, angle between, uniform copies', async () => {

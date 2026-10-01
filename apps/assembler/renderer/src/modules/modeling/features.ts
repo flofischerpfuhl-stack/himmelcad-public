@@ -155,11 +155,20 @@ export interface PatternFeature extends FeatureBase {
   pattern: PatternDefinition;
 }
 
-/** Splits a body by a plane into two bodies (the part on the plane's positive side becomes new). */
+/**
+ * Splits a body into two bodies: by a plane (the part on the plane's
+ * positive side becomes new), or with `profile` by a closed sketch profile
+ * (or planar face) projected through the body along its normal (the part
+ * inside the profile becomes new). With `keepOriginal` the body stays as it
+ * was and both parts are new bodies (Shapr3D's Keep Originals).
+ */
 export interface SplitFeature extends FeatureBase {
   kind: 'split';
   bodyId: string;
   plane: PlaneRef;
+  /** Split with this profile instead of `plane`. */
+  profile?: ProfileRef;
+  keepOriginal?: boolean;
 }
 
 /**
@@ -399,6 +408,9 @@ export function sketchIdsUsedBy(feature: ModelingFeature): string[] {
       break;
     case 'loft':
       feature.profiles.forEach(addProfile);
+      break;
+    case 'split':
+      if (feature.profile) addProfile(feature.profile);
       break;
     case 'hole':
     case 'emboss':

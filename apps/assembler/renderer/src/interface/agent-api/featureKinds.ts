@@ -254,6 +254,9 @@ function normalise(
     case 'mirror':
     case 'split':
       if (out.plane !== undefined) out.plane = planeRef(out.plane, 'params.plane');
+      if (kind === 'split' && out.profile !== undefined) {
+        out.profile = profileRef(out.profile, 'params.profile');
+      }
       if (kind === 'mirror') {
         if (out.axis !== undefined) out.axis = axisRef(out.axis, 'params.axis');
         if (Array.isArray(out.faces)) {
@@ -478,6 +481,9 @@ function defaults(kind: string, params: Json): Json {
       return { flip: false };
     case 'thicken':
       return { direction: 'outside', operation: 'new' };
+    case 'split':
+      // A profile split needs no plane; the stored feature always has one.
+      return { plane: { kind: 'plane', plane: 'XY', offset: 0 } };
     case 'scale':
       return { factor: 1, center: [0, 0, 0], copy: false };
     case 'translate':

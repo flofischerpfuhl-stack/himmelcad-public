@@ -2226,7 +2226,7 @@
     },
     "split": {
       "label": "Split",
-      "summary": "Splits a body by a plane into two bodies (the positive side becomes new).",
+      "summary": "Splits a body into two bodies: by a plane (the positive side becomes new) or, with `profile`, by a closed sketch profile/planar face projected through the body (the inside becomes new); `keepOriginal` keeps the body and makes both parts new bodies.",
       "params": {
         "type": "object",
         "properties": {
@@ -2236,10 +2236,18 @@
           },
           "plane": {
             "$ref": "#/$defs/SketchPlane"
+          },
+          "profile": {
+            "$ref": "#/$defs/ExtrudeProfile"
+          },
+          "keepOriginal": {
+            "type": "boolean",
+            "default": false
           }
         },
-        "required": ["bodyId", "plane"],
-        "additionalProperties": false
+        "required": ["bodyId"],
+        "additionalProperties": false,
+        "description": "Either `plane` or `profile` (which then wins)."
       }
     },
     "transform": {

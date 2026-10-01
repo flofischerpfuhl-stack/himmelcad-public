@@ -115,6 +115,9 @@ export interface SplitDraft {
   kind: 'split';
   bodyId: string;
   plane: PlaneRef;
+  /** Split with a sketch profile (projected through the body) instead of the plane. */
+  profile?: ProfileRef;
+  keepOriginal?: boolean;
 }
 
 /** Rotate Around Axis: bodies, an axis (edge / sketch line / world), degrees, copy. */
@@ -623,6 +626,11 @@ export function createModelingDraft(
       const face = selectedFaceRefs(ctx).find(isPlanar);
       if (face)
         return { ok: true, draft: { kind: 'split', bodyId, plane: { kind: 'face', face } } };
+      // A selected sketch profile is the split element (projected through the body).
+      const sketchItem = selected(ctx.selection, 'sketchProfile')[0];
+      const profile = sketchItem
+        ? sketchProfileRef(sketchItem.featureId, sketchItem.regionKey)
+        : undefined;
       const body = bodyOf(ctx.evaluation, bodyId);
       if (!body) return { ok: false, reason: 'The body is not evaluated yet.' };
       const size = sub(body.max, body.min);
@@ -640,6 +648,7 @@ export function createModelingDraft(
             plane: PLANE_OF_AXIS[largest],
             offset: round((body.min[i]! + body.max[i]!) / 2),
           },
+          ...(profile ? { profile } : {}),
         },
       };
     }
@@ -843,9 +852,16 @@ export function acceptModelingPick(
       if (pickedBody)
         return { ...draft, bodyIds: toggle(draft.bodyIds, pickedBody, (a, b) => a === b) };
       return draft;
-    case 'split':
-      if (faceRef && isPlanar(faceRef)) return { ...draft, plane: { kind: 'face', face: faceRef } };
+    case 'split': {
+      if (pick.kind === 'sketchProfile') {
+        return { ...draft, profile: sketchProfileRef(pick.featureId, pick.regionKey) };
+      }
+      if (faceRef && isPlanar(faceRef)) {
+        const { profile: _profile, ...rest } = draft;
+        return { ...rest, plane: { kind: 'face', face: faceRef } };
+      }
       return draft;
+    }
     case 'rotateAxis':
       // Bodies step: any click on a body (face, edge) adds or removes that body.
       if (draft.step === 0) {
@@ -1009,7 +1025,14 @@ export function modelingDraftToFeature(
       if (draft.bodyIds.length === 0) return null;
       return { ...common, kind: 'pattern', bodyIds: draft.bodyIds, pattern: draft.pattern };
     case 'split':
-      return { ...common, kind: 'split', bodyId: draft.bodyId, plane: draft.plane };
+      return {
+        ...common,
+        kind: 'split',
+        bodyId: draft.bodyId,
+        plane: draft.plane,
+        ...(draft.profile ? { profile: draft.profile } : {}),
+        ...(draft.keepOriginal ? { keepOriginal: true } : {}),
+      };
     case 'rotateAxis':
       if (draft.bodyIds.length === 0) return null;
       return {
@@ -1098,7 +1121,9 @@ export function modelingDraftMeta(draft: ModelingDraft): DraftMeta {
       return {
         label: 'Split Body',
         shortcut: '',
-        prompt: 'Drag the plane or type its offset; click a planar face to split along it.',
+        prompt: draft.profile
+          ? 'Split with the sketch profile (through the body). Click a planar face to split along its plane instead.'
+          : 'Drag the plane or type its offset; click a planar face or a sketch profile to split with it.',
       };
     case 'rotateAxis':
       return {
@@ -1319,7 +1344,39 @@ export function modelingDraftBadges(draft: ModelingDraft): DraftBadge[] {
         ...patternModeBadges(draft),
       ];
     case 'split':
-      return [planeBadge(draft.plane, 'Split plane')];
+      return [
+        ...(draft.profile
+          ? [
+              {
+                ariaLabel: 'Split with',
+                value: 'profile',
+                options: [
+                  { value: 'profile', label: 'Profile' },
+                  { value: 'plane', label: 'Plane' },
+                ],
+                apply: (d: FeatureDraft, value: string): FeatureDraft => {
+                  if (d.kind !== 'split' || value === 'profile') return d;
+                  const { profile: _profile, ...rest } = d;
+                  return rest;
+                },
+              },
+            ]
+          : [planeBadge(draft.plane, 'Split plane')]),
+        {
+          ariaLabel: 'Keep original',
+          value: draft.keepOriginal ? 'keep' : 'split',
+          options: [
+            { value: 'split', label: 'Split the body' },
+            { value: 'keep', label: 'Keep original' },
+          ],
+          apply: (d: FeatureDraft, value: string): FeatureDraft => {
+            if (d.kind !== 'split') return d;
+            if (value === 'keep') return { ...d, keepOriginal: true };
+            const { keepOriginal: _keep, ...rest } = d;
+            return rest;
+          },
+        },
+      ];
     case 'rotateAxis':
       return [
         {
@@ -1641,6 +1698,8 @@ export function modelingDraftHandles(
         draft.kind === 'mirror' ? draft.bodyIds : [draft.bodyId],
       );
       if (!plane || !centre || draft.plane.kind !== 'plane') return [];
+      // A profile split has no plane to drag.
+      if (draft.kind === 'split' && draft.profile) return [];
       const planeRef = draft.plane;
       const base = sub(centre, scale(plane.normal, dot(sub(centre, plane.point), plane.normal)));
       return [
@@ -1931,7 +1990,7 @@ export function modelingDraftGuides(
   } else if (draft.kind === 'mirror' && draft.axis) {
     const centre = bodyCentre(evaluation, draft.bodyIds);
     axisSegment(draft.axis, centre, 40);
-  } else if (draft.kind === 'mirror' || draft.kind === 'split') {
+  } else if (draft.kind === 'mirror' || (draft.kind === 'split' && !draft.profile)) {
     const plane = planeOf(evaluation, draft.plane);
     const bounds = unionBounds(
       evaluation.bodies.filter((b) =>

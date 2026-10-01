@@ -139,6 +139,16 @@ class HeadlessBlock8Tests(unittest.TestCase):
             self.assertAlmostEqual(cube.bbox.min[0], -2, places=6)
             self.assertEqual(doc.errors(), {})
 
+    def test_split_by_profile_keeps_the_original(self) -> None:
+        with Document(AssemblerClient(StdioTransport())) as doc:
+            block = doc.box(20, 20, 10, center=(10, 10, 0))
+            cutter = doc.sketch("XY", 30)
+            cutter.circle(4, center=(10, 10))
+            doc.split(block, profile=cutter, keep=True)
+            self.assertEqual(len(doc.bodies()), 3)
+            self.assertAlmostEqual(block.volume, 4000, places=6)
+            self.assertEqual(doc.errors(), {})
+
 
 if __name__ == "__main__":
     unittest.main()

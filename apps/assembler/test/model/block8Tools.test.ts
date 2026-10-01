@@ -305,6 +305,35 @@ void test('Move/Rotate on an edge: Move Edge with arrows across the edge; one un
   assert.ok(Math.abs(body('body:a').volume - 8000) < 1e-6);
 });
 
+void test('Split Body: a clicked sketch profile is the split element; Keep original', async () => {
+  await load([
+    cube('a', [0, 0, 0], 20),
+    {
+      ...base('c'),
+      kind: 'sketch',
+      plane: { kind: 'plane', plane: 'XY', offset: 30 },
+      entities: [
+        { id: 'p1', kind: 'point', x: 0, y: 0 },
+        { id: 'c1', kind: 'circle', center: 'p1', radius: 4 },
+      ],
+      constraints: [],
+      dimensions: [],
+    } as Feature,
+  ]);
+  store.getState().setSelection([{ kind: 'body', bodyId: 'body:a' }]);
+  run('tools.split');
+  store
+    .getState()
+    .updateFeatureDraft((x, ev) => acceptPick(x, { kind: 'sketchProfile', featureId: 'c' }, ev));
+  assert.ok(draft('split').profile, 'the profile splits');
+  assert.equal(badge('Split with').value, 'profile');
+  store.getState().updateFeatureDraft((x, ev) => badge('Keep original').apply(x, 'keep', ev));
+  await store.getState().whenSettled();
+  await commit();
+  assert.equal(store.getState().evaluation.bodies.length, 3);
+  assert.ok(Math.abs(body('body:a').volume - 8000) < 1e-6, 'the original is kept');
+});
+
 void test('Rotate Around Axis started with its bodies: the Axis step is current, Bodies is one click back', async () => {
   await load([cube('a', [0, 0, 0], 10), cube('b', [30, 0, 0], 10)]);
   store.getState().setSelection([{ kind: 'body', bodyId: 'body:a' }]);

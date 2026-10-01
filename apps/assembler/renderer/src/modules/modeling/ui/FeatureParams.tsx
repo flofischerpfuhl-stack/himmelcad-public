@@ -466,7 +466,29 @@ export function ModelingFeatureParams({
       );
     }
     case 'split':
-      return <div className={styles.params}>{planeOffset(feature.plane)}</div>;
+      return (
+        <div className={styles.params}>
+          {feature.profile ? (
+            <span className={styles.paramNote}>With a sketch profile, through the body</span>
+          ) : (
+            planeOffset(feature.plane)
+          )}
+          <div>
+            <span className={styles.paramLabel}>Original</span>
+            <Select
+              aria-label={`${feature.name} keep original`}
+              value={feature.keepOriginal ? 'keep' : 'split'}
+              options={[
+                { value: 'split', label: 'Split it' },
+                { value: 'keep', label: 'Keep' },
+              ]}
+              onChange={(event) =>
+                edit({ keepOriginal: event.currentTarget.value === 'keep' ? true : undefined })
+              }
+            />
+          </div>
+        </div>
+      );
     case 'transform':
       return (
         <div className={styles.params}>

@@ -1050,6 +1050,23 @@ class Document(PrintToolsMixin, InteropMixin):
             pattern["uniform"] = True
         return self._feature(self.client.create_feature("pattern", {"bodyIds": [b.id for b in items], "pattern": pattern}, name=name))
 
+    def split(self, body: Body, plane: str | Face | Datum | tuple[str, float] = "XY", *, profile: Sketch | MirroredSketch | Face | None = None, regions: Sequence[str] | None = None, keep: bool = False, name: str | None = None) -> Feature:
+        """Splits ``body`` into two bodies by ``plane`` (the positive side becomes ``body:<feature id>``)
+        or by a sketch ``profile`` projected through the body (the inside becomes new); ``keep=True``
+        keeps the original and makes both parts new bodies."""
+        params: dict[str, Any] = {"bodyId": body.id, "plane": self._plane_ref(plane)}
+        if profile is not None:
+            if isinstance(profile, Face):
+                params["profile"] = {"kind": "face", "face": profile.ref}
+            else:
+                ref: dict[str, Any] = {"kind": "sketch", "featureId": profile.id}
+                if regions is not None:
+                    ref["regions"] = list(regions)
+                params["profile"] = ref
+        if keep:
+            params["keepOriginal"] = True
+        return self._feature(self.client.create_feature("split", params, name=name))
+
     def _primitive(self, shape: str, sizes: dict[str, float], plane: str | Face | Datum | tuple[str, float], center: Sequence[float], op: str, target: Body | None, name: str | None, flip: bool | None = None) -> Body:
         params: dict[str, Any] = {"shape": shape, "plane": self._plane_ref(plane), "center": [float(v) for v in center], "operation": op, **sizes}
         # Like the Add tools: a cut on a face goes into the face (a pocket/hole) unless told otherwise.
