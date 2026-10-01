@@ -350,12 +350,13 @@ void test('Helical revolve: a spring has the screw-motion volume and climbs pitc
   near(r.volume, Math.PI * 1 * 2 * Math.PI * 10 * 2, 2, 'spring volume');
   near(r.min[2], -1, 0.05, 'starts at the profile');
   near(r.max[2], 11, 0.05, 'climbs 2 × 5 mm');
-  const left = await evaluate(spring({ leftHanded: true }));
+  // One turn each (helical sweeps are the slow part of this file).
+  const left = await evaluate(spring({ leftHanded: true, turns: 1 }));
   noErrors(left);
-  near(only(left, 'body:r').volume, r.volume, 1, 'left-handed volume');
-  const down = await evaluate(spring({ pitch: -5 }));
+  near(only(left, 'body:r').volume, r.volume / 2, 1, 'left-handed volume');
+  const down = await evaluate(spring({ pitch: -5, turns: 1 }));
   noErrors(down);
-  near(only(down, 'body:r').min[2], -11, 0.05, 'negative pitch climbs down');
+  near(only(down, 'body:r').min[2], -6, 0.05, 'negative pitch climbs down');
 });
 
 void test('Helical revolve refuses overlapping turns and a profile on the axis', async () => {
