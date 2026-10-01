@@ -780,6 +780,19 @@ export class ViewportRenderer {
   private idColorTex: WebGLTexture | null = null;
   private idDepthRb: WebGLRenderbuffer | null = null;
   private idDepthColorRb: WebGLRenderbuffer | null = null;
+  /** Pixel buffer and fence of an asynchronous depth-window read (orbit pivot). */
+  private depthReadBuffer: WebGLBuffer | null = null;
+  private depthRead: {
+    x0: number;
+    y0: number;
+    width: number;
+    height: number;
+    glY: number;
+    xPx: number;
+    yPx: number;
+    half: number;
+    fence: WebGLSync;
+  } | null = null;
   private idWidth = 0;
   private idHeight = 0;
   private aoFbo: WebGLFramebuffer | null = null;
@@ -1818,20 +1831,12 @@ export class ViewportRenderer {
     return (px[0]! | (px[1]! << 8) | (px[2]! << 16) | (px[3]! << 24)) >>> 0;
   }
 
-  /**
-   * Window depth (0…1, `NaN` where nothing pickable is drawn) of the id
-   * pass in a square of `2 · half` framebuffer pixels around (`xPx`, `yPx`)
-   * (top-left origin), rows top first — the orbit/zoom pivot's input
-   * (`orbitPivot.ts`). One small synchronous read; the id pass is drawn
-   * first if it is out of date. `null` before the first frame.
-   */
-  readPickDepthWindow(
+  /** The framebuffer rectangle of a depth window around (`xPx`, `yPx`), clamped; `null` if empty. */
+  private depthWindowRect(
     xPx: number,
     yPx: number,
     half: number,
-  ): { x0: number; y0: number; width: number; height: number; z: Float32Array } | null {
-    const gl = this.gl;
-    if (!this.ensurePick() || !this.idFbo) return null;
+  ): { x0: number; y0: number; width: number; height: number; glY: number } | null {
     const x0 = Math.max(0, Math.floor(xPx - half));
     const y0 = Math.max(0, Math.floor(yPx - half));
     const x1 = Math.min(this.idWidth, Math.ceil(xPx + half));
@@ -1839,12 +1844,11 @@ export class ViewportRenderer {
     const width = x1 - x0;
     const height = y1 - y0;
     if (width <= 0 || height <= 0) return null;
-    const bytes = new Uint8Array(width * height * 4);
-    gl.bindFramebuffer(gl.FRAMEBUFFER, this.idFbo);
-    gl.readBuffer(gl.COLOR_ATTACHMENT1);
-    gl.readPixels(x0, this.idHeight - y1, width, height, gl.RGBA, gl.UNSIGNED_BYTE, bytes);
-    gl.readBuffer(gl.COLOR_ATTACHMENT0);
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    return { x0, y0, width, height, glY: this.idHeight - y1 };
+  }
+
+  /** Decodes depth-attachment bytes (bottom-up rows) into window depths, top row first. */
+  private static decodeDepth(bytes: Uint8Array, width: number, height: number): Float32Array {
     const z = new Float32Array(width * height);
     for (let row = 0; row < height; row += 1) {
       // readPixels rows are bottom-up.
@@ -1857,9 +1861,101 @@ export class ViewportRenderer {
             : (bytes[o]! + bytes[o + 1]! * 256 + bytes[o + 2]! * 65536) / 16777215;
       }
     }
-    return { x0, y0, width, height, z };
+    return z;
   }
 
+  /**
+   * Window depth (0…1, `NaN` where nothing pickable is drawn) of the id
+   * pass in a square of `2 · half` framebuffer pixels around (`xPx`, `yPx`)
+   * (top-left origin), rows top first — the orbit/zoom pivot's input
+   * (`orbitPivot.ts`). One small synchronous read (it waits for the GPU's
+   * queued work); the id pass is drawn first if it is out of date. `null`
+   * before the first frame. {@link requestPickDepthWindow} avoids the wait
+   * when the window is known a moment earlier (pointer down).
+   */
+  readPickDepthWindow(
+    xPx: number,
+    yPx: number,
+    half: number,
+  ): { x0: number; y0: number; width: number; height: number; z: Float32Array } | null {
+    const gl = this.gl;
+    if (!this.ensurePick() || !this.idFbo) return null;
+    const rect = this.depthWindowRect(xPx, yPx, half);
+    if (!rect) return null;
+    const { x0, y0, width, height, glY } = rect;
+    const bytes = new Uint8Array(width * height * 4);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.idFbo);
+    gl.readBuffer(gl.COLOR_ATTACHMENT1);
+    gl.readPixels(x0, glY, width, height, gl.RGBA, gl.UNSIGNED_BYTE, bytes);
+    gl.readBuffer(gl.COLOR_ATTACHMENT0);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    return { x0, y0, width, height, z: ViewportRenderer.decodeDepth(bytes, width, height) };
+  }
+
+  /**
+   * Starts an asynchronous read of the same window (into a pixel buffer,
+   * with a fence): nothing waits. {@link takePickDepthWindow} returns it once
+   * the GPU is done. A new request replaces an unfinished one.
+   */
+  requestPickDepthWindow(xPx: number, yPx: number, half: number): boolean {
+    const gl = this.gl;
+    this.cancelPickDepthWindow();
+    if (!this.ensurePick() || !this.idFbo) return false;
+    const rect = this.depthWindowRect(xPx, yPx, half);
+    if (!rect) return false;
+    this.depthReadBuffer ??= gl.createBuffer();
+    if (!this.depthReadBuffer) return false;
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, this.depthReadBuffer);
+    gl.bufferData(gl.PIXEL_PACK_BUFFER, rect.width * rect.height * 4, gl.STREAM_READ);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.idFbo);
+    gl.readBuffer(gl.COLOR_ATTACHMENT1);
+    gl.readPixels(rect.x0, rect.glY, rect.width, rect.height, gl.RGBA, gl.UNSIGNED_BYTE, 0);
+    gl.readBuffer(gl.COLOR_ATTACHMENT0);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+    const fence = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
+    if (!fence) return false;
+    gl.flush();
+    this.depthRead = { ...rect, xPx, yPx, half, fence };
+    return true;
+  }
+
+  /**
+   * The window {@link requestPickDepthWindow} read for exactly this point,
+   * if the GPU has finished it; `null` otherwise (not requested, another
+   * point, or not ready yet) — never waits.
+   */
+  takePickDepthWindow(
+    xPx: number,
+    yPx: number,
+    half: number,
+  ): { x0: number; y0: number; width: number; height: number; z: Float32Array } | null {
+    const gl = this.gl;
+    const read = this.depthRead;
+    if (!read || !this.depthReadBuffer) return null;
+    if (read.xPx !== xPx || read.yPx !== yPx || read.half !== half) return null;
+    const status = gl.clientWaitSync(read.fence, 0, 0);
+    if (status !== gl.ALREADY_SIGNALED && status !== gl.CONDITION_SATISFIED) return null;
+    this.cancelPickDepthWindow();
+    const bytes = new Uint8Array(read.width * read.height * 4);
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, this.depthReadBuffer);
+    gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, bytes);
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+    return {
+      x0: read.x0,
+      y0: read.y0,
+      width: read.width,
+      height: read.height,
+      z: ViewportRenderer.decodeDepth(bytes, read.width, read.height),
+    };
+  }
+
+  /** Drops an unfinished {@link requestPickDepthWindow}. */
+  cancelPickDepthWindow(): void {
+    if (!this.depthRead) return;
+    this.gl.deleteSync(this.depthRead.fence);
+    this.depthRead = null;
+  }
   // ---- offscreen image export -------------------------------------------------------------------
 
   /** Largest image side {@link renderImage} can produce on this GPU. */
@@ -1963,6 +2059,8 @@ export class ViewportRenderer {
     if (this.idColorTex) gl.deleteTexture(this.idColorTex);
     if (this.idDepthRb) gl.deleteRenderbuffer(this.idDepthRb);
     if (this.idDepthColorRb) gl.deleteRenderbuffer(this.idDepthColorRb);
+    this.cancelPickDepthWindow();
+    if (this.depthReadBuffer) gl.deleteBuffer(this.depthReadBuffer);
     if (this.aoFbo) gl.deleteFramebuffer(this.aoFbo);
     if (this.aoDepthTex) gl.deleteTexture(this.aoDepthTex);
     if (this.shadowFbo) gl.deleteFramebuffer(this.shadowFbo);

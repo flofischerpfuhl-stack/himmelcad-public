@@ -55,6 +55,22 @@ export interface ViewportProbe {
     times: number[];
     reads: number[];
   } | null;
+  /**
+   * Like `pivotAt` but the way an orbit does it: the read starts at pointer down and is
+   * taken ~20 ms later; `times` include starting it, `prefetchedRuns` count the runs that
+   * found the GPU done (no wait).
+   */
+  pivotPrefetchAt?(
+    x: number,
+    y: number,
+    runs?: number,
+  ): Promise<{
+    point: readonly [number, number, number];
+    rule: string;
+    times: number[];
+    reads: number[];
+    prefetchedRuns: number;
+  } | null>;
 }
 
 let probe: ViewportProbe | null = null;

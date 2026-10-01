@@ -79,7 +79,9 @@ export interface ProjectionBlend {
  * exact (an orthographic end is `0`, not a tiny perspective).
  */
 export function blendFov(blend: ProjectionBlend, now: number): { fov: number; done: boolean } {
-  const t = Math.min(1, Math.max(0, (now - blend.start) / Math.max(1, blend.duration)));
+  // No animation (reduced motion, Settings › Animate camera off): the end at once.
+  if (blend.duration <= 0) return { fov: blend.toFov, done: true };
+  const t = Math.min(1, Math.max(0, (now - blend.start) / blend.duration));
   if (t >= 1) return { fov: blend.toFov, done: true };
   const eased = 1 - Math.pow(1 - t, 3);
   const from = perspectiveStrength(blend.fromFov);

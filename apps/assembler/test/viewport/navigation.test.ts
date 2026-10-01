@@ -354,6 +354,11 @@ void test('adaptive: perspective while orbiting, parallel in sketches and standa
   assert.deepEqual(blendFov(blend, 1200), { fov: 0, done: true });
   const mid = blendFov(blend, 1100);
   assert.ok(mid.fov > 0 && mid.fov < 45 && !mid.done, `mid ${mid.fov}`);
+  assert.deepEqual(
+    blendFov({ fromFov: 0, toFov: 45, start: 5, duration: 0 }, 5),
+    { fov: 45, done: true },
+    'no animation: at once',
+  );
   const up = blendFov({ fromFov: 0, toFov: 45, start: 0, duration: 200 }, 1);
   assert.ok(up.fov > 0 && up.fov < 5, `leaves parallel gently: ${up.fov}`);
 });

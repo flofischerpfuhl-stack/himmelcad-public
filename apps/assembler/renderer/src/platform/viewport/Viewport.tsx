@@ -420,6 +420,8 @@ export interface PivotProbe {
   ms: number;
   /** The depth-window read alone (includes drawing a stale id pass), ms. */
   readMs: number;
+  /** The window came from the read started at pointer down (no wait). */
+  prefetched: boolean;
 }
 
 type HandleHover =
@@ -546,6 +548,8 @@ export function Viewport(props: ViewportProps): JSX.Element {
     depthPoint: Vec3 | null;
   } | null>(null);
   const lastPivotRef = useRef<PivotProbe | null>(null);
+  /** The depth window read started at pointer/finger down for an orbit (`prefetchPivot`). */
+  const depthRequestRef = useRef<{ x: number; y: number; pose: CameraPose } | null>(null);
 
   const state = useAssemblerStore();
   const stateRef = useRef(state);
@@ -673,6 +677,22 @@ export function Viewport(props: ViewportProps): JSX.Element {
     );
   }, []);
 
+  /**
+   * `pose` with the field of view the camera is heading for (projection
+   * setting, open sketch, standard view): a fit is computed for the
+   * projection it will end in, not for a blend's intermediate angle.
+   */
+  const withWantedFov = useCallback((pose: CameraPose): CameraPose => {
+    const prefs = usePreferences.getState();
+    return {
+      ...pose,
+      fov: wantedFov(prefs.projection, prefs.fov, {
+        sketching: modeDrawingPlaneNormal() !== null,
+        standardView: standardViewRef.current,
+      }),
+    };
+  }, []);
+
   // ---- Camera preset requests ----------------------------------------------
   const lastCameraNonce = useRef<number | null>(null);
   useEffect(() => {
@@ -684,10 +704,10 @@ export function Viewport(props: ViewportProps): JSX.Element {
     if (request.preset !== 'fit') standardViewRef.current = true;
     const next =
       request.preset === 'fit'
-        ? fitPose(visibleBodies(), current, hostAspect())
+        ? fitPose(visibleBodies(), withWantedFov(current), hostAspect())
         : presetPose(request.preset, current);
     animateTo(next);
-  }, [state.viewState.cameraRequest, animateTo, visibleBodies, hostAspect]);
+  }, [state.viewState.cameraRequest, animateTo, visibleBodies, hostAspect, withWantedFov]);
 
   // ---- Workspace camera commands (home, fit selection, cube edges/corners, roll, saved views, look at face)
   const lastWorkspaceCameraNonce = useRef<number | null>(null);
@@ -696,23 +716,38 @@ export function Viewport(props: ViewportProps): JSX.Element {
       const current = poseRef.current;
       const aspect = hostAspect();
       const s = useAssemblerStore.getState();
+      // Home, cube edges/corners, saved views and Look at face are standard views (Adaptive:
+      // parallel until the next orbit); fits and the 90° roll keep the current state.
+      const standard =
+        command.kind === 'home' ||
+        command.kind === 'direction' ||
+        command.kind === 'pose' ||
+        command.kind === 'lookAlong' ||
+        command.kind === 'lookAtFace';
+      const wasStandard = standardViewRef.current;
+      if (standard) standardViewRef.current = true;
+      // Fits are computed for the projection the camera ends in.
+      const fitFrom = withWantedFov;
       let next: CameraPose | null = null;
       switch (command.kind) {
         case 'home':
-          next = fitPose(visibleBodies(), presetPose('iso', current), aspect);
+          next = fitPose(visibleBodies(), fitFrom(presetPose('iso', current)), aspect);
           break;
         case 'fitAll':
-          next = fitPose(visibleBodies(), current, aspect);
+          next = fitPose(visibleBodies(), fitFrom(current), aspect);
           break;
         case 'fitSelection': {
           const bounds = cameraTargetBounds(sceneModel(s), s.selection);
-          next = fitPose(bounds.length > 0 ? bounds : visibleBodies(), current, aspect);
+          next = fitPose(bounds.length > 0 ? bounds : visibleBodies(), fitFrom(current), aspect);
           break;
         }
         case 'fitItems': {
           const bounds = cameraTargetBounds(sceneModel(s), command.items);
-          if (bounds.length === 0) return;
-          next = fitPose(bounds, current, aspect);
+          if (bounds.length === 0) {
+            standardViewRef.current = wasStandard;
+            return;
+          }
+          next = fitPose(bounds, fitFrom(current), aspect);
           break;
         }
         case 'direction':
@@ -726,33 +761,32 @@ export function Viewport(props: ViewportProps): JSX.Element {
           next = withFov({ ...command.pose }, current.fov ?? preferredFov());
           break;
         case 'lookAlong':
-          next = fitPose(visibleBodies(), poseFromDirection(command.direction, current), aspect);
+          next = fitPose(
+            visibleBodies(),
+            fitFrom(poseFromDirection(command.direction, current)),
+            aspect,
+          );
           break;
         case 'lookAtFace': {
           const body = sceneModel(s).bodies.find((b) => b.id === command.bodyId);
           const face = body ? findFace(body, command.faceKey) : undefined;
-          if (!body || !face) return;
+          if (!body || !face) {
+            standardViewRef.current = wasStandard;
+            return;
+          }
           const oriented = face.normal ? poseFromDirection(face.normal, current) : current;
           const bounds = faceFrameBounds(body, face.key);
-          next = bounds ? fitPose([bounds], oriented, aspect) : oriented;
+          next = bounds ? fitPose([bounds], fitFrom(oriented), aspect) : oriented;
           break;
         }
       }
-      if (!next) return;
-      // Home, cube edges/corners, saved views and Look at face are standard views (Adaptive:
-      // parallel until the next orbit); fits and the 90° roll keep the current state.
-      if (
-        command.kind === 'home' ||
-        command.kind === 'direction' ||
-        command.kind === 'pose' ||
-        command.kind === 'lookAlong' ||
-        command.kind === 'lookAtFace'
-      ) {
-        standardViewRef.current = true;
+      if (!next) {
+        standardViewRef.current = wasStandard;
+        return;
       }
       animateTo(next);
     },
-    [animateTo, visibleBodies, hostAspect],
+    [animateTo, visibleBodies, hostAspect, withWantedFov],
   );
   useEffect(() => {
     const shell = viewportShell();
@@ -1195,6 +1229,7 @@ export function Viewport(props: ViewportProps): JSX.Element {
       let point: Vec3 | null = null;
       let rule: PivotRule = 'model';
       let readMs = 0;
+      let prefetched = false;
       const host = hostRef.current;
       const renderer = rendererRef.current;
       const frame = pickFrameRef.current;
@@ -1203,8 +1238,18 @@ export function Viewport(props: ViewportProps): JSX.Element {
         const { dpr } = sizeRef.current;
         const px = (clientX - rect.left) * dpr;
         const py = (clientY - rect.top) * dpr;
+        const half = PIVOT_SEARCH_RADIUS_PX * dpr;
         const r0 = performance.now();
-        const win = renderer.readPickDepthWindow(px, py, PIVOT_SEARCH_RADIUS_PX * dpr);
+        // The read started at pointer down (same point, same camera) if the GPU has it by now,
+        // else one small synchronous read.
+        const request = depthRequestRef.current;
+        depthRequestRef.current = null;
+        let win =
+          request && request.x === clientX && request.y === clientY && request.pose === pose
+            ? renderer.takePickDepthWindow(px, py, half)
+            : null;
+        prefetched = win !== null;
+        win ??= renderer.readPickDepthWindow(px, py, half);
         readMs = performance.now() - r0;
         const found = win
           ? pivotDepth(
@@ -1239,7 +1284,7 @@ export function Viewport(props: ViewportProps): JSX.Element {
         rule = bounds ? 'model' : 'target';
       }
       if (!point) return null;
-      lastPivotRef.current = { point, rule, ms: performance.now() - t0, readMs };
+      lastPivotRef.current = { point, rule, ms: performance.now() - t0, readMs, prefetched };
       return { point, rule };
     },
     [rayAtClient],
@@ -1255,6 +1300,29 @@ export function Viewport(props: ViewportProps): JSX.Element {
       isOrthographic(poseRef.current) ? null : (cursorPivot(clientX, clientY)?.point ?? null),
     [cursorPivot],
   );
+
+  /**
+   * Starts reading the depth window at a pointer/finger down that may become
+   * an orbit, so that `cursorPivot` finds it ready when the drag passes the
+   * click threshold and never waits for the GPU (it falls back to a small
+   * synchronous read if the GPU is not done yet).
+   */
+  const prefetchPivot = useCallback((clientX: number, clientY: number) => {
+    const renderer = rendererRef.current;
+    const host = hostRef.current;
+    const frame = pickFrameRef.current;
+    const pose = poseRef.current;
+    if (!renderer || !host || !frame || frame.pose !== pose) return;
+    if (usePreferences.getState().orbitAround === 'centre') return;
+    const rect = host.getBoundingClientRect();
+    const { dpr } = sizeRef.current;
+    const started = renderer.requestPickDepthWindow(
+      (clientX - rect.left) * dpr,
+      (clientY - rect.top) * dpr,
+      PIVOT_SEARCH_RADIUS_PX * dpr,
+    );
+    depthRequestRef.current = started ? { x: clientX, y: clientY, pose } : null;
+  }, []);
 
   /** The pivot an orbit starting at a client point turns about (Settings › Navigation › Orbit around). */
   const orbitPivotAt = useCallback(
@@ -1914,13 +1982,15 @@ export function Viewport(props: ViewportProps): JSX.Element {
       animRef.current = null;
       glideRef.current = null;
       touchIdsRef.current.add(pointerId);
+      // One finger may orbit: start reading the pivot's depth where it went down.
+      if (touchIdsRef.current.size === 1) prefetchPivot(clientX, clientY);
       gestures.setOptions({
         twistDeg: usePreferences.getState().twistRoll ? TWIST_DEAD_ZONE_DEG : Infinity,
       });
       applyGestures(gestures.down({ id: pointerId, x: clientX, y: clientY, t }));
       scheduleLongPress();
     },
-    [applyGestures, scheduleLongPress],
+    [applyGestures, scheduleLongPress, prefetchPivot],
   );
 
   const onTouchDown = useCallback(
@@ -2050,8 +2120,10 @@ export function Viewport(props: ViewportProps): JSX.Element {
       };
       // A drag that hides the gizmo (its centre being placed) redraws it at once.
       if (mode.kind === 'tool' && mode.drag.hidesGizmo) dirtyRef.current = true;
+      // A possible orbit: start reading the pivot's depth now, it is ready when the drag begins.
+      if (mode.kind === 'orbit') prefetchPivot(event.clientX, event.clientY);
     },
-    [findHandleHit, pickAt, onTouchDown, popup, applyGestures, zoomDepthPointAt],
+    [findHandleHit, pickAt, onTouchDown, popup, applyGestures, zoomDepthPointAt, prefetchPivot],
   );
 
   const onPointerMove = useCallback(
@@ -2485,9 +2557,43 @@ export function Viewport(props: ViewportProps): JSX.Element {
         }
         return last ? { ...last, times, reads } : null;
       },
+      pivotPrefetchAt: async (x, y, runs = 1) => {
+        // As an orbit does it: the read starts at pointer down (after a camera move, so the id
+        // pass is drawn too), the drag passes the click threshold ~20 ms later.
+        let last: PivotProbe | null = null;
+        const times: number[] = [];
+        const reads: number[] = [];
+        let prefetched = 0;
+        for (let i = 0; i < runs; i += 1) {
+          const renderer = rendererRef.current;
+          const input = sceneInputNow(sizeRef.current);
+          if (renderer && input) {
+            const built = buildScene(input);
+            renderer.renderPicking(
+              built.frame.viewProj,
+              built.idBatches,
+              built.frame.clip,
+              sizeRef.current.dpr,
+              built.frame.depth?.lineBias ?? 5e-5,
+            );
+          }
+          const t0 = performance.now();
+          prefetchPivot(x, y);
+          const startMs = performance.now() - t0;
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          cursorPivot(x, y);
+          last = lastPivotRef.current;
+          if (last) {
+            times.push(startMs + last.ms);
+            reads.push(last.readMs);
+            if (last.prefetched) prefetched += 1;
+          }
+        }
+        return last ? { ...last, times, reads, prefetchedRuns: prefetched } : null;
+      },
     });
     return () => setViewportProbe(null);
-  }, [sceneInputNow, cursorPivot]);
+  }, [sceneInputNow, cursorPivot, prefetchPivot]);
 
   // ---- Dimension chips (screen positions recomputed every drawn frame via `tick`) ----
   const labels = useMemo(() => {

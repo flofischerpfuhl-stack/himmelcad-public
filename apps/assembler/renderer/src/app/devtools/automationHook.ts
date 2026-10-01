@@ -103,6 +103,12 @@ export interface AssemblerAutomation {
     runs?: number,
     stale?: boolean,
   ): ReturnType<NonNullable<ViewportProbe['pivotAt']>> | null;
+  /** The pivot the way an orbit determines it (read started at pointer down, taken ~20 ms later). */
+  pivotPrefetchAt(
+    x: number,
+    y: number,
+    runs?: number,
+  ): ReturnType<NonNullable<ViewportProbe['pivotPrefetchAt']>>;
   /** Measure panel state (pins, points, Point tool). */
   measureStore: typeof useMeasureStore;
   /** Project file state: New/Open/Save, templates (`newFromTemplate`), crash recovery offer. */
@@ -255,6 +261,8 @@ export function installAutomationHook(store: typeof useAssemblerStore): void {
     viewportStats: (finish) => getViewportProbe()?.stats?.(finish) ?? null,
     viewportBenchmark: (frames) => getViewportProbe()?.benchmark?.(frames) ?? null,
     pivotAt: (x, y, runs, stale) => getViewportProbe()?.pivotAt?.(x, y, runs, stale) ?? null,
+    pivotPrefetchAt: async (x, y, runs) =>
+      (await getViewportProbe()?.pivotPrefetchAt?.(x, y, runs)) ?? null,
     measureStore: useMeasureStore,
     projectStore: useProjectStore,
     interopStore: useInteropStore,
