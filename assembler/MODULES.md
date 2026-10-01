@@ -53,7 +53,7 @@ Lucide or Electron, only files under `electron/` import Electron.
 product     app (desktop renderer)  ·  headless (CLI)  ·  desktop-host (Electron)      [later: assembler-web]
 interface   agent-api  <  shell-ui
 domain      sketching · modeling · direct-edit · construction · parameters · measure ·
-            display · interop · templates · print · printers          (no domain → domain)
+            canvas · display · interop · templates · print · printers (no domain → domain)
 platform    input  <  viewport  <  widgets                            (+ @himmelcad/hardware-profile, shared)
 foundation  jobs  <  document  <  sketch-solver  <  geometry-kernel  <  commands
 ```
@@ -72,6 +72,7 @@ foundation  jobs  <  document  <  sketch-solver  <  geometry-kernel  <  commands
 | modeling        | domain     | **Migrated.** Solid features (extrude … thicken, print parts) with kinds, evaluators, tools and tool sessions, History cards, handles, API kind schemas.                                                                                                                                                                  | `renderer/src/modules/modeling`             |
 | direct-edit     | domain     | **Migrated.** Offset Face (value modes), Delete Face.                                                                                                                                                                                                                                                                     | `renderer/src/modules/direct-edit`          |
 | construction    | domain     | **Migrated.** Construction planes and axes.                                                                                                                                                                                                                                                                               | `renderer/src/modules/construction`         |
+| canvas          | domain     | Reference images (Shapr3D canvas, Block 8): the `referenceImage` kind (no geometry), the project's pictures (`images` file field), Add › Image… and Calibrate Image, viewport quads (`ImageBatch`), History card, calibration overlay, `image.*` API.                                                                     | `renderer/src/modules/canvas`               |
 | parameters      | domain     | **Migrated.** Parameter edits (plan/commit), the store slice, Parameters panel, parameter API methods.                                                                                                                                                                                                                    | `renderer/src/modules/parameters`           |
 | measure         | domain     | **Migrated.** Measure mode, pinned measurements, panel, overlay, measure API.                                                                                                                                                                                                                                             | `renderer/src/modules/measure`              |
 | display         | domain     | **Migrated.** Appearance/colour, display-mode and section commands and menus, visibility commands, analysis legend, image export, persisted view display.                                                                                                                                                                 | `renderer/src/modules/display`              |
@@ -224,7 +225,8 @@ module, order, validate, include? })` for a top-level field (typed by
   `commands/projectFields.ts`; `viewState` itself is core (200); view-state
   parts displayMode 100 / display 110 (display), camera 200 / section 300 /
   grid 500 / panels 600 (the store; section 100 in the project store),
-  measurements 400 (measure), savedViews 700 (shell-ui). The project store
+  measurements 400 (measure), savedViews 700 (shell-ui); `images` (field
+  order 110, section 140) of the canvas module. The project store
   (`shell-ui/project/projectStore.ts`) only collects and applies sections.
 - **`api.handlers`** for interop's and measure's methods (since the
   integration their specs and handlers are `api.methods` blocks).
