@@ -520,6 +520,15 @@ void test('layout: tablet and phone sizes with touch', async (t) => {
       centre,
     );
     assert.equal(hit, 'CANVAS', `${name}: the centre of the screen is the model`);
+    // The top bar's menus never run under the view cube (phone width: the cube moves below).
+    const underCube = await page.evaluate(() => {
+      const cube = document.querySelector('[aria-label^="View cube"]').getBoundingClientRect();
+      return Array.from(document.querySelectorAll('nav[aria-label="Main menu"] button'))
+        .map((b) => ({ label: b.textContent, r: b.getBoundingClientRect() }))
+        .filter(({ r }) => r.right > cube.left && r.left < cube.right && r.bottom > cube.top - 34)
+        .map(({ label }) => label);
+    });
+    assert.deepEqual(underCube, [], `${name}: menus under the view cube`);
     const scroll = await page.evaluate(() => ({
       x: document.scrollingElement.scrollWidth - innerWidth,
       y: document.scrollingElement.scrollHeight - innerHeight,
