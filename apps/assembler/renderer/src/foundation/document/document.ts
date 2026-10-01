@@ -148,6 +148,13 @@ export interface ExtrudeFeature extends FeatureBase {
   /** The extrude starts this far from the profile along its normal (Shapr3D "Start: Offset"), mm. */
   startOffset?: Millimeters | undefined;
   /**
+   * Taper (draft) angle of the side walls, degrees (Shapr3D's extrude draft
+   * angle): positive narrows the solid away from the start plane (holes
+   * widen), negative widens it; both sides of a symmetric/two-sided
+   * extrude narrow away from the start. Distance extents only.
+   */
+  taper?: number | undefined;
+  /**
    * Source formula for `distance` (document parameters, `model/parameters.ts`),
    * when set. `distance` always holds the last successfully resolved value
    * (kept in sync by `model/store.ts` whenever a parameter changes), so the
@@ -315,6 +322,9 @@ declare module './featureKinds.js' {
 
 /** Minimum size, in millimetres, of sketch dimensions and extrude distances. */
 export const MIN_FEATURE_SIZE_MM: Millimeters = 0.1;
+
+/** Largest taper angle of an extrude (either sign), degrees. */
+export const MAX_EXTRUDE_TAPER = 80;
 
 /** Body id for the body created by a feature: derived from the feature id, never from position. */
 export function bodyIdFor(featureId: string): string {

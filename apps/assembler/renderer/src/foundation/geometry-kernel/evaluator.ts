@@ -20,6 +20,7 @@ import './occtArena.js';
 import * as R from 'replicad';
 
 import {
+  MAX_EXTRUDE_TAPER,
   MIN_FEATURE_SIZE_MM,
   bodyIdFor,
   frameForFace,
@@ -134,6 +135,7 @@ import {
   type ExtrudeSpan,
 } from './features/extrudeExtent.js';
 import { offsetBodyFaces } from './features/faceOps.js';
+import { taperedPrism } from './features/taper.js';
 import '../document/coreKinds.js';
 import type { FeatureKit } from './features/kit.js';
 import { applyRegisteredFeature } from './features/registry.js';
@@ -696,34 +698,53 @@ export function createEvaluator(oc: OpenCascade, options: EvaluatorOptions = {})
     region: SketchRegion,
     profileIndex: number,
     span: ExtrudeSpan,
+    featureOrder: ReadonlyMap<string, number>,
   ): { shape: Shape3D; faces: KeyedFace[] } {
     if (region.area < MIN_FEATURE_SIZE_MM * MIN_FEATURE_SIZE_MM) {
       throw new FeatureError(`Sketch profile is too small (${region.area.toFixed(4)} mm²)`);
     }
     const face = regionFace(frame, region);
     const n = frame.normal;
+    // Caps are named along the main side: `start` nearer the profile, `end` farther.
+    // (A symmetric extrude always named them along +normal.)
+    const travel = scale(n, feature.symmetric ? 1 : extrudeSign(feature));
+    const name = (shape: Shape3D, piece: 'main' | 'back'): KeyedFace[] => {
+      const geoms = describeShape(shape);
+      const caps = geoms
+        .map((g, i) => ({ g, i }))
+        .filter(({ g }) => g.normal !== null && Math.abs(dot(g.normal, n)) > 1 - 1e-9)
+        .sort((a, b) => dot(a.g.centroid, travel) - dot(b.g.centroid, travel));
+      const shapeFaces = topologyOf(shape).faces;
+      const keys = geoms.map((_, i) => {
+        if (caps.length === 2 && caps[0]!.i === i) return `${feature.id}:start:${profileIndex}`;
+        if (caps.length === 2 && caps[1]!.i === i) return `${feature.id}:end:${profileIndex}`;
+        const mid = shapeFaces[i]!.pointOnSurface(0.5, 0.5);
+        const point: Vec3 = [mid.x, mid.y, mid.z];
+        mid.delete();
+        const side = sideFaceKey(feature.id, profileIndex, frame, region, point);
+        return piece === 'back' ? `${side}:back` : side;
+      });
+      return geoms.map((g, i) => ({ ...g, key: keys[i]!, aliases: [] }));
+    };
+    if (feature.taper) {
+      return taperedPrism(
+        kit,
+        featureOrder,
+        feature.id,
+        face,
+        frame.origin,
+        n,
+        span,
+        feature.startOffset ?? 0,
+        feature.taper,
+        name,
+      );
+    }
     const base = span.from === 0 ? face : face.translate(scale(n, span.from));
     const vector = new R.Vector(scale(n, span.to - span.from));
     const shape = R.basicFaceExtrusion(base, vector);
     vector.delete();
-    // Caps are named along the main side: `start` nearer the profile, `end` farther.
-    // (A symmetric extrude always named them along +normal.)
-    const travel = scale(n, feature.symmetric ? 1 : extrudeSign(feature));
-    const geoms = describeShape(shape);
-    const caps = geoms
-      .map((g, i) => ({ g, i }))
-      .filter(({ g }) => g.normal !== null && Math.abs(dot(g.normal, n)) > 1 - 1e-9)
-      .sort((a, b) => dot(a.g.centroid, travel) - dot(b.g.centroid, travel));
-    const shapeFaces = topologyOf(shape).faces;
-    const keys = geoms.map((_, i) => {
-      if (caps.length === 2 && caps[0]!.i === i) return `${feature.id}:start:${profileIndex}`;
-      if (caps.length === 2 && caps[1]!.i === i) return `${feature.id}:end:${profileIndex}`;
-      const mid = shapeFaces[i]!.pointOnSurface(0.5, 0.5);
-      const point: Vec3 = [mid.x, mid.y, mid.z];
-      mid.delete();
-      return sideFaceKey(feature.id, profileIndex, frame, region, point);
-    });
-    return { shape, faces: geoms.map((g, i) => ({ ...g, key: keys[i]!, aliases: [] })) };
+    return { shape, faces: name(shape, 'main') };
   }
 
   /** Boolean of `tool` into `target` (in place), naming the result from OCCT's history. */
@@ -812,6 +833,16 @@ export function createEvaluator(oc: OpenCascade, options: EvaluatorOptions = {})
         );
       }
     }
+    if (feature.taper !== undefined && feature.taper !== 0) {
+      if (!Number.isFinite(feature.taper) || Math.abs(feature.taper) > MAX_EXTRUDE_TAPER) {
+        throw new FeatureError(
+          `Taper must be between -${MAX_EXTRUDE_TAPER}° and ${MAX_EXTRUDE_TAPER}°`,
+        );
+      }
+      if ((feature.extent?.kind ?? 'distance') !== 'distance') {
+        throw new FeatureError('Taper works with a Distance extent; set the extent to Distance');
+      }
+    }
     if (feature.profile.kind === 'face') {
       applyFaceExtrude(feature, feature.profile.face, ctx);
       return;
@@ -843,7 +874,7 @@ export function createEvaluator(oc: OpenCascade, options: EvaluatorOptions = {})
     );
     let tool: { shape: Shape3D; faces: KeyedFace[] } | null = null;
     for (const [index, region] of chosen.entries()) {
-      const prism = extrudeProfile(feature, frame, region, index, span);
+      const prism = extrudeProfile(feature, frame, region, index, span, ctx.featureOrder);
       if (!tool) {
         tool = prism;
       } else {
@@ -917,39 +948,55 @@ export function createEvaluator(oc: OpenCascade, options: EvaluatorOptions = {})
       geom.centroid,
       ...outline,
     ]);
-    const start = span.from === 0 ? face.clone() : face.clone().translate(scale(n, span.from));
-    const vector = new R.Vector(scale(n, span.to - span.from));
-    const prismShape = R.basicFaceExtrusion(start, vector);
-    vector.delete();
     const faceEdgeKeys = edgeKeysOf(body);
     const sourceEdges = (topology.faceEdges[index] ?? [])
       .map((e) => ({ key: faceEdgeKeys[e]!, midpoint: topology.edgeGeoms[e]!.midpoint }))
       .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
     const travel = scale(n, Math.sign(feature.distance));
-    const geoms = describeShape(prismShape);
-    const caps = geoms
-      .map((g, i) => ({ g, i }))
-      .filter(({ g }) => g.normal !== null && Math.abs(dot(g.normal, n)) > 1 - 1e-9)
-      .sort((a, b) => dot(a.g.centroid, travel) - dot(b.g.centroid, travel));
-    const keys = geoms.map((g, i) => {
-      if (caps.length === 2 && caps[0]!.i === i) return `${feature.id}:start:0`;
-      // The moved face keeps its identity (and so do references to it).
-      if (caps.length === 2 && caps[1]!.i === i) return baseFaceKey(geom.key);
-      let best = 0;
-      let bestDistance = Infinity;
-      sourceEdges.forEach((edge, s) => {
-        const d = distance(edge.midpoint, g.centroid);
-        if (d < bestDistance) {
-          bestDistance = d;
-          best = s;
-        }
+    const name = (prismShape: Shape3D, piece: 'main' | 'back'): KeyedFace[] => {
+      const geoms = describeShape(prismShape);
+      const caps = geoms
+        .map((g, i) => ({ g, i }))
+        .filter(({ g }) => g.normal !== null && Math.abs(dot(g.normal, n)) > 1 - 1e-9)
+        .sort((a, b) => dot(a.g.centroid, travel) - dot(b.g.centroid, travel));
+      const keys = geoms.map((g, i) => {
+        if (caps.length === 2 && caps[0]!.i === i) return `${feature.id}:start:0`;
+        // The moved face keeps its identity (and so do references to it).
+        if (caps.length === 2 && caps[1]!.i === i) return baseFaceKey(geom.key);
+        let best = 0;
+        let bestDistance = Infinity;
+        sourceEdges.forEach((edge, s) => {
+          const d = distance(edge.midpoint, g.centroid);
+          if (d < bestDistance) {
+            bestDistance = d;
+            best = s;
+          }
+        });
+        return `${feature.id}:side:0:${best}${piece === 'back' ? ':back' : ''}`;
       });
-      return `${feature.id}:side:0:${best}`;
-    });
-    let tool: { shape: Shape3D; faces: KeyedFace[] } = {
-      shape: prismShape,
-      faces: geoms.map((g, i) => ({ ...g, key: keys[i]!, aliases: [] })),
+      return geoms.map((g, i) => ({ ...g, key: keys[i]!, aliases: [] }));
     };
+    let tool: { shape: Shape3D; faces: KeyedFace[] };
+    if (feature.taper) {
+      tool = taperedPrism(
+        kit,
+        ctx.featureOrder,
+        feature.id,
+        face,
+        geom.centroid,
+        n,
+        span,
+        feature.startOffset ?? 0,
+        feature.taper,
+        name,
+      );
+    } else {
+      const start = span.from === 0 ? face.clone() : face.clone().translate(scale(n, span.from));
+      const vector = new R.Vector(scale(n, span.to - span.from));
+      const prismShape = R.basicFaceExtrusion(start, vector);
+      vector.delete();
+      tool = { shape: prismShape, faces: name(prismShape, 'main') };
+    }
     if (trim) {
       const back = extrudeSign(feature) > 0 ? span.from : span.to;
       tool = trimExtrudeTool(kit, ctx, feature.id, tool, trim, add(geom.centroid, scale(n, back)));

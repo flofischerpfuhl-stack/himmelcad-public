@@ -13,6 +13,12 @@ import {
 } from '../../foundation/commands/api/contract.js';
 import { API_ORDER, type ApiContribution } from '../../foundation/commands/api/registry.js';
 import type { JsonSchema } from '../../foundation/commands/api/validate.js';
+import {
+  MAX_HELIX_TURNS,
+  MAX_SCALE_FACTOR,
+  MIN_SCALE_FACTOR,
+  PRIMITIVE_SHAPES,
+} from './features.js';
 import { PRINT_DEFS, PRINT_FEATURE_KIND_SCHEMAS } from './printSchema.js';
 
 const operation: JsonSchema = {
@@ -37,7 +43,29 @@ const PROFILE_KIND_SCHEMAS: Record<string, FeatureKindSpec> = {
           minimum: -360,
           maximum: 360,
           default: 360,
-          description: 'Degrees; 360 is a full revolution, negative turns the other way.',
+          description:
+            'Degrees; 360 is a full revolution, negative turns the other way. Ignored with `helix`.',
+        },
+        helix: {
+          type: 'object',
+          properties: {
+            pitch: {
+              type: 'number',
+              description:
+                'Rise per turn along the axis (mm); negative climbs against the axis direction. Its magnitude must exceed the profile extent along the axis (turns may not overlap).',
+            },
+            turns: {
+              type: 'number',
+              exclusiveMinimum: 0,
+              maximum: MAX_HELIX_TURNS,
+              description: 'Number of turns (fractions allowed); height = |pitch| × turns.',
+            },
+            leftHanded: { type: 'boolean', default: false },
+          },
+          required: ['pitch', 'turns'],
+          additionalProperties: false,
+          description:
+            'Helical revolve (springs, coils, thread ridges): the profile climbs `pitch` per turn while turning about the axis.',
         },
         operation,
         targetBodyId: schemaString,
@@ -164,6 +192,70 @@ const BODY_KIND_SCHEMAS: Record<string, FeatureKindSpec> = {
         offset: { type: 'number', default: 0 },
       },
       ['face', 'target'],
+    ),
+  },
+  scale: {
+    label: 'Scale',
+    summary:
+      'Scales bodies about `center`: uniformly by `factor`, or per world axis with `factors` (non-uniform needs the HimmelCAD OCCT build); `copy` keeps the originals and adds scaled copies (print fit tests).',
+    params: schemaObject(
+      {
+        bodyIds: { type: 'array', items: schemaString, minItems: 1 },
+        factor: {
+          type: 'number',
+          minimum: MIN_SCALE_FACTOR,
+          maximum: MAX_SCALE_FACTOR,
+          default: 1,
+        },
+        factorExpression: {
+          ...schemaString,
+          description: 'Formula over document parameters, resolved into `factor`.',
+        },
+        factors: {
+          ...schemaRef('Vec3'),
+          description: 'Per-axis factors along world X, Y, Z (each > 0); overrides `factor`.',
+        },
+        center: schemaRef('Vec3'),
+        copy: { type: 'boolean', default: false },
+      },
+      ['bodyIds'],
+      'The centre defaults to the world origin.',
+    ),
+  },
+  translate: {
+    label: 'Translate',
+    summary:
+      'Moves bodies point to point: by `to − from` (picked start and end points, world); `copy` keeps the originals and adds moved copies.',
+    params: schemaObject(
+      {
+        bodyIds: { type: 'array', items: schemaString, minItems: 1 },
+        from: schemaRef('Vec3'),
+        to: schemaRef('Vec3'),
+        copy: { type: 'boolean', default: false },
+      },
+      ['bodyIds', 'from', 'to'],
+    ),
+  },
+  primitive: {
+    label: 'Primitive',
+    summary:
+      'Adds a box, cylinder, sphere, cone or torus standing on a plane (world plane, planar face, construction plane), its base centred at `center` (projected onto the plane); New/Join/Cut/Intersect like Extrude. Sizes: box width (plane u) / depth (v) / height; cylinder radius / height; cone radius (base) / radius2 (top, 0 = pointed) / height; sphere radius; torus radius (ring) / radius2 (tube).',
+    params: schemaObject(
+      {
+        shape: { enum: [...PRIMITIVE_SHAPES] },
+        plane: schemaRef('SketchPlane'),
+        center: schemaRef('Vec3'),
+        width: { type: 'number', exclusiveMinimum: 0 },
+        depth: { type: 'number', exclusiveMinimum: 0 },
+        height: { type: 'number', exclusiveMinimum: 0 },
+        radius: { type: 'number', exclusiveMinimum: 0 },
+        radius2: { type: 'number', minimum: 0 },
+        operation,
+        targetBodyId: schemaString,
+        resultBodyName: schemaString,
+      },
+      ['shape'],
+      'The plane defaults to XY at 0, the centre to the origin; the sizes the shape needs are required.',
     ),
   },
 };

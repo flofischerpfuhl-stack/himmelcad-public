@@ -511,7 +511,7 @@ const CORE_FEATURE_KIND_SCHEMAS: Record<string, FeatureKindSpec> = {
   extrude: {
     label: 'Extrude',
     summary:
-      'Extrudes sketch profiles (or pushes/pulls a planar face) along the sketch normal; negative distance goes the other way. Extent Distance / Through All / To Object, one side / symmetric / two sides (`distance2`), start offset; New/Join/Cut/Intersect.',
+      'Extrudes sketch profiles (or pushes/pulls a planar face) along the sketch normal; negative distance goes the other way. Extent Distance / Through All / To Object, one side / symmetric / two sides (`distance2`), start offset, taper angle; New/Join/Cut/Intersect.',
     params: obj(
       {
         profile: ref('ExtrudeProfile'),
@@ -540,6 +540,13 @@ const CORE_FEATURE_KIND_SCHEMAS: Record<string, FeatureKindSpec> = {
         startOffset: {
           type: 'number',
           description: 'The extrude starts this far from the profile along its normal (mm).',
+        },
+        taper: {
+          type: 'number',
+          minimum: -80,
+          maximum: 80,
+          description:
+            'Taper (draft) angle of the side walls in degrees: positive narrows the solid away from the start plane (holes widen), negative widens it; both sides of a symmetric/two-sided extrude narrow away from the start. Distance extent only; sides of lines, arcs and circles.',
         },
       },
       ['profile'],

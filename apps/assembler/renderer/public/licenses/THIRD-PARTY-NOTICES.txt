@@ -58,13 +58,15 @@ builds made with the option HIMMELCAD_OCCT=replicad ship the files above)
 ship instead
 
   assets/himmelcad_occt-<hash>.wasm    (HimmelCAD build "@himmelcad/occt-wasm"
-                                        8.0.1-hc.2: the same OCCT 8.0.1,
+                                        8.0.1-hc.3: the same OCCT 8.0.1,
                                         opencascade.js toolchain and
                                         replicad bindings, plus the OCCT
                                         classes BRepAlgoAPI_Defeaturing,
                                         IGESControl_Reader/Writer/Controller,
-                                        STEPCAFControl_Reader and a C++
-                                        facade over BRepOffset_MakeOffset;
+                                        STEPCAFControl_Reader,
+                                        BRepBuilderAPI_GTransform and C++
+                                        facades over BRepOffset_MakeOffset
+                                        and XCAF label names;
                                         LGPL-2.1-only)
   assets/himmelcad_occt-<hash>.js      (its Emscripten loader)
 

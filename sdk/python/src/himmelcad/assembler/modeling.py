@@ -721,7 +721,7 @@ class Document(PrintToolsMixin, InteropMixin):
     def _feature(self, result: Mapping[str, Any]) -> Feature:
         return Feature(self, str(result["featureId"]), str(result["kind"]), str(result["name"]))
 
-    def extrude(self, profile: Sketch | MirroredSketch | Face, distance: float | None = None, *, expression: str | None = None, op: str = "new", target: Body | None = None, symmetric: bool = False, regions: Sequence[str] | None = None, name: str | None = None, body_name: str | None = None, through_all: bool = False, to: Face | Body | None = None, distance2: float | None = None, start_offset: float | None = None) -> Body:
+    def extrude(self, profile: Sketch | MirroredSketch | Face, distance: float | None = None, *, expression: str | None = None, op: str = "new", target: Body | None = None, symmetric: bool = False, regions: Sequence[str] | None = None, name: str | None = None, body_name: str | None = None, through_all: bool = False, to: Face | Body | None = None, distance2: float | None = None, start_offset: float | None = None, taper: float | None = None) -> Body:
         """Extrudes a sketch (all regions, or the region keys in ``regions``) or pushes/pulls a planar face.
 
         ``distance`` or ``expression`` (a formula over ``doc.param(...)`` names, e.g.
@@ -731,8 +731,10 @@ class Document(PrintToolsMixin, InteropMixin):
         goes through every body, ``to=`` a face (planar: its plane) or body
         stops at it — both in the direction of ``distance``'s sign (default
         +1). ``distance2`` extrudes the other side too (two sides),
-        ``start_offset`` starts the extrude away from the profile. Returns the
-        new or modified body.
+        ``start_offset`` starts the extrude away from the profile. ``taper``
+        (degrees) tilts the side walls: positive narrows the solid away from
+        the start plane (holes widen), negative widens it (distance extents
+        only). Returns the new or modified body.
         """
         if isinstance(profile, Face):
             ref: dict[str, Any] = {"kind": "face", "face": profile.ref}
@@ -759,6 +761,8 @@ class Document(PrintToolsMixin, InteropMixin):
             params["distance2"] = distance2
         if start_offset is not None:
             params["startOffset"] = start_offset
+        if taper:
+            params["taper"] = taper
         if not isinstance(profile, Face) or op == "intersect":
             params["operation"] = op
             if op != "new" and target_id:
@@ -887,10 +891,24 @@ class Document(PrintToolsMixin, InteropMixin):
         distance = -abs(depth) if sketch.on_body else abs(depth)
         return self.extrude(sketch, distance, op="cut", target=target, **kwargs)
 
-    def revolve(self, profile: Sketch | MirroredSketch | Face, axis: str | Edge | SketchLine | Datum, angle: float = 360.0, *, op: str = "new", target: Body | None = None, regions: Sequence[str] | None = None, name: str | None = None, body_name: str | None = None) -> Body:
+    def revolve(self, profile: Sketch | MirroredSketch | Face, axis: str | Edge | SketchLine | Datum, angle: float = 360.0, *, op: str = "new", target: Body | None = None, regions: Sequence[str] | None = None, name: str | None = None, body_name: str | None = None, pitch: float | None = None, turns: float | None = None, height: float | None = None, left_handed: bool = False) -> Body:
         """Revolves a sketch (all regions, or ``regions``) or a planar face about ``axis``:
         ``"X"``/``"Y"``/``"Z"`` (world axis through the origin), a straight/circular :class:`Edge`,
-        or a :class:`SketchLine` (e.g. ``s.line((0, 0), (0, 10), construction=True)``)."""
+        or a :class:`SketchLine` (e.g. ``s.line((0, 0), (0, 10), construction=True)``).
+
+        Helical revolve (springs, coils, thread ridges): give ``pitch`` (mm per turn; negative
+        climbs against the axis) and ``turns`` or ``height`` (= ``|pitch| × turns``);
+        ``left_handed`` for a left-hand helix. ``angle`` is then ignored."""
+        helix: dict[str, Any] | None = None
+        if pitch is not None:
+            if turns is None and height is None:
+                raise ValueError("a helix needs turns= or height=")
+            count = turns if turns is not None else float(height) / abs(pitch)  # type: ignore[arg-type]
+            helix = {"pitch": pitch, "turns": count}
+            if left_handed:
+                helix["leftHanded"] = True
+        elif turns is not None or height is not None:
+            raise ValueError("turns=/height= need pitch=")
         if isinstance(axis, str):
             axis_ref: dict[str, Any] = {"kind": "world", "axis": axis.upper()}
         elif isinstance(axis, Edge):
@@ -906,6 +924,8 @@ class Document(PrintToolsMixin, InteropMixin):
                 ref["regions"] = list(regions)
             target_id = target.id if target else profile.on_body
         params: dict[str, Any] = {"profile": ref, "axis": axis_ref, "angle": angle, "operation": op}
+        if helix is not None:
+            params["helix"] = helix
         if op != "new" and target_id:
             params["targetBodyId"] = target_id
         if body_name:
@@ -985,6 +1005,68 @@ class Document(PrintToolsMixin, InteropMixin):
 
     def move(self, body: Body, dx: float = 0.0, dy: float = 0.0, dz: float = 0.0, *, name: str | None = None) -> Feature:
         return self._feature(self.client.create_feature("move", {"bodyId": body.id, "dx": dx, "dy": dy, "dz": dz}, name=name))
+
+    def scale(self, bodies: Body | Iterable[Body], factor: float | Sequence[float] = 1.0, *, center: Sequence[float] = (0.0, 0.0, 0.0), copy: bool = False, name: str | None = None) -> Feature:
+        """Scales bodies about ``center``: ``factor`` a number (uniform) or ``(fx, fy, fz)`` per
+        world axis (non-uniform; needs the HimmelCAD OCCT build). ``copy=True`` keeps the
+        originals and adds scaled copies ``body:<feature id>:<i>`` (print fit tests)."""
+        items = [bodies] if isinstance(bodies, Body) else list(bodies)
+        params: dict[str, Any] = {"bodyIds": [b.id for b in items], "center": [float(v) for v in center], "copy": copy}
+        if isinstance(factor, (int, float)):
+            params["factor"] = float(factor)
+        else:
+            params["factor"] = 1.0
+            params["factors"] = [float(v) for v in factor]
+        return self._feature(self.client.create_feature("scale", params, name=name))
+
+    def translate(self, bodies: Body | Iterable[Body], start: Sequence[float], end: Sequence[float], *, copy: bool = False, name: str | None = None) -> Feature:
+        """Moves bodies point to point by ``end − start`` (world points, e.g. a vertex to another);
+        ``copy=True`` keeps the originals and adds moved copies ``body:<feature id>:<i>``."""
+        items = [bodies] if isinstance(bodies, Body) else list(bodies)
+        params = {"bodyIds": [b.id for b in items], "from": [float(v) for v in start], "to": [float(v) for v in end], "copy": copy}
+        return self._feature(self.client.create_feature("translate", params, name=name))
+
+    def _primitive(self, shape: str, sizes: dict[str, float], plane: str | Face | Datum | tuple[str, float], center: Sequence[float], op: str, target: Body | None, name: str | None) -> Body:
+        params: dict[str, Any] = {"shape": shape, "plane": self._plane_ref(plane), "center": [float(v) for v in center], "operation": op, **sizes}
+        if op != "new":
+            target_id = target.id if target else (plane.body_id if isinstance(plane, Face) else None)
+            if target_id:
+                params["targetBodyId"] = target_id
+        result = self.client.create_feature("primitive", params, name=name)
+        feature = self._feature(result)
+        if op == "new":
+            return Body(self, f"body:{feature.id}", feature)
+        return Body(self, str(params.get("targetBodyId") or self._last_body_id(result)), feature)
+
+    def box(self, width: float, depth: float, height: float, *, plane: str | Face | Datum | tuple[str, float] = "XY", center: Sequence[float] = (0.0, 0.0, 0.0), op: str = "new", target: Body | None = None, name: str | None = None) -> Body:
+        """A box standing on ``plane``, its base centred at ``center`` (``width`` along the plane's u, ``depth`` along v)."""
+        return self._primitive("box", {"width": width, "depth": depth, "height": height}, plane, center, op, target, name)
+
+    def cylinder(self, radius: float, height: float, *, plane: str | Face | Datum | tuple[str, float] = "XY", center: Sequence[float] = (0.0, 0.0, 0.0), op: str = "new", target: Body | None = None, name: str | None = None) -> Body:
+        """A cylinder standing on ``plane`` (``op="cut"`` on a face makes a round pocket)."""
+        return self._primitive("cylinder", {"radius": radius, "height": height}, plane, center, op, target, name)
+
+    def sphere(self, radius: float, *, plane: str | Face | Datum | tuple[str, float] = "XY", center: Sequence[float] = (0.0, 0.0, 0.0), op: str = "new", target: Body | None = None, name: str | None = None) -> Body:
+        """A sphere resting on ``plane`` at ``center``."""
+        return self._primitive("sphere", {"radius": radius}, plane, center, op, target, name)
+
+    def cone(self, radius: float, height: float, top_radius: float = 0.0, *, plane: str | Face | Datum | tuple[str, float] = "XY", center: Sequence[float] = (0.0, 0.0, 0.0), op: str = "new", target: Body | None = None, name: str | None = None) -> Body:
+        """A cone (``top_radius`` 0) or frustum standing on ``plane``."""
+        return self._primitive("cone", {"radius": radius, "radius2": top_radius, "height": height}, plane, center, op, target, name)
+
+    def torus(self, radius: float, tube_radius: float, *, plane: str | Face | Datum | tuple[str, float] = "XY", center: Sequence[float] = (0.0, 0.0, 0.0), op: str = "new", target: Body | None = None, name: str | None = None) -> Body:
+        """A torus lying on ``plane``: ring ``radius``, ``tube_radius`` (smaller)."""
+        return self._primitive("torus", {"radius": radius, "radius2": tube_radius}, plane, center, op, target, name)
+
+    def move_edge(self, edge: Edge, vector: Sequence[float], *, name: str | None = None) -> Feature:
+        """Moves a straight edge between two planar faces by ``vector`` (world mm): both faces
+        tilt about their far sides to follow it (Shapr3D Move on an edge)."""
+        return self._feature(self.client.create_feature("moveEdge", {"edge": edge.ref, "vector": [float(v) for v in vector]}, name=name))
+
+    def move_face(self, face: Face, vector: Sequence[float], *, name: str | None = None) -> Feature:
+        """Moves a planar face by ``vector`` in any direction: along its normal it offsets,
+        sideways its planar neighbours tilt to follow (Shapr3D Move on a face)."""
+        return self._feature(self.client.create_feature("moveFace", {"face": face.ref, "vector": [float(v) for v in vector]}, name=name))
 
     def color(self, body: Body, rgb_hex: str, *, name: str | None = None) -> Feature:
         return self._feature(self.client.create_feature("setAppearance", {"bodyId": body.id, "color": rgb_hex}, name=name))

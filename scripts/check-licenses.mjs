@@ -67,7 +67,7 @@ const ADMITTED_LGPL = [
     // HIMMELCAD_OCCT=replicad opts out);
     // same runtime-loaded worker module, not an npm dependency.
     name: '@himmelcad/occt-wasm',
-    version: '8.0.1-hc.2',
+    version: '8.0.1-hc.3',
     license: 'LGPL-2.1-only',
   },
   {

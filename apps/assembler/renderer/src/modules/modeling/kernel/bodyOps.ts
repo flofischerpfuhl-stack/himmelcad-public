@@ -25,22 +25,33 @@ import { sampleEdge } from '../../../foundation/geometry-kernel/sketchProjection
 import {
   mirroredSketchId,
   MAX_PATTERN_COUNT,
+  MAX_SCALE_FACTOR,
+  MIN_SCALE_FACTOR,
   type AlignFeature,
   type MirrorFeature,
   type PatternFeature,
   type RotateAxisFeature,
+  type ScaleFeature,
   type SplitFeature,
   type TransformFeature,
+  type TranslateFeature,
 } from '../features.js';
 import { assignFaceKeys } from '../../../foundation/geometry-kernel/naming.js';
-import { booleanWithHistory, type HistoryResult } from '../../../foundation/geometry-kernel/occt.js';
+import {
+  booleanWithHistory,
+  type HistoryResult,
+} from '../../../foundation/geometry-kernel/occt.js';
 import type {
   BodyStateLike,
   FeatureKit,
   ReplayContextLike,
   Shape3D,
 } from '../../../foundation/geometry-kernel/features/kit.js';
-import { transformShape } from '../../../foundation/geometry-kernel/features/occRigid.js';
+import {
+  nonUniformScaleUnsupported,
+  scaleShape,
+  transformShape,
+} from '../../../foundation/geometry-kernel/features/occRigid.js';
 import {
   bodyOrFail,
   resolveAxis,
@@ -421,6 +432,113 @@ export function applyRotateAxis(
           },
         ];
   bodies.forEach((body, i) => {
+    if (feature.copy) {
+      addCopy(kit, ctx, feature.id, body, ops, extraBodyId(feature.id, i), `${body.name} (copy)`);
+    } else if (ops.length > 0) {
+      moveBody(kit, ctx, feature.id, body, ops);
+    }
+  });
+}
+
+// ---- Scale ----------------------------------------------------------------------------
+
+export function applyScale(feature: ScaleFeature, ctx: ReplayContextLike, kit: FeatureKit): void {
+  const factors: Vec3 = feature.factors
+    ? [...feature.factors]
+    : [feature.factor, feature.factor, feature.factor];
+  if (!factors.every((f) => Number.isFinite(f) && f >= MIN_SCALE_FACTOR && f <= MAX_SCALE_FACTOR)) {
+    kit.fail(`Scale factors must be between ${MIN_SCALE_FACTOR} and ${MAX_SCALE_FACTOR}`);
+  }
+  if (!feature.center.every(Number.isFinite)) kit.fail('The scale centre must be a point');
+  const uniform = factors[0] === factors[1] && factors[1] === factors[2];
+  if (!uniform) {
+    const reason = nonUniformScaleUnsupported(kit.oc);
+    if (reason) kit.fail(reason);
+  }
+  const bodies = bodiesOf(kit, ctx, feature.bodyIds);
+  const identity = factors.every((f) => f === 1);
+  bodies.forEach((body, i) => {
+    if (identity) {
+      if (feature.copy) {
+        addCopy(
+          kit,
+          ctx,
+          feature.id,
+          body,
+          [],
+          extraBodyId(feature.id, i),
+          `${body.name} (scaled)`,
+        );
+      }
+      return;
+    }
+    let shape: Shape3D;
+    try {
+      shape = scaleShape(kit.oc, body.shape, feature.center, factors);
+    } catch (error) {
+      if (kit.isFailure(error)) throw error;
+      kit.fail(`Scale failed: ${kit.describeError(error)}`);
+    }
+    if (!(R.measureVolume(shape) > 0)) kit.fail('Scale failed: the result is not a closed solid');
+    const faces = scaledFaces(kit, ctx, feature.id, body, shape);
+    if (feature.copy) {
+      kit.addBody(
+        ctx,
+        {
+          id: extraBodyId(feature.id, i),
+          name: `${body.name} (scaled)`,
+          createdBy: feature.id,
+          shape,
+          faces,
+        },
+        body.color,
+      );
+    } else {
+      body.shape = shape;
+      body.faces = faces;
+      ctx.touch(body.id);
+    }
+  });
+}
+
+/**
+ * Keyed faces of a scaled copy: OCCT's transform keeps the topology and
+ * its explorer order, so face `i` of the copy is face `i` of the source
+ * (it keeps the source's key, like a moved body). A different face count
+ * (never expected) falls back to surface identity.
+ */
+function scaledFaces(
+  kit: FeatureKit,
+  ctx: ReplayContextLike,
+  featureId: string,
+  body: BodyStateLike,
+  shape: Shape3D,
+): BodyStateLike['faces'] {
+  const geoms = kit.describeShape(shape);
+  if (geoms.length === body.faces.length) {
+    return geoms.map((g, i) => ({
+      ...g,
+      key: body.faces[i]!.key,
+      aliases: [...body.faces[i]!.aliases],
+    }));
+  }
+  const keys = assignFaceKeys(geoms, body.faces, ctx.featureOrder, () => `${featureId}:new`);
+  return kit.withKeys(geoms, keys);
+}
+
+// ---- Translate (point to point) -----------------------------------------------------------
+
+export function applyTranslate(
+  feature: TranslateFeature,
+  ctx: ReplayContextLike,
+  kit: FeatureKit,
+): void {
+  if (![...feature.from, ...feature.to].every(Number.isFinite)) {
+    kit.fail('Translate needs a start and an end point');
+  }
+  const vector = sub(feature.to, feature.from);
+  const ops: RigidOp[] = length(vector) > 0 ? [{ kind: 'translate', vector }] : [];
+  bodiesOf(kit, ctx, feature.bodyIds).forEach((body, i) => {
     if (feature.copy) {
       addCopy(kit, ctx, feature.id, body, ops, extraBodyId(feature.id, i), `${body.name} (copy)`);
     } else if (ops.length > 0) {

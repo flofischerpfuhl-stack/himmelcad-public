@@ -6,7 +6,13 @@
 import { Select } from '@himmelcad/ui';
 
 import type { ExtrudeOperation, Plane, AxisRef } from '../../../foundation/document/document.js';
-import type { ModelingFeature } from '../features.js';
+import {
+  PRIMITIVE_LABEL,
+  PRIMITIVE_SIZE_FIELDS,
+  type ModelingFeature,
+  type PrimitiveShape,
+  type RevolveHelix,
+} from '../features.js';
 import type { AssemblerState, FeaturePatch } from '../../../foundation/commands/store.js';
 import { ExpressionField } from '../../../platform/widgets/ExpressionField.js';
 import { PrintFeatureParams } from './PrintFeatureParams.js';
@@ -26,6 +32,18 @@ function axisText(axis: AxisRef): string {
   if (axis.kind === 'construction') return 'construction axis';
   return 'sketch line';
 }
+
+/** A helix switched on from the History card: 5 mm pitch, 3 turns. */
+const DEFAULT_HELIX: RevolveHelix = { pitch: 5, turns: 3 };
+
+/** History-card labels of the primitive sizes. */
+export const PRIMITIVE_FIELD_LABEL: Record<PrimitiveShape, Partial<Record<string, string>>> = {
+  box: { width: 'Width', depth: 'Depth', height: 'Height' },
+  cylinder: { radius: 'Radius', height: 'Height' },
+  sphere: { radius: 'Radius' },
+  cone: { radius: 'Base radius', radius2: 'Top radius', height: 'Height' },
+  torus: { radius: 'Ring radius', radius2: 'Tube radius' },
+};
 
 function plural(n: number, one: string, many = `${one}s`): string {
   return `${n} ${n === 1 ? one : many}`;
@@ -73,16 +91,202 @@ export function ModelingFeatureParams({
     );
 
   switch (feature.kind) {
-    case 'revolve':
+    case 'revolve': {
+      const helix = feature.helix;
       return (
         <div className={styles.params}>
-          <ExpressionField
-            label="Angle"
-            value={feature.angle}
-            unit="°"
-            onCommit={(v) => edit({ angle: v })}
-          />
+          <div>
+            <span className={styles.paramLabel}>Path</span>
+            <Select
+              aria-label={`${feature.name} path`}
+              value={helix ? 'helix' : 'plain'}
+              options={[
+                { value: 'plain', label: 'Revolve' },
+                { value: 'helix', label: 'Helix' },
+              ]}
+              onChange={(event) =>
+                edit({
+                  helix: event.currentTarget.value === 'helix' ? DEFAULT_HELIX : undefined,
+                })
+              }
+            />
+          </div>
+          {helix ? (
+            <>
+              <ExpressionField
+                label="Pitch"
+                value={helix.pitch}
+                unit="mm"
+                onCommit={(v) => edit({ helix: { ...helix, pitch: v } })}
+              />
+              <ExpressionField
+                label="Turns"
+                value={helix.turns}
+                onCommit={(v) => edit({ helix: { ...helix, turns: v } })}
+              />
+              <ExpressionField
+                label="Height"
+                value={Math.abs(helix.pitch) * helix.turns}
+                unit="mm"
+                onCommit={(v) =>
+                  edit({
+                    helix: {
+                      ...helix,
+                      turns: Math.abs(helix.pitch) > 0 ? v / Math.abs(helix.pitch) : helix.turns,
+                    },
+                  })
+                }
+              />
+              <div>
+                <span className={styles.paramLabel}>Hand</span>
+                <Select
+                  aria-label={`${feature.name} handedness`}
+                  value={helix.leftHanded ? 'left' : 'right'}
+                  options={[
+                    { value: 'right', label: 'Right-handed' },
+                    { value: 'left', label: 'Left-handed' },
+                  ]}
+                  onChange={(event) => {
+                    const { leftHanded: _drop, ...rest } = helix;
+                    edit({
+                      helix:
+                        event.currentTarget.value === 'left' ? { ...rest, leftHanded: true } : rest,
+                    });
+                  }}
+                />
+              </div>
+            </>
+          ) : (
+            <ExpressionField
+              label="Angle"
+              value={feature.angle}
+              unit="°"
+              onCommit={(v) => edit({ angle: v })}
+            />
+          )}
           <span className={styles.paramNote}>About the {axisText(feature.axis)}</span>
+          {operation(feature.operation)}
+        </div>
+      );
+    }
+    case 'scale': {
+      const factors = feature.factors;
+      return (
+        <div className={styles.params}>
+          {factors ? (
+            (['X', 'Y', 'Z'] as const).map((axis, i) => (
+              <ExpressionField
+                key={axis}
+                label={`Factor ${axis}`}
+                value={factors[i]!}
+                onCommit={(v) => edit({ factors: factors.map((f, j) => (j === i ? v : f)) })}
+              />
+            ))
+          ) : (
+            <ExpressionField
+              label="Factor"
+              value={feature.factor}
+              onCommit={(v) => edit({ factor: v, factorExpression: undefined })}
+            />
+          )}
+          <div>
+            <span className={styles.paramLabel}>Scaling</span>
+            <Select
+              aria-label={`${feature.name} uniform`}
+              value={factors ? 'axes' : 'uniform'}
+              options={[
+                { value: 'uniform', label: 'Uniform' },
+                { value: 'axes', label: 'Per axis' },
+              ]}
+              onChange={(event) =>
+                edit(
+                  event.currentTarget.value === 'axes'
+                    ? { factors: [feature.factor, feature.factor, feature.factor] }
+                    : { factors: undefined, factor: factors?.[0] ?? feature.factor },
+                )
+              }
+            />
+          </div>
+          {[0, 1, 2].map((i) => (
+            <ExpressionField
+              key={`center${i}`}
+              label={`Centre ${'XYZ'[i]}`}
+              value={feature.center[i]!}
+              unit="mm"
+              onCommit={(v) => edit({ center: feature.center.map((p, j) => (j === i ? v : p)) })}
+            />
+          ))}
+          <div>
+            <span className={styles.paramLabel}>Result</span>
+            <Select
+              aria-label={`${feature.name} copy`}
+              value={feature.copy ? 'copy' : 'move'}
+              options={[
+                { value: 'move', label: 'Scale' },
+                { value: 'copy', label: 'Copy' },
+              ]}
+              onChange={(event) => edit({ copy: event.currentTarget.value === 'copy' })}
+            />
+          </div>
+          <span className={styles.paramNote}>
+            {plural(feature.bodyIds.length, 'body', 'bodies')}
+          </span>
+        </div>
+      );
+    }
+    case 'translate': {
+      const delta = feature.to.map((t, i) => t - feature.from[i]!);
+      return (
+        <div className={styles.params}>
+          {(['X', 'Y', 'Z'] as const).map((axis, i) => (
+            <ExpressionField
+              key={axis}
+              label={`Move ${axis}`}
+              value={delta[i]!}
+              unit="mm"
+              onCommit={(v) =>
+                edit({ to: feature.to.map((t, j) => (j === i ? feature.from[j]! + v : t)) })
+              }
+            />
+          ))}
+          <div>
+            <span className={styles.paramLabel}>Result</span>
+            <Select
+              aria-label={`${feature.name} copy`}
+              value={feature.copy ? 'copy' : 'move'}
+              options={[
+                { value: 'move', label: 'Move' },
+                { value: 'copy', label: 'Copy' },
+              ]}
+              onChange={(event) => edit({ copy: event.currentTarget.value === 'copy' })}
+            />
+          </div>
+          <span className={styles.paramNote}>
+            {plural(feature.bodyIds.length, 'body', 'bodies')}, point to point
+          </span>
+        </div>
+      );
+    }
+    case 'primitive':
+      return (
+        <div className={styles.params}>
+          {PRIMITIVE_SIZE_FIELDS[feature.shape].map((field) => (
+            <ExpressionField
+              key={field}
+              label={PRIMITIVE_FIELD_LABEL[feature.shape][field] ?? field}
+              value={feature[field] ?? 0}
+              unit="mm"
+              onCommit={(v) => edit({ [field]: v, [`${field}Expression`]: undefined })}
+            />
+          ))}
+          <span className={styles.paramNote}>
+            {PRIMITIVE_LABEL[feature.shape]} on{' '}
+            {feature.plane.kind === 'plane'
+              ? `the ${feature.plane.plane} plane`
+              : feature.plane.kind === 'face'
+                ? 'a face'
+                : 'a construction plane'}
+          </span>
           {operation(feature.operation)}
         </div>
       );

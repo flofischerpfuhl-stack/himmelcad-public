@@ -4,7 +4,13 @@
  * the first problem throws with a path-qualified message.
  */
 import type { Feature } from '../../foundation/document/document.js';
-import { MODELING_FEATURE_KINDS, type ModelingFeature } from './features.js';
+import {
+  MODELING_FEATURE_KINDS,
+  PRIMITIVE_SHAPES,
+  PRIMITIVE_SIZE_FIELDS,
+  type ModelingFeature,
+  type PrimitiveShape,
+} from './features.js';
 import { isPrintFeatureKind, validatePrintFeature } from './printFeatureFormat.js';
 import { validateAxisRef, validatePlaneRef } from '../../foundation/document/validation.js';
 import type { FormatHelpers } from '../../foundation/document/featureKinds.js';
@@ -67,13 +73,60 @@ export function validateModelingFeature(r: Rec, path: string, h: FormatHelpers):
       h.fail(`${path}.${field}`, 'expected a non-empty array of strings');
     }
   };
+  const vec3 = (field: string) => {
+    if (!isVec3(r[field])) h.fail(`${path}.${field}`, 'expected a Vec3');
+  };
+  const optionalPositive = (field: string) => {
+    if (r[field] !== undefined && !(isNumber(r[field]) && r[field] >= 0)) {
+      h.fail(`${path}.${field}`, 'expected a number ≥ 0');
+    }
+  };
   switch (r.kind as ModelingFeature['kind']) {
     case 'revolve':
       profile(r.profile, `${path}.profile`);
       axis(r.axis, `${path}.axis`);
       num('angle');
       operation();
+      if (r.helix !== undefined) {
+        const helix = r.helix;
+        if (!isRecord(helix)) h.fail(`${path}.helix`, 'expected an object');
+        if (!isNumber(helix.pitch)) h.fail(`${path}.helix.pitch`, 'expected a number');
+        if (!isNumber(helix.turns)) h.fail(`${path}.helix.turns`, 'expected a number');
+        if (helix.leftHanded !== undefined && typeof helix.leftHanded !== 'boolean') {
+          h.fail(`${path}.helix.leftHanded`, 'expected a boolean');
+        }
+      }
       break;
+    case 'scale':
+      stringList('bodyIds');
+      num('factor');
+      optionalStr('factorExpression');
+      if (r.factors !== undefined) vec3('factors');
+      vec3('center');
+      bool('copy');
+      break;
+    case 'translate':
+      stringList('bodyIds');
+      vec3('from');
+      vec3('to');
+      bool('copy');
+      break;
+    case 'primitive': {
+      if (!(PRIMITIVE_SHAPES as readonly unknown[]).includes(r.shape)) {
+        h.fail(`${path}.shape`, `expected one of ${PRIMITIVE_SHAPES.join(', ')}`);
+      }
+      plane(r.plane, `${path}.plane`);
+      vec3('center');
+      for (const field of ['width', 'depth', 'height', 'radius', 'radius2']) {
+        optionalPositive(field);
+        optionalStr(`${field}Expression`);
+      }
+      for (const field of PRIMITIVE_SIZE_FIELDS[r.shape as PrimitiveShape]) {
+        if (r[field] === undefined) h.fail(`${path}.${field}`, 'expected a number');
+      }
+      operation();
+      break;
+    }
     case 'sweep': {
       profile(r.profile, `${path}.profile`);
       const p = r.path;

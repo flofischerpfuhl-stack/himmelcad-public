@@ -4,19 +4,27 @@
  */
 import {
   AlignVerticalSpaceAround,
+  Box,
   CircleDot,
+  Cone,
+  Cylinder,
   FlipHorizontal2,
+  Globe,
   Layers,
   Layers2,
   LayoutGrid,
   Move3d,
+  MoveUpRight,
   Rotate3d,
   RotateCw,
   Route,
+  Scaling,
+  Shapes,
   Spline,
   SquareSlash,
   SquareSplitHorizontal,
   Stamp,
+  Torus,
   TriangleRight,
   type LucideIcon,
 } from 'lucide-react';
@@ -38,6 +46,9 @@ export const MODELING_FEATURE_ICON: Readonly<Record<ModelingFeature['kind'], Luc
   draft: TriangleRight,
   rib: SquareSlash,
   thicken: Layers2,
+  scale: Scaling,
+  translate: MoveUpRight,
+  primitive: Shapes,
 };
 
 export const MODELING_COMMAND_ICON: Readonly<Record<string, LucideIcon>> = {
@@ -57,4 +68,11 @@ export const MODELING_COMMAND_ICON: Readonly<Record<string, LucideIcon>> = {
   'tools.filletFaceEdges': Spline,
   'tools.filletConcave': Spline,
   'tools.filletConvex': Spline,
+  'transform.scale': Scaling,
+  'transform.translate': MoveUpRight,
+  'add.box': Box,
+  'add.cylinder': Cylinder,
+  'add.sphere': Globe,
+  'add.cone': Cone,
+  'add.torus': Torus,
 };
