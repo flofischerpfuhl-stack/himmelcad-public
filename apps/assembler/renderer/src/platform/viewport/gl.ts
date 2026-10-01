@@ -585,8 +585,15 @@ void main() {
 }`;
 
 const ID_ENCODE = `
+precision highp int;
 vec4 encodeId(float id) {
   return vec4(mod(id, 256.0), mod(floor(id / 256.0), 256.0), mod(floor(id / 65536.0), 256.0), floor(id / 16777216.0)) / 255.0;
+}
+// The id pass's second attachment: window depth in 24 bits (RGB), A = 1 where drawn
+// (orbit/zoom pivot, orbitPivot.ts unpackDepth).
+vec4 encodeDepth(float z) {
+  uint d = uint(clamp(z, 0.0, 1.0) * 16777215.0 + 0.5);
+  return vec4(float(d & 255u), float((d >> 8u) & 255u), float((d >> 16u) & 255u), 255.0) / 255.0;
 }`;
 
 const LINE_PICK_FS = `#version 300 es
@@ -597,12 +604,14 @@ in vec2 vAlongW;
 in float vHalf;
 in float vLocal;
 uniform float uBase;
-out vec4 outColor;
+layout(location = 0) out vec4 outColor;
+layout(location = 1) out vec4 outDepth;
 ${ID_ENCODE}
 void main() {
   if (vClip > 0.0) discard;
   if (abs(vSideW.x / vSideW.y) > vHalf) discard;
   outColor = encodeId(uBase + floor(vLocal + 0.5));
+  outDepth = encodeDepth(gl_FragCoord.z);
 }`;
 
 const ID_VS = `#version 300 es
@@ -616,13 +625,16 @@ void main() {
 }`;
 
 const ID_FS = `#version 300 es
-precision mediump float;
+precision highp float;
 in float vClip;
 uniform vec4 uId;
-out vec4 outColor;
+layout(location = 0) out vec4 outColor;
+layout(location = 1) out vec4 outDepth;
+${ID_ENCODE}
 void main() {
   if (vClip > 0.0) discard;
   outColor = uId;
+  outDepth = encodeDepth(gl_FragCoord.z);
 }`;
 
 const MESH_ID_VS = `#version 300 es
@@ -643,11 +655,13 @@ precision highp float;
 in float vClip;
 flat in float vLocal;
 uniform float uBase;
-out vec4 outColor;
+layout(location = 0) out vec4 outColor;
+layout(location = 1) out vec4 outDepth;
 ${ID_ENCODE}
 void main() {
   if (vClip > 0.0) discard;
   outColor = encodeId(uBase + floor(vLocal + 0.5));
+  outDepth = encodeDepth(gl_FragCoord.z);
 }`;
 
 /** Ground contact shadow: blurred height field from the shadow map. */
@@ -765,6 +779,7 @@ export class ViewportRenderer {
   private idFbo: WebGLFramebuffer | null = null;
   private idColorTex: WebGLTexture | null = null;
   private idDepthRb: WebGLRenderbuffer | null = null;
+  private idDepthColorRb: WebGLRenderbuffer | null = null;
   private idWidth = 0;
   private idHeight = 0;
   private aoFbo: WebGLFramebuffer | null = null;
@@ -1593,6 +1608,7 @@ export class ViewportRenderer {
     if (this.idFbo) gl.deleteFramebuffer(this.idFbo);
     if (this.idColorTex) gl.deleteTexture(this.idColorTex);
     if (this.idDepthRb) gl.deleteRenderbuffer(this.idDepthRb);
+    if (this.idDepthColorRb) gl.deleteRenderbuffer(this.idDepthColorRb);
     this.idWidth = Math.max(1, width);
     this.idHeight = Math.max(1, height);
     const tex = gl.createTexture()!;
@@ -1613,14 +1629,23 @@ export class ViewportRenderer {
     const depth = gl.createRenderbuffer()!;
     gl.bindRenderbuffer(gl.RENDERBUFFER, depth);
     gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT24, this.idWidth, this.idHeight);
+    // Second colour attachment: the packed window depth of what the id pass drew
+    // (WebGL2 cannot read a depth renderbuffer back).
+    const depthColor = gl.createRenderbuffer()!;
+    gl.bindRenderbuffer(gl.RENDERBUFFER, depthColor);
+    gl.renderbufferStorage(gl.RENDERBUFFER, gl.RGBA8, this.idWidth, this.idHeight);
     const fbo = gl.createFramebuffer()!;
     gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT1, gl.RENDERBUFFER, depthColor);
     gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, depth);
+    gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1]);
+    gl.readBuffer(gl.COLOR_ATTACHMENT0);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     this.idFbo = fbo;
     this.idColorTex = tex;
     this.idDepthRb = depth;
+    this.idDepthColorRb = depthColor;
   }
 
   /** Draws the recorded id pass if it is out of date. */
@@ -1793,6 +1818,48 @@ export class ViewportRenderer {
     return (px[0]! | (px[1]! << 8) | (px[2]! << 16) | (px[3]! << 24)) >>> 0;
   }
 
+  /**
+   * Window depth (0…1, `NaN` where nothing pickable is drawn) of the id
+   * pass in a square of `2 · half` framebuffer pixels around (`xPx`, `yPx`)
+   * (top-left origin), rows top first — the orbit/zoom pivot's input
+   * (`orbitPivot.ts`). One small synchronous read; the id pass is drawn
+   * first if it is out of date. `null` before the first frame.
+   */
+  readPickDepthWindow(
+    xPx: number,
+    yPx: number,
+    half: number,
+  ): { x0: number; y0: number; width: number; height: number; z: Float32Array } | null {
+    const gl = this.gl;
+    if (!this.ensurePick() || !this.idFbo) return null;
+    const x0 = Math.max(0, Math.floor(xPx - half));
+    const y0 = Math.max(0, Math.floor(yPx - half));
+    const x1 = Math.min(this.idWidth, Math.ceil(xPx + half));
+    const y1 = Math.min(this.idHeight, Math.ceil(yPx + half));
+    const width = x1 - x0;
+    const height = y1 - y0;
+    if (width <= 0 || height <= 0) return null;
+    const bytes = new Uint8Array(width * height * 4);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.idFbo);
+    gl.readBuffer(gl.COLOR_ATTACHMENT1);
+    gl.readPixels(x0, this.idHeight - y1, width, height, gl.RGBA, gl.UNSIGNED_BYTE, bytes);
+    gl.readBuffer(gl.COLOR_ATTACHMENT0);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    const z = new Float32Array(width * height);
+    for (let row = 0; row < height; row += 1) {
+      // readPixels rows are bottom-up.
+      const src = (height - 1 - row) * width * 4;
+      for (let col = 0; col < width; col += 1) {
+        const o = src + col * 4;
+        z[row * width + col] =
+          bytes[o + 3] === 0
+            ? Number.NaN
+            : (bytes[o]! + bytes[o + 1]! * 256 + bytes[o + 2]! * 65536) / 16777215;
+      }
+    }
+    return { x0, y0, width, height, z };
+  }
+
   // ---- offscreen image export -------------------------------------------------------------------
 
   /** Largest image side {@link renderImage} can produce on this GPU. */
@@ -1895,6 +1962,7 @@ export class ViewportRenderer {
     if (this.idFbo) gl.deleteFramebuffer(this.idFbo);
     if (this.idColorTex) gl.deleteTexture(this.idColorTex);
     if (this.idDepthRb) gl.deleteRenderbuffer(this.idDepthRb);
+    if (this.idDepthColorRb) gl.deleteRenderbuffer(this.idDepthColorRb);
     if (this.aoFbo) gl.deleteFramebuffer(this.aoFbo);
     if (this.aoDepthTex) gl.deleteTexture(this.aoDepthTex);
     if (this.shadowFbo) gl.deleteFramebuffer(this.shadowFbo);

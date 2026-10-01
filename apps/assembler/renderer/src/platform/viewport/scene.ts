@@ -189,6 +189,11 @@ export interface SceneInput {
   hiddenEdgesVisible?: boolean;
   /** World axes. Default `true`. */
   axesVisible?: boolean;
+  /**
+   * Normal of the open sketch's plane: the world axis along it is not drawn
+   * (it would only be a dot, or a misleading diagonal line in perspective).
+   */
+  sketchNormal?: Vec3 | null;
   /** Surface opacity in X-Ray mode. Default 0.32. */
   xrayOpacity?: number;
   /** World plane of the grid (default XY); the ground shadow needs XY. */
@@ -381,7 +386,10 @@ export function buildScene(input: SceneInput): BuiltScene {
   const eye = billboardEye(input.pose);
   const hitScale = input.hitScale ?? 1;
   const handleScale = input.handleScale ?? 1;
-  const edgeHitWidth = (distance: number): number => baseEdgeHitWidth(distance) * hitScale;
+  // The visible height at the target (any projection): a pose's `distance` is
+  // only the eye distance in a 45° perspective.
+  const edgeHitWidth = (distance: number): number =>
+    baseEdgeHitWidth(viewHeightAt(input.pose, distance) / (2 * Math.tan(Math.PI / 8))) * hitScale;
 
   const lit: TriBatch[] = [];
   const underlay: DrawBatch[] = [];
@@ -436,7 +444,10 @@ export function buildScene(input: SceneInput): BuiltScene {
   const lineInk = isWireframe || isXray ? input.colors.wire : input.colors.bodyEdge;
 
   // ---- Grid (XY plane by default; XZ / YZ when chosen) ------------------------
-  const gridExtent = Math.min(20000, Math.max(200, input.pose.distance * 6));
+  // Zoom-dependent sizes follow the visible height at the target, not the eye distance (which a
+  // narrow or blending field of view stretches).
+  const zoomDistance = viewHeightAt(input.pose, input.pose.distance) / (2 * Math.tan(Math.PI / 8));
+  const gridExtent = Math.min(20000, Math.max(200, zoomDistance * 6));
   const gridPlane = input.gridPlane ?? 'XY';
   // Grid (a, b) → world: the plane's two axes, the third coordinate 0.
   const onGrid = (a: number, b: number): Vec3 =>
@@ -494,13 +505,20 @@ export function buildScene(input: SceneInput): BuiltScene {
 
   // ---- World axes (Shapr3D-style red/green/blue) ---------------------------
   if ((input.axesVisible ?? true) && !sectionOnly) {
-    const axisLen = Math.max(50, input.pose.distance * 0.6);
+    const axisLen = Math.max(50, zoomDistance * 0.6);
     const axes: { color: readonly [number, number, number]; to: Vec3 }[] = [
       { color: input.colors.axisX, to: [axisLen, 0, 0] },
       { color: input.colors.axisY, to: [0, axisLen, 0] },
       { color: input.colors.axisZ, to: [0, 0, axisLen] },
     ];
+    const normal = input.sketchNormal;
     for (const axis of axes) {
+      // The axis out of an open sketch's plane (within 1°) is left out.
+      if (normal) {
+        const n = normalize3(normal);
+        const along = Math.abs(n[0] * axis.to[0] + n[1] * axis.to[1] + n[2] * axis.to[2]) / axisLen;
+        if (along > Math.cos(Math.PI / 180)) continue;
+      }
       underlay.push({
         kind: 'lines',
         segments: new Float32Array([0, 0, 0, axis.to[0], axis.to[1], axis.to[2]]),

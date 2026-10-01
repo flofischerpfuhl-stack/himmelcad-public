@@ -14,7 +14,16 @@ import type { FingerDrawing } from './pointer.js';
 export type LengthUnit = 'mm' | 'in';
 export type ToolbarLabels = 'icons' | 'hover' | 'always';
 export type ThemeName = 'dark' | 'light';
-export type Projection = 'perspective' | 'orthographic';
+/**
+ * Camera projection (owner decision 2026-10-01): parallel everywhere, the
+ * Fusion 360-like `adaptive` (perspective while orbiting freely, parallel in
+ * sketches and after a view-cube face/edge/corner or a named view until the
+ * next orbit), or perspective everywhere. The viewport's policy is
+ * `viewport/projection.ts`.
+ */
+export type Projection = 'orthographic' | 'adaptive' | 'perspective';
+/** What an orbit turns about (Settings › Navigation). */
+export type OrbitAround = 'cursor' | 'selection' | 'centre';
 
 export interface Preferences {
   /** Display unit for read-outs (measurements, dimension chips). Documents stay in millimetres. */
@@ -30,8 +39,15 @@ export interface Preferences {
   navigationPreset: NavigationPresetId;
   theme: ThemeName;
   projection: Projection;
-  /** Perspective field of view, degrees. */
+  /**
+   * The user picked `projection`. Preferences stored before the flag existed
+   * with `perspective` (the old default) move to the new default.
+   */
+  projectionChosen: boolean;
+  /** Perspective field of view, degrees (Perspective, and Adaptive while orbiting). */
   fov: number;
+  /** Orbit pivot: the point under the cursor (default), the selection's centre, or the screen centre. */
+  orbitAround: OrbitAround;
   /** Animated camera transitions (also off when the OS asks for reduced motion). */
   animateCamera: boolean;
   /** `high`: ambient occlusion and the ground contact shadow; `standard`: plain lighting (slow GPUs). */
@@ -141,8 +157,10 @@ export const DEFAULT_PREFERENCES: Preferences = {
   singleKeyHotkeys: true,
   navigationPreset: 'shapr3d',
   theme: 'dark',
-  projection: 'perspective',
+  projection: 'orthographic',
+  projectionChosen: false,
   fov: 45,
+  orbitAround: 'cursor',
   animateCamera: true,
   renderQuality: 'high',
   renderQualityChosen: false,
@@ -228,6 +246,14 @@ export function parsePreferences(text: string | null): Preferences {
       : r.renderQuality === 'standard';
   const number = (lo: number, hi: number) => (v: unknown) =>
     typeof v === 'number' && Number.isFinite(v) && v >= lo && v <= hi;
+  // Stored before the flag existed: `perspective` was the default then, not a choice.
+  const projectionChosen =
+    typeof r.projectionChosen === 'boolean'
+      ? r.projectionChosen
+      : r.projection === 'orthographic' || r.projection === 'adaptive';
+  const projection = projectionChosen
+    ? pick('projection', oneOf(['orthographic', 'adaptive', 'perspective']))
+    : DEFAULT_PREFERENCES.projection;
   return {
     units: pick('units', oneOf(['mm', 'in'])),
     gridVisible: pick('gridVisible', bool),
@@ -236,8 +262,10 @@ export function parsePreferences(text: string | null): Preferences {
     singleKeyHotkeys: pick('singleKeyHotkeys', bool),
     navigationPreset: pick('navigationPreset', oneOf(NAVIGATION_PRESETS.map((p) => p.id))),
     theme: pick('theme', oneOf(['dark', 'light'])),
-    projection: pick('projection', oneOf(['perspective', 'orthographic'])),
+    projection,
+    projectionChosen,
     fov: pick('fov', number(10, 90)),
+    orbitAround: pick('orbitAround', oneOf(['cursor', 'selection', 'centre'])),
     animateCamera: pick('animateCamera', bool),
     renderQuality: renderQualityChosen
       ? pick('renderQuality', oneOf(['high', 'standard']))
@@ -289,6 +317,7 @@ export const usePreferences = create<PreferencesState>((set, get) => ({
     set({
       [key]: value,
       ...(key === 'renderQuality' ? { renderQualityChosen: true } : {}),
+      ...(key === 'projection' ? { projectionChosen: true } : {}),
     } as Partial<PreferencesState>);
     persist(snapshot(get()));
   },

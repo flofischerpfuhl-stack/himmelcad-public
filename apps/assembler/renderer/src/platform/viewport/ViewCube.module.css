@@ -144,3 +144,15 @@
     top: 100px;
   }
 }
+
+.menuRow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.menuCheck {
+  display: inline-flex;
+  width: 12px;
+  color: var(--hc-accent-base);
+}

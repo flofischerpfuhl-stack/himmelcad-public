@@ -16,6 +16,8 @@
  *    across a reload — the native pickers are replaced by handles from the
  *    origin-private file system, everything after the picker is real.
  * 5. Layout at tablet and phone sizes, with touch input enabled.
+ * 6. Navigation: orbiting over a bore pivots inside it (orthographic, perspective,
+ *    adaptive), chosen in the Display popover's projection row.
  */
 import assert from 'node:assert/strict';
 import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -537,4 +539,130 @@ void test('layout: tablet and phone sizes with touch', async (t) => {
     assert.deepEqual(errors, []);
     await context.close();
   }
+});
+
+void test('navigation: the orbit pivot sits inside a bore; projection row in the Display popover', async (t) => {
+  const server = await startServer();
+  const browser = await launch();
+  t.after(async () => {
+    await browser.close();
+    await server.close();
+  });
+  const page = await (
+    await browser.newContext({ viewport: { width: 1280, height: 800 } })
+  ).newPage();
+  const errors = watchErrors(page);
+  await page.goto(server.url);
+  await page.locator('[data-home-screen]').waitFor({ timeout: 120_000 });
+  await page.getByRole('button', { name: /^Blank/ }).click();
+  await page.locator('[data-home-screen]').waitFor({ state: 'detached' });
+  const rpc = await agentAccess(page);
+  await waitFor(
+    () => rpc('document.get'),
+    (d) => d.kernel.status === 'ready',
+    'kernel ready',
+  );
+  // A 40 × 40 × 10 plate centred on the origin with a Ø5 through bore in its middle.
+  const plate = await rpc('feature.create', {
+    kind: 'sketch',
+    params: {
+      plane: { kind: 'plane', plane: 'XY' },
+      profiles: [{ kind: 'rectangle', x: -20, y: -20, width: 40, height: 40 }],
+    },
+  });
+  const body = await rpc('feature.create', {
+    kind: 'extrude',
+    params: { profile: { kind: 'sketch', featureId: plate.featureId }, distance: 10 },
+  });
+  const bodyId = `body:${body.featureId}`;
+  const bore = await rpc('feature.create', {
+    kind: 'sketch',
+    params: {
+      plane: { kind: 'face', face: { bodyId, select: '>Z' } },
+      profiles: [{ kind: 'circle', cx: 0, cy: 0, radius: 2.5 }],
+    },
+  });
+  await rpc('feature.create', {
+    kind: 'extrude',
+    params: {
+      profile: { kind: 'sketch', featureId: bore.featureId },
+      distance: -10,
+      operation: 'cut',
+      targetBodyId: bodyId,
+    },
+  });
+  const [solid] = await waitFor(
+    () => rpc('bodies.list'),
+    (list) =>
+      list.length === 1 && list[0].valid && Math.abs(list[0].volume - (16000 - 62.5 * Math.PI)) < 1,
+    'the plate with its bore',
+  );
+  assert.ok(solid);
+
+  // Orthographic is the default; the Display popover offers the three modes in one row.
+  await page.locator('button[aria-label^="Display:"]').click();
+  const row = page.getByRole('radiogroup', { name: 'Projection' });
+  assert.equal(
+    await row.getByRole('radio', { name: 'Orthographic' }).getAttribute('aria-checked'),
+    'true',
+  );
+  await shot(page, 'w7-display-projection-row');
+  await page.keyboard.press('Escape');
+
+  /** Top view, fitted: the bore is in the middle of the canvas. Orbits from there; reads the dot. */
+  const orbitOverBore = async (name) => {
+    await page.keyboard.press('Control+4');
+    await page.waitForTimeout(500);
+    await runCommand(page, 'Zoom to fit');
+    await page.waitForTimeout(800);
+    const c = await canvasCentre(page);
+    const x = Math.round(c.x);
+    const y = Math.round(c.y);
+    await page.mouse.move(x, y);
+    await page.waitForTimeout(150);
+    await page.mouse.down({ button: 'right' });
+    for (let i = 1; i <= 10; i += 1) await page.mouse.move(x + i * 6, y + i * 2);
+    await page.waitForTimeout(150);
+    const dot = await page.evaluate(() => {
+      const el = document.querySelector('[data-pivot]');
+      return el
+        ? {
+            point: el.getAttribute('data-pivot').split(',').map(Number),
+            rule: el.getAttribute('data-pivot-rule'),
+          }
+        : null;
+    });
+    await shot(page, `w7-pivot-${name}`);
+    await page.mouse.up({ button: 'right' });
+    await page.waitForTimeout(200);
+    assert.ok(dot, `${name}: the pivot dot shows while orbiting`);
+    assert.equal(
+      await page.locator('[data-pivot]').count(),
+      0,
+      `${name}: the dot goes with the orbit`,
+    );
+    const [px, py, pz] = dot.point;
+    assert.ok(Math.hypot(px, py) < 2.5, `${name}: inside the bore (x, y = ${px}, ${py})`);
+    return { rule: dot.rule, z: pz };
+  };
+
+  // Orthographic: nothing under the cursor (it looks through the bore) → the rim's depth.
+  const ortho = await orbitOverBore('orthographic');
+  assert.equal(ortho.rule, 'near');
+  assert.ok(Math.abs(ortho.z - 10) < 0.2, `orthographic: at the rim depth (z = ${ortho.z})`);
+
+  // Perspective (chosen in the popover): the bore's wall is seen too, the pivot sits in the bore.
+  await page.locator('button[aria-label^="Display:"]').click();
+  await row.getByRole('radio', { name: 'Perspective' }).click();
+  await page.keyboard.press('Escape');
+  const persp = await orbitOverBore('perspective');
+  assert.ok(persp.z > 0 && persp.z <= 10.05, `perspective: inside the bore (z = ${persp.z})`);
+
+  // Adaptive: the Top view is a standard view → parallel again → the rim depth exactly.
+  await page.locator('button[aria-label^="Display:"]').click();
+  await row.getByRole('radio', { name: 'Adaptive' }).click();
+  await page.keyboard.press('Escape');
+  const adaptive = await orbitOverBore('adaptive');
+  assert.ok(Math.abs(adaptive.z - 10) < 0.2, `adaptive top view is parallel (z = ${adaptive.z})`);
+  assert.deepEqual(errors, []);
 });

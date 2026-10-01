@@ -28,6 +28,19 @@
   animation: press-ring 180ms ease-out;
 }
 
+/* Orbit pivot: a subtle dot, only while an orbit runs. */
+.pivotDot {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  margin: -4px 0 0 -4px;
+  border: 1.5px solid var(--hc-bg-void);
+  border-radius: 50%;
+  background: var(--hc-accent-base);
+  opacity: 0.85;
+  pointer-events: none;
+}
+
 @keyframes press-ring {
   from {
     transform: scale(0.6);

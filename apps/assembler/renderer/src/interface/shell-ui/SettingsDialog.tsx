@@ -8,6 +8,7 @@ import {
   usePreferences,
   type Handedness,
   type LengthUnit,
+  type OrbitAround,
   type Projection,
   type TabletLayoutSetting,
   type ThemeName,
@@ -21,6 +22,7 @@ import {
   navigationPreset,
   type NavigationPresetId,
 } from '../../platform/input/navigation.js';
+import { PROJECTION_MODES } from '../../platform/viewport/projection.js';
 import { ShortcutSettings } from './ShortcutSettings.js';
 import styles from './SettingsDialog.module.css';
 
@@ -158,20 +160,43 @@ export function SettingsDialog(): JSX.Element {
             onChange={(e) => set('navigationPreset', e.currentTarget.value as NavigationPresetId)}
           />
         </Row>
-        <Row label="Projection">
+        <Row
+          label="Orbit around"
+          hint={
+            prefs.orbitAround === 'cursor'
+              ? 'The point under the cursor; zoom goes there too'
+              : prefs.orbitAround === 'selection'
+                ? 'The selection’s centre (else the point under the cursor)'
+                : 'The middle of the view'
+          }
+        >
+          <Select
+            aria-label="Orbit around"
+            value={prefs.orbitAround}
+            options={[
+              { value: 'cursor', label: 'Point under cursor' },
+              { value: 'selection', label: 'Selection' },
+              { value: 'centre', label: 'Screen centre' },
+            ]}
+            onChange={(e) => set('orbitAround', e.currentTarget.value as OrbitAround)}
+          />
+        </Row>
+        <Row
+          label="Projection"
+          hint={PROJECTION_MODES.find((m) => m.id === prefs.projection)?.hint ?? ''}
+        >
           <Select
             aria-label="Projection"
             value={prefs.projection}
-            options={[
-              { value: 'perspective', label: 'Perspective' },
-              { value: 'orthographic', label: 'Orthographic' },
-            ]}
+            options={PROJECTION_MODES.map((m) => ({ value: m.id, label: m.label }))}
             onChange={(e) => set('projection', e.currentTarget.value as Projection)}
           />
         </Row>
         <Row
           label="Field of view"
-          hint={prefs.projection === 'orthographic' ? 'Perspective only' : `${prefs.fov}°`}
+          hint={
+            prefs.projection === 'orthographic' ? 'Perspective and Adaptive only' : `${prefs.fov}°`
+          }
         >
           <Slider
             aria-label="Field of view"

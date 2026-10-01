@@ -6,9 +6,10 @@
  * search, shortcuts and context menu never drift apart (interaction
  * research §1/§7).
  */
-import { useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { Check } from 'lucide-react';
+import { Fragment, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 
-import { Menu, MenuItem, Tooltip } from '@himmelcad/ui';
+import { Menu, MenuItem, MenuSeparator, Tooltip } from '@himmelcad/ui';
 
 import { COMMANDS, type CommandGroup } from '../../foundation/commands/registry.js';
 import type { AssemblerState } from '../../foundation/commands/store.js';
@@ -90,25 +91,36 @@ export function CommandGroupMenu({
           {commands.length === 0 && !extraItems ? (
             <div className={styles.empty}>{emptyHint ?? 'No commands yet'}</div>
           ) : null}
-          {commands.map((command) => {
+          {commands.map((command, index) => {
             const availability = command.availability(state);
+            const checked = command.checked?.();
             return (
-              <MenuItem
-                key={command.id}
-                disabled={!availability.enabled}
-                {...(availability.reason ? { title: availability.reason } : {})}
-                onSelect={() => {
-                  command.run(state);
-                  state.pushRecentCommand(command.id);
-                }}
-              >
-                <span className={styles.row}>
-                  <span className={styles.label}>{command.label}</span>
-                  {command.shortcut ? (
-                    <span className={styles.shortcut}>{command.shortcut}</span>
-                  ) : null}
-                </span>
-              </MenuItem>
+              <Fragment key={command.id}>
+                {command.separatorBefore && index > 0 ? <MenuSeparator /> : null}
+                <MenuItem
+                  disabled={!availability.enabled}
+                  {...(availability.reason ? { title: availability.reason } : {})}
+                  {...(checked ? { 'aria-current': true } : {})}
+                  onSelect={() => {
+                    command.run(state);
+                    state.pushRecentCommand(command.id);
+                  }}
+                >
+                  <span className={styles.row}>
+                    <span className={styles.label}>
+                      {checked !== undefined ? (
+                        <span className={styles.check} aria-hidden>
+                          {checked ? <Check size={12} /> : null}
+                        </span>
+                      ) : null}
+                      {command.label}
+                    </span>
+                    {command.shortcut ? (
+                      <span className={styles.shortcut}>{command.shortcut}</span>
+                    ) : null}
+                  </span>
+                </MenuItem>
+              </Fragment>
             );
           })}
           {extraItems}

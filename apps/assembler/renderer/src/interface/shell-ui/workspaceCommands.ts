@@ -14,6 +14,12 @@ import {
 import { usePreferences } from '../../platform/input/preferences.js';
 import { viewDirection } from '../../platform/viewport/camera.js';
 import {
+  PROJECTION_MODES,
+  nextProjection,
+  projectionLabel,
+} from '../../platform/viewport/projection.js';
+import { notify } from '../../foundation/commands/notices.js';
+import {
   MAX_SAVED_VIEWS,
   currentCameraPose,
   nearestOrthoDirection,
@@ -225,27 +231,45 @@ export const WORKSPACE_COMMANDS: readonly Command[] = [
         .sendCamera({ kind: 'direction', direction: nearestOrthoDirection(viewDirection(pose)) });
     },
   },
+  // Projection (owner decision 2026-10-01): one user preference, three modes, one cycle shortcut;
+  // the same choice as the Display popover's row, the cube menu and Settings › Navigation.
+  ...PROJECTION_MODES.map(
+    (mode, index): Command => ({
+      id: `view.projection.${mode.id}`,
+      label: mode.id === 'adaptive' ? 'Adaptive projection' : `${mode.label} projection`,
+      group: 'view',
+      keywords: [
+        'projection',
+        'camera',
+        'view',
+        mode.id,
+        ...(mode.id === 'orthographic' ? ['parallel', 'ortho', 'isometric'] : []),
+        ...(mode.id === 'adaptive' ? ['perspective with ortho faces', 'auto', 'fusion'] : []),
+        ...(mode.id === 'perspective' ? ['fov', 'field of view', 'depth'] : []),
+      ],
+      adaptive: false,
+      separatorBefore: index === 0,
+      checked: () => usePreferences.getState().projection === mode.id,
+      availability: () => enabled,
+      run: () => usePreferences.getState().setPreference('projection', mode.id),
+    }),
+  ),
   {
     id: 'view.projection',
-    // Names the projection it switches to (menus show no toggle state).
+    // Kept id (it used to toggle perspective/orthographic): now cycles the three modes.
     get label() {
-      return usePreferences.getState().projection === 'orthographic'
-        ? 'Perspective view'
-        : 'Orthographic view';
+      return `Next projection (${projectionLabel(nextProjection(usePreferences.getState().projection))})`;
     },
     group: 'view',
-    keywords: ['perspective', 'parallel', 'projection', 'camera', 'fov'],
+    shortcut: 'Alt+P',
+    keywords: ['projection', 'cycle', 'toggle', 'perspective', 'orthographic', 'adaptive'],
     adaptive: false,
-    availability: () => ({
-      enabled: true,
-      recommended: usePreferences.getState().projection === 'orthographic',
-    }),
+    availability: () => enabled,
     run: () => {
       const prefs = usePreferences.getState();
-      prefs.setPreference(
-        'projection',
-        prefs.projection === 'orthographic' ? 'perspective' : 'orthographic',
-      );
+      const next = nextProjection(prefs.projection);
+      prefs.setPreference('projection', next);
+      notify(`Projection: ${projectionLabel(next)}`);
     },
   },
   {

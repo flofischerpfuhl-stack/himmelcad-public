@@ -57,6 +57,8 @@ export const sketchingUi = defineModuleUi({
       // Navigating fingers (pen-only drawing) still select sketch geometry with a tap or a box.
       tap: sketchTouchTap,
       boxSelect: sketchTouchBox,
+      // The sketch plane: its out-of-plane world axis is hidden, Adaptive shows it in parallel.
+      drawingPlaneNormal: () => useSketchStore.getState().session?.frame.normal ?? null,
     },
   ],
 });

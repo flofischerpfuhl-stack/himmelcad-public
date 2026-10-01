@@ -6,6 +6,7 @@ import type {
   EvaluationResult,
 } from '../../foundation/geometry-kernel/types.js';
 import {
+  modeDrawingPlaneNormal,
   modeHiddenFeatureIds,
   modeOwnsKeyboard,
   offerModeBox,
@@ -52,21 +53,30 @@ import {
 import {
   DEFAULT_POSE,
   fitPose,
-  isOrthographic,
   lerpPose,
-  orbit as orbitPose,
+  orbitAbout,
   pan as panPose,
+  pointAtViewDepth,
   poseFromDirection,
   presetPose,
   rollBy,
+  viewDepthOf,
   viewProjectionMatrix,
   withFov,
+  withFovAt,
   worldPerPixel as cameraWorldPerPixel,
   zoomTowards,
   type CameraPose,
   type CameraPresetName,
 } from './camera.js';
 import { cameraTargetBounds, faceFrameBounds } from './cameraTargets.js';
+import { blendFov, PROJECTION_BLEND_MS, wantedFov, type ProjectionBlend } from './projection.js';
+import {
+  PIVOT_SEARCH_RADIUS_PX,
+  pivotDepth,
+  type DepthProjection,
+  type PivotRule,
+} from './orbitPivot.js';
 import { navigationPreset, penNavigation, resolveDrag } from '../input/navigation.js';
 import {
   INERTIA_MIN_START,
@@ -298,7 +308,8 @@ function activeFeatureCount(s: AssemblerState): number {
 
 type DragMode =
   | { kind: 'none' }
-  | { kind: 'orbit' }
+  /** `started`: the drag passed the click threshold and the pivot is set. */
+  | { kind: 'orbit'; started?: boolean }
   | { kind: 'pan' }
   /** Pen + Alt drag: vertical movement zooms towards where the drag started. */
   | { kind: 'zoom'; anchor: Vec3 | null }
@@ -376,10 +387,31 @@ function reduceMotion(): boolean {
   );
 }
 
-/** The pose projection settings ask for (`0` = orthographic). */
+/** The field of view the projection setting gives a free 3D view (`0` = orthographic). */
 function preferredFov(): number {
   const prefs = usePreferences.getState();
-  return prefs.projection === 'orthographic' ? 0 : prefs.fov;
+  return wantedFov(prefs.projection, prefs.fov, { sketching: false, standardView: false });
+}
+
+/** A wheel burst keeps its zoom anchor while the cursor stays within this (CSS px) … */
+const WHEEL_PIVOT_SLOP_PX = 4;
+/** … and the wheel pauses for less than this (ms). */
+const WHEEL_BURST_MS = 300;
+
+/** What the last recorded id pass was drawn with (the pivot reads its depth). */
+interface PickFrame {
+  pose: CameraPose;
+  depth: DepthProjection;
+}
+
+/** The last pivot determination (DEV probe and measurement). */
+export interface PivotProbe {
+  point: Vec3;
+  rule: PivotRule;
+  /** Whole determination, ms (read + rules). */
+  ms: number;
+  /** The depth-window read alone (includes drawing a stale id pass), ms. */
+  readMs: number;
 }
 
 type HandleHover =
@@ -419,6 +451,29 @@ function applyHandleValue(handle: ToolHandleKind, raw: number, snapDrag = true):
   s.setSectionOffset(Math.min(hi, Math.max(lo, snap(raw, HANDLE_STEP_MM))));
 }
 /**
+ * The orbit pivot, a small dot drawn while an orbit runs (re-projected every
+ * frame). `data-pivot`/`data-pivot-rule` let end-to-end tests read it.
+ */
+function PivotDot(props: {
+  point: Vec3;
+  rule: PivotRule;
+  project: (point: Vec3) => readonly [number, number] | null;
+  tick: number;
+}): JSX.Element | null {
+  const screen = props.project(props.point);
+  if (!screen) return null;
+  return (
+    <div
+      className={styles.pivotDot}
+      style={{ left: screen[0], top: screen[1] }}
+      data-pivot={props.point.map((v) => v.toFixed(3)).join(',')}
+      data-pivot-rule={props.rule}
+      aria-hidden
+    />
+  );
+}
+
+/**
  * The Assembler 3D viewport: WebGL2 scene (grid/axes/bodies/sketches),
  * Shapr3D-style orbit camera, click/hover picking, the view cube, and the
  * interactive tools' live previews and drag handles. Fills its parent
@@ -453,6 +508,26 @@ export function Viewport(props: ViewportProps): JSX.Element {
   const handleHoverRef = useRef<HandleHover | null>(null);
   /** Opens the active tool's value chip when the user starts typing a number. */
   const [editRequest, setEditRequest] = useState<{ nonce: number; text: string } | null>(null);
+  /**
+   * Adaptive projection: the camera went to a standard view (view-cube face,
+   * edge or corner, a named or saved view, Home, Look at face) and was not
+   * orbited since. Tracked in every mode so switching to Adaptive fits.
+   */
+  const standardViewRef = useRef(false);
+  /** A running change of the field of view outside a camera animation. */
+  const projectionBlendRef = useRef<ProjectionBlend | null>(null);
+  /** The pivot of the running orbit (and its glide); `null` = the target. */
+  const pivotRef = useRef<Vec3 | null>(null);
+  /** An orbit gesture is running (its pivot anchors projection blends). */
+  const orbitActiveRef = useRef(false);
+  /** The pivot dot, shown while an orbit runs. */
+  const [orbitDot, setOrbitDot] = useState<{ point: Vec3; rule: PivotRule } | null>(null);
+  const pickFrameRef = useRef<PickFrame | null>(null);
+  /** The zoom anchor of the current wheel burst. */
+  const wheelAnchorRef = useRef<{ x: number; y: number; time: number; point: Vec3 } | null>(null);
+  /** The anchor of a pen navigation by hover (Shift/Alt + hover), per modifier. */
+  const penHoverPivotRef = useRef<{ nav: string; point: Vec3 | null } | null>(null);
+  const lastPivotRef = useRef<PivotProbe | null>(null);
 
   const state = useAssemblerStore();
   const stateRef = useRef(state);
@@ -587,6 +662,8 @@ export function Viewport(props: ViewportProps): JSX.Element {
     if (!request || request.nonce === lastCameraNonce.current) return;
     lastCameraNonce.current = request.nonce;
     const current = poseRef.current;
+    // A named view (Front, Top, … from the cube, menus or Ctrl+2…7) is a standard view.
+    if (request.preset !== 'fit') standardViewRef.current = true;
     const next =
       request.preset === 'fit'
         ? fitPose(visibleBodies(), current, hostAspect())
@@ -643,7 +720,19 @@ export function Viewport(props: ViewportProps): JSX.Element {
           break;
         }
       }
-      if (next) animateTo(next);
+      if (!next) return;
+      // Home, cube edges/corners, saved views and Look at face are standard views (Adaptive:
+      // parallel until the next orbit); fits and the 90° roll keep the current state.
+      if (
+        command.kind === 'home' ||
+        command.kind === 'direction' ||
+        command.kind === 'pose' ||
+        command.kind === 'lookAlong' ||
+        command.kind === 'lookAtFace'
+      ) {
+        standardViewRef.current = true;
+      }
+      animateTo(next);
     },
     [animateTo, visibleBodies, hostAspect],
   );
@@ -663,11 +752,8 @@ export function Viewport(props: ViewportProps): JSX.Element {
   const projection = usePreferences((p) => p.projection);
   const fovSetting = usePreferences((p) => p.fov);
   const theme = usePreferences((p) => p.theme);
+  // The render loop blends to the projection the setting asks for (`wantedFovNow`).
   useEffect(() => {
-    const fov = projection === 'orthographic' ? 0 : fovSetting;
-    if ((poseRef.current.fov ?? 45) === fov) return;
-    animRef.current = null;
-    poseRef.current = withFov(poseRef.current, fov);
     dirtyRef.current = true;
   }, [projection, fovSetting]);
   useEffect(() => {
@@ -715,6 +801,8 @@ export function Viewport(props: ViewportProps): JSX.Element {
   const touchBoxRef = useRef(false);
   /** Camera glide after a flick. */
   const glideRef = useRef<Glide | null>(null);
+  /** Zoom anchor of the running two-finger gesture. */
+  const pinchAnchorRef = useRef<Vec3 | null>(null);
   /** Where the pen hovered last (pen + modifier hover navigates). */
   const penHoverRef = useRef<{ x: number; y: number } | null>(null);
   /** Long-press feedback ring (host px) until the finger moves or lifts. */
@@ -797,6 +885,7 @@ export function Viewport(props: ViewportProps): JSX.Element {
         edgesVisible: current.viewState.edgesVisible,
         hiddenEdgesVisible: current.viewState.hiddenEdgesVisible,
         axesVisible: current.viewState.axesVisible,
+        sketchNormal: modeDrawingPlaneNormal(),
         xrayOpacity: current.viewState.xrayOpacity,
         gridPlane: current.viewState.gridPlane,
         materials: bodyMaterials(current.features, activeFeatureCount(current)),
@@ -852,13 +941,43 @@ export function Viewport(props: ViewportProps): JSX.Element {
     let handle = 0;
     const loop = (now: number) => {
       handle = requestAnimationFrame(loop);
-      const anim = animRef.current;
+      // The projection the setting asks for now (Adaptive: sketch open, standard view).
+      const prefs = usePreferences.getState();
+      const want = wantedFov(prefs.projection, prefs.fov, {
+        sketching: modeDrawingPlaneNormal() !== null,
+        standardView: standardViewRef.current,
+      });
+      let anim = animRef.current;
+      if (anim && (anim.to.fov ?? 45) !== want) {
+        // A camera animation carries the projection change (lerpPose blends it).
+        anim = { ...anim, to: withFovAt(anim.to, want) };
+        animRef.current = anim;
+        projectionBlendRef.current = null;
+      }
       if (anim) {
         const t = Math.min(1, (now - anim.start) / Math.max(1, anim.duration));
         const eased = 1 - Math.pow(1 - t, 3);
         poseRef.current = lerpPose(anim.from, anim.to, eased);
         dirtyRef.current = true;
         if (t >= 1) animRef.current = null;
+      } else if ((poseRef.current.fov ?? 45) !== want) {
+        // A short blend about the orbit pivot (or the target): no jump in apparent size.
+        let blend = projectionBlendRef.current;
+        if (!blend || blend.toFov !== want) {
+          blend = {
+            fromFov: poseRef.current.fov ?? 45,
+            toFov: want,
+            start: now,
+            duration: reduceMotion() || !prefs.animateCamera ? 0 : PROJECTION_BLEND_MS,
+          };
+          projectionBlendRef.current = blend;
+        }
+        const step = blendFov(blend, now);
+        // While orbiting (or gliding after it) the pivot keeps its place, else the target plane.
+        const orbiting = orbitActiveRef.current || glideRef.current?.kind === 'orbit';
+        poseRef.current = withFovAt(poseRef.current, step.fov, orbiting ? pivotRef.current : null);
+        if (step.done) projectionBlendRef.current = null;
+        dirtyRef.current = true;
       }
       const glide = glideRef.current;
       if (glide) {
@@ -868,7 +987,7 @@ export function Viewport(props: ViewportProps): JSX.Element {
         const step = inertiaStep(glide, dt);
         poseRef.current =
           glide.kind === 'orbit'
-            ? orbitPose(poseRef.current, step.dx, step.dy)
+            ? orbitAbout(poseRef.current, step.dx, step.dy, pivotRef.current)
             : panPose(poseRef.current, step.dx, step.dy, hostRef.current?.clientHeight ?? 800);
         if (step.next) {
           glide.vx = step.next.vx;
@@ -897,6 +1016,10 @@ export function Viewport(props: ViewportProps): JSX.Element {
         built.frame.depth?.lineBias ?? 5e-5,
       );
       lastPickTableRef.current = built.pickTable;
+      if (built.frame.depth) {
+        const { near, far, orthographic } = built.frame.depth;
+        pickFrameRef.current = { pose: input.pose, depth: { near, far, orthographic } };
+      } else pickFrameRef.current = null;
       setTick((v) => (v + 1) % 1_000_000);
       const waiters = frameWaitersRef.current;
       frameWaitersRef.current = [];
@@ -1036,6 +1159,123 @@ export function Viewport(props: ViewportProps): JSX.Element {
     },
     [rayAtClient],
   );
+
+  /**
+   * The orbit/zoom pivot under a client point (`orbitPivot.ts`): the surface
+   * under the cursor, else the drawn depths around it (a bore: its rim depth),
+   * else the visible model's centre depth — always on the cursor ray. Reads
+   * one small window of the id pass's depth; without one (no frame yet, the
+   * camera moved since the last frame) it goes straight to the model rule.
+   */
+  const cursorPivot = useCallback(
+    (clientX: number, clientY: number): { point: Vec3; rule: PivotRule } | null => {
+      const t0 = performance.now();
+      const pose = poseRef.current;
+      const ray = rayAtClient(clientX, clientY);
+      if (!ray) return null;
+      let point: Vec3 | null = null;
+      let rule: PivotRule = 'model';
+      let readMs = 0;
+      const host = hostRef.current;
+      const renderer = rendererRef.current;
+      const frame = pickFrameRef.current;
+      if (host && renderer && frame && frame.pose === pose) {
+        const rect = host.getBoundingClientRect();
+        const { dpr } = sizeRef.current;
+        const px = (clientX - rect.left) * dpr;
+        const py = (clientY - rect.top) * dpr;
+        const r0 = performance.now();
+        const win = renderer.readPickDepthWindow(px, py, PIVOT_SEARCH_RADIUS_PX * dpr);
+        readMs = performance.now() - r0;
+        const found = win
+          ? pivotDepth(
+              {
+                width: win.width,
+                height: win.height,
+                z: win.z,
+                cx: px - win.x0,
+                cy: py - win.y0,
+                cssPerSample: 1 / dpr,
+              },
+              frame.depth,
+            )
+          : null;
+        if (found) {
+          point = pointAtViewDepth(pose, ray, found.depth);
+          rule = found.rule;
+        }
+      }
+      if (!point) {
+        // Rule 3: on the cursor ray at the depth of the visible model's centre.
+        const s = useAssemblerStore.getState();
+        const bounds = visibleBounds(sceneModel(s).bodies, s.hiddenBodyIds, s.isolatedBodyIds);
+        const depth = bounds
+          ? viewDepthOf(pose, [
+              (bounds.min[0] + bounds.max[0]) / 2,
+              (bounds.min[1] + bounds.max[1]) / 2,
+              (bounds.min[2] + bounds.max[2]) / 2,
+            ])
+          : pose.distance;
+        point = pointAtViewDepth(pose, ray, depth);
+        rule = bounds ? 'model' : 'target';
+      }
+      if (!point) return null;
+      lastPivotRef.current = { point, rule, ms: performance.now() - t0, readMs };
+      return { point, rule };
+    },
+    [rayAtClient],
+  );
+
+  /** The pivot an orbit starting at a client point turns about (Settings › Navigation › Orbit around). */
+  const orbitPivotAt = useCallback(
+    (clientX: number, clientY: number): { point: Vec3; rule: PivotRule } | null => {
+      const around = usePreferences.getState().orbitAround;
+      if (around === 'centre') return null;
+      if (around === 'selection') {
+        const s = useAssemblerStore.getState();
+        const bounds = cameraTargetBounds(sceneModel(s), s.selection);
+        if (bounds.length > 0) {
+          let min: Vec3 = [Infinity, Infinity, Infinity];
+          let max: Vec3 = [-Infinity, -Infinity, -Infinity];
+          for (const b of bounds) {
+            min = [
+              Math.min(min[0], b.min[0]),
+              Math.min(min[1], b.min[1]),
+              Math.min(min[2], b.min[2]),
+            ];
+            max = [
+              Math.max(max[0], b.max[0]),
+              Math.max(max[1], b.max[1]),
+              Math.max(max[2], b.max[2]),
+            ];
+          }
+          return {
+            point: [(min[0] + max[0]) / 2, (min[1] + max[1]) / 2, (min[2] + max[2]) / 2],
+            rule: 'selection',
+          };
+        }
+      }
+      return cursorPivot(clientX, clientY);
+    },
+    [cursorPivot],
+  );
+
+  /** An orbit begins (mouse, pen, finger): Adaptive leaves the standard view; the pivot dot shows. */
+  const beginOrbit = useCallback(
+    (at: { x: number; y: number } | null) => {
+      standardViewRef.current = false;
+      glideRef.current = null;
+      const pivot = at ? orbitPivotAt(at.x, at.y) : null;
+      pivotRef.current = pivot?.point ?? null;
+      orbitActiveRef.current = true;
+      setOrbitDot(pivot ?? { point: poseRef.current.target, rule: 'target' });
+    },
+    [orbitPivotAt],
+  );
+  const endOrbit = useCallback(() => {
+    orbitActiveRef.current = false;
+    setOrbitDot(null);
+  }, []);
 
   /** What the modules' DOM overlays get from the viewport (`domOverlays.ts`). */
   /** Set below, once the touch handlers exist (`adoptTouches`). */
@@ -1539,24 +1779,35 @@ export function Viewport(props: ViewportProps): JSX.Element {
             setBox(null);
             break;
           case 'orbitStart':
+            setPressRing(null);
+            // One finger orbits about the point under it (the pivot rules).
+            beginOrbit({ x: e.x, y: e.y });
+            break;
           case 'transformStart':
             setPressRing(null);
             glideRef.current = null;
+            // Pinch zoom anchors at the fingers' midpoint, by the same pivot rules.
+            pinchAnchorRef.current = cursorPivot(e.cx, e.cy)?.point ?? null;
             break;
           case 'orbit':
-            poseRef.current = orbitPose(poseRef.current, e.dx, e.dy);
+            poseRef.current = orbitAbout(poseRef.current, e.dx, e.dy, pivotRef.current);
             dirtyRef.current = true;
             break;
           case 'orbitEnd':
+            endOrbit();
             startGlide('orbit', e.vx, e.vy);
             break;
           case 'transform': {
-            let pose = panPose(poseRef.current, e.dx, e.dy, host.clientHeight);
+            const anchor = pinchAnchorRef.current;
+            // The fingers move the content at the anchor's depth 1:1.
+            let pose = panPose(
+              poseRef.current,
+              e.dx,
+              e.dy,
+              host.clientHeight,
+              anchor ? viewDepthOf(poseRef.current, anchor) : undefined,
+            );
             if (e.scale !== 1 && e.scale > 0) {
-              const ray = rayAtClient(e.cx, e.cy);
-              const anchor = ray
-                ? rayPlaneIntersect(ray.origin, ray.direction, pose.target, [0, 0, 1])
-                : null;
               pose = zoomTowards(pose, 1 / e.scale, anchor);
             }
             if (e.rotation !== 0 && usePreferences.getState().twistRoll) {
@@ -1582,12 +1833,14 @@ export function Viewport(props: ViewportProps): JSX.Element {
       }
     },
     [
+      beginOrbit,
       contextMenuAt,
+      cursorPivot,
       doubleTap,
+      endOrbit,
       finishBox,
       handleClick,
       historyGesture,
-      rayAtClient,
       startGlide,
       updateBox,
     ],
@@ -1727,11 +1980,8 @@ export function Viewport(props: ViewportProps): JSX.Element {
       if (penNav === 'orbit') mode = { kind: 'orbit' };
       else if (penNav === 'pan') mode = { kind: 'pan' };
       else if (penNav === 'zoom') {
-        const ray = rayAtClient(event.clientX, event.clientY);
-        const anchor = ray
-          ? rayPlaneIntersect(ray.origin, ray.direction, poseRef.current.target, [0, 0, 1])
-          : null;
-        mode = { kind: 'zoom', anchor };
+        // Pen + Alt drag zooms at the point under the pen (the pivot rules).
+        mode = { kind: 'zoom', anchor: cursorPivot(event.clientX, event.clientY)?.point ?? null };
       } else if (action === 'orbit') mode = { kind: 'orbit' };
       else if (action === 'pan') mode = { kind: 'pan' };
       else if (event.button === 0) {
@@ -1760,7 +2010,7 @@ export function Viewport(props: ViewportProps): JSX.Element {
       // A drag that hides the gizmo (its centre being placed) redraws it at once.
       if (mode.kind === 'tool' && mode.drag.hidesGizmo) dirtyRef.current = true;
     },
-    [findHandleHit, pickAt, onTouchDown, popup, applyGestures, rayAtClient],
+    [findHandleHit, pickAt, onTouchDown, popup, applyGestures, cursorPivot],
   );
 
   const onPointerMove = useCallback(
@@ -1779,13 +2029,36 @@ export function Viewport(props: ViewportProps): JSX.Element {
         });
         const last = penHoverRef.current;
         penHoverRef.current = { x: event.clientX, y: event.clientY };
+        if (!nav && penHoverPivotRef.current) {
+          if (penHoverPivotRef.current.nav === 'orbit') endOrbit();
+          penHoverPivotRef.current = null;
+        }
         if (nav && last) {
           const dx = event.clientX - last.x;
           const dy = event.clientY - last.y;
           const height = hostRef.current?.clientHeight ?? 800;
-          if (nav === 'orbit') poseRef.current = orbitPose(poseRef.current, dx, dy);
-          else if (nav === 'pan') poseRef.current = panPose(poseRef.current, dx, dy, height);
-          else poseRef.current = zoomTowards(poseRef.current, Math.exp(dy * PEN_ZOOM_PER_PX), null);
+          // The pivot is set once when a modifier starts the hover navigation.
+          if (penHoverPivotRef.current?.nav !== nav) {
+            if (nav === 'orbit') {
+              beginOrbit({ x: last.x, y: last.y });
+              penHoverPivotRef.current = { nav, point: pivotRef.current };
+            } else {
+              penHoverPivotRef.current = {
+                nav,
+                point: nav === 'zoom' ? (cursorPivot(last.x, last.y)?.point ?? null) : null,
+              };
+            }
+          }
+          if (nav === 'orbit') {
+            poseRef.current = orbitAbout(poseRef.current, dx, dy, pivotRef.current);
+          } else if (nav === 'pan') poseRef.current = panPose(poseRef.current, dx, dy, height);
+          else {
+            poseRef.current = zoomTowards(
+              poseRef.current,
+              Math.exp(dy * PEN_ZOOM_PER_PX),
+              penHoverPivotRef.current.point,
+            );
+          }
           animRef.current = null;
           dirtyRef.current = true;
           return;
@@ -1850,7 +2123,12 @@ export function Viewport(props: ViewportProps): JSX.Element {
       if (mode.kind === 'box') {
         updateBox(gesture.startX, gesture.startY, event.clientX, event.clientY);
       } else if (mode.kind === 'orbit') {
-        poseRef.current = orbitPose(poseRef.current, dx, dy);
+        if (!mode.started) {
+          // Decided once per gesture, where the button went down.
+          mode.started = true;
+          beginOrbit({ x: gesture.startX, y: gesture.startY });
+        }
+        poseRef.current = orbitAbout(poseRef.current, dx, dy, pivotRef.current);
         dirtyRef.current = true;
       } else if (mode.kind === 'pan') {
         poseRef.current = panPose(poseRef.current, dx, dy, height);
@@ -1885,7 +2163,17 @@ export function Viewport(props: ViewportProps): JSX.Element {
         }
       }
     },
-    [pickAt, rayAtClient, selectionFromPick, onTouchMove, updateBox, toolPointer],
+    [
+      pickAt,
+      rayAtClient,
+      selectionFromPick,
+      onTouchMove,
+      updateBox,
+      toolPointer,
+      beginOrbit,
+      endOrbit,
+      cursorPivot,
+    ],
   );
 
   const onPointerUp = useCallback(
@@ -1897,6 +2185,7 @@ export function Viewport(props: ViewportProps): JSX.Element {
       const gesture = gestureRef.current;
       gestureRef.current = null;
       if (!gesture) return;
+      if (gesture.mode.kind === 'orbit' && gesture.mode.started) endOrbit();
       if (gesture.mode.kind === 'tool' && gesture.mode.drag.hidesGizmo) dirtyRef.current = true; // gizmo handles come back
 
       if (gesture.mode.kind === 'box') {
@@ -1929,7 +2218,7 @@ export function Viewport(props: ViewportProps): JSX.Element {
         false,
       );
     },
-    [contextMenuAt, finishBox, handleClick, onTouchUp],
+    [contextMenuAt, finishBox, handleClick, onTouchUp, endOrbit],
   );
 
   const onWheel = useCallback(
@@ -1937,14 +2226,28 @@ export function Viewport(props: ViewportProps): JSX.Element {
       animRef.current = null;
       glideRef.current = null;
       const factor = Math.exp(event.deltaY * 0.0012);
-      const ray = rayAtClient(event.clientX, event.clientY);
-      const anchor = ray
-        ? rayPlaneIntersect(ray.origin, ray.direction, poseRef.current.target, [0, 0, 1])
-        : null;
+      // One anchor per wheel burst (the pivot rules: into a bore, not behind it), kept while
+      // the cursor barely moves.
+      const now = performance.now();
+      const burst = wheelAnchorRef.current;
+      let anchor: Vec3 | null;
+      if (
+        burst &&
+        now - burst.time < WHEEL_BURST_MS &&
+        Math.hypot(event.clientX - burst.x, event.clientY - burst.y) <= WHEEL_PIVOT_SLOP_PX
+      ) {
+        burst.time = now;
+        anchor = burst.point;
+      } else {
+        anchor = cursorPivot(event.clientX, event.clientY)?.point ?? null;
+        wheelAnchorRef.current = anchor
+          ? { x: event.clientX, y: event.clientY, time: now, point: anchor }
+          : null;
+      }
       poseRef.current = zoomTowards(poseRef.current, factor, anchor);
       dirtyRef.current = true;
     },
-    [rayAtClient],
+    [cursorPivot],
   );
 
   const onCubePreset = useCallback((preset: CameraPresetName) => {
@@ -1991,7 +2294,10 @@ export function Viewport(props: ViewportProps): JSX.Element {
 
   const onCubeOrbitDrag = useCallback((dxPixels: number, dyPixels: number) => {
     animRef.current = null;
-    poseRef.current = orbitPose(poseRef.current, dxPixels, dyPixels);
+    // Dragging the cube orbits about the target (no point under a cursor) and leaves a standard view.
+    standardViewRef.current = false;
+    pivotRef.current = null;
+    poseRef.current = orbitAbout(poseRef.current, dxPixels, dyPixels, null);
     dirtyRef.current = true;
   }, []);
 
@@ -2086,9 +2392,38 @@ export function Viewport(props: ViewportProps): JSX.Element {
         dirtyRef.current = true;
         return perFrame;
       },
+      pivotAt: (x, y, runs = 1, stale = true) => {
+        // Measurement: the whole pivot determination at a page point. `stale`: the id
+        // pass is re-recorded first (as after any camera move), so a run includes drawing it.
+        let last: PivotProbe | null = null;
+        const times: number[] = [];
+        const reads: number[] = [];
+        for (let i = 0; i < runs; i += 1) {
+          const frame = pickFrameRef.current;
+          const renderer = rendererRef.current;
+          const input = stale ? sceneInputNow(sizeRef.current) : null;
+          if (renderer && frame && input) {
+            const built = buildScene(input);
+            renderer.renderPicking(
+              built.frame.viewProj,
+              built.idBatches,
+              built.frame.clip,
+              sizeRef.current.dpr,
+              built.frame.depth?.lineBias ?? 5e-5,
+            );
+          }
+          cursorPivot(x, y);
+          last = lastPivotRef.current;
+          if (last) {
+            times.push(last.ms);
+            reads.push(last.readMs);
+          }
+        }
+        return last ? { ...last, times, reads } : null;
+      },
     });
     return () => setViewportProbe(null);
-  }, [sceneInputNow]);
+  }, [sceneInputNow, cursorPivot]);
 
   // ---- Dimension chips (screen positions recomputed every drawn frame via `tick`) ----
   const labels = useMemo(() => {
@@ -2139,6 +2474,7 @@ export function Viewport(props: ViewportProps): JSX.Element {
           onTouchUp(event, true);
           return;
         }
+        if (gestureRef.current?.mode.kind === 'orbit') endOrbit();
         gestureRef.current = null;
         setBox(null);
       }}
@@ -2159,16 +2495,13 @@ export function Viewport(props: ViewportProps): JSX.Element {
         onFit={() => sendCamera({ kind: 'fitAll' })}
         onRoll={(degrees) => sendCamera({ kind: 'roll', degrees })}
         onOrbitDrag={onCubeOrbitDrag}
-        orthographic={isOrthographic(poseRef.current)}
-        onToggleProjection={() => {
-          const prefs = usePreferences.getState();
-          prefs.setPreference(
-            'projection',
-            prefs.projection === 'orthographic' ? 'perspective' : 'orthographic',
-          );
-        }}
+        projection={projection}
+        onProjection={(mode) => usePreferences.getState().setPreference('projection', mode)}
         onSaveView={() => viewportShell().saveCurrentView()}
       />
+      {orbitDot ? (
+        <PivotDot point={orbitDot.point} rule={orbitDot.rule} project={projectHost} tick={tick} />
+      ) : null}
       {selectThrough ? (
         <SelectThroughChip onTurnOff={() => viewportShell().setSelectThrough(false)} />
       ) : null}

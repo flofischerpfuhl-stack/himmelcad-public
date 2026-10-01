@@ -1,4 +1,4 @@
-import { RotateCcw, RotateCw } from 'lucide-react';
+import { Check, RotateCcw, RotateCw } from 'lucide-react';
 import { useRef, useState } from 'react';
 
 import { ContextMenu, MenuItem, MenuSeparator, clampMenuPosition } from '@himmelcad/ui';
@@ -13,6 +13,8 @@ import {
   type CubeFace,
 } from './camera.js';
 import type { Vec3 } from './math.js';
+import type { Projection } from '../input/preferences.js';
+import { PROJECTION_MODES } from './projection.js';
 import styles from './ViewCube.module.css';
 
 const DRAG_THRESHOLD_PX = 4;
@@ -31,8 +33,9 @@ export interface ViewCubeProps {
   /** Rotates the view about its viewing axis (positive = counter-clockwise). */
   onRoll: (degrees: number) => void;
   onOrbitDrag: (dxPixels: number, dyPixels: number) => void;
-  orthographic: boolean;
-  onToggleProjection: () => void;
+  /** The projection setting (Orthographic / Adaptive / Perspective), offered in the cube's menu. */
+  projection: Projection;
+  onProjection: (mode: Projection) => void;
   onSaveView?: () => void;
 }
 
@@ -201,16 +204,24 @@ export function ViewCube(props: ViewCubeProps): JSX.Element {
       ) : null}
       {menu ? (
         <ContextMenu
-          {...clampMenuPosition(menu.x, menu.y, 200, 160)}
+          {...clampMenuPosition(menu.x, menu.y, 200, 220)}
           ariaLabel="View cube"
           onClose={() => setMenu(null)}
         >
           <MenuItem onSelect={props.onHome}>Home view</MenuItem>
           <MenuItem onSelect={props.onFit}>Zoom to fit</MenuItem>
           <MenuSeparator />
-          <MenuItem onSelect={props.onToggleProjection}>
-            {props.orthographic ? 'Perspective' : 'Orthographic'}
-          </MenuItem>
+          {PROJECTION_MODES.map((mode) => (
+            <MenuItem key={mode.id} title={mode.hint} onSelect={() => props.onProjection(mode.id)}>
+              <span className={styles.menuRow}>
+                <span className={styles.menuCheck} aria-hidden>
+                  {props.projection === mode.id ? <Check size={12} /> : null}
+                </span>
+                {mode.label}
+              </span>
+            </MenuItem>
+          ))}
+          <MenuSeparator />
           {props.onSaveView ? <MenuItem onSelect={props.onSaveView}>Save view</MenuItem> : null}
         </ContextMenu>
       ) : null}

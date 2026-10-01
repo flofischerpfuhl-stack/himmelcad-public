@@ -96,6 +96,13 @@ export interface AssemblerAutomation {
   viewportStats(finish?: boolean): ReturnType<NonNullable<ViewportProbe['stats']>> | null;
   /** Mean ms per frame over `frames` back-to-back renders (GPU included; see `Viewport.tsx`). */
   viewportBenchmark(frames: number): number | null;
+  /** Orbit/zoom pivot at a page point, measured `runs` times (`stale`: the id pass is redrawn first). */
+  pivotAt(
+    x: number,
+    y: number,
+    runs?: number,
+    stale?: boolean,
+  ): ReturnType<NonNullable<ViewportProbe['pivotAt']>> | null;
   /** Measure panel state (pins, points, Point tool). */
   measureStore: typeof useMeasureStore;
   /** Project file state: New/Open/Save, templates (`newFromTemplate`), crash recovery offer. */
@@ -247,6 +254,7 @@ export function installAutomationHook(store: typeof useAssemblerStore): void {
     cameraPose: () => currentCameraPose(),
     viewportStats: (finish) => getViewportProbe()?.stats?.(finish) ?? null,
     viewportBenchmark: (frames) => getViewportProbe()?.benchmark?.(frames) ?? null,
+    pivotAt: (x, y, runs, stale) => getViewportProbe()?.pivotAt?.(x, y, runs, stale) ?? null,
     measureStore: useMeasureStore,
     projectStore: useProjectStore,
     interopStore: useInteropStore,

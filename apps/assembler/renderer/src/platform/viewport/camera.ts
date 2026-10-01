@@ -60,7 +60,7 @@ export function isOrthographic(pose: CameraPose): boolean {
 }
 
 /** Perspective field of view (radians); the reference angle for orthographic views. */
-function fovRadians(pose: CameraPose): number {
+export function fovRadians(pose: CameraPose): number {
   const fov = pose.fov ?? DEFAULT_FOV_DEG;
   return ((fov <= 0 ? DEFAULT_FOV_DEG : fov) * Math.PI) / 180;
 }
@@ -261,15 +261,19 @@ export function orbit(pose: CameraPose, dxPixels: number, dyPixels: number): Cam
   };
 }
 
-/** Screen-space pan: moves `target` along the camera's right/up axes so the scene appears to follow the pointer 1:1. */
+/**
+ * Screen-space pan: moves `target` along the camera's right/up axes so the
+ * scene at view depth `depth` (default: the target's) follows the pointer 1:1.
+ */
 export function pan(
   pose: CameraPose,
   dxPixels: number,
   dyPixels: number,
   viewportHeightPx: number,
+  depth: number = pose.distance,
 ): CameraPose {
   const { right, up } = cameraBasis(pose);
-  const scale = worldPerPixel(pose, pose.distance, viewportHeightPx);
+  const scale = worldPerPixel(pose, depth, viewportHeightPx);
   const dx = -dxPixels * scale;
   const dy = dyPixels * scale;
   return {
@@ -406,22 +410,163 @@ function wrapAngle(a: number): number {
   return d;
 }
 
+/**
+ * Smallest field of view a projection blend passes through (degrees): a
+ * 2° perspective is indistinguishable from a parallel view, so a blend
+ * from or to orthographic starts/ends there and then switches exactly.
+ */
+export const BLEND_MIN_FOV_DEG = 2;
+
+/** `tan(fov / 2)` of a pose's projection: 0 for orthographic. */
+export function perspectiveStrength(fovDeg: number | undefined): number {
+  const fov = fovDeg ?? DEFAULT_FOV_DEG;
+  return fov <= 0 ? 0 : Math.tan((fov * Math.PI) / 360);
+}
+
+/** Field of view (degrees) of a perspective strength; below the blend minimum it stays at that minimum. */
+export function fovOfStrength(s: number): number {
+  const min = perspectiveStrength(BLEND_MIN_FOV_DEG);
+  return (Math.atan(Math.max(min, s)) * 360) / Math.PI;
+}
+
 export function lerpPose(a: CameraPose, b: CameraPose, t: number): CameraPose {
   // Views straight up/down keep the destination yaw (it sets screen-up there).
   const dyaw = wrapAngle(b.yaw - a.yaw);
   const rollA = a.roll ?? 0;
   const rollB = b.roll ?? 0;
-  return {
-    ...b,
-    target: [
-      a.target[0] + (b.target[0] - a.target[0]) * t,
-      a.target[1] + (b.target[1] - a.target[1]) * t,
-      a.target[2] + (b.target[2] - a.target[2]) * t,
-    ],
-    distance: a.distance * Math.pow(b.distance / a.distance, t),
+  const target: Vec3 = [
+    a.target[0] + (b.target[0] - a.target[0]) * t,
+    a.target[1] + (b.target[1] - a.target[1]) * t,
+    a.target[2] + (b.target[2] - a.target[2]) * t,
+  ];
+  const angles = {
     yaw: t >= 1 ? b.yaw : a.yaw + dyaw * t,
     pitch: a.pitch + (b.pitch - a.pitch) * t,
     roll: t >= 1 ? rollB : rollA + wrapAngle(rollB - rollA) * t,
+  };
+  const fovA = a.fov ?? DEFAULT_FOV_DEG;
+  const fovB = b.fov ?? DEFAULT_FOV_DEG;
+  if (fovA === fovB || t >= 1) {
+    return {
+      ...b,
+      target,
+      distance: t >= 1 ? b.distance : a.distance * Math.pow(b.distance / a.distance, t),
+      ...angles,
+    };
+  }
+  // A projection change on the way (Adaptive: perspective → a view-cube face in
+  // orthographic): the visible height at the target follows the zoom, the
+  // perspective strength fades, and the distance is what gives that height.
+  const heightA = viewHeightAt(a, a.distance);
+  const heightB = viewHeightAt(b, b.distance);
+  const height = heightA * Math.pow(heightB / heightA, t);
+  const s = perspectiveStrength(fovA) + (perspectiveStrength(fovB) - perspectiveStrength(fovA)) * t;
+  const fov = fovOfStrength(s);
+  return {
+    ...b,
+    target,
+    fov,
+    distance: height / (2 * Math.tan((fov * Math.PI) / 360)),
+    ...angles,
+  };
+}
+
+/** Depth of `point` along the viewing axis, measured from the eye (orthographic: from the target's eye). */
+export function viewDepthOf(pose: CameraPose, point: Vec3): number {
+  const eye = eyeOf(pose);
+  const back = viewDirection(pose);
+  return -(
+    (point[0] - eye[0]) * back[0] +
+    (point[1] - eye[1]) * back[1] +
+    (point[2] - eye[2]) * back[2]
+  );
+}
+
+/** The point of a pointer ray (`unprojectRay`) at view depth `depth`, or `null` for a ray parallel to the screen. */
+export function pointAtViewDepth(
+  pose: CameraPose,
+  ray: { origin: Vec3; direction: Vec3 },
+  depth: number,
+): Vec3 | null {
+  const back = viewDirection(pose);
+  const along = -(
+    ray.direction[0] * back[0] +
+    ray.direction[1] * back[1] +
+    ray.direction[2] * back[2]
+  );
+  if (along < 1e-9) return null;
+  const t = (depth - viewDepthOf(pose, ray.origin)) / along;
+  return [
+    ray.origin[0] + ray.direction[0] * t,
+    ray.origin[1] + ray.direction[1] * t,
+    ray.origin[2] + ray.direction[2] * t,
+  ];
+}
+
+/**
+ * Changes the projection to `fovDeg` (`0` = orthographic; perspective
+ * angles are not clamped, so blends may pass small ones) keeping the plane
+ * through `anchor` parallel to the screen exactly where it is: same screen
+ * position and the same scale. The target moves along the viewing axis to
+ * that plane. Without an anchor the target's plane is kept.
+ */
+export function withFovAt(pose: CameraPose, fovDeg: number, anchor?: Vec3 | null): CameraPose {
+  const back = viewDirection(pose);
+  const depth = anchor ? viewDepthOf(pose, anchor) : pose.distance;
+  const ortho = isOrthographic(pose);
+  // Visible height on the anchor plane now.
+  const height = ortho
+    ? viewHeightAt(pose, pose.distance)
+    : 2 * Math.max(1e-6, depth) * Math.tan(fovRadians(pose) / 2);
+  // The anchor plane's centre (on the viewing axis).
+  const shift = pose.distance - depth;
+  const centre: Vec3 = [
+    pose.target[0] + back[0] * shift,
+    pose.target[1] + back[1] * shift,
+    pose.target[2] + back[2] * shift,
+  ];
+  if (fovDeg <= 0) {
+    return {
+      ...pose,
+      fov: 0,
+      target: centre,
+      distance: height / (2 * Math.tan(FOV_Y_RADIANS / 2)),
+    };
+  }
+  const distance = height / (2 * Math.tan((fovDeg * Math.PI) / 360));
+  return { ...pose, fov: fovDeg, target: centre, distance };
+}
+
+/**
+ * Orbits like {@link orbit} but about `pivot` instead of the target: the
+ * camera turns rigidly about the pivot, which stays where it is on screen.
+ */
+export function orbitAbout(
+  pose: CameraPose,
+  dxPixels: number,
+  dyPixels: number,
+  pivot: Vec3 | null,
+): CameraPose {
+  const next = orbit(pose, dxPixels, dyPixels);
+  if (!pivot) return next;
+  const before = cameraBasis(pose);
+  const after = cameraBasis(next);
+  const rel: Vec3 = [
+    pose.target[0] - pivot[0],
+    pose.target[1] - pivot[1],
+    pose.target[2] - pivot[2],
+  ];
+  // Camera-space coordinates of the target relative to the pivot stay the same.
+  const r = rel[0] * before.right[0] + rel[1] * before.right[1] + rel[2] * before.right[2];
+  const u = rel[0] * before.up[0] + rel[1] * before.up[1] + rel[2] * before.up[2];
+  const b = rel[0] * before.back[0] + rel[1] * before.back[1] + rel[2] * before.back[2];
+  return {
+    ...next,
+    target: [
+      pivot[0] + after.right[0] * r + after.up[0] * u + after.back[0] * b,
+      pivot[1] + after.right[1] * r + after.up[1] * u + after.back[1] * b,
+      pivot[2] + after.right[2] * r + after.up[2] * u + after.back[2] * b,
+    ],
   };
 }
 

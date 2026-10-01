@@ -1,7 +1,8 @@
 /**
  * Display popover of the right dock (interaction research §5 "Display
  * modes"): Shaded with edges / Shaded / Wireframe / X-Ray / Visualized /
- * Zebra / Curvature (Alt+1…7), the Edges, Hidden edges, Grid and Axes
+ * Zebra / Curvature (Alt+1…7), the projection (Orthographic / Adaptive /
+ * Perspective, Alt+P cycles), the Edges, Hidden edges, Grid and Axes
  * toggles and the render quality. Every entry runs the same registry command
  * as the View › Display menu, command search and the shortcuts. Native
  * radios and checkboxes (shared `Radio`/`Checkbox`) keep keyboard access:
@@ -30,6 +31,7 @@ import {
   activeDisplayEntry,
   edgesToggleApplies,
 } from '../../../platform/viewport/displayModes.js';
+import { PROJECTION_MODES } from '../../../platform/viewport/projection.js';
 import styles from './DisplayMenu.module.css';
 
 function run(state: AssemblerState, id: string): void {
@@ -79,6 +81,7 @@ export function DisplayMenu({ state }: { state: AssemblerState }): JSX.Element {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const quality = usePreferences((p) => p.renderQuality);
+  const projection = usePreferences((p) => p.projection);
   const view = state.viewState;
   const active = activeDisplayEntry(view.displayMode, view.edgesVisible);
   const activeEntry = DISPLAY_MODE_ENTRIES.find((e) => e.id === active)!;
@@ -173,6 +176,29 @@ export function DisplayMenu({ state }: { state: AssemblerState }): JSX.Element {
               <span className={styles.sliderValue}>{Math.round(view.xrayOpacity * 100)} %</span>
             </label>
           ) : null}
+          <div className={styles.separator} role="separator" />
+          <div className={styles.sectionTitle} id="hc-display-projection">
+            Projection
+          </div>
+          <div
+            className={styles.segmented}
+            role="radiogroup"
+            aria-labelledby="hc-display-projection"
+          >
+            {PROJECTION_MODES.map((mode) => (
+              <Tooltip key={mode.id} content={mode.hint}>
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={projection === mode.id}
+                  className={`${styles.segment} ${projection === mode.id ? styles.segmentActive : ''}`}
+                  onClick={() => run(state, `view.projection.${mode.id}`)}
+                >
+                  {mode.label}
+                </button>
+              </Tooltip>
+            ))}
+          </div>
           <div className={styles.separator} role="separator" />
           <div className={styles.sectionTitle}>Show</div>
           <div className={styles.toggles}>

@@ -421,7 +421,8 @@ export function SketchOverlay({
   const drawing = tool !== null && tool.kind !== 'select';
   // 3D snaps: the body geometry seen along the sketch normal (far edges in orthographic view only).
   const bodies = useAssemblerStore((s) => s.evaluation.bodies);
-  const orthographic = usePreferences((p) => p.projection === 'orthographic');
+  // Adaptive shows sketches in parallel projection too.
+  const orthographic = usePreferences((p) => p.projection !== 'perspective');
   const circleDimension = useSketchPreferences((p) => p.circleDimension);
   const frame = session?.frame ?? null;
   const bodyTargets = useMemo(

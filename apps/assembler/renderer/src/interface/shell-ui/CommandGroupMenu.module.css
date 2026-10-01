@@ -30,6 +30,12 @@
   min-width: 0;
 }
 
+.check {
+  display: inline-flex;
+  width: 12px;
+  color: var(--hc-accent-base);
+}
+
 .shortcut {
   font-family: var(--hc-font-mono);
   font-size: 11px;

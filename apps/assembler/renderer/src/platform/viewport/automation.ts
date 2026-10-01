@@ -37,6 +37,24 @@ export interface ViewportProbe {
   };
   /** Renders `frames` frames back to back and returns the mean ms per frame (GPU included). */
   benchmark?(frames: number): number | null;
+  /**
+   * Determines the orbit/zoom pivot at a page point `runs` times (`stale`:
+   * the id pass is redrawn first, as after a camera move) and returns the
+   * last result with every run's total and read time (ms).
+   */
+  pivotAt?(
+    x: number,
+    y: number,
+    runs?: number,
+    stale?: boolean,
+  ): {
+    point: readonly [number, number, number];
+    rule: string;
+    ms: number;
+    readMs: number;
+    times: number[];
+    reads: number[];
+  } | null;
 }
 
 let probe: ViewportProbe | null = null;

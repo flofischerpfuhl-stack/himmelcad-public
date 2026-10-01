@@ -98,6 +98,45 @@
   color: var(--hc-fg-subtle);
 }
 
+/* Projection: one compact row of three choices (a setting users rarely change). */
+.segmented {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--hc-radius-sm);
+  background: var(--hc-bg-chip);
+}
+
+.segment {
+  min-width: 0;
+  height: 24px;
+  padding: 0 4px;
+  border: none;
+  border-radius: var(--hc-radius-sm);
+  background: transparent;
+  color: var(--hc-fg-muted);
+  font-family: var(--hc-font-ui);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.segment:hover {
+  background: var(--hc-hover-bg);
+  color: var(--hc-fg-default);
+}
+
+.segmentActive,
+.segmentActive:hover {
+  background: var(--hc-accent-base);
+  color: var(--hc-fg-on-accent);
+}
+
+.segment:focus-visible {
+  outline: 2px solid var(--hc-focus-ring);
+  outline-offset: 1px;
+}
+
 .separator {
   height: 1px;
   margin: var(--hc-space-1) 0;

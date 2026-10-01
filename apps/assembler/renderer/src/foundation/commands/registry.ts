@@ -78,6 +78,10 @@ export interface Command {
    * menus, search and shortcuts. Default `true`.
    */
   adaptive?: boolean;
+  /** A choice that is in effect (one of several modes): menus show a check mark. */
+  checked?: () => boolean;
+  /** Menus draw a separator above this command (a new block within its group). */
+  separatorBefore?: boolean;
   availability: (ctx: CommandContext) => CommandAvailability;
   run: (ctx: CommandContext) => void;
 }

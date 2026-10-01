@@ -99,6 +99,12 @@ export interface ViewportMode {
   tap?(tap: ViewportTap): boolean;
   /** A finger box selection (long press + drag) while the mode runs: `true` if handled. */
   boxSelect?(box: ViewportBox, additive: boolean): boolean;
+  /**
+   * The normal of the plane the mode draws on (an open sketch), or `null`:
+   * the viewport then hides the world axis out of that plane and, with the
+   * Adaptive projection, shows the view in parallel projection.
+   */
+  drawingPlaneNormal?(): Vec3 | null;
 }
 
 const domOverlays: ViewportDomOverlay[] = [];
@@ -147,4 +153,13 @@ export function offerModeTap(tap: ViewportTap): boolean {
 /** Offers a finger box selection to the modes; `true` if one handled it. */
 export function offerModeBox(box: ViewportBox, additive: boolean): boolean {
   return modes.some((m) => m.boxSelect?.(box, additive) ?? false);
+}
+
+/** The drawing plane's normal of a running mode (an open sketch), or `null`. */
+export function modeDrawingPlaneNormal(): Vec3 | null {
+  for (const mode of modes) {
+    const normal = mode.drawingPlaneNormal?.() ?? null;
+    if (normal) return normal;
+  }
+  return null;
 }
