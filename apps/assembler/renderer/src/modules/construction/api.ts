@@ -1,8 +1,8 @@
 /**
  * The construction module's agent-API method `datums.list`: construction
  * planes and axes as evaluated (plane frame / axis point and direction, the
- * drawn centre and size), whose spec stays in the core method block of
- * `interface/agent-api/schema.ts` (the published order); and the
+ * drawn centre and size; block `API_ORDER.methods.datumsList`, after
+ * `sketches.list` in the published order); and the
  * `feature.create` parameter schemas of `constructionPlane` and
  * `constructionAxis` (block `API_ORDER.featureKinds.construction`).
  */
@@ -10,9 +10,11 @@ import {
   schemaNumber,
   schemaObject,
   schemaRef,
+  schemaScope,
   type ApiContext,
   type FeatureKindSpec,
   type Json,
+  type MethodSpec,
 } from '../../foundation/commands/api/contract.js';
 import { API_ORDER, type ApiContribution } from '../../foundation/commands/api/registry.js';
 import { isConstructionFeatureKind } from './construction.js';
@@ -35,6 +37,16 @@ async function listDatums(ctx: ApiContext, p: Json): Promise<Json[]> {
       };
     });
 }
+
+const DATUMS_LIST: MethodSpec = {
+  kind: 'query',
+  capability: 'document.read',
+  summary:
+    'Construction planes and axes (constructionPlane/constructionAxis steps) as evaluated: plane frame / axis point + direction, and the drawn centre and size.',
+  params: schemaObject({ scope: schemaScope }),
+  result:
+    '[{featureId, name, kind: "plane"|"axis", frame: {origin,u,v,normal}, center, size, error}] (axis: origin = a point on it, normal = its direction)',
+};
 
 const KIND_SCHEMAS: Record<string, FeatureKindSpec> = {
   constructionPlane: {
@@ -124,6 +136,11 @@ const KIND_SCHEMAS: Record<string, FeatureKindSpec> = {
 };
 
 export const CONSTRUCTION_API: ApiContribution = {
-  handlers: { 'datums.list': (ctx, p) => listDatums(ctx, p) },
+  methods: [
+    {
+      order: API_ORDER.methods.datumsList,
+      methods: { 'datums.list': { spec: DATUMS_LIST, handler: (ctx, p) => listDatums(ctx, p) } },
+    },
+  ],
   featureKinds: [{ order: API_ORDER.featureKinds.construction, kinds: KIND_SCHEMAS }],
 };

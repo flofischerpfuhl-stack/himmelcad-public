@@ -1,7 +1,7 @@
 /**
  * The registration contracts phase B added below the domain modules
  * (assembler/MODULES.md §3): draft tools, project templates, datum
- * resolution, sketch usage, handler-only API contributions and the
+ * resolution, sketch usage, module-owned API methods and the
  * viewport's DOM overlays and modes — each with the registrations the
  * product composition (`test/setup.ts`) makes.
  */
@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  API_METHODS,
   apiMethodHandler,
   registerApiContribution,
 } from '../../renderer/src/foundation/commands/api/registry.js';
@@ -146,14 +147,36 @@ void test('consumed sketches come from the kind registry; suppressed steps consu
   assert.equal(parseDerivedSketchId('sketch-1'), null);
 });
 
-void test('sketching and construction own their API handlers; a second owner throws', () => {
-  for (const method of ['sketches.list', 'datums.list', 'sketch.addProfile', 'sketch.project']) {
+void test('modules own their API methods (spec + handler); a second owner throws, nothing changes', () => {
+  const owned = [
+    'sketches.list',
+    'datums.list',
+    'sketch.addProfile',
+    'sketch.project',
+    'measure.get',
+    'measure.volume',
+    'import.step',
+    'mesh.toSolid',
+  ];
+  for (const method of owned) {
     assert.equal(typeof apiMethodHandler(method), 'function', method);
+    assert.ok(API_METHODS[method], `${method} is published`);
   }
+  const before = JSON.stringify(Object.keys(API_METHODS));
+  const spec = API_METHODS['datums.list']!;
   assert.throws(
-    () => registerApiContribution('other', { handlers: { 'datums.list': () => [] } }),
-    /API handler of "datums.list" is registered twice \(construction, other\)/,
+    () =>
+      registerApiContribution('other', {
+        methods: [
+          { order: 1, methods: { 'other.method': { spec } } },
+          { order: 2, methods: { 'datums.list': { spec, handler: () => [] } } },
+        ],
+      }),
+    /API method "datums.list" is registered twice \(construction, other\)/,
   );
+  // The failed registration left nothing behind (no half-registered block).
+  assert.equal(JSON.stringify(Object.keys(API_METHODS)), before);
+  assert.equal(API_METHODS['other.method'], undefined);
 });
 
 void test('viewport DOM overlays and modes are registries the viewport asks', () => {

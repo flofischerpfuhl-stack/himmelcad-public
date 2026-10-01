@@ -36,7 +36,12 @@ import { ApiError } from '../../foundation/commands/api/errors.js';
 import { resolveFaceInput } from '../../foundation/commands/api/references.js';
 
 import type { MethodSpec } from '../../foundation/commands/api/contract.js';
-import { API_ORDER, type ApiContribution } from '../../foundation/commands/api/registry.js';
+import {
+  API_ORDER,
+  type ApiContribution,
+  type ApiHandler,
+  type ApiMethod,
+} from '../../foundation/commands/api/registry.js';
 import type { JsonSchema } from '../../foundation/commands/api/validate.js';
 
 type Json = Record<string, unknown>;
@@ -572,30 +577,60 @@ export function stepExportOptions(
   };
 }
 
+/** `import.step`, published after the core exports (block `API_ORDER.methods.importStep`). */
+const IMPORT_STEP_METHODS: Record<string, MethodSpec> = {
+  'import.step': {
+    kind: 'command',
+    capability: 'document.write',
+    transactional: true,
+    summary:
+      'Imports a STEP file as one "Import" history step: one body per placed part with names, colours and assembly folders (`structure: "single"`: the whole file as one body).',
+    params: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', minLength: 1, description: 'Headless only (filesystem.read).' },
+        data: { type: 'string', minLength: 1, description: 'Base64 STEP bytes.' },
+        fileName: str,
+        structure: STEP_IMPORT_STRUCTURE,
+        expectedRevision: revision,
+      },
+      additionalProperties: false,
+      anyOf: [{ required: ['path'] }, { required: ['data', 'fileName'] }],
+    },
+    result:
+      '{featureId, createdBodyIds, parts: [{bodyId, name, color, itemPath}], warnings?, revision, committed, errors}',
+  },
+};
+
+const INTEROP_HANDLERS: Readonly<Record<string, ApiHandler>> = {
+  'import.step': (ctx, p) => importStep(ctx, p),
+  'import.iges': (ctx, p) => importIges(ctx, p),
+  'interop.formats': (ctx) => interopFormats(ctx),
+  'import.mesh': (ctx, p) => importMesh(ctx, p),
+  'import.dxf': (ctx, p) => importDxf(ctx, p),
+  'export.dxf': (ctx, p) => exportDxf(ctx, p),
+  'mesh.toSolid': (ctx, p) => meshToSolid(ctx, p),
+};
+
+function withHandlers(specs: Record<string, MethodSpec>): Record<string, ApiMethod> {
+  return Object.fromEntries(
+    Object.entries(specs).map(([name, spec]) => {
+      const handler = INTEROP_HANDLERS[name];
+      if (!handler) throw new Error(`interop: "${name}" has a spec but no handler`);
+      return [name, { spec, handler }];
+    }),
+  );
+}
+
 /**
- * The interop module's agent-API contribution: the handlers of the import /
- * export methods, on the session services (`ApiContext` provides every
- * {@link InteropContext} service). Their schemas are still published by the
- * agent-api block (`INTEROP_METHODS` and `import.step` in `schema.ts`), in
- * the published order.
+ * The interop module's agent-API contribution: the import / export methods
+ * (`import.step` after the core exports, the rest in their own block after
+ * print), with handlers on the session services (`ApiContext` provides
+ * every {@link InteropContext} service).
  */
 export const INTEROP_API: ApiContribution = {
-  // The specs of interop.formats, import.*, export.dxf, mesh.toSolid (block API_ORDER.methods.interop).
   methods: [
-    {
-      order: API_ORDER.methods.interop,
-      methods: Object.fromEntries(
-        Object.entries(INTEROP_METHODS).map(([name, spec]) => [name, { spec }]),
-      ),
-    },
+    { order: API_ORDER.methods.importStep, methods: withHandlers(IMPORT_STEP_METHODS) },
+    { order: API_ORDER.methods.interop, methods: withHandlers(INTEROP_METHODS) },
   ],
-  handlers: {
-    'import.step': (ctx, p) => importStep(ctx, p),
-    'import.iges': (ctx, p) => importIges(ctx, p),
-    'interop.formats': (ctx) => interopFormats(ctx),
-    'import.mesh': (ctx, p) => importMesh(ctx, p),
-    'import.dxf': (ctx, p) => importDxf(ctx, p),
-    'export.dxf': (ctx, p) => exportDxf(ctx, p),
-    'mesh.toSolid': (ctx, p) => meshToSolid(ctx, p),
-  },
 };

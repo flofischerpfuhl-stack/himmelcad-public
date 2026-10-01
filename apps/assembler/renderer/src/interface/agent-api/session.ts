@@ -1,7 +1,7 @@
 /**
  * The canonical command layer: executes `hcasm.agent-api@1` methods
  * against the application store. The same class serves the headless CLI
- * (in-process OCCT) and the in-app loopback endpoint (OCCT worker), so both
+ * (OCCT in a worker thread) and the in-app loopback endpoint (OCCT Web Worker), so both
  * transports have identical semantics.
  *
  * Invariants:
@@ -38,18 +38,7 @@ import type { Body, EvaluationResult } from '../../foundation/geometry-kernel/ty
 import type { Feature } from '../../foundation/document/document.js';
 import type { SketchFeature } from '../../foundation/sketch-solver/sketchFeature.js';
 import { resolveParameterValues } from '../../foundation/document/parameters.js';
-import { runMeasureQuery } from '../../modules/measure/measureApi.js';
-import {
-  exportDxf,
-  importDxf,
-  importMesh,
-  importStep as importStepCommand,
-  importIges,
-  IGES_UNAVAILABLE,
-  interopFormats,
-  meshToSolid,
-  stepExportOptions,
-} from '../../modules/interop/interopApi.js';
+import { IGES_UNAVAILABLE, stepExportOptions } from '../../modules/interop/interopApi.js';
 import { stepAssemblyFromItems } from '../../modules/interop/stepTree.js';
 import { useItemsStore } from '../../foundation/commands/items.js';
 import {
@@ -211,6 +200,21 @@ export class AgentSession {
     if (spec.kind === 'command' && spec.capability === 'document.write') {
       if (method !== 'transaction.begin') this.checkRevision(p);
     }
+    try {
+      return await this.run(method, p);
+    } catch (error) {
+      // A kernel job stopped by its time budget, wherever it ran (module handlers included).
+      if (!(error instanceof ApiError) && isKernelTimeout(error)) {
+        throw kernelTimeoutError(
+          error instanceof Error ? error.message : String(error),
+          (error as KernelTimeoutError).budgetMs,
+        );
+      }
+      throw error;
+    }
+  }
+
+  private async run(method: string, p: Json): Promise<unknown> {
     // Methods a module registered with a handler (`foundation/commands/api/registry.ts`).
     const handler = apiMethodHandler(method);
     if (handler) return handler(this.context(), p, method);
@@ -237,16 +241,6 @@ export class AgentSession {
         return this.store.getState().selection;
       case 'selection.set':
         return this.setSelection(p);
-      case 'measure.get':
-      case 'measure.distance':
-      case 'measure.angle':
-      case 'measure.area':
-      case 'measure.volume':
-        return runMeasureQuery(method, p, {
-          evaluation: await this.readEvaluation(p),
-          features: this.activeFeatures(p),
-          kernel: this.kernel,
-        });
       case 'feature.create':
         return this.write('feature.create', (f, e) => this.createFeature(p, f, e));
       case 'feature.edit':
@@ -277,20 +271,6 @@ export class AgentSession {
       case 'export.step':
       case 'export.iges':
         return this.exportBodies(method, p);
-      case 'import.step':
-        return importStepCommand(this.interop(), p);
-      case 'import.iges':
-        return importIges(this.interop(), p);
-      case 'interop.formats':
-        return interopFormats(this.interop());
-      case 'import.mesh':
-        return importMesh(this.interop(), p);
-      case 'import.dxf':
-        return importDxf(this.interop(), p);
-      case 'export.dxf':
-        return exportDxf(this.interop(), p);
-      case 'mesh.toSolid':
-        return meshToSolid(this.interop(), p);
       case 'project.new':
         return this.newProject(p);
       case 'project.open':
@@ -1007,11 +987,6 @@ export class AgentSession {
       findFeature: (features, featureId) => this.findFeature(features, featureId),
       validateStored: (feature) => validateStored(feature),
     };
-  }
-
-  /** The import/export handlers (`interopApi.ts`) run on the general session services. */
-  private interop(): ApiContext {
-    return this.context();
   }
 
   private ensureNoTx(what: string): void {

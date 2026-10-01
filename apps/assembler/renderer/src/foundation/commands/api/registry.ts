@@ -25,13 +25,6 @@ export interface ApiContribution {
   methods?: readonly { order: number; methods: Readonly<Record<string, ApiMethod>> }[];
   defs?: readonly { order: number; defs: Readonly<Record<string, JsonSchema>> }[];
   featureKinds?: readonly { order: number; kinds: Readonly<Record<string, FeatureKindSpec>> }[];
-  /**
-   * Handlers of methods whose schema another module's block still publishes
-   * (phase B: a module takes over the handlers first; the schema's owner
-   * hands the specs over later without changing the published order). A
-   * method has at most one handler.
-   */
-  handlers?: Readonly<Record<string, ApiHandler>>;
 }
 
 /**
@@ -43,6 +36,8 @@ export const API_ORDER = {
     coreHead: 100,
     printSettings: 110,
     coreMid: 120,
+    measure: 122,
+    coreSketch: 124,
     parameter: 130,
     coreTail: 140,
     printFeatures: 900,
@@ -55,7 +50,21 @@ export const API_ORDER = {
     directEdit: 500,
     printFeatures: 900,
   },
-  methods: { coreHead: 100, parameters: 200, coreTail: 300, print: 400, interop: 500 },
+  methods: {
+    coreHead: 100,
+    sketchesList: 110,
+    datumsList: 120,
+    coreSelection: 130,
+    parameters: 200,
+    measure: 250,
+    coreFeatures: 300,
+    sketchEdits: 310,
+    coreTail: 320,
+    importStep: 330,
+    coreProject: 340,
+    print: 400,
+    interop: 500,
+  },
 } as const;
 
 interface Block<T> {
@@ -76,25 +85,15 @@ export const API_DEFS: Record<string, JsonSchema> = {};
 /** Every feature-kind parameter schema, in contract order (live). */
 export const API_FEATURE_KINDS: Record<string, FeatureKindSpec> = {};
 const handlers = new Map<string, ApiHandler>();
-const handlerOwners = new Map<string, string>();
 
-function setHandler(module: string, name: string, handler: ApiHandler): void {
-  const owner = handlerOwners.get(name);
-  if (owner && handlers.get(name) !== handler) {
-    throw new Error(`API handler of "${name}" is registered twice (${owner}, ${module})`);
-  }
-  handlers.set(name, handler);
-  handlerOwners.set(name, module);
-}
-
-function merge<T, R>(
-  blocks: Block<T>[],
-  target: Record<string, R>,
+/** Throws if a key of `added` is already registered (in `blocks` or earlier in `added`). */
+function assertUnique<T>(
+  blocks: readonly Block<T>[],
+  added: readonly Block<T>[],
   what: string,
-  map: (entry: T) => R,
 ): void {
   const seen = new Map<string, string>();
-  for (const block of blocks) {
+  for (const block of [...blocks, ...added]) {
     for (const key of Object.keys(block.entries)) {
       const owner = seen.get(key);
       if (owner)
@@ -102,6 +101,9 @@ function merge<T, R>(
       seen.set(key, block.module);
     }
   }
+}
+
+function merge<T, R>(blocks: Block<T>[], target: Record<string, R>, map: (entry: T) => R): void {
   blocks.sort((a, b) => a.order - b.order || a.sequence - b.sequence);
   for (const key of Object.keys(target)) delete target[key];
   for (const block of blocks) {
@@ -109,37 +111,53 @@ function merge<T, R>(
   }
 }
 
-/** Registers a module's methods, `$defs` and feature-kind schemas. */
+function blocksOf<T>(
+  module: string,
+  list: readonly { order: number; entries: Readonly<Record<string, T>> }[],
+  existing: readonly Block<T>[],
+): Block<T>[] {
+  return list.map((block, i) => ({
+    order: block.order,
+    sequence: existing.length + i,
+    module,
+    entries: block.entries,
+  }));
+}
+
+/**
+ * Registers a module's methods (with their handlers), `$defs` and
+ * feature-kind schemas. A name registered twice throws and leaves the
+ * registry unchanged.
+ */
 export function registerApiContribution(module: string, contribution: ApiContribution): void {
-  for (const block of contribution.methods ?? []) {
-    methodBlocks.push({
-      order: block.order,
-      sequence: methodBlocks.length,
-      module,
-      entries: block.methods,
-    });
-  }
-  for (const block of contribution.defs ?? []) {
-    defBlocks.push({ order: block.order, sequence: defBlocks.length, module, entries: block.defs });
-  }
-  for (const block of contribution.featureKinds ?? []) {
-    kindBlocks.push({
-      order: block.order,
-      sequence: kindBlocks.length,
-      module,
-      entries: block.kinds,
-    });
-  }
-  merge(methodBlocks, API_METHODS, 'method', (m) => m.spec);
-  merge(defBlocks, API_DEFS, '$defs entry', (d) => d);
-  merge(kindBlocks, API_FEATURE_KINDS, 'feature kind', (k) => k);
-  for (const block of contribution.methods ?? []) {
-    for (const [name, method] of Object.entries(block.methods)) {
-      if (method.handler) setHandler(module, name, method.handler);
+  const methods = blocksOf(
+    module,
+    (contribution.methods ?? []).map((b) => ({ order: b.order, entries: b.methods })),
+    methodBlocks,
+  );
+  const defs = blocksOf(
+    module,
+    (contribution.defs ?? []).map((b) => ({ order: b.order, entries: b.defs })),
+    defBlocks,
+  );
+  const kinds = blocksOf(
+    module,
+    (contribution.featureKinds ?? []).map((b) => ({ order: b.order, entries: b.kinds })),
+    kindBlocks,
+  );
+  assertUnique(methodBlocks, methods, 'method');
+  assertUnique(defBlocks, defs, '$defs entry');
+  assertUnique(kindBlocks, kinds, 'feature kind');
+  methodBlocks.push(...methods);
+  defBlocks.push(...defs);
+  kindBlocks.push(...kinds);
+  merge(methodBlocks, API_METHODS, (m) => m.spec);
+  merge(defBlocks, API_DEFS, (d) => d);
+  merge(kindBlocks, API_FEATURE_KINDS, (k) => k);
+  for (const block of methods) {
+    for (const [name, method] of Object.entries(block.entries)) {
+      if (method.handler) handlers.set(name, method.handler);
     }
-  }
-  for (const [name, handler] of Object.entries(contribution.handlers ?? {})) {
-    setHandler(module, name, handler);
   }
 }
 

@@ -1,10 +1,8 @@
 /**
  * The sketching module's agent-API methods (`hcasm.agent-api@1`):
  * `sketches.list` and the `sketch.*` edits, as handlers on the session
- * services (`foundation/commands/api/contract.ts`). Their specs stay in the
- * core method blocks of `interface/agent-api/schema.ts` for now (the
- * published method order), so this module contributes handlers only
- * (`ApiContribution.handlers`).
+ * services (`foundation/commands/api/contract.ts`), with their specs
+ * (`apiSchema.ts`, two blocks at their places in the published order).
  *
  * Every `sketch.*` edit is one edit of one sketch: applied to the sketch
  * data, re-solved by planeGCS, validated like Save/Open would and committed
@@ -12,7 +10,11 @@
  */
 import type { ApiContext, Json, WriteOutcome } from '../../foundation/commands/api/contract.js';
 import { ApiError } from '../../foundation/commands/api/errors.js';
-import type { ApiContribution, ApiHandler } from '../../foundation/commands/api/registry.js';
+import {
+  API_ORDER,
+  type ApiContribution,
+  type ApiHandler,
+} from '../../foundation/commands/api/registry.js';
 import type { Feature } from '../../foundation/document/document.js';
 import { consumedSketchIds, parseDerivedSketchId } from '../../foundation/document/sketchUsage.js';
 import type { EvaluationResult } from '../../foundation/geometry-kernel/types.js';
@@ -24,6 +26,7 @@ import type {
   SketchDimensionKind,
   Vec2,
 } from '../../foundation/sketch-solver/types.js';
+import { SKETCH_EDIT_METHODS, SKETCHES_LIST_METHODS } from './apiSchema.js';
 import { ADVANCED_SKETCH_METHODS, advancedSketchEdit } from './sketchAdvancedApi.js';
 import {
   addArcShape,
@@ -214,11 +217,33 @@ async function editSketch(
 const editHandler: ApiHandler = (ctx, p, method) =>
   ctx.write(method, (features, evaluation) => editSketch(ctx, method, p, features, evaluation));
 
+const EDIT_METHODS: ReadonlySet<string> = new Set([
+  ...BASIC_SKETCH_METHODS,
+  ...ADVANCED_SKETCH_METHODS,
+]);
+for (const name of Object.keys(SKETCH_EDIT_METHODS)) {
+  if (!EDIT_METHODS.has(name)) throw new Error(`sketching: "${name}" has a spec but no edit`);
+}
+
 export const SKETCHING_API: ApiContribution = {
-  handlers: {
-    'sketches.list': (ctx, p) => listSketches(ctx, p),
-    ...Object.fromEntries(
-      [...BASIC_SKETCH_METHODS, ...ADVANCED_SKETCH_METHODS].map((m) => [m, editHandler]),
-    ),
-  },
+  methods: [
+    {
+      order: API_ORDER.methods.sketchesList,
+      methods: {
+        'sketches.list': {
+          spec: SKETCHES_LIST_METHODS['sketches.list']!,
+          handler: (ctx, p) => listSketches(ctx, p),
+        },
+      },
+    },
+    {
+      order: API_ORDER.methods.sketchEdits,
+      methods: Object.fromEntries(
+        Object.entries(SKETCH_EDIT_METHODS).map(([name, spec]) => [
+          name,
+          { spec, handler: editHandler },
+        ]),
+      ),
+    },
+  ],
 };

@@ -63,6 +63,13 @@ export const schemaRevision: JsonSchema = {
     'Optimistic concurrency: the command fails with `conflict` unless the document revision still equals this value.',
 };
 
+/** The read scope every document query accepts (committed document or open transaction). */
+export const schemaScope: JsonSchema = {
+  enum: ['auto', 'committed', 'staged'],
+  default: 'auto',
+  description: "`auto`: the open transaction's staged state if any, else the committed document.",
+};
+
 /** A closed object schema (`additionalProperties: false`). */
 export function schemaObject(
   properties: Record<string, JsonSchema>,

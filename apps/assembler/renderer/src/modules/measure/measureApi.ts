@@ -25,8 +25,21 @@ import {
   materialPreset,
 } from '../../platform/viewport/displayModes.js';
 import { findBody } from '../../foundation/commands/api/describe.js';
-import type { ApiContribution, ApiHandler } from '../../foundation/commands/api/registry.js';
+import {
+  schemaObject,
+  schemaRef,
+  schemaScope,
+  schemaString,
+  type MethodSpec,
+} from '../../foundation/commands/api/contract.js';
+import {
+  API_ORDER,
+  type ApiContribution,
+  type ApiHandler,
+} from '../../foundation/commands/api/registry.js';
+import type { JsonSchema } from '../../foundation/commands/api/validate.js';
 import { ApiError } from '../../foundation/commands/api/errors.js';
+import { isKernelTimeout } from '../../foundation/geometry-kernel/timeout.js';
 import { resolveEdgeInput, resolveFaceInput } from '../../foundation/commands/api/references.js';
 
 type Json = Record<string, unknown>;
@@ -117,6 +130,8 @@ async function kernelDistance(
     const result = await env.kernel.measureDistance([...env.features], ta, tb);
     return { ...result, approx: false };
   } catch (error) {
+    // A stopped kernel is not a property of the query (the session reports `kernelTimeout`).
+    if (isKernelTimeout(error)) throw error;
     throw new ApiError(
       'featureFailed',
       `Distance query failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -251,17 +266,97 @@ const measureQuery: ApiHandler = async (ctx, p, method) =>
     kernel: ctx.kernel,
   });
 
+const MEASURE_DEFS: Record<string, JsonSchema> = {
+  MeasureTarget: {
+    description:
+      'What to measure: a body, a face or edge (key or selector matching exactly one), or a world point [x, y, z] (mm).',
+    oneOf: [
+      schemaObject({ kind: { const: 'body' }, bodyId: schemaString }, ['kind', 'bodyId']),
+      schemaObject({ kind: { const: 'face' }, face: schemaRef('FaceInput') }, ['kind', 'face']),
+      schemaObject({ kind: { const: 'edge' }, edge: schemaRef('EdgeInput') }, ['kind', 'edge']),
+      schemaObject({ kind: { const: 'point' }, point: schemaRef('Vec3') }, ['kind', 'point']),
+    ],
+  },
+};
+
+const MEASURE_METHODS: Record<string, MethodSpec> = {
+  'measure.get': {
+    kind: 'query',
+    capability: 'document.read',
+    summary:
+      "The Measure panel's measurement of 1..n items (one body: size/volume/mass/area; one edge: length or radius/diameter; one face: area (+ cylinder diameter); two items: exact minimum distance from the kernel, parallel distance or angle; several bodies: combined box/volume/mass). Values carry `unit` (mm, mm², mm³, deg, g); `approx` marks mesh estimates.",
+    params: schemaObject(
+      {
+        items: { type: 'array', items: schemaRef('MeasureTarget'), minItems: 1, maxItems: 16 },
+        scope: schemaScope,
+      },
+      ['items'],
+    ),
+    result: '{title, subject, values: [{label, kind, value, unit, approx?, secondary?}], note?}',
+  },
+  'measure.distance': {
+    kind: 'query',
+    capability: 'document.read',
+    summary:
+      'Exact minimum distance between two bodies/faces/edges/points (kernel BRepExtrema_DistShapeShape) and the closest points.',
+    params: schemaObject(
+      { a: schemaRef('MeasureTarget'), b: schemaRef('MeasureTarget'), scope: schemaScope },
+      ['a', 'b'],
+    ),
+    result: '{distance, pointA, pointB, unit: "mm", exact: true}',
+  },
+  'measure.angle': {
+    kind: 'query',
+    capability: 'document.read',
+    summary:
+      'Angle between two planar faces, two straight edges, or a straight edge and a planar face (deg). Parallel items give angle 0, `parallel: true` and their `distance`.',
+    params: schemaObject(
+      { a: schemaRef('MeasureTarget'), b: schemaRef('MeasureTarget'), scope: schemaScope },
+      ['a', 'b'],
+    ),
+    result: '{angle, unit: "deg", parallel, distance?}',
+  },
+  'measure.area': {
+    kind: 'query',
+    capability: 'document.read',
+    summary: 'Exact B-rep area of faces (selectors may match several; each face counted once).',
+    params: schemaObject(
+      {
+        faces: { type: 'array', items: schemaRef('FaceInput'), minItems: 1 },
+        scope: schemaScope,
+      },
+      ['faces'],
+    ),
+    result: '{area, unit: "mm²", faces: [{bodyId, key, surface, area}]}',
+  },
+  'measure.volume': {
+    kind: 'query',
+    capability: 'document.read',
+    summary:
+      'Exact B-rep volume, surface area, bounding box and mass (density of the body material set with its appearance, PLA otherwise; solid) of the given bodies (default: all).',
+    params: schemaObject({ bodyIds: { type: 'array', items: schemaString }, scope: schemaScope }),
+    result:
+      '{volume, mass, units, bodies: [{bodyId, name, volume, surfaceArea, material, densityGPerCm3, mass, bbox}]}',
+  },
+};
+
 /**
- * The measure module's agent-API contribution: the handlers of the
- * `measure.*` queries. Their schemas (and `MeasureTarget`) are still
- * published by the agent-api block (`schema.ts`), in the published order.
+ * The measure module's agent-API contribution: the `measure.*` queries
+ * (block `API_ORDER.methods.measure`, between the parameter methods and the
+ * core feature commands, the published order) and their `MeasureTarget`
+ * definition (between `EdgeInput` and the sketch definitions).
  */
 export const MEASURE_API: ApiContribution = {
-  handlers: {
-    'measure.get': measureQuery,
-    'measure.distance': measureQuery,
-    'measure.angle': measureQuery,
-    'measure.area': measureQuery,
-    'measure.volume': measureQuery,
-  },
+  methods: [
+    {
+      order: API_ORDER.methods.measure,
+      methods: Object.fromEntries(
+        Object.entries(MEASURE_METHODS).map(([name, spec]) => [
+          name,
+          { spec, handler: measureQuery },
+        ]),
+      ),
+    },
+  ],
+  defs: [{ order: API_ORDER.defs.measure, defs: MEASURE_DEFS }],
 };

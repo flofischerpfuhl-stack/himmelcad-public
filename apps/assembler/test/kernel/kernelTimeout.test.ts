@@ -217,6 +217,39 @@ void test('agent API: a write whose evaluation times out answers kernelTimeout, 
   session.dispose();
   adapter.dispose();
 });
+
+void test('agent API: a module handler whose kernel query times out answers kernelTimeout too', async () => {
+  // measure.distance is the measure module's handler; its kernel query never returns.
+  const { adapter } = harness((message, worker) => {
+    if (message.type === 'measureDistance') return;
+    answer(message, worker);
+  }, 60);
+  const store = useAssemblerStore;
+  store.getState().attachKernel(adapter);
+  store.getState().loadDocument([], { projectName: 'Timeout' });
+  await store.getState().whenSettled();
+  const session = new AgentSession({
+    store,
+    kernel: adapter,
+    host: { server: 'headless', capabilities: HEADLESS_CAPABILITIES },
+  });
+  await assert.rejects(
+    session.handle('measure.distance', {
+      a: { kind: 'point', point: [0, 0, 0] },
+      b: { kind: 'point', point: [10, 0, 0] },
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof ApiError);
+      assert.equal(error.code, 'kernelTimeout');
+      assert.equal(error.details?.committed, false);
+      assert.equal(error.details?.budgetMs, 60);
+      return true;
+    },
+  );
+  session.dispose();
+  adapter.dispose();
+});
+
 void test('HIMMELCAD_KERNEL_TIMEOUT_MS: default, explicit budget, 0 switches it off, junk fails', () => {
   assert.equal(kernelTimeoutFromEnv({}, 120_000), 120_000);
   assert.equal(kernelTimeoutFromEnv({ HIMMELCAD_KERNEL_TIMEOUT_MS: '5000' }, 120_000), 5000);
