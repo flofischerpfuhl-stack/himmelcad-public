@@ -27,6 +27,7 @@ ERROR_CODES = (
     "permissionDenied",
     "confirmationRequired",
     "unsupported",
+    "kernelTimeout",
     "cancelled",
     "internal",
 )
@@ -109,6 +110,18 @@ class ConfirmationRequiredError(AssemblerError):
     pass
 
 
+class KernelTimeoutError(AssemblerError):
+    """The CAD kernel did not finish within its time budget and was restarted; nothing was committed.
+
+    `budget_ms` is the budget the server applied (`details.budgetMs`) when it reports it.
+    """
+
+    @property
+    def budget_ms(self) -> int | None:
+        value = self.details.get("budgetMs")
+        return int(value) if isinstance(value, (int, float)) else None
+
+
 class TransportError(AssemblerError):
     """The headless process or loopback endpoint could not be reached or died."""
 
@@ -126,6 +139,7 @@ _CLASSES: dict[str, type[AssemblerError]] = {
     "transactionState": TransactionStateError,
     "permissionDenied": PermissionDeniedError,
     "confirmationRequired": ConfirmationRequiredError,
+    "kernelTimeout": KernelTimeoutError,
 }
 
 

@@ -26,29 +26,30 @@
  *                       evaluation on a separate, fresh kernel instance.
  * - `heap`              the wasm heap stays below {@link HEAP_LIMIT_BYTES}
  *                       under the restart policy.
+ * - `kernelTimeout`     no kernel job (fuzzed or reference) runs longer than
+ *                       {@link FUZZ_KERNEL_TIMEOUT_MS} without progress (F13): the
+ *                       thread kernel stops it and the fuzzer records a finding
+ *                       instead of hanging.
  * - `arenaOrder`        no OCCT object arena was closed out of order
  *                       (interleaved kernel users, `kernel/occtArena.ts`).
  * - `roundTrip`         STEP/IGES export → import of valid solids keeps their
  *                       volume; DXF export → import of a sketch keeps its
  *                       regions' total area.
  *
- * The OCCT module is the one `HIMMELCAD_OCCT` selects (`headless/occtModule.ts`).
+ * Both kernels — the fuzzed one and the cold reference — run in Node worker
+ * threads (`headless/threadKernel.ts`, the headless CLI's kernel) with a time
+ * budget, so an OCCT call that never returns becomes a `kernelTimeout`
+ * finding. The OCCT module is the one `HIMMELCAD_OCCT` selects
+ * (`headless/occtModule.ts`).
  */
-import * as R from 'replicad';
-
-import { loadOcct as loadSelectedOcct, type OpenCascadeModule } from '../../headless/occtModule.js';
+import { ThreadKernelAdapter } from '../../headless/threadKernel.js';
 
 import { ApiError } from '../../renderer/src/foundation/commands/api/errors.js';
 import {
   AgentSession,
   HEADLESS_CAPABILITIES,
 } from '../../renderer/src/interface/agent-api/session.js';
-import { InProcessKernelAdapter } from '../../renderer/src/foundation/geometry-kernel/adapter.js';
-import {
-  createEvaluator,
-  type KernelEvaluator,
-} from '../../renderer/src/foundation/geometry-kernel/evaluator.js';
-import { arenaInterleavings } from '../../renderer/src/foundation/geometry-kernel/occtArena.js';
+import { isKernelTimeout } from '../../renderer/src/foundation/geometry-kernel/timeout.js';
 import type { EvaluationResult } from '../../renderer/src/foundation/geometry-kernel/types.js';
 import type { Feature } from '../../renderer/src/foundation/document/document.js';
 import { checkMove, moveFeature } from '../../renderer/src/interface/shell-ui/historyTools.js';
@@ -60,12 +61,21 @@ import { loadNodeSolver } from '../sketch/nodeSolver.js';
 import { between, pick, type Op } from './ops.js';
 
 type Json = Record<string, unknown>;
-type OpenCascade = OpenCascadeModule;
 
 /** Hard bound for the kernel's wasm heap (the recycle threshold below keeps it far lower). */
 export const HEAP_LIMIT_BYTES = 1536 * 1024 * 1024;
 /** Recycle threshold of the fuzzed kernel: low, so long runs go through kernel restarts. */
 export const FUZZ_RECYCLE_BYTES = 384 * 1024 * 1024;
+/**
+ * Time budget of one kernel job without progress (a feature step, an export, a cold
+ * evaluation). Far above any fuzzed document's evaluation (well under a second per step);
+ * env `ASSEMBLER_FUZZ_KERNEL_TIMEOUT_MS`.
+ */
+export const FUZZ_KERNEL_TIMEOUT_MS = Number(
+  process.env.ASSEMBLER_FUZZ_KERNEL_TIMEOUT_MS ?? 20_000,
+);
+/** Cold evaluations per reference kernel before a fresh one (instance-state independence). */
+const REFERENCE_CHECKS = 150;
 
 /** Codes that are legitimate refusals of a random command. */
 const REFUSALS = new Set<ApiError['code']>([
@@ -119,10 +129,13 @@ function fail(invariant: string, message: string): never {
   throw new InvariantError(invariant, message);
 }
 
-/** A fresh instance of the OCCT module `HIMMELCAD_OCCT` selects (`headless/occtModule.ts`), quiet. */
-async function loadOcct(): Promise<OpenCascade> {
-  const quiet = () => undefined;
-  return loadSelectedOcct({ print: quiet, printErr: quiet });
+/** A kernel thread for the fuzzer: quiet, with the fuzz time budget. */
+function fuzzKernel(recycleHeapBytes?: number): ThreadKernelAdapter {
+  return new ThreadKernelAdapter({
+    quiet: true,
+    jobTimeoutMs: FUZZ_KERNEL_TIMEOUT_MS,
+    ...(recycleHeapBytes !== undefined ? { recycleHeapBytes } : {}),
+  });
 }
 
 function round(v: number, digits: number): number {
@@ -204,27 +217,23 @@ interface FaceSummary {
 
 export class FuzzHarness {
   readonly store = useAssemblerStore;
-  readonly kernel: InProcessKernelAdapter;
+  readonly kernel: ThreadKernelAdapter;
   readonly session: AgentSession;
-  private reference: { oc: OpenCascade; checks: number; ballast: unknown[] } | null = null;
+  /** The cold reference kernel (a separate OCCT instance), replaced every {@link REFERENCE_CHECKS} checks. */
+  private reference: { kernel: ThreadKernelAdapter; checks: number } | null = null;
+  /** OCCT arenas the reference kernels closed out of order (retired kernels included). */
+  private referenceInterleavings = 0;
   /** Determinism differences explained by OCCT's heap-layout dependence (finding F3), this run. */
   private marginal: string[] = [];
-  /** The fuzzed kernel's OCCT instance (replicad keeps one global instance; see coldEvaluate). */
-  private mainOc: OpenCascade | null = null;
   private asyncErrors: unknown[] = [];
   private paramCounter = 0;
-  kernelLoads = 0;
+  /** How often the fuzzed kernel was (re)loaded: first load, recycles, restarts. */
+  get kernelLoads(): number {
+    return this.kernel.loads;
+  }
 
   private constructor() {
-    this.kernel = new InProcessKernelAdapter(
-      async () => {
-        this.kernelLoads += 1;
-        const oc = await loadOcct();
-        this.mainOc = oc;
-        return createEvaluator(oc);
-      },
-      { recycleHeapBytes: FUZZ_RECYCLE_BYTES },
-    );
+    this.kernel = fuzzKernel(FUZZ_RECYCLE_BYTES);
     this.store.getState().attachKernel(this.kernel);
     setSketchSolverFactory(() => ({
       solve: async (request) => (await loadNodeSolver()).solve(request),
@@ -266,36 +275,23 @@ export class FuzzHarness {
   }
 
   /**
-   * Cold evaluation on a separate OCCT instance with empty caches. replicad
-   * holds ONE global OCCT instance (`setOC`, set by `createEvaluator`), so
-   * the reference instance is swapped in for the call and the fuzzed
-   * kernel's instance restored afterwards (never concurrently: the store is
-   * settled before every check).
+   * Cold evaluation on a separate OCCT instance (the reference kernel thread)
+   * with empty caches; `perturbation` shifts that instance's heap layout
+   * first (extra OCCT allocations). Runs within the fuzz time budget.
    */
   async coldEvaluate(features: Feature[], perturbation = 0): Promise<EvaluationResult> {
     await this.settle();
-    // Waits for the fuzzed kernel to be (re)loaded, so its `setOC` cannot land mid-evaluation.
-    await this.call('document.get');
-    await this.call('bodies.list', { scope: 'committed' });
-    if (!this.reference || this.reference.checks >= 150) {
-      this.reference = null;
-      this.reference = { oc: await loadOcct(), checks: 0, ballast: [] };
+    if (!this.reference || this.reference.checks >= REFERENCE_CHECKS) {
+      if (this.reference) {
+        this.referenceInterleavings += await this.reference.kernel.arenaInterleavings();
+        this.reference.kernel.dispose();
+      }
+      this.reference = { kernel: fuzzKernel(), checks: 0 };
     }
     this.reference.checks += 1;
-    // A different wasm heap layout for the same document (see checkDeterminism).
-    for (let i = 0; i < perturbation * 7; i += 1) {
-      this.reference.ballast.push(new this.reference.oc.gp_Pnt(i, perturbation, 0));
-    }
-    let evaluator: KernelEvaluator | null = null;
-    try {
-      evaluator = createEvaluator(this.reference.oc);
-      return await evaluator.evaluate(features, { quality: 'final' });
-    } finally {
-      evaluator?.clearCache();
-      if (this.mainOc) R.setOC(this.mainOc);
-    }
+    const cold = await this.reference.kernel.evaluateFresh(features, { perturbation });
+    return cold.result;
   }
-
   private activeFeatures(): Feature[] {
     const { features, rollbackBefore } = this.store.getState();
     const marker = rollbackBefore ? features.findIndex((f) => f.id === rollbackBefore) : -1;
@@ -1318,16 +1314,21 @@ export class FuzzHarness {
     );
   }
 
-  private checkDocument(): void {
+  private async checkDocument(): Promise<void> {
     const { features } = this.store.getState();
     const ids = new Set<string>();
     for (const f of features) {
       if (ids.has(f.id)) fail('uniqueIds', `duplicate feature id ${f.id}`);
       ids.add(f.id);
     }
-    // OCCT object arenas must never be closed out of order (interleaved kernel users).
-    if (arenaInterleavings() !== 0) {
-      fail('arenaOrder', `${arenaInterleavings()} OCCT arena(s) closed out of order`);
+    // OCCT object arenas must never be closed out of order (interleaved kernel users), in the
+    // fuzzed kernel's thread or a reference kernel's.
+    const interleavings =
+      (await this.kernel.arenaInterleavings()) +
+      this.referenceInterleavings +
+      ((await this.reference?.kernel.arenaInterleavings()) ?? 0);
+    if (interleavings !== 0) {
+      fail('arenaOrder', `${interleavings} OCCT arena(s) closed out of order`);
     }
   }
 
@@ -1416,17 +1417,8 @@ export class FuzzHarness {
   /** Cold evaluation with a fresh evaluator on the fuzzed kernel's OCCT instance (store settled). */
   private async coldEvaluateOnMain(features: Feature[], staged = false): Promise<EvaluationResult> {
     await this.settle();
-    await this.call('document.get');
-    await this.call('bodies.list', { scope: 'committed' });
-    if (!this.mainOc) throw new Error('the fuzzed kernel is not loaded');
-    const evaluator = createEvaluator(this.mainOc);
-    try {
-      // `staged`: the steps before the last one first, so the last one starts from a checkpoint.
-      if (staged) await evaluator.evaluate(features.slice(0, -1), { quality: 'final' });
-      return await evaluator.evaluate(features, { quality: 'final' });
-    } finally {
-      evaluator.clearCache();
-    }
+    // `staged`: the steps before the last one first, so the last one starts from a checkpoint.
+    return (await this.kernel.evaluateFresh(features, { staged })).result;
   }
 
   private async checkUndoRedo(): Promise<void> {
@@ -1500,6 +1492,8 @@ export class FuzzHarness {
             entry.outcome = 'refused';
             entry.detail = `${error.code}: ${error.message}`;
             refused += 1;
+          } else if (error instanceof ApiError && error.code === 'kernelTimeout') {
+            fail('kernelTimeout', `${resolved.label.slice(0, 160)}: ${error.message}`);
           } else if (error instanceof ApiError) {
             fail('exception', `${error.code}: ${error.message}`);
           } else {
@@ -1549,7 +1543,7 @@ export class FuzzHarness {
           `#${step} ${entry.outcome} ${resolved.label.slice(0, 160)}${entry.detail ? ` — ${entry.detail.slice(0, 160)}` : ''}`,
         );
 
-        this.checkDocument();
+        await this.checkDocument();
         const evaluation = this.store.getState().evaluation;
         this.checkEvaluation(evaluation, this.activeFeatures());
         maxHeapBytes = Math.max(maxHeapBytes, evaluation.stats.heapBytes ?? 0);
@@ -1565,10 +1559,18 @@ export class FuzzHarness {
         if (changed) await this.checkSaveLoad();
         this.checkAsyncErrors();
       } catch (error) {
-        const invariant = error instanceof InvariantError ? error.invariant : 'exception';
-        const message =
+        // A kernel job that ran out of time (a fuzzed write: ApiError `kernelTimeout`; a cold
+        // evaluation: KernelTimeoutError) is its own finding class (F13), not an exception.
+        const timeout = !(error instanceof InvariantError) && isKernelTimeout(error);
+        const invariant =
           error instanceof InvariantError
-            ? error.message
+            ? error.invariant
+            : timeout
+              ? 'kernelTimeout'
+              : 'exception';
+        const message =
+          error instanceof InvariantError || timeout
+            ? (error as Error).message
             : `harness: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`;
         entry.outcome = 'failed';
         entry.detail = `${invariant}: ${message}`;

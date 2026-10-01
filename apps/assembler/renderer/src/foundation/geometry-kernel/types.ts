@@ -287,4 +287,10 @@ export type EvaluationOutcome =
   | { kind: 'done'; revision: number; result: EvaluationResult }
   | { kind: 'superseded'; revision: number }
   | { kind: 'cancelled'; revision: number }
-  | { kind: 'failed'; revision: number; message: string };
+  | {
+      kind: 'failed';
+      revision: number;
+      message: string;
+      /** `kernelTimeout`: the job exceeded the adapter's time budget and was stopped (`timeout.ts`). */
+      code?: 'kernelTimeout';
+    };

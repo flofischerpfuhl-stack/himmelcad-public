@@ -14,6 +14,12 @@
  * - Memory: once the worker's wasm heap passes `RECYCLE_HEAP_BYTES` the
  *   worker is restarted the next time the queue is idle, then warmed up with
  *   the last document (OCCT leaks a little per operation; see `adapter.ts`).
+ * - Time budget (`jobTimeoutMs`, off by default; the headless CLI sets it):
+ *   an evaluation that reports no progress for the budget, or an export,
+ *   distance or query job that does not answer within it, fails with
+ *   `KernelTimeoutError` (`timeout.ts`, agent API `kernelTimeout`); the
+ *   worker is terminated and restarted and an evaluation that was waiting is
+ *   sent again. OCCT calls that never return cannot hang the caller.
  */
 import type { Feature } from '../document/document.js';
 import {
@@ -36,6 +42,7 @@ import type {
 import type { ExportMeshBody, MeshExportOptions } from './meshExport.js';
 import type { IgesExportOptions } from './igesExchange.js';
 import type { StepExportOptions } from './stepExport.js';
+import { KernelTimeoutError } from './timeout.js';
 
 interface Pending {
   jobId: number;
@@ -82,14 +89,128 @@ export class WorkerKernelAdapter extends QueuedKernelAdapter {
   /** Heap right after a recycle's warm-up: what the document itself needs. */
   private baselineHeap = 0;
   private readonly recycleHeapBytes: number;
+  /** Budget of one job, ms (`undefined`: none). */
+  private readonly jobTimeoutMs: number | undefined;
+  private readonly budgets = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly queryPending = new Map<
+    number,
+    { resolve: (value: unknown) => void; reject: (error: Error) => void }
+  >();
 
   constructor(
     private readonly createWorker: () => Worker,
-    options: { recycleHeapBytes?: number } = {},
+    options: { recycleHeapBytes?: number; jobTimeoutMs?: number } = {},
   ) {
     super();
     this.recycleHeapBytes = options.recycleHeapBytes ?? RECYCLE_HEAP_BYTES;
+    this.jobTimeoutMs = options.jobTimeoutMs;
     this.start();
+  }
+
+  // ---- time budget ----------------------------------------------------------------
+
+  /** Starts (or restarts) the budget of job `key`; `what` names it in the timeout message. */
+  private arm(key: string, what: string): void {
+    const budget = this.jobTimeoutMs;
+    if (budget === undefined) return;
+    this.disarm(key);
+    this.budgets.set(
+      key,
+      setTimeout(() => {
+        this.budgets.delete(key);
+        this.timeOut(key, new KernelTimeoutError(what, budget));
+      }, budget),
+    );
+  }
+
+  private disarm(key: string): void {
+    const timer = this.budgets.get(key);
+    if (timer === undefined) return;
+    clearTimeout(timer);
+    this.budgets.delete(key);
+  }
+
+  private disarmAll(): void {
+    for (const timer of this.budgets.values()) clearTimeout(timer);
+    this.budgets.clear();
+  }
+
+  /**
+   * Job `key` ran out of time: it fails with `error`, the worker (stuck in
+   * OCCT) is terminated and restarted, the other jobs it held fail, and an
+   * evaluation that was waiting is sent again to the fresh worker.
+   */
+  private timeOut(key: string, error: KernelTimeoutError): void {
+    this.disarmAll();
+    this.worker?.terminate();
+    this.worker = null;
+    const jobId = Number(key.slice(1));
+    if (key.startsWith('e') && this.pending?.jobId === jobId) {
+      this.pending.reject(error);
+      this.pending = null;
+    } else {
+      for (const table of [
+        this.exportPending,
+        this.meshPending,
+        this.measurePending,
+        this.queryPending,
+      ]) {
+        const job = table.get(jobId);
+        if (!job) continue;
+        table.delete(jobId);
+        job.reject(error);
+      }
+    }
+    const lost = 'The CAD kernel was restarted after another computation ran out of time; retry.';
+    this.failExports(lost);
+    this.rejectMeasurements(lost);
+    if (this.disposed) return;
+    // An evaluation that was waiting behind the stuck job is resent once the worker is ready.
+    this.restartNotice = `The CAD kernel stopped a computation that ran longer than ${Math.round(error.budgetMs / 1000)} s and was restarted. Your document is unchanged.`;
+    this.setStatus({
+      status: 'loading',
+      message: 'Restarting CAD kernel…',
+      progress: null,
+      loadMs: null,
+      notice: this.restartNotice,
+    });
+    this.start();
+  }
+
+  // ---- host queries -----------------------------------------------------------------
+
+  /**
+   * Runs a named query the worker's host registered (`workerHost.ts`),
+   * outside the evaluation queue, within the job budget.
+   */
+  protected query<T>(query: string, params: unknown, what: string): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const worker = this.worker;
+      if (!worker) {
+        reject(new Error('CAD kernel worker is not running'));
+        return;
+      }
+      const jobId = this.nextExportJobId++;
+      this.queryPending.set(jobId, { resolve: (value) => resolve(value as T), reject });
+      const message: WorkerRequest = { type: 'query', jobId, query, params };
+      worker.postMessage(message);
+      this.arm(`x${jobId}`, what);
+    });
+  }
+
+  /** Resolves once the kernel is ready (or rejects when it failed to load). */
+  protected whenReady(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const off = this.onStatus((status) => {
+        if (status.status === 'ready') {
+          queueMicrotask(() => off());
+          resolve();
+        } else if (status.status === 'error') {
+          queueMicrotask(() => off());
+          reject(new Error(status.message));
+        }
+      });
+    });
   }
 
   /**
@@ -111,6 +232,9 @@ export class WorkerKernelAdapter extends QueuedKernelAdapter {
   protected override onIdle(): void {
     if (!this.recycleRequested || !this.worker || this.disposed) return;
     if (this.status.status !== 'ready') return;
+    // Exports, distance and host queries bypass the queue: never recycle under them.
+    if (this.exportPending.size + this.meshPending.size + this.measurePending.size > 0) return;
+    if (this.queryPending.size > 0) return;
     this.recycleRequested = false;
     this.worker.terminate();
     this.worker = null;
@@ -160,7 +284,17 @@ export class WorkerKernelAdapter extends QueuedKernelAdapter {
       this.crash(message.message);
       return;
     }
+    if (message.type === 'queryResult' || message.type === 'queryFailed') {
+      this.disarm(`x${message.jobId}`);
+      const pending = this.queryPending.get(message.jobId);
+      if (!pending) return;
+      this.queryPending.delete(message.jobId);
+      if (message.type === 'queryResult') pending.resolve(message.value);
+      else pending.reject(new Error(message.message));
+      return;
+    }
     if (message.type === 'measureResult' || message.type === 'measureFailed') {
+      this.disarm(`x${message.jobId}`);
       const pending = this.measurePending.get(message.jobId);
       if (!pending) return;
       this.measurePending.delete(message.jobId);
@@ -169,6 +303,7 @@ export class WorkerKernelAdapter extends QueuedKernelAdapter {
       return;
     }
     if (message.type === 'exportResult' || message.type === 'exportFailed') {
+      this.disarm(`x${message.jobId}`);
       const pending = this.exportPending.get(message.jobId);
       if (!pending) return;
       this.exportPending.delete(message.jobId);
@@ -177,6 +312,7 @@ export class WorkerKernelAdapter extends QueuedKernelAdapter {
       return;
     }
     if (message.type === 'meshResult' || message.type === 'meshFailed') {
+      this.disarm(`x${message.jobId}`);
       const pending = this.meshPending.get(message.jobId);
       if (!pending) return;
       this.meshPending.delete(message.jobId);
@@ -185,7 +321,11 @@ export class WorkerKernelAdapter extends QueuedKernelAdapter {
       return;
     }
     if (message.type === 'progress') {
-      if (this.pending?.jobId === message.jobId) this.pending.context.progress(message.progress);
+      if (this.pending?.jobId === message.jobId) {
+        this.pending.context.progress(message.progress);
+        // The budget is per step: a long document that keeps progressing is not stuck.
+        this.arm(`e${message.jobId}`, 'evaluating the document');
+      }
       return;
     }
     // Every result updates the mesh table, even one nobody waits for any more:
@@ -194,6 +334,7 @@ export class WorkerKernelAdapter extends QueuedKernelAdapter {
     if (result) this.checkHeap(result.stats.heapBytes ?? 0, this.pending?.request.revision === -1);
     const pending = this.pending;
     if (!pending || pending.jobId !== message.jobId) return;
+    this.disarm(`e${message.jobId}`);
     this.pending = null;
     if (result) pending.resolve(result);
     else if (message.type === 'failed') pending.reject(new Error(message.message));
@@ -229,6 +370,7 @@ export class WorkerKernelAdapter extends QueuedKernelAdapter {
 
   /** Restarts a crashed worker (see the module comment). */
   private crash(detail: string): void {
+    this.disarmAll();
     this.worker?.terminate();
     this.worker = null;
     this.failExports(`The CAD kernel stopped while exporting: ${detail}`);
@@ -280,6 +422,7 @@ export class WorkerKernelAdapter extends QueuedKernelAdapter {
       ...(pending.request.commitCheck ? { commitCheck: [...pending.request.commitCheck] } : {}),
     };
     this.worker!.postMessage(message);
+    this.arm(`e${pending.jobId}`, 'evaluating the document');
   }
 
   override exportStep(
@@ -303,6 +446,7 @@ export class WorkerKernelAdapter extends QueuedKernelAdapter {
         ...(options ? { options } : {}),
       };
       worker.postMessage(message);
+      this.arm(`x${jobId}`, 'STEP export');
     });
   }
 
@@ -327,6 +471,7 @@ export class WorkerKernelAdapter extends QueuedKernelAdapter {
         ...(options ? { options } : {}),
       };
       worker.postMessage(message);
+      this.arm(`x${jobId}`, 'IGES export');
     });
   }
 
@@ -351,6 +496,7 @@ export class WorkerKernelAdapter extends QueuedKernelAdapter {
         angularTolerance: options.angularTolerance,
       };
       worker.postMessage(message);
+      this.arm(`x${jobId}`, 'the export tessellation');
     });
   }
 
@@ -375,6 +521,7 @@ export class WorkerKernelAdapter extends QueuedKernelAdapter {
         b,
       };
       worker.postMessage(message);
+      this.arm(`x${jobId}`, 'the distance query');
     });
   }
 
@@ -384,6 +531,8 @@ export class WorkerKernelAdapter extends QueuedKernelAdapter {
     this.exportPending.clear();
     for (const pending of this.meshPending.values()) pending.reject(new Error(message));
     this.meshPending.clear();
+    for (const pending of this.queryPending.values()) pending.reject(new Error(message));
+    this.queryPending.clear();
   }
 
   private rejectMeasurements(reason: string): void {
@@ -405,6 +554,7 @@ export class WorkerKernelAdapter extends QueuedKernelAdapter {
   }
 
   protected override abortRunning(): void {
+    this.disarmAll();
     this.pending?.reject(new Error('cancelled'));
     this.pending = null;
     this.worker?.terminate();
@@ -423,6 +573,9 @@ export class WorkerKernelAdapter extends QueuedKernelAdapter {
 
   override dispose(): void {
     super.dispose();
+    this.disarmAll();
+    this.failExports('The CAD kernel was closed.');
+    this.rejectMeasurements('The CAD kernel was closed.');
     this.worker?.terminate();
     this.worker = null;
   }

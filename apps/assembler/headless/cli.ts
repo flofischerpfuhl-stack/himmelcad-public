@@ -1,9 +1,11 @@
 /**
  * `assembler-headless` — HimmelCAD Assembler without a GUI.
  *
- * Runs the canonical command layer (`renderer/src/api/session.ts`) on the
- * same application store the desktop app uses, with the OCCT kernel
- * in-process, and speaks JSON-RPC 2.0 over stdio: one request object per
+ * Runs the canonical command layer (`interface/agent-api/session.ts`) on
+ * the same application store the desktop app uses, with the OCCT kernel in
+ * a worker thread (`threadKernel.ts`: a job that makes no progress for
+ * `HIMMELCAD_KERNEL_TIMEOUT_MS`, default 120 s, `0` = no budget, fails with
+ * `kernelTimeout` and the kernel restarts), and speaks JSON-RPC 2.0 over stdio: one request object per
  * line on stdin, one response object per line on stdout. Everything else
  * (kernel logs, diagnostics) goes to stderr, so stdout stays a clean
  * protocol stream for agents, CI and the Python SDK
@@ -37,7 +39,11 @@ import {
 } from '../renderer/src/interface/agent-api/session.js';
 import { useAssemblerStore } from '../renderer/src/foundation/commands/store.js';
 import { setSketchSolverFactory } from '../renderer/src/foundation/sketch-solver/solverProvider.js';
-import { createHeadlessKernel } from './nodeKernel.js';
+import {
+  DEFAULT_HEADLESS_KERNEL_TIMEOUT_MS,
+  kernelTimeoutFromEnv,
+} from '../renderer/src/foundation/geometry-kernel/timeout.js';
+import { createThreadKernel } from './threadKernel.js';
 import { installHeadlessFonts } from './nodeFonts.js';
 import { createHeadlessSketchSolver } from './nodeSolver.js';
 
@@ -62,7 +68,8 @@ async function serve(): Promise<void> {
   const store = useAssemblerStore;
   // Start from an empty document (the store's initial content is the UI demo part).
   store.getState().loadDocument([], { projectName: 'Untitled' });
-  const kernel = createHeadlessKernel();
+  const jobTimeoutMs = kernelTimeoutFromEnv(process.env, DEFAULT_HEADLESS_KERNEL_TIMEOUT_MS);
+  const kernel = createThreadKernel(jobTimeoutMs !== undefined ? { jobTimeoutMs } : {});
   store.getState().attachKernel(kernel);
   // Sketch writes re-solve with planeGCS in-process (loaded on first use).
   setSketchSolverFactory(createHeadlessSketchSolver);

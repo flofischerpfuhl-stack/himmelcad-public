@@ -39,6 +39,7 @@ import type { ExportMeshBody, MeshExportOptions } from './meshExport.js';
 import type { IgesExportOptions } from './igesExchange.js';
 import type { StepExportOptions } from './stepExport.js';
 import { isFatalKernelError } from './fatal.js';
+import { isKernelTimeout } from './timeout.js';
 
 export interface KernelJob {
   id: number;
@@ -324,6 +325,7 @@ export abstract class QueuedKernelAdapter implements KernelAdapter {
           kind: 'failed',
           revision: next.request.revision,
           message: error instanceof Error ? error.message : String(error),
+          ...(isKernelTimeout(error) ? { code: 'kernelTimeout' as const } : {}),
         }),
       )
       .then((outcome) => {

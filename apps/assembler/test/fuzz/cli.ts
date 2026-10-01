@@ -13,7 +13,11 @@
  *
  * Deterministic: sequence i of seed s is `generateSequence(sequenceSeed(s, i))`.
  * Exit code 1 if an invariant broke; every finding is written as a
- * reproducer JSON (minimal ops + the resolved calls) and printed.
+ * reproducer JSON (minimal ops + the resolved calls) and printed. A
+ * `kernelTimeout` finding (an OCCT call that does not return, F13, stopped by
+ * the kernel thread's time budget and answered as a structured refusal) is
+ * written and printed too but does not fail the run: it is a kernel limit the
+ * product handles, listed in `assembler/ROBUSTNESS.md`.
  */
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -133,7 +137,13 @@ async function main(): Promise<number> {
   print(
     `fuzz done: seed ${seed}, ${sequence} sequences, ${totalSteps} steps, ${totalCommitted} committed, ${totalRefused} refused, max heap ${Math.round(maxHeap / 2 ** 20)} MB, kernel loads ${harness.kernelLoads}, ${Math.round((Date.now() - start) / 1000)} s, ${findings.length} finding(s), ${totalMarginal} marginal (OCCT heap-layout, F3)`,
   );
-  return findings.length > 0 ? 1 : 0;
+  const failing = findings.filter((f) => f.invariant !== 'kernelTimeout');
+  if (failing.length < findings.length) {
+    print(
+      `${findings.length - failing.length} kernelTimeout finding(s) (OCCT does not return, F13; refused with kernelTimeout, not failing)`,
+    );
+  }
+  return failing.length > 0 ? 1 : 0;
 }
 
 main().then(

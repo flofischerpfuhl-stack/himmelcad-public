@@ -288,11 +288,15 @@ select}` expands a CadQuery-style selector server-side: `+Z`/`-Y` (facing /
 - **Structured errors.** `invalidRequest`, `methodNotFound`, `invalidParams`,
   `notFound`, `referenceNotFound`, `featureFailed`, `conflict`, `busy`,
   `sketchConflict`, `transactionState`, `permissionDenied`, `confirmationRequired`,
-  `unsupported`, `cancelled`, `internal` — each with `message`, and where
+  `unsupported`, `kernelTimeout`, `cancelled`, `internal` — each with `message`, and where
   predictable a `hint` and `details` (e.g. the 12 most similar face/edge keys
   with names for an unknown reference, the existing ids for an unknown body,
   the method family for an unknown method). JSON-RPC carries them in
-  `error.data`.
+  `error.data`. `kernelTimeout` (headless CLI): the CAD kernel made no
+  progress within `HIMMELCAD_KERNEL_TIMEOUT_MS` (default 120 s; `0` = no
+  budget) — it was stopped and restarted, nothing was committed
+  (`details.committed: false`, `details.budgetMs` when known); change the
+  parameters and retry (`ROBUSTNESS.md` F13).
 - **Units.** Millimetres, Z up; sketch `(u, v)` on `XY`/`XZ`/`YZ` are world
   axes, and a sketch on an axis-aligned face uses the parallel plane's axes.
 - **Serialisation.** A session executes requests strictly in order. In the

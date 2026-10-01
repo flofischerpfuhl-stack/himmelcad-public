@@ -27,6 +27,7 @@
     "permissionDenied",
     "confirmationRequired",
     "unsupported",
+    "kernelTimeout",
     "cancelled",
     "internal"
   ],
