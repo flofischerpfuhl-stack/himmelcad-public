@@ -186,6 +186,13 @@ window only.
   pen + Shift orbit, keypad value 12 applied. Screens `t01`–`t10*.png`
   (1180 × 820, coarse pointer).
 
+- Performance: `bench:interactive` (no code on its path changed) as an
+  interleaved A/B against 8a892c9e on the same machine, 6 runs each, while
+  other streams loaded the CPU (36–100 %): medians moved ±10–20 % in both
+  directions, including pure OCCT time; by per-row minimum one row was > 10 %
+  slower (leave the sketch, UI part 5.3 → 5.9 ms; its wall time +3.8 %).
+  Evidence: `D:\AgentWork\HimmelCAD-Assembler\shots\block8-touch\bench-interactive-ab-*.md`.
+
 ## Limits and open items
 
 - **No real hardware yet:** iPad (Safari, Apple Pencil — through the web
@@ -206,3 +213,6 @@ window only.
   left-handed use.
 - Shared `@himmelcad/ui` controls grow through the control-height tokens and
   role-based rules in `assembler.css`, not per component.
+- Why a command is disabled is still a hover tip / `title` on the left dock’s
+  mode buttons and menu rows; on touch a tap on a disabled button explains
+  nothing yet (a tap equivalent for that tip is open).
