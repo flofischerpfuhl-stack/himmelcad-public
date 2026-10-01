@@ -42,7 +42,8 @@ checked by `pnpm check:assembler-modules`):
 ## Scripts
 
 - `pnpm dev` — Vite dev server + Electron together.
-- `pnpm dev:web` — Vite only, for iterating on the renderer in a browser.
+- `pnpm dev:web` — Vite only, for iterating on the renderer in a browser (the
+  deployable browser product, a PWA, is `apps/assembler-web`; `assembler/WEB.md`).
 - `pnpm build` — renderer (Vite) + Electron main/preload (`tsc`) + headless CLI.
 - `pnpm typecheck` — renderer and main-process TypeScript projects.
 - `pnpm test` — Node test runner; kernel tests load the real OCCT wasm in
