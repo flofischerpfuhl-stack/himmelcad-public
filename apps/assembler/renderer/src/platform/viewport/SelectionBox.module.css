@@ -69,3 +69,22 @@
   padding: 0 4px;
   color: var(--hc-fg-subtle);
 }
+
+/* A touch box: the filter chips are tapped with another finger. */
+.chipButton {
+  pointer-events: auto;
+  min-height: 36px;
+  min-width: 56px;
+  justify-content: center;
+  font: inherit;
+  font-size: 13px;
+  color: inherit;
+  background: transparent;
+  border: 1px solid var(--hc-border-default);
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.chipButton.chipActive {
+  border-color: var(--hc-accent-base);
+}

@@ -140,6 +140,8 @@ export const ExpressionSuggestInput = forwardRef<HTMLInputElement, ExpressionSug
     return (
       <>
         <input
+          // The touch number keypad offers digits, operators and brackets (`NumericKeypad.tsx`).
+          data-hc-keypad="expression"
           {...inputProps}
           ref={inputRef}
           value={value}

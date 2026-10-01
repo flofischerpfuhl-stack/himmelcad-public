@@ -14,6 +14,8 @@ export interface SelectionBoxProps {
   filters: readonly { label: string; key: string; active: boolean }[];
   /** Hint under the chips ("Tab cycles"), omitted when empty. */
   hint?: string;
+  /** The chips can be tapped (a touch box: another finger picks the filter); index into `filters`. */
+  onFilter?: (index: number) => void;
 }
 
 /**
@@ -38,12 +40,26 @@ export function SelectionBox(props: SelectionBoxProps): JSX.Element {
     >
       <div className={styles.strip}>
         <span className={styles.mode}>{props.mode === 'window' ? 'Inside' : 'Touching'}</span>
-        {props.filters.map((f) => (
-          <span key={f.key} className={`${styles.chip} ${f.active ? styles.chipActive : ''}`}>
-            {f.label}
-            <kbd className={styles.key}>{f.key}</kbd>
-          </span>
-        ))}
+        {props.filters.map((f, index) =>
+          props.onFilter ? (
+            <button
+              key={f.key}
+              type="button"
+              className={`${styles.chip} ${styles.chipButton} ${f.active ? styles.chipActive : ''}`}
+              aria-pressed={f.active}
+              // The finger holding the box keeps its pointer; this one only picks the filter.
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={() => props.onFilter?.(index)}
+            >
+              {f.label}
+            </button>
+          ) : (
+            <span key={f.key} className={`${styles.chip} ${f.active ? styles.chipActive : ''}`}>
+              {f.label}
+              <kbd className={styles.key}>{f.key}</kbd>
+            </span>
+          ),
+        )}
         {props.hint ? <span className={styles.hint}>{props.hint}</span> : null}
       </div>
     </div>
