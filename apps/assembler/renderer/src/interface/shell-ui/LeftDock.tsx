@@ -95,7 +95,7 @@ export function LeftDock({ state, onOpenSearch }: LeftDockProps): JSX.Element {
             tooltip={tip('Add')}
             triggerClassName={styles.iconButton}
             trigger={trigger(AddIcon, 'Add')}
-            emptyHint="No Add commands in Phase 0"
+            emptyHint="No Add commands"
           />
           <CommandGroupMenu
             label="Construct"

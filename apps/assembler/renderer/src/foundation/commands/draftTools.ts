@@ -90,7 +90,8 @@ interface DraftToolHandleBase<D> {
   id: string;
   label: string;
   prefix?: string;
-  unit: 'mm' | 'deg' | 'count';
+  /** `count`: whole numbers; `ratio`: a plain number without a unit (a scale factor, turns). */
+  unit: 'mm' | 'deg' | 'count' | 'ratio';
   value: number;
   /** Returns the draft with the new value (already validated/clamped). */
   apply: (draft: D, value: number) => D;

@@ -1,6 +1,6 @@
 {
   "name": "@himmelcad/occt-wasm",
-  "version": "8.0.1-hc.2",
+  "version": "8.0.1-hc.3",
   "private": true,
   "description": "HimmelCAD build of OCCT 8.0.1 as WebAssembly (opencascade.js toolchain, replicad bindings + extra classes). Build artefacts in dist/ are not committed; see README.md.",
   "license": "LGPL-2.1-only",

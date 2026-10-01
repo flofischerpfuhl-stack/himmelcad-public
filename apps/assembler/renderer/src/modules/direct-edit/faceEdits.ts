@@ -140,6 +140,24 @@ export function applyOffsetFace(
   const d = modeOffset(kit, ctx, feature, resolved[0]!);
   // Already at the target size/distance: nothing to move.
   if (mode !== 'offset' && Math.abs(d) < SAME_SIZE_MM) return;
+  offsetResolvedFaces(kit, ctx, body, resolved, d, feature.id);
+}
+
+/**
+ * Moves the resolved faces of `body` by `d` along their outward normals:
+ * OCCT's offset with re-extended neighbours on the HimmelCAD build, else
+ * (or when OCCT changes more than these faces) the slab emulation. The
+ * moved faces keep their keys. Also the normal part of Move Face.
+ */
+export function offsetResolvedFaces(
+  kit: FeatureKit,
+  ctx: ReplayContextLike,
+  body: BodyStateLike,
+  resolved: readonly ResolvedFace[],
+  d: number,
+  featureId: string,
+): void {
+  const feature = { id: featureId };
   for (const r of resolved) checkOffsetFits(kit, r, d);
   // HimmelCAD OCCT build: move the faces and re-extend their neighbours.
   const exact = offsetFacesWithHistory(

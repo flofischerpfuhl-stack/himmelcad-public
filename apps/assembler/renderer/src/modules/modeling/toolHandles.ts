@@ -6,6 +6,7 @@
  * pointer handlers and the chip overlay (`viewportTools.ts`). Values are
  * written back through {@link applyToolHandleValue}.
  */
+import { MAX_EXTRUDE_TAPER, frameForFace } from '../../foundation/document/document.js';
 import { opsAffine } from '../../foundation/geometry-kernel/features/rigid.js';
 import { WORLD_AXES, gizmoOps, isWorldAxes } from './moveGizmo.js';
 import type { Body } from '../../foundation/geometry-kernel/types.js';
@@ -131,7 +132,79 @@ function extrudeHandles(state: AssemblerState): ToolHandleSet {
       at: [base[0] + dir[0] * length, base[1] + dir[1] * length, base[2] + dir[2] * length],
     });
   }
+  const taper = taperHandle(tool, samples, base);
+  if (taper) {
+    out.angles.push(taper);
+    out.chips.push({
+      handle: 'extrudeTaper',
+      label: 'Taper angle',
+      prefix: '∠',
+      unit: 'deg',
+      value: tool.taper ?? 0,
+      at: angleAt({ ...taper, radius: taper.radius * 1.35 }, (tool.taper ?? 0) + 12),
+    });
+  }
   return out;
+}
+
+/**
+ * The taper (draft) handle of a distance extrude: an arc at the wall
+ * farthest along the profile's first in-plane axis, swinging from the
+ * extrude direction (0°) inwards (positive) or outwards (negative).
+ */
+function taperHandle(
+  tool: Extract<AssemblerState['activeTool'], { kind: 'extrude' }>,
+  samples: { center: Vec3; normal: Vec3; outline: Vec3[] },
+  base: Vec3,
+): ToolHandleSet['angles'][number] | null {
+  if ((tool.extent ?? 'distance') !== 'distance' || tool.distance === 0) return null;
+  const n = samples.normal;
+  const side = frameForFace(n, [0, 0, 0]).u;
+  const pts = samples.outline;
+  if (pts.length < 2) return null;
+  // The wall point: the outline segment midpoint farthest along the in-plane axis.
+  let wall: Vec3 | null = null;
+  let best = -Infinity;
+  for (let i = 0; i < pts.length; i += 1) {
+    const a = pts[i]!;
+    const b = pts[(i + 1) % pts.length]!;
+    const m: Vec3 = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2];
+    const along = dot(sub(m, samples.center), side);
+    if (along > best) {
+      best = along;
+      wall = m;
+    }
+  }
+  if (!wall) return null;
+  const rel = sub(wall, samples.center);
+  const out = normalize(sub(rel, scale(n, dot(rel, n))));
+  const travel = scale(n, tool.distance < 0 ? -1 : 1);
+  const center: Vec3 = [base[0] + rel[0], base[1] + rel[1], base[2] + rel[2]];
+  // About `out × travel`, so a positive angle turns the extrude direction inwards (−out).
+  return {
+    handle: 'extrudeTaper',
+    center,
+    axis: cross(out, travel),
+    ref: travel,
+    radius: Math.min(20, Math.max(6, Math.abs(tool.distance) * 0.6)),
+    value: tool.taper ?? 0,
+    ring: false,
+    color: null,
+    // Draft angles are small: whole degrees (Shift: free).
+    snapDeg: 1,
+  };
+}
+
+function dot(a: Vec3, b: Vec3): number {
+  return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+}
+
+function sub(a: Vec3, b: Vec3): Vec3 {
+  return [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+}
+
+function scale(a: Vec3, k: number): Vec3 {
+  return [a[0] * k, a[1] * k, a[2] * k];
 }
 
 /** Bodies of the Move/Rotate preview: the body moved (or a moved copy added), the original as ghost. */
@@ -176,6 +249,13 @@ export function applyToolHandleValue(handle: ToolHandleKind, raw: number, snap: 
     const r = [tool.rotation.rx, tool.rotation.ry, tool.rotation.rz];
     r[i] = Math.round(raw * 1000) / 1000;
     s.setRotation(r[0]!, r[1]!, r[2]!);
+    return true;
+  }
+  if (handle === 'extrudeTaper') {
+    // Drags snap to whole degrees (Shift-free dragging is the viewport's).
+    const value = snap ? Math.round(raw) : Math.round(raw * 1000) / 1000;
+    const clamped = Math.max(-MAX_EXTRUDE_TAPER, Math.min(MAX_EXTRUDE_TAPER, value));
+    s.setExtrudeOptions({ taper: clamped === 0 ? undefined : clamped });
     return true;
   }
   if (handle === 'extrude2' || handle === 'extrudeStart') {

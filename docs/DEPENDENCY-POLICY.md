@@ -69,7 +69,7 @@ admitted LGPL components"):
 - `@salusoft89/planegcs` 1.2.0 (FreeCAD planeGCS, LGPL-2.0-or-later), a
   runtime-loaded WebAssembly module + JS chunk in the Assembler sketch-solver
   worker; admitted 2026-09-29 with an exception in `scripts/check-licenses.mjs`.
-- `@himmelcad/occt-wasm` 8.0.1-hc.2 (`vendor/occt-wasm`: the same OCCT 8.0.1
+- `@himmelcad/occt-wasm` 8.0.1-hc.3 (`vendor/occt-wasm`: the same OCCT 8.0.1
   opencascade.js build relinked with extra bindings, LGPL-2.1-only with the
   Open CASCADE exception), the same runtime-loaded module slot, the Assembler's
   default module since 2026-09-30 (`HIMMELCAD_OCCT=replicad` opts out);

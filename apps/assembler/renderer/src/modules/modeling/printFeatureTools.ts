@@ -915,7 +915,7 @@ export type PrintHandle =
       id: string;
       label: string;
       prefix?: string;
-      unit: 'mm' | 'deg' | 'count';
+      unit: 'mm' | 'deg' | 'count' | 'ratio';
       value: number;
       at: Vec3;
       apply: (draft: PrintDraft, value: number) => PrintDraft;

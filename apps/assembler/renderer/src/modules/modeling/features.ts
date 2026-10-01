@@ -35,17 +35,36 @@ import {
 export type { AxisRef, PathRef, PlaneRef, ProfileRef, WorldAxis };
 export { extraBodyId, worldAxisVector } from '../../foundation/document/document.js';
 
+/**
+ * Helical revolve (Shapr3D's revolve "elevation"): while turning about the
+ * axis the profile climbs `pitch` mm along it per turn, for `turns` turns —
+ * springs, coils and thread ridges. Right-handed about the axis direction
+ * unless `leftHanded`; a negative pitch climbs against the axis direction.
+ */
+export interface RevolveHelix {
+  /** Rise per full turn, mm; its magnitude must exceed the profile's extent along the axis. */
+  pitch: Millimeters;
+  /** Number of turns, (0, MAX_HELIX_TURNS]; fractions allowed. */
+  turns: number;
+  leftHanded?: boolean;
+}
+
 /** Revolves a profile about an axis; New/Join/Cut like Extrude. */
 export interface RevolveFeature extends FeatureBase {
   kind: 'revolve';
   profile: ProfileRef;
   axis: AxisRef;
-  /** Degrees, (0, 360]; 360 is a full revolution. Negative turns the other way. */
+  /** Degrees, (0, 360]; 360 is a full revolution. Negative turns the other way. Ignored with `helix`. */
   angle: number;
+  /** Helical revolve instead of a plain one (optional, additive). */
+  helix?: RevolveHelix;
   operation: ExtrudeOperation;
   targetBodyId?: string;
   resultBodyName?: string;
 }
+
+/** Most turns of a helical revolve (bounds evaluation cost). */
+export const MAX_HELIX_TURNS = 200;
 
 /** Sweeps a profile along a path; New/Join/Cut like Extrude. */
 export interface SweepFeature extends FeatureBase {
@@ -102,14 +121,32 @@ export function parseMirroredSketchId(id: string): { mirrorId: string; index: nu
 }
 
 export type PatternDefinition =
-  | { kind: 'linear'; direction: AxisRef; count: number; spacing: Millimeters }
+  | {
+      kind: 'linear';
+      direction: AxisRef;
+      count: number;
+      /** Distance between neighbours, or with `spacingMode: 'total'` from the first to the last. */
+      spacing: Millimeters;
+      spacingMode?: 'spacing' | 'total';
+      /** A second direction (a grid of `count × second.count`), Shapr3D's Pattern 3D. */
+      second?: { direction: AxisRef; count: number; spacing: Millimeters };
+    }
   | {
       kind: 'circular';
       axis: AxisRef;
       count: number;
-      /** Total angle in degrees; 360 spreads `count` instances evenly around. */
+      /**
+       * Total angle in degrees (360 spreads `count` instances evenly around),
+       * or with `angleMode: 'spacing'` the angle between neighbours.
+       */
       angle: number;
+      angleMode?: 'total' | 'spacing';
+      /** Copies keep their orientation (moved along the circle, not turned). */
+      uniform?: boolean;
     };
+
+/** Most instances of a two-direction pattern (bounds evaluation cost). */
+export const MAX_PATTERN_INSTANCES = 1000;
 
 /** Copies bodies in a linear or circular pattern (independent copies, like Shapr3D's Pattern 3D). */
 export interface PatternFeature extends FeatureBase {
@@ -118,11 +155,20 @@ export interface PatternFeature extends FeatureBase {
   pattern: PatternDefinition;
 }
 
-/** Splits a body by a plane into two bodies (the part on the plane's positive side becomes new). */
+/**
+ * Splits a body into two bodies: by a plane (the part on the plane's
+ * positive side becomes new), or with `profile` by a closed sketch profile
+ * (or planar face) projected through the body along its normal (the part
+ * inside the profile becomes new). With `keepOriginal` the body stays as it
+ * was and both parts are new bodies (Shapr3D's Keep Originals).
+ */
 export interface SplitFeature extends FeatureBase {
   kind: 'split';
   bodyId: string;
   plane: PlaneRef;
+  /** Split with this profile instead of `plane`. */
+  profile?: ProfileRef;
+  keepOriginal?: boolean;
 }
 
 /**
@@ -173,6 +219,105 @@ export interface AlignFeature extends FeatureBase {
   offset: Millimeters;
 }
 
+/**
+ * Scales bodies about `center` (Shapr3D Scale; print fit tests): uniformly
+ * by `factor`, or with `factors` independently along world X, Y and Z
+ * (non-uniform; needs the HimmelCAD OCCT build, whose surfaces become NURBS
+ * where a similarity cannot carry them). With `copy` the scaled bodies are
+ * new bodies and the originals stay.
+ */
+export interface ScaleFeature extends FeatureBase {
+  kind: 'scale';
+  bodyIds: string[];
+  /** Uniform factor (> 0); ignored when `factors` is set. */
+  factor: number;
+  /** Source formula of `factor` (document parameters), when set. */
+  factorExpression?: string | undefined;
+  /** Per-axis factors along world X, Y, Z (each > 0). */
+  factors?: Vec3;
+  /** The fixed point of the scaling (world). */
+  center: Vec3;
+  copy: boolean;
+}
+
+/** Smallest and largest scale factor (bounds tolerance trouble and evaluation cost). */
+export const MIN_SCALE_FACTOR = 0.001;
+export const MAX_SCALE_FACTOR = 1000;
+
+/**
+ * Point-to-point translation of bodies (Shapr3D Translate): every body
+ * moves by `to − from` (the picked start and end points, world); with
+ * `copy` the moved bodies are new bodies and the originals stay.
+ */
+export interface TranslateFeature extends FeatureBase {
+  kind: 'translate';
+  bodyIds: string[];
+  from: Vec3;
+  to: Vec3;
+  copy: boolean;
+}
+
+export type PrimitiveShape = 'box' | 'cylinder' | 'sphere' | 'cone' | 'torus';
+
+export const PRIMITIVE_SHAPES: readonly PrimitiveShape[] = [
+  'box',
+  'cylinder',
+  'sphere',
+  'cone',
+  'torus',
+];
+
+/**
+ * A primitive solid standing on a plane (the "Add" menu): its base is
+ * centred at `center` (a world point, projected onto the plane) and it
+ * grows along the plane's normal (`flip`: to the other side). Sizes per shape — box: `width` (along
+ * the plane's u), `depth` (v), `height`; cylinder: `radius`, `height`;
+ * cone: `radius` (base), `radius2` (top, 0 = pointed), `height`; sphere:
+ * `radius` (resting on the plane); torus: `radius` (ring), `radius2`
+ * (tube), lying on the plane. New/Join/Cut like Extrude.
+ */
+export interface PrimitiveFeature extends FeatureBase {
+  kind: 'primitive';
+  shape: PrimitiveShape;
+  plane: PlaneRef;
+  center: Vec3;
+  width?: Millimeters;
+  depth?: Millimeters;
+  height?: Millimeters;
+  radius?: Millimeters;
+  radius2?: Millimeters;
+  /** Grows to the other side of the plane (into the face: a pocket or a hole when cutting). */
+  flip?: boolean;
+  /** Source formulas of the sizes (document parameters), when set. */
+  widthExpression?: string | undefined;
+  depthExpression?: string | undefined;
+  heightExpression?: string | undefined;
+  radiusExpression?: string | undefined;
+  operation: ExtrudeOperation;
+  targetBodyId?: string;
+  resultBodyName?: string;
+}
+
+/** The size fields each primitive shape needs (all > 0, except a cone's `radius2` ≥ 0). */
+export const PRIMITIVE_SIZE_FIELDS: Record<
+  PrimitiveShape,
+  readonly ('width' | 'depth' | 'height' | 'radius' | 'radius2')[]
+> = {
+  box: ['width', 'depth', 'height'],
+  cylinder: ['radius', 'height'],
+  sphere: ['radius'],
+  cone: ['radius', 'radius2', 'height'],
+  torus: ['radius', 'radius2'],
+};
+
+export const PRIMITIVE_LABEL: Record<PrimitiveShape, string> = {
+  box: 'Box',
+  cylinder: 'Cylinder',
+  sphere: 'Sphere',
+  cone: 'Cone',
+  torus: 'Torus',
+};
+
 export type ModelingFeature =
   | RevolveFeature
   | SweepFeature
@@ -183,6 +328,9 @@ export type ModelingFeature =
   | TransformFeature
   | RotateAxisFeature
   | AlignFeature
+  | ScaleFeature
+  | TranslateFeature
+  | PrimitiveFeature
   // Hole, Emboss, Draft, Rib, Thicken (`printFeatures.ts`).
   | PrintFeature;
 
@@ -197,6 +345,9 @@ declare module '../../foundation/document/featureKinds.js' {
     transform: TransformFeature;
     rotateAxis: RotateAxisFeature;
     align: AlignFeature;
+    scale: ScaleFeature;
+    translate: TranslateFeature;
+    primitive: PrimitiveFeature;
   }
 }
 
@@ -211,6 +362,9 @@ export const MODELING_FEATURE_KINDS: readonly ModelingFeature['kind'][] = [
   'rotateAxis',
   'align',
   ...PRINT_FEATURE_KINDS,
+  'scale',
+  'translate',
+  'primitive',
 ];
 
 export function isModelingFeature(feature: Feature): feature is ModelingFeature {
@@ -229,6 +383,9 @@ export const MODELING_FEATURE_LABEL: Record<ModelingFeature['kind'], string> = {
   rotateAxis: 'Rotate',
   align: 'Align',
   ...PRINT_FEATURE_LABEL,
+  scale: 'Scale',
+  translate: 'Translate',
+  primitive: 'Primitive',
 };
 
 /** Largest pattern instance count (bounds evaluation cost). */
@@ -251,6 +408,9 @@ export function sketchIdsUsedBy(feature: ModelingFeature): string[] {
       break;
     case 'loft':
       feature.profiles.forEach(addProfile);
+      break;
+    case 'split':
+      if (feature.profile) addProfile(feature.profile);
       break;
     case 'hole':
     case 'emboss':

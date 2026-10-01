@@ -28,6 +28,39 @@ export function DirectEditParams({
       </div>
     );
   }
+  if (feature.kind === 'moveEdge' || feature.kind === 'moveFace') {
+    const vector = feature.vector;
+    return (
+      <div className={styles.params}>
+        {(['X', 'Y', 'Z'] as const).map((axis, i) => (
+          <ExpressionField
+            key={axis}
+            label={`Move ${axis}`}
+            value={vector[i]!}
+            unit="mm"
+            onCommit={(v) => edit({ vector: vector.map((c, j) => (j === i ? v : c)) })}
+          />
+        ))}
+        {feature.kind === 'moveFace' && feature.rotation ? (
+          <ExpressionField
+            label="Turn"
+            value={feature.rotation.angle}
+            unit="°"
+            onCommit={(v) =>
+              edit({
+                rotation: v === 0 ? undefined : { ...feature.rotation!, angle: v },
+              })
+            }
+          />
+        ) : null}
+        <span className={styles.paramNote}>
+          {feature.kind === 'moveEdge'
+            ? 'The two faces at the edge tilt about their far sides'
+            : 'Along the normal: offset; sideways: the neighbours tilt'}
+        </span>
+      </div>
+    );
+  }
   // Radius/Diameter/Total are target values, re-measured on every evaluation (DIR-01);
   // the mode is chosen in the Offset Face tool, where the face geometry is known.
   const mode = feature.mode ?? 'offset';

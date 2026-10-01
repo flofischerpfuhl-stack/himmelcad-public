@@ -26,7 +26,7 @@ export interface ToolChip {
   handle: ToolHandleKind;
   label: string;
   prefix?: string;
-  unit: 'mm' | 'deg' | 'count';
+  unit: 'mm' | 'deg' | 'count' | 'ratio';
   value: number;
   /** World anchor of the chip. */
   at: Vec3;
@@ -54,7 +54,7 @@ export interface ToolLabel {
   key: string;
   label: string;
   prefix?: string;
-  unit?: 'mm' | 'deg' | 'count';
+  unit?: 'mm' | 'deg' | 'count' | 'ratio';
   value: number;
   at: Vec3;
   /** Shown in the error style (the current parameters fail). */

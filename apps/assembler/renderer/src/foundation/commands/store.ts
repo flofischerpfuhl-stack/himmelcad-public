@@ -63,7 +63,7 @@ import {
 import { createDemoDocument } from './demoDocument.js';
 import { featureKindLabel } from '../document/featureKinds.js';
 
-import { draftToFeature, type FeatureDraft } from './featureDrafts.js';
+import { draftNamePrefix, draftToFeature, type FeatureDraft } from './featureDrafts.js';
 import { readyToFinish, startSession, type PickSessionState } from './pickSession.js';
 
 import { defaultSectionOffset, visibleBounds } from './viewBounds.js';
@@ -1395,7 +1395,10 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
         const kind = tool.draft.kind;
         const feature = draftToFeature(tool.draft, {
           id: createFeatureId(kind),
-          name: nextFeatureName(featureKindLabel(kind), state.features),
+          name: nextFeatureName(
+            draftNamePrefix(tool.draft) ?? featureKindLabel(kind),
+            state.features,
+          ),
         });
         if (!feature) return; // references still missing: the tool stays open
         commitChecked(feature, [{ kind: 'feature', featureId: feature.id }]);

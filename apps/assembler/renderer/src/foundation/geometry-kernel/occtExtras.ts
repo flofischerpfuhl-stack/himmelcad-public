@@ -69,6 +69,31 @@ export interface OcctExtras {
   };
 }
 
+/**
+ * `BRepBuilderAPI_GTransform` (HimmelCAD build 8.0.1-hc.3+): a general
+ * affine map of a shape — non-uniform scaling. Detected on its own, so a
+ * module built before hc.3 still offers the other extras.
+ */
+export interface BRepBuilderAPIGTransform extends Deletable {
+  IsDone(): boolean;
+  Shape(): RawShape;
+  Modified(shape: RawShape): ShapeList;
+}
+
+export type GTransformClass = new (
+  shape: RawShape,
+  transformation: Deletable,
+  copy: boolean,
+) => BRepBuilderAPIGTransform;
+
+/** The `BRepBuilderAPI_GTransform` class of `oc`, or `null` when the build lacks it. */
+export function gTransformClass(oc: unknown): GTransformClass | null {
+  const o = oc as { BRepBuilderAPI_GTransform?: unknown };
+  return typeof o.BRepBuilderAPI_GTransform === 'function'
+    ? (o.BRepBuilderAPI_GTransform as GTransformClass)
+    : null;
+}
+
 /** `BRepOffset_Mode::BRepOffset_Skin`. */
 export const OFFSET_MODE_SKIN = 0;
 /** `GeomAbs_JoinType` values. */

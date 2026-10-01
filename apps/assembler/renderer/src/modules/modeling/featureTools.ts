@@ -59,7 +59,12 @@ import type {
   HandleBase,
   ToolPick,
 } from '../../foundation/commands/featureDrafts.js';
-import { MAX_PATTERN_COUNT, type PatternDefinition } from './features.js';
+import {
+  MAX_HELIX_TURNS,
+  MAX_PATTERN_COUNT,
+  type PatternDefinition,
+  type RevolveHelix,
+} from './features.js';
 import { findSketchContact, pointInsideBody } from './modeling.js';
 import type { SelectionItem } from '../../foundation/commands/store.js';
 
@@ -77,6 +82,8 @@ export type RevolveDraft = {
   profile: ProfileRef;
   axis: AxisRef | null;
   angle: number;
+  /** Helical revolve (springs, threads): pitch per turn, turns, hand. */
+  helix?: RevolveHelix;
 } & ProfileOperation;
 
 export type SweepDraft = { kind: 'sweep'; profile: ProfileRef; path: PathRef } & ProfileOperation;
@@ -108,6 +115,9 @@ export interface SplitDraft {
   kind: 'split';
   bodyId: string;
   plane: PlaneRef;
+  /** Split with a sketch profile (projected through the body) instead of the plane. */
+  profile?: ProfileRef;
+  keepOriginal?: boolean;
 }
 
 /** Rotate Around Axis: bodies, an axis (edge / sketch line / world), degrees, copy. */
@@ -117,6 +127,8 @@ export interface RotateAxisDraft {
   axis: AxisRef;
   angle: number;
   copy: boolean;
+  /** Input step (Next): 0 bodies, 1 axis; clicks go to it. Absent: by what is clicked. */
+  step?: 0 | 1;
 }
 
 export interface AlignDraft {
@@ -127,6 +139,8 @@ export interface AlignDraft {
   flip: boolean;
   center: boolean;
   offset: number;
+  /** Input step (Next): 0 the moving face, 1 the target face. Absent: by body. */
+  step?: 0 | 1;
 }
 
 /** The drafts of this file (the print drafts are in `printFeatureTools.ts`). */
@@ -612,6 +626,11 @@ export function createModelingDraft(
       const face = selectedFaceRefs(ctx).find(isPlanar);
       if (face)
         return { ok: true, draft: { kind: 'split', bodyId, plane: { kind: 'face', face } } };
+      // A selected sketch profile is the split element (projected through the body).
+      const sketchItem = selected(ctx.selection, 'sketchProfile')[0];
+      const profile = sketchItem
+        ? sketchProfileRef(sketchItem.featureId, sketchItem.regionKey)
+        : undefined;
       const body = bodyOf(ctx.evaluation, bodyId);
       if (!body) return { ok: false, reason: 'The body is not evaluated yet.' };
       const size = sub(body.max, body.min);
@@ -629,6 +648,7 @@ export function createModelingDraft(
             plane: PLANE_OF_AXIS[largest],
             offset: round((body.min[i]! + body.max[i]!) / 2),
           },
+          ...(profile ? { profile } : {}),
         },
       };
     }
@@ -657,7 +677,15 @@ export function createModelingDraft(
       }
       return {
         ok: true,
-        draft: { kind: 'rotateAxis', bodyIds, axis, angle: DEFAULT_ROTATE_ANGLE, copy: false },
+        // Started with its bodies: the axis step is current (Next/Back via the step badges).
+        draft: {
+          kind: 'rotateAxis',
+          bodyIds,
+          axis,
+          angle: DEFAULT_ROTATE_ANGLE,
+          copy: false,
+          step: 1,
+        },
       };
     }
     case 'align': {
@@ -683,6 +711,7 @@ export function createModelingDraft(
           flip: false,
           center: true,
           offset: 0,
+          step: 1,
         },
       };
     }
@@ -823,21 +852,40 @@ export function acceptModelingPick(
       if (pickedBody)
         return { ...draft, bodyIds: toggle(draft.bodyIds, pickedBody, (a, b) => a === b) };
       return draft;
-    case 'split':
-      if (faceRef && isPlanar(faceRef)) return { ...draft, plane: { kind: 'face', face: faceRef } };
+    case 'split': {
+      if (pick.kind === 'sketchProfile') {
+        return { ...draft, profile: sketchProfileRef(pick.featureId, pick.regionKey) };
+      }
+      if (faceRef && isPlanar(faceRef)) {
+        const { profile: _profile, ...rest } = draft;
+        return { ...rest, plane: { kind: 'face', face: faceRef } };
+      }
       return draft;
+    }
     case 'rotateAxis':
+      // Bodies step: any click on a body (face, edge) adds or removes that body.
+      if (draft.step === 0) {
+        return pickedBody
+          ? { ...draft, bodyIds: toggle(draft.bodyIds, pickedBody, (a, b) => a === b) }
+          : draft;
+      }
       // An edge or sketch line is the axis; a body (or its face) is added or removed.
       if (edgeRef && (edgeRef.signature.curve === 'line' || edgeRef.signature.curve === 'circle')) {
         return { ...draft, axis: { kind: 'edge', edge: edgeRef } };
       }
       if (lineAxis) return { ...draft, axis: lineAxis };
-      if (pickedBody && pick.kind !== 'edge') {
+      if (pickedBody && pick.kind !== 'edge' && draft.step === undefined) {
         return { ...draft, bodyIds: toggle(draft.bodyIds, pickedBody, (a, b) => a === b) };
       }
       return draft;
     case 'align':
       if (faceRef && isPlanar(faceRef)) {
+        // With steps: the moving face (any body but the target's), then the target face.
+        if (draft.step === 0) {
+          if (faceRef.bodyId === draft.target.bodyId) return draft;
+          return { ...draft, face: faceRef, bodyId: faceRef.bodyId };
+        }
+        if (draft.step === 1 && faceRef.bodyId === draft.bodyId) return draft;
         if (faceRef.bodyId === draft.bodyId) return { ...draft, face: faceRef };
         return { ...draft, target: faceRef };
       }
@@ -872,7 +920,7 @@ function acceptDatumPick(
     case 'revolve':
       return axis ? { ...draft, axis } : draft;
     case 'rotateAxis':
-      return axis ? { ...draft, axis } : draft;
+      return axis && draft.step !== 0 ? { ...draft, axis } : draft;
     case 'pattern':
       if (!axis) return draft;
       return draft.pattern.kind === 'linear'
@@ -941,6 +989,7 @@ export function modelingDraftToFeature(
         profile: draft.profile,
         axis: draft.axis,
         angle: draft.angle,
+        ...(draft.helix ? { helix: draft.helix } : {}),
         ...op(draft),
       };
     case 'sweep':
@@ -976,7 +1025,14 @@ export function modelingDraftToFeature(
       if (draft.bodyIds.length === 0) return null;
       return { ...common, kind: 'pattern', bodyIds: draft.bodyIds, pattern: draft.pattern };
     case 'split':
-      return { ...common, kind: 'split', bodyId: draft.bodyId, plane: draft.plane };
+      return {
+        ...common,
+        kind: 'split',
+        bodyId: draft.bodyId,
+        plane: draft.plane,
+        ...(draft.profile ? { profile: draft.profile } : {}),
+        ...(draft.keepOriginal ? { keepOriginal: true } : {}),
+      };
     case 'rotateAxis':
       if (draft.bodyIds.length === 0) return null;
       return {
@@ -1011,9 +1067,11 @@ export function modelingDraftMeta(draft: ModelingDraft): DraftMeta {
       return {
         label: 'Revolve',
         shortcut: 'V',
-        prompt: draft.axis
-          ? 'Drag the arc or type an angle. Click an edge or a sketch line to change the axis.'
-          : 'Pick the axis: a straight edge, a sketch line, or X/Y/Z.',
+        prompt: !draft.axis
+          ? 'Pick the axis: a straight edge, a sketch line, or X/Y/Z.'
+          : draft.helix
+            ? 'Helix: drag the arrow for the height or type the pitch and turns. Click an edge or a sketch line to change the axis.'
+            : 'Drag the arc or type an angle. Click an edge or a sketch line to change the axis.',
       };
     case 'sweep':
       return {
@@ -1063,7 +1121,9 @@ export function modelingDraftMeta(draft: ModelingDraft): DraftMeta {
       return {
         label: 'Split Body',
         shortcut: '',
-        prompt: 'Drag the plane or type its offset; click a planar face to split along it.',
+        prompt: draft.profile
+          ? 'Split with the sketch profile (through the body). Click a planar face to split along its plane instead.'
+          : 'Drag the plane or type its offset; click a planar face or a sketch profile to split with it.',
       };
     case 'rotateAxis':
       return {
@@ -1125,6 +1185,39 @@ export function modelingDraftBadges(draft: ModelingDraft): DraftBadge[] {
     case 'revolve':
       return [
         { ...OPERATION_BADGE, value: draft.operation },
+        {
+          ariaLabel: 'Revolve path',
+          value: draft.helix ? 'helix' : 'revolve',
+          options: [
+            { value: 'revolve', label: 'Revolve' },
+            { value: 'helix', label: 'Helix' },
+          ],
+          apply: (d, value, evaluation) => {
+            if (d.kind !== 'revolve') return d;
+            if (value !== 'helix') {
+              const { helix: _helix, ...rest } = d;
+              return rest;
+            }
+            return d.helix ? d : { ...d, helix: defaultHelix(evaluation, d) };
+          },
+        },
+        ...(draft.helix
+          ? [
+              {
+                ariaLabel: 'Helix hand',
+                value: draft.helix.leftHanded ? 'left' : 'right',
+                options: [
+                  { value: 'right', label: 'Right-hand' },
+                  { value: 'left', label: 'Left-hand' },
+                ],
+                apply: (d: FeatureDraft, value: string): FeatureDraft => {
+                  if (d.kind !== 'revolve' || !d.helix) return d;
+                  const { leftHanded: _drop, ...rest } = d.helix;
+                  return { ...d, helix: value === 'left' ? { ...rest, leftHanded: true } : rest };
+                },
+              },
+            ]
+          : []),
         {
           ariaLabel: 'Revolve axis',
           value: draft.axis?.kind === 'world' ? draft.axis.axis : draft.axis ? 'edge' : '',
@@ -1248,9 +1341,42 @@ export function modelingDraftBadges(draft: ModelingDraft): DraftBadge[] {
             };
           },
         },
+        ...patternModeBadges(draft),
       ];
     case 'split':
-      return [planeBadge(draft.plane, 'Split plane')];
+      return [
+        ...(draft.profile
+          ? [
+              {
+                ariaLabel: 'Split with',
+                value: 'profile',
+                options: [
+                  { value: 'profile', label: 'Profile' },
+                  { value: 'plane', label: 'Plane' },
+                ],
+                apply: (d: FeatureDraft, value: string): FeatureDraft => {
+                  if (d.kind !== 'split' || value === 'profile') return d;
+                  const { profile: _profile, ...rest } = d;
+                  return rest;
+                },
+              },
+            ]
+          : [planeBadge(draft.plane, 'Split plane')]),
+        {
+          ariaLabel: 'Keep original',
+          value: draft.keepOriginal ? 'keep' : 'split',
+          options: [
+            { value: 'split', label: 'Split the body' },
+            { value: 'keep', label: 'Keep original' },
+          ],
+          apply: (d: FeatureDraft, value: string): FeatureDraft => {
+            if (d.kind !== 'split') return d;
+            if (value === 'keep') return { ...d, keepOriginal: true };
+            const { keepOriginal: _keep, ...rest } = d;
+            return rest;
+          },
+        },
+      ];
     case 'rotateAxis':
       return [
         {
@@ -1309,6 +1435,116 @@ export function modelingDraftBadges(draft: ModelingDraft): DraftBadge[] {
         },
       ];
   }
+}
+
+/**
+ * Pattern options beyond type and direction (MOD-20): spacing between
+ * neighbours or total length, a second direction (a grid), and for a
+ * circular pattern total angle or angle between, rotated or uniform copies.
+ * Switching how a value is read keeps the instances where they are.
+ */
+function patternModeBadges(draft: PatternDraft): DraftBadge[] {
+  const p = draft.pattern;
+  const roundValue = (v: number) => Math.round(v * 1000) / 1000;
+  if (p.kind === 'linear') {
+    return [
+      {
+        ariaLabel: 'Pattern spacing',
+        value: p.spacingMode ?? 'spacing',
+        options: [
+          { value: 'spacing', label: 'Spacing' },
+          { value: 'total', label: 'Total' },
+        ],
+        apply: (d, value) => {
+          if (d.kind !== 'pattern' || d.pattern.kind !== 'linear') return d;
+          const q = d.pattern;
+          if ((q.spacingMode ?? 'spacing') === value) return d;
+          const toTotal = value === 'total';
+          const convert = (spacing: number, count: number) =>
+            roundValue(toTotal ? spacing * (count - 1) : spacing / Math.max(1, count - 1));
+          const { spacingMode: _drop, ...rest } = q;
+          return {
+            ...d,
+            pattern: {
+              ...rest,
+              spacing: convert(q.spacing, q.count),
+              ...(toTotal ? { spacingMode: 'total' as const } : {}),
+              ...(q.second
+                ? { second: { ...q.second, spacing: convert(q.second.spacing, q.second.count) } }
+                : {}),
+            },
+          };
+        },
+      },
+      {
+        ariaLabel: 'Pattern directions',
+        value: p.second ? 'two' : 'one',
+        options: [
+          { value: 'one', label: 'One direction' },
+          { value: 'two', label: 'Two directions' },
+        ],
+        apply: (d, value, evaluation) => {
+          if (d.kind !== 'pattern' || d.pattern.kind !== 'linear') return d;
+          const { second, ...rest } = d.pattern;
+          if (value === 'one') return { ...d, pattern: rest };
+          if (second) return d;
+          const first = axisLine(evaluation, d.pattern.direction, [])?.dir ?? [1, 0, 0];
+          // The world axis most across the first direction.
+          const axis =
+            (['X', 'Y', 'Z'] as WorldAxis[])
+              .filter((a) => Math.abs(dot(worldAxisVector(a), first)) < 1 - 1e-6)
+              .sort(
+                (a, b) =>
+                  Math.abs(dot(worldAxisVector(a), first)) -
+                  Math.abs(dot(worldAxisVector(b), first)),
+              )[0] ?? 'Y';
+          return {
+            ...d,
+            pattern: {
+              ...rest,
+              second: { direction: { kind: 'world', axis }, count: 2, spacing: rest.spacing },
+            },
+          };
+        },
+      },
+    ];
+  }
+  return [
+    {
+      ariaLabel: 'Pattern angle',
+      value: p.angleMode ?? 'total',
+      options: [
+        { value: 'total', label: 'Total angle' },
+        { value: 'spacing', label: 'Angle between' },
+      ],
+      apply: (d, value) => {
+        if (d.kind !== 'pattern' || d.pattern.kind !== 'circular') return d;
+        const q = d.pattern;
+        if ((q.angleMode ?? 'total') === value) return d;
+        const full = Math.abs(q.angle) >= 360 - 1e-9;
+        const { angleMode: _drop, ...rest } = q;
+        if (value === 'spacing') {
+          const step = full ? 360 / q.count : q.angle / Math.max(1, q.count - 1);
+          return { ...d, pattern: { ...rest, angle: roundValue(step), angleMode: 'spacing' } };
+        }
+        const total = Math.min(360, q.angle * (q.count - 1));
+        return { ...d, pattern: { ...rest, angle: roundValue(total) } };
+      },
+    },
+    {
+      ariaLabel: 'Pattern copies',
+      value: p.uniform ? 'uniform' : 'rotated',
+      options: [
+        { value: 'rotated', label: 'Rotated' },
+        { value: 'uniform', label: 'Uniform' },
+      ],
+      apply: (d, value) => {
+        if (d.kind !== 'pattern' || d.pattern.kind !== 'circular') return d;
+        const { uniform: _drop, ...rest } = d.pattern;
+        return { ...d, pattern: value === 'uniform' ? { ...rest, uniform: true } : rest };
+      },
+    },
+  ];
 }
 
 // ---- handles & chips ----------------------------------------------------------------------
@@ -1410,6 +1646,7 @@ export function modelingDraftHandles(
       const line = axisLine(evaluation, draft.axis, features);
       const samples = profileSamples(evaluation, draft.profile);
       if (!line || !samples) return [];
+      if (draft.helix) return helixHandles(draft.helix, line, samples.center);
       const k = dot(sub(samples.center, line.point), line.dir);
       const center = add(line.point, scale(line.dir, k));
       const radial = sub(samples.center, center);
@@ -1461,6 +1698,8 @@ export function modelingDraftHandles(
         draft.kind === 'mirror' ? draft.bodyIds : [draft.bodyId],
       );
       if (!plane || !centre || draft.plane.kind !== 'plane') return [];
+      // A profile split has no plane to drag.
+      if (draft.kind === 'split' && draft.profile) return [];
       const planeRef = draft.plane;
       const base = sub(centre, scale(plane.normal, dot(sub(centre, plane.point), plane.normal)));
       return [
@@ -1498,17 +1737,19 @@ export function modelingDraftHandles(
         const line = axisLine(evaluation, p.direction, features);
         if (!line) return [];
         const dir = line.dir;
-        const lastCentre = add(centre, scale(dir, p.spacing * (p.count - 1)));
-        return [
+        const total = p.spacingMode === 'total';
+        const step = total ? p.spacing / Math.max(1, p.count - 1) : p.spacing;
+        const lastCentre = add(centre, scale(dir, step * (p.count - 1)));
+        const out: DraftHandle[] = [
           {
             kind: 'linear',
             id: 'spacing',
-            label: 'Pattern spacing',
+            label: total ? 'Pattern length' : 'Pattern spacing',
             unit: 'mm',
             value: p.spacing,
             base: centre,
             dir,
-            length: Math.max(Math.abs(p.spacing), STEM_MM),
+            length: Math.max(Math.abs(step), STEM_MM),
             apply: (d, value) =>
               d.kind === 'pattern' && d.pattern.kind === 'linear'
                 ? {
@@ -1522,6 +1763,47 @@ export function modelingDraftHandles(
           },
           { ...count, kind: 'chip', at: add(lastCentre, scale(dir, 6)) },
         ];
+        const second = p.second;
+        const line2 = second ? axisLine(evaluation, second.direction, features) : null;
+        if (second && line2) {
+          const dir2 = line2.dir;
+          const step2 = total ? second.spacing / Math.max(1, second.count - 1) : second.spacing;
+          const lastRow = add(centre, scale(dir2, step2 * (second.count - 1)));
+          const setSecond = (d: FeatureDraft, patch: Partial<typeof second>): FeatureDraft =>
+            d.kind === 'pattern' && d.pattern.kind === 'linear' && d.pattern.second
+              ? { ...d, pattern: { ...d.pattern, second: { ...d.pattern.second, ...patch } } }
+              : d;
+          out.push(
+            {
+              kind: 'linear',
+              id: 'spacing2',
+              label: total ? 'Second direction length' : 'Second direction spacing',
+              unit: 'mm',
+              value: second.spacing,
+              base: centre,
+              dir: dir2,
+              length: Math.max(Math.abs(step2), STEM_MM),
+              apply: (d, value) =>
+                setSecond(d, {
+                  spacing: Math.abs(value) < MIN_FEATURE_SIZE_MM ? MIN_FEATURE_SIZE_MM : value,
+                }),
+            },
+            {
+              kind: 'chip',
+              id: 'count2',
+              label: 'Second direction count',
+              prefix: '×',
+              unit: 'count',
+              value: second.count,
+              at: add(lastRow, scale(dir2, 6)),
+              apply: (d, value) =>
+                setSecond(d, {
+                  count: Math.max(1, Math.min(MAX_PATTERN_COUNT, Math.round(value))),
+                }),
+            },
+          );
+        }
+        return out;
       }
       const line = axisLine(evaluation, p.axis, features);
       if (!line) return [];
@@ -1598,6 +1880,86 @@ export function modelingDraftHandles(
   }
 }
 
+// ---- helical revolve -----------------------------------------------------------------------
+
+/**
+ * A helix switched on in the tool: the pitch just over the profile's extent
+ * along the axis (turns cannot overlap; a coil spring's wire touches the
+ * next turn at 1 ×), rounded up to 0.5 mm, and 3 turns.
+ */
+function defaultHelix(evaluation: EvaluationResult, draft: RevolveDraft): RevolveHelix {
+  const line = axisLine(evaluation, draft.axis, []);
+  const samples = profileSamples(evaluation, draft.profile);
+  let extent = 1;
+  if (line && samples && samples.outline.length > 0) {
+    const along = samples.outline.map((p) => dot(sub(p, line.point), line.dir));
+    extent = Math.max(...along) - Math.min(...along);
+  }
+  return { pitch: Math.max(1, Math.ceil((extent * 1.5) / 0.5) * 0.5), turns: 3 };
+}
+
+/** Helix handles: the height arrow along the axis, pitch and turns chips. */
+function helixHandles(
+  helix: RevolveHelix,
+  line: { point: Vec3; dir: Vec3 },
+  centre: Vec3,
+): DraftHandle[] {
+  const up = helix.pitch < 0 ? scale(line.dir, -1) : line.dir;
+  const rise = Math.abs(helix.pitch);
+  const height = rise * helix.turns;
+  // On the axis, level with the profile: the coil grows from there.
+  const k = dot(sub(centre, line.point), line.dir);
+  const base = add(line.point, scale(line.dir, k));
+  const side = normalize(sub(centre, base));
+  const setHelix = (d: FeatureDraft, patch: Partial<RevolveHelix>): FeatureDraft =>
+    d.kind === 'revolve' && d.helix ? { ...d, helix: { ...d.helix, ...patch } } : d;
+  return [
+    {
+      kind: 'linear',
+      id: 'height',
+      label: 'Helix height',
+      unit: 'mm',
+      value: Math.round(height * 1000) / 1000,
+      base,
+      dir: up,
+      length: Math.max(height, STEM_MM),
+      apply: (d, value) =>
+        setHelix(d, {
+          turns: Math.min(
+            MAX_HELIX_TURNS,
+            Math.max(0.01, Math.round((value / rise) * 1000) / 1000),
+          ),
+        }),
+    },
+    {
+      kind: 'chip',
+      id: 'pitch',
+      label: 'Pitch',
+      prefix: 'P',
+      unit: 'mm',
+      value: helix.pitch,
+      at: add(add(base, scale(up, rise)), scale(side, -6)),
+      apply: (d, value) =>
+        Math.abs(value) < MIN_FEATURE_SIZE_MM
+          ? d
+          : setHelix(d, { pitch: Math.round(value * 1000) / 1000 }),
+    },
+    {
+      kind: 'chip',
+      id: 'turns',
+      label: 'Turns',
+      prefix: '×',
+      unit: 'ratio',
+      value: helix.turns,
+      at: add(add(base, scale(up, height)), scale(side, -6)),
+      apply: (d, value) =>
+        setHelix(d, {
+          turns: Math.min(MAX_HELIX_TURNS, Math.max(0.01, Math.round(value * 1000) / 1000)),
+        }),
+    },
+  ];
+}
+
 // ---- guides (axis lines, planes) -----------------------------------------------------------
 
 /** Reference geometry the tool shows while it runs: the revolve/pattern axis, the mirror/split plane. */
@@ -1628,7 +1990,7 @@ export function modelingDraftGuides(
   } else if (draft.kind === 'mirror' && draft.axis) {
     const centre = bodyCentre(evaluation, draft.bodyIds);
     axisSegment(draft.axis, centre, 40);
-  } else if (draft.kind === 'mirror' || draft.kind === 'split') {
+  } else if (draft.kind === 'mirror' || (draft.kind === 'split' && !draft.profile)) {
     const plane = planeOf(evaluation, draft.plane);
     const bounds = unionBounds(
       evaluation.bodies.filter((b) =>

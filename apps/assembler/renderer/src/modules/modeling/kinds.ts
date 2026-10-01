@@ -24,6 +24,8 @@ const EXPRESSION_FIELDS: Partial<Record<ModelingFeature['kind'], readonly string
   draft: ['angle'],
   rib: ['thickness'],
   thicken: ['thickness'],
+  scale: ['factor'],
+  primitive: ['width', 'depth', 'height', 'radius'],
 };
 
 /** Kinds whose result is always a boolean of solids (holes, emboss/engrave, ribs). */

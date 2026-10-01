@@ -88,11 +88,13 @@ export interface ExtrudeTool extends ToolSessionBase, KernelPreviewFields {
   distance2?: number;
   /** Start offset from the profile along its normal, mm. */
   startOffset?: number;
+  /** Taper (draft) angle of the walls, degrees; positive narrows away from the start. */
+  taper?: number;
 }
 
 /** The extrude options a tool/History card can change (`setExtrudeOptions`); `undefined` clears one. */
 export type ExtrudeToolOptions = {
-  [K in 'extent' | 'extentTarget' | 'sides' | 'distance2' | 'startOffset']?:
+  [K in 'extent' | 'extentTarget' | 'sides' | 'distance2' | 'startOffset' | 'taper']?:
     | ExtrudeTool[K]
     | undefined;
 };
@@ -235,6 +237,7 @@ function buildProvisionalExtrude(
       ? { distance2: tool.distance2 }
       : {}),
     ...(tool.startOffset ? { startOffset: tool.startOffset } : {}),
+    ...(tool.taper ? { taper: tool.taper } : {}),
   };
 }
 

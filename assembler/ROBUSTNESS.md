@@ -59,7 +59,11 @@ broke.
   angle, midplane, three points) and sketches on them, extrude extents
   (Through All, To Object face/body, two sides, start offset), and
   STEP/IGES/DXF export → import round trips; `feature.edit` also varies
-  draft angles, thicken/rib thickness and sweep/loft operations.
+  draft angles, thicken/rib thickness and sweep/loft operations. Block 8
+  (model stream) added 7 kinds (58 in all): primitives (on the grid or a
+  planar face, Join/Cut into it), Scale (uniform/per axis, copies),
+  Translate, Move Edge, Move Face, helical revolves (≤ 2 turns) and tapered
+  extrudes (one side, symmetric, two sides).
 - **State-independent ops.** An op is `{op, r: [8 numbers in 0..1]}`; the
   numbers are resolved against the document _when the op runs_ ("the n-th
   body", "a planar face of it", "a size between a and b"). An op with
@@ -324,7 +328,8 @@ full `pnpm test` run; it passed alone.
   document can show a warning after a reopen and none while editing (or the
   reverse) for marginal booleans.
 - **Interleaved OCCT users** are detected, not supported (see Native crash).
-- **Fuzzer coverage gaps** (after Block 6): no split/align/offsetFace/
+- **Fuzzer coverage gaps** (after Block 6; Block 8 added Move Face/Edge,
+  Scale, Translate, primitives, helix and taper): no split/align/offsetFace/
   deleteFace ops, no sketch spline/ellipse ops, no STL/3MF/OBJ import or
   mesh-to-solid, no concurrent UI tool sessions; the monkey test is random,
   not model-based, and does not check document invariants.

@@ -13,6 +13,7 @@ import {
   frameForFace,
   framePoint,
   MIN_FEATURE_SIZE_MM,
+  type ProfileRef,
   type SketchFrame,
   type Vec3,
   extraBodyId,
@@ -25,29 +26,43 @@ import { sampleEdge } from '../../../foundation/geometry-kernel/sketchProjection
 import {
   mirroredSketchId,
   MAX_PATTERN_COUNT,
+  MAX_PATTERN_INSTANCES,
+  MAX_SCALE_FACTOR,
+  MIN_SCALE_FACTOR,
   type AlignFeature,
   type MirrorFeature,
   type PatternFeature,
   type RotateAxisFeature,
+  type ScaleFeature,
   type SplitFeature,
   type TransformFeature,
+  type TranslateFeature,
 } from '../features.js';
 import { assignFaceKeys } from '../../../foundation/geometry-kernel/naming.js';
-import { booleanWithHistory, type HistoryResult } from '../../../foundation/geometry-kernel/occt.js';
+import {
+  booleanWithHistory,
+  type HistoryResult,
+} from '../../../foundation/geometry-kernel/occt.js';
 import type {
   BodyStateLike,
   FeatureKit,
   ReplayContextLike,
   Shape3D,
 } from '../../../foundation/geometry-kernel/features/kit.js';
-import { transformShape } from '../../../foundation/geometry-kernel/features/occRigid.js';
+import {
+  nonUniformScaleUnsupported,
+  scaleShape,
+  transformShape,
+} from '../../../foundation/geometry-kernel/features/occRigid.js';
 import {
   bodyOrFail,
+  profileSections,
   resolveAxis,
   resolvePlane,
 } from '../../../foundation/geometry-kernel/features/refs.js';
 import {
   add,
+  applyPoint,
   cross,
   dot,
   length,
@@ -269,48 +284,174 @@ export function applyPattern(
     kit.fail(`Pattern count must be a whole number from 2 to ${MAX_PATTERN_COUNT}`);
   }
   const bodies = bodiesOf(kit, ctx, feature.bodyIds);
-  let opsFor: (k: number) => RigidOp[];
+  /** The motion of instance `k` of a body whose box centre is `centre`. */
+  let opsFor: (k: number, centre: Vec3) => RigidOp[];
+  /** Second direction of a linear grid: its count and the move of its `j`-th row. */
+  let rows: { count: number; vector: (j: number) => Vec3 } | null = null;
   if (pattern.kind === 'linear') {
-    if (!(Math.abs(pattern.spacing) >= MIN_FEATURE_SIZE_MM)) {
+    const total = pattern.spacingMode === 'total';
+    const spacing = total ? pattern.spacing / (pattern.count - 1) : pattern.spacing;
+    if (!(Math.abs(spacing) >= MIN_FEATURE_SIZE_MM)) {
       kit.fail(`Pattern spacing must be at least ${MIN_FEATURE_SIZE_MM} mm`);
     }
     const { dir } = resolveAxis(kit, ctx, pattern.direction);
-    opsFor = (k) => [{ kind: 'translate', vector: scale(dir, pattern.spacing * k) }];
+    opsFor = (k) => [{ kind: 'translate', vector: scale(dir, spacing * k) }];
+    const second = pattern.second;
+    if (second) {
+      if (!Number.isInteger(second.count) || second.count < 1 || second.count > MAX_PATTERN_COUNT) {
+        kit.fail(
+          `The second direction count must be a whole number from 1 to ${MAX_PATTERN_COUNT}`,
+        );
+      }
+      if (pattern.count * second.count > MAX_PATTERN_INSTANCES) {
+        kit.fail(`A pattern makes at most ${MAX_PATTERN_INSTANCES} instances`);
+      }
+      const spacing2 =
+        total && second.count > 1 ? second.spacing / (second.count - 1) : second.spacing;
+      if (second.count > 1 && !(Math.abs(spacing2) >= MIN_FEATURE_SIZE_MM)) {
+        kit.fail(`Pattern spacing must be at least ${MIN_FEATURE_SIZE_MM} mm`);
+      }
+      const dir2 = resolveAxis(kit, ctx, second.direction).dir;
+      if (length(cross(dir, dir2)) < 1e-6) kit.fail('The two pattern directions must differ');
+      rows = { count: second.count, vector: (j) => scale(dir2, spacing2 * j) };
+    }
   } else {
     if (!(Math.abs(pattern.angle) >= 0.1 && Math.abs(pattern.angle) <= 360)) {
       kit.fail('Pattern angle must be between 0.1° and 360°');
     }
     const axis = resolveAxis(kit, ctx, pattern.axis);
     const full = Math.abs(pattern.angle) >= 360 - 1e-9;
-    const step = full ? 360 / pattern.count : pattern.angle / (pattern.count - 1);
-    opsFor = (k) => [
-      { kind: 'rotate', point: axis.point, axis: axis.dir, angle: (step * k * Math.PI) / 180 },
-    ];
+    const step =
+      pattern.angleMode === 'spacing'
+        ? pattern.angle
+        : full
+          ? 360 / pattern.count
+          : pattern.angle / (pattern.count - 1);
+    if (Math.abs(step * (pattern.count - 1)) > 360 + 1e-9) {
+      kit.fail('The instances would go round more than once; use a smaller angle or count');
+    }
+    const turn = (k: number): RigidOp => ({
+      kind: 'rotate',
+      point: axis.point,
+      axis: axis.dir,
+      angle: (step * k * Math.PI) / 180,
+    });
+    opsFor = pattern.uniform
+      ? // Uniform: the copy moves to where its box centre turns to, keeping its orientation.
+        (k, centre) => [
+          { kind: 'translate', vector: sub(applyPoint(opsAffine([turn(k)]), centre), centre) },
+        ]
+      : (k) => [turn(k)];
   }
   bodies.forEach((body, b) => {
-    for (let k = 1; k < pattern.count; k += 1) {
-      addCopy(
-        kit,
-        ctx,
-        feature.id,
-        body,
-        opsFor(k),
-        extraBodyId(feature.id, b * MAX_PATTERN_COUNT + k),
-        `${body.name} (${k + 1})`,
-      );
+    const [min, max] = kit.boundsOf(body.shape);
+    const centre = scale(add(min, max), 0.5);
+    for (let j = 0; j < (rows?.count ?? 1); j += 1) {
+      for (let k = 0; k < pattern.count; k += 1) {
+        if (j === 0 && k === 0) continue;
+        const ops = opsFor(k, centre);
+        const shift = rows && j > 0 ? rows.vector(j) : null;
+        // Row 0 keeps the one-direction ids; further rows get ids of their own.
+        const index =
+          j === 0
+            ? b * MAX_PATTERN_COUNT + k
+            : GRID_ID_BASE + (b * MAX_PATTERN_COUNT + j) * MAX_PATTERN_COUNT + k;
+        addCopy(
+          kit,
+          ctx,
+          feature.id,
+          body,
+          shift ? [...ops, { kind: 'translate', vector: shift }] : ops,
+          extraBodyId(feature.id, index),
+          j === 0 ? `${body.name} (${k + 1})` : `${body.name} (${k + 1}, ${j + 1})`,
+        );
+      }
     }
   });
 }
+
+/** First body-id index of a pattern's second-direction rows (above every one-direction id). */
+const GRID_ID_BASE = 1_000_000;
 
 // ---- Split -------------------------------------------------------------------------
 
 export function applySplit(feature: SplitFeature, ctx: ReplayContextLike, kit: FeatureKit): void {
   const body = bodyOrFail(kit, ctx, feature.bodyId);
-  const plane = resolvePlane(kit, ctx, feature.plane);
   const [min, max] = body.shape.boundingBox.bounds as [Vec3, Vec3];
   const centre: Vec3 = scale(add(min, max), 0.5);
+  const what = feature.profile ? 'profile' : 'plane';
+  let positive: HistoryResult;
+  let negative: HistoryResult;
+  try {
+    const cutter = feature.profile
+      ? profileCutter(kit, ctx, feature.profile, body, centre)
+      : halfSpace(kit, ctx, feature, body, centre);
+    positive = booleanWithHistory(kit.oc, 'common', body.shape, cutter);
+    negative = booleanWithHistory(kit.oc, 'cut', body.shape, cutter);
+  } catch (error) {
+    if (kit.isFailure(error)) throw error;
+    kit.fail(`Split failed: ${kit.describeError(error)}`);
+  }
+  try {
+    const tiny = 1e-6 * Math.max(1, R.measureVolume(body.shape));
+    if (!(R.measureVolume(positive.shape) > tiny) || !(R.measureVolume(negative.shape) > tiny)) {
+      kit.fail(`The ${what} does not cut "${body.name}"`);
+    }
+    const keyed = (part: HistoryResult) =>
+      kit.nameResult(
+        part.shape,
+        part.history,
+        [{ shape: body.shape, faces: body.faces }],
+        ctx.featureOrder,
+        () => `${feature.id}:cut`,
+      );
+    const positiveFaces = keyed(positive);
+    const negativeFaces = keyed(negative);
+    if (feature.keepOriginal) {
+      // Keep Originals: the body stays, both parts are new.
+      kit.addBody(
+        ctx,
+        {
+          id: extraBodyId(feature.id, 0),
+          name: `${body.name} (split 1)`,
+          createdBy: feature.id,
+          shape: negative.shape,
+          faces: negativeFaces,
+        },
+        body.color,
+      );
+    } else {
+      body.shape = negative.shape;
+      body.faces = negativeFaces;
+      ctx.touch(body.id);
+    }
+    kit.addBody(
+      ctx,
+      {
+        id: bodyIdFor(feature.id),
+        name: feature.keepOriginal ? `${body.name} (split 2)` : `${body.name} (split)`,
+        createdBy: feature.id,
+        shape: positive.shape,
+        faces: positiveFaces,
+      },
+      body.color,
+    );
+  } finally {
+    positive.history.delete();
+    negative.history.delete();
+  }
+}
+
+/** The half-space on the plane's positive side: a large prism standing on the plane. */
+function halfSpace(
+  kit: FeatureKit,
+  ctx: ReplayContextLike,
+  feature: SplitFeature,
+  body: BodyStateLike,
+  centre: Vec3,
+): Shape3D {
+  const plane = resolvePlane(kit, ctx, feature.plane);
   const size = Math.max(10, kit.diagonalOf(body.shape) * 2 + length(sub(centre, plane.point)) * 2);
-  // Half-space on the plane's positive side: a large prism standing on the plane.
   const frame = frameForFace(plane.normal, plane.point);
   const onPlane = sub(centre, scale(plane.normal, dot(sub(centre, plane.point), plane.normal)));
   const uv = {
@@ -323,52 +464,49 @@ export function applySplit(feature: SplitFeature, ctx: ReplayContextLike, kit: F
     [1, 1],
     [-1, 1],
   ].map(([a, b]) => framePoint(frame, uv.u + a! * size, uv.v + b! * size));
-  let positive: HistoryResult;
-  let negative: HistoryResult;
+  const base = R.makePolygon(corners);
+  const vector = new R.Vector(scale(plane.normal, size * 2));
   try {
-    const base = R.makePolygon(corners);
-    const vector = new R.Vector(scale(plane.normal, size * 2));
-    const halfSpace = R.basicFaceExtrusion(base, vector);
-    vector.delete();
-    positive = booleanWithHistory(kit.oc, 'common', body.shape, halfSpace);
-    negative = booleanWithHistory(kit.oc, 'cut', body.shape, halfSpace);
-  } catch (error) {
-    if (kit.isFailure(error)) throw error;
-    kit.fail(`Split failed: ${kit.describeError(error)}`);
-  }
-  try {
-    const tiny = 1e-6 * Math.max(1, R.measureVolume(body.shape));
-    if (!(R.measureVolume(positive.shape) > tiny) || !(R.measureVolume(negative.shape) > tiny)) {
-      kit.fail(`The plane does not cut "${body.name}"`);
-    }
-    const keyed = (part: HistoryResult) =>
-      kit.nameResult(
-        part.shape,
-        part.history,
-        [{ shape: body.shape, faces: body.faces }],
-        ctx.featureOrder,
-        () => `${feature.id}:cut`,
-      );
-    const positiveFaces = keyed(positive);
-    const negativeFaces = keyed(negative);
-    body.shape = negative.shape;
-    body.faces = negativeFaces;
-    ctx.touch(body.id);
-    kit.addBody(
-      ctx,
-      {
-        id: bodyIdFor(feature.id),
-        name: `${body.name} (split)`,
-        createdBy: feature.id,
-        shape: positive.shape,
-        faces: positiveFaces,
-      },
-      body.color,
-    );
+    return R.basicFaceExtrusion(base, vector);
   } finally {
-    positive.history.delete();
-    negative.history.delete();
+    vector.delete();
   }
+}
+
+/**
+ * The profile's prism through the whole body along the profile normal
+ * (Shapr3D: the split element is projected through the body and need not
+ * touch it); several regions are joined.
+ */
+function profileCutter(
+  kit: FeatureKit,
+  ctx: ReplayContextLike,
+  profile: ProfileRef,
+  body: BodyStateLike,
+  centre: Vec3,
+): Shape3D {
+  const sections = profileSections(kit, ctx, profile);
+  let cutter: Shape3D | null = null;
+  for (const section of sections) {
+    const n = section.normal;
+    const reach = kit.diagonalOf(body.shape) + Math.abs(dot(sub(centre, section.center), n)) + 1;
+    const start = section.face.clone().translate(scale(n, -reach));
+    const vector = new R.Vector(scale(n, reach * 2));
+    let prism: Shape3D;
+    try {
+      prism = R.basicFaceExtrusion(start, vector);
+    } finally {
+      vector.delete();
+    }
+    if (!cutter) cutter = prism;
+    else {
+      const fused = booleanWithHistory(kit.oc, 'fuse', cutter, prism);
+      fused.history.delete();
+      cutter = fused.shape;
+    }
+  }
+  if (!cutter) kit.fail('The split profile is empty');
+  return cutter;
 }
 
 // ---- Transform (Move/Rotate gizmo) ---------------------------------------------------
@@ -421,6 +559,113 @@ export function applyRotateAxis(
           },
         ];
   bodies.forEach((body, i) => {
+    if (feature.copy) {
+      addCopy(kit, ctx, feature.id, body, ops, extraBodyId(feature.id, i), `${body.name} (copy)`);
+    } else if (ops.length > 0) {
+      moveBody(kit, ctx, feature.id, body, ops);
+    }
+  });
+}
+
+// ---- Scale ----------------------------------------------------------------------------
+
+export function applyScale(feature: ScaleFeature, ctx: ReplayContextLike, kit: FeatureKit): void {
+  const factors: Vec3 = feature.factors
+    ? [...feature.factors]
+    : [feature.factor, feature.factor, feature.factor];
+  if (!factors.every((f) => Number.isFinite(f) && f >= MIN_SCALE_FACTOR && f <= MAX_SCALE_FACTOR)) {
+    kit.fail(`Scale factors must be between ${MIN_SCALE_FACTOR} and ${MAX_SCALE_FACTOR}`);
+  }
+  if (!feature.center.every(Number.isFinite)) kit.fail('The scale centre must be a point');
+  const uniform = factors[0] === factors[1] && factors[1] === factors[2];
+  if (!uniform) {
+    const reason = nonUniformScaleUnsupported(kit.oc);
+    if (reason) kit.fail(reason);
+  }
+  const bodies = bodiesOf(kit, ctx, feature.bodyIds);
+  const identity = factors.every((f) => f === 1);
+  bodies.forEach((body, i) => {
+    if (identity) {
+      if (feature.copy) {
+        addCopy(
+          kit,
+          ctx,
+          feature.id,
+          body,
+          [],
+          extraBodyId(feature.id, i),
+          `${body.name} (scaled)`,
+        );
+      }
+      return;
+    }
+    let shape: Shape3D;
+    try {
+      shape = scaleShape(kit.oc, body.shape, feature.center, factors);
+    } catch (error) {
+      if (kit.isFailure(error)) throw error;
+      kit.fail(`Scale failed: ${kit.describeError(error)}`);
+    }
+    if (!(R.measureVolume(shape) > 0)) kit.fail('Scale failed: the result is not a closed solid');
+    const faces = scaledFaces(kit, ctx, feature.id, body, shape);
+    if (feature.copy) {
+      kit.addBody(
+        ctx,
+        {
+          id: extraBodyId(feature.id, i),
+          name: `${body.name} (scaled)`,
+          createdBy: feature.id,
+          shape,
+          faces,
+        },
+        body.color,
+      );
+    } else {
+      body.shape = shape;
+      body.faces = faces;
+      ctx.touch(body.id);
+    }
+  });
+}
+
+/**
+ * Keyed faces of a scaled copy: OCCT's transform keeps the topology and
+ * its explorer order, so face `i` of the copy is face `i` of the source
+ * (it keeps the source's key, like a moved body). A different face count
+ * (never expected) falls back to surface identity.
+ */
+function scaledFaces(
+  kit: FeatureKit,
+  ctx: ReplayContextLike,
+  featureId: string,
+  body: BodyStateLike,
+  shape: Shape3D,
+): BodyStateLike['faces'] {
+  const geoms = kit.describeShape(shape);
+  if (geoms.length === body.faces.length) {
+    return geoms.map((g, i) => ({
+      ...g,
+      key: body.faces[i]!.key,
+      aliases: [...body.faces[i]!.aliases],
+    }));
+  }
+  const keys = assignFaceKeys(geoms, body.faces, ctx.featureOrder, () => `${featureId}:new`);
+  return kit.withKeys(geoms, keys);
+}
+
+// ---- Translate (point to point) -----------------------------------------------------------
+
+export function applyTranslate(
+  feature: TranslateFeature,
+  ctx: ReplayContextLike,
+  kit: FeatureKit,
+): void {
+  if (![...feature.from, ...feature.to].every(Number.isFinite)) {
+    kit.fail('Translate needs a start and an end point');
+  }
+  const vector = sub(feature.to, feature.from);
+  const ops: RigidOp[] = length(vector) > 0 ? [{ kind: 'translate', vector }] : [];
+  bodiesOf(kit, ctx, feature.bodyIds).forEach((body, i) => {
     if (feature.copy) {
       addCopy(kit, ctx, feature.id, body, ops, extraBodyId(feature.id, i), `${body.name} (copy)`);
     } else if (ops.length > 0) {

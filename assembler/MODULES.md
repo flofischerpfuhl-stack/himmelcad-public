@@ -71,7 +71,7 @@ foundation  host  <  jobs  <  document  <  sketch-solver  <  geometry-kernel  < 
 | widgets         | platform   | The building blocks module UIs share (panel and History-card styles, expression fields with name completion, anchored menus) and the **UI half of the module contract** (`moduleUi.ts`).                                                                                                                                  | `renderer/src/platform/widgets`             |
 | sketching       | domain     | **Migrated.** Sketch mode: session, drawing tools, inference, sketch commands, overlay, chrome, History card, sketch agent API.                                                                                                                                                                                           | `renderer/src/modules/sketching`            |
 | modeling        | domain     | **Migrated.** Solid features (extrude … thicken, print parts) with kinds, evaluators, tools and tool sessions, History cards, handles, API kind schemas.                                                                                                                                                                  | `renderer/src/modules/modeling`             |
-| direct-edit     | domain     | **Migrated.** Offset Face (value modes), Delete Face.                                                                                                                                                                                                                                                                     | `renderer/src/modules/direct-edit`          |
+| direct-edit     | domain     | **Migrated.** Offset Face (value modes), Delete Face, Move Edge, Move Face (any direction).                                                                                                                                                                                                                               | `renderer/src/modules/direct-edit`          |
 | construction    | domain     | **Migrated.** Construction planes and axes.                                                                                                                                                                                                                                                                               | `renderer/src/modules/construction`         |
 | parameters      | domain     | **Migrated.** Parameter edits (plan/commit), the store slice, Parameters panel, parameter API methods.                                                                                                                                                                                                                    | `renderer/src/modules/parameters`           |
 | measure         | domain     | **Migrated.** Measure mode, pinned measurements, panel, overlay, measure API.                                                                                                                                                                                                                                             | `renderer/src/modules/measure`              |
@@ -280,6 +280,30 @@ provisional, commit, emptyClickFinishes })`: the core runs the shared
   `registry.ts` `registeredCommand`, `COMMAND_ORDER.directEdit` /
   `modelingFeaturesTail` and `API_ORDER.featureKinds.{modeling,
 construction, modelingTail, directEdit}` (published orders unchanged).
+
+Added in Block 8 (model stream, branch `asm/b8-model-20261001`):
+
+- **Draft-tool hooks** (`commands/featureDrafts.ts`): `steps(draft)` — input
+  steps with a Next button and clickable step badges in the pill (Translate,
+  Rotate Around Axis, Align; clicks go to the current step), dispatched by
+  `draftSteps`; `namePrefix(draft)` — the History name of the committed step
+  when it is not the kind's label (a `primitive` step is "Box 1"), read by
+  the store's commit (`draftNamePrefix`).
+- **Handle unit `ratio`** (`draftTools.ts`, `viewport/toolViews.ts`): a plain
+  number chip without unit or rounding (scale factor, helix turns).
+- **Angle snap per handle** (`viewport/scene.ts` `AngleHandleState.snapDeg`):
+  an arc handle may snap finer than the gizmo's 15° (the extrude taper: 1°).
+- **Pick plans of module commands** (`commands/pickSession.ts`
+  `registerPickPlan`, `acceptAnyBody`, `normalizeToBody`): a module registers
+  the tool-before-selection plan of its own command (Scale) instead of
+  editing the core table.
+- `COMMAND_ORDER.primitives` (430) — the Add menu's primitives (modeling),
+  between the modelling features and Construct.
+- The OCCT build adds `BRepBuilderAPI_GTransform` (`occtExtras.ts`
+  `gTransformClass`, detected on its own; `features/occRigid.ts`
+  `scaleShape`), and `features/taper.ts` offers `draftFaces` (several faces
+  tilted in one `BRepOffsetAPI_DraftAngle`, keys kept through its history)
+  to the extrude taper and direct-edit's Move Edge / Move Face.
 
 Settled in the integration (Block 7):
 

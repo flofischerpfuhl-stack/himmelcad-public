@@ -15,6 +15,7 @@ contract, every replicad binding kept) with these OCCT classes added:
 | `IGESControl_Reader`, `IGESControl_Writer`, `IGESControl_Controller` | IGES exchange                                                                     |
 | `STEPCAFControl_Reader`                                  | STEP assemblies with names/colours (the XCAF writer side is already in replicad's build)     |
 | `HimmelcadXcaf` (facade, since 8.0.1-hc.2)               | XCAF label names (UTF-8) and child labels for the STEP assembly reader                       |
+| `BRepBuilderAPI_GTransform` (since 8.0.1-hc.3)            | Per-axis (non-uniform) Scale of bodies                                                       |
 
 `BRepOffset_MakeOffset` itself is excluded from opencascade.js binding
 generation (its `bindgen-filters.yaml` lists it under "Undefined symbols"), so
@@ -26,8 +27,9 @@ of `TDF_LabelSequence` (so no `GetComponents`/`GetFreeShapes`).
 
 Versions: `8.0.1-hc.1` (Offset/Defeaturing/IGES/XCAF reader classes),
 `8.0.1-hc.2` (+ `HimmelcadXcaf`; the `.js` loader is byte-identical, the
-`.wasm` differs). `package.json` carries the current version;
-`artifacts.sha256` its hashes.
+`.wasm` differs), `8.0.1-hc.3` (+ `BRepBuilderAPI_GTransform` for per-axis Scale,
+2026-10-01; `.js` loader again byte-identical). `package.json` carries the
+current version; `artifacts.sha256` its hashes.
 
 ## Files
 

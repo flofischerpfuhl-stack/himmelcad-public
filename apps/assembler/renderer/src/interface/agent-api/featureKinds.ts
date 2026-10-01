@@ -27,6 +27,7 @@ import {
   fillSignatures,
 } from '../../foundation/commands/api/references.js';
 import { DEFS, FEATURE_KIND_SCHEMAS } from './schema.js';
+import { PRIMITIVE_LABEL, type PrimitiveShape } from '../../modules/modeling/features.js';
 import { validateSchema, type JsonSchema } from '../../foundation/commands/api/validate.js';
 
 type Json = Record<string, unknown>;
@@ -72,7 +73,7 @@ export { paramsOf };
 function preprocess(kind: string, params: Json): Json {
   const out = { ...params };
   if (
-    (kind === 'sketch' || kind === 'mirror' || kind === 'split') &&
+    (kind === 'sketch' || kind === 'mirror' || kind === 'split' || kind === 'primitive') &&
     typeof out.plane === 'string'
   ) {
     out.plane = { kind: 'plane', plane: out.plane, offset: 0 };
@@ -253,6 +254,9 @@ function normalise(
     case 'mirror':
     case 'split':
       if (out.plane !== undefined) out.plane = planeRef(out.plane, 'params.plane');
+      if (kind === 'split' && out.profile !== undefined) {
+        out.profile = profileRef(out.profile, 'params.profile');
+      }
       if (kind === 'mirror') {
         if (out.axis !== undefined) out.axis = axisRef(out.axis, 'params.axis');
         if (Array.isArray(out.faces)) {
@@ -263,9 +267,18 @@ function normalise(
     case 'pattern': {
       const pattern = out.pattern as Json | undefined;
       if (pattern?.kind === 'linear' && pattern.direction !== undefined) {
+        const second = pattern.second as Json | undefined;
         out.pattern = {
           ...pattern,
           direction: axisRef(pattern.direction, 'params.pattern.direction'),
+          ...(isRecord(second) && second.direction !== undefined
+            ? {
+                second: {
+                  ...second,
+                  direction: axisRef(second.direction, 'params.pattern.second.direction'),
+                },
+              }
+            : {}),
         };
       } else if (pattern?.kind === 'circular' && pattern.axis !== undefined) {
         out.pattern = { ...pattern, axis: axisRef(pattern.axis, 'params.pattern.axis') };
@@ -358,6 +371,15 @@ function normalise(
         dedupeByKey(out, 'faces');
       }
       if (out.neutral !== undefined) out.neutral = planeRef(out.neutral, 'params.neutral');
+      return out;
+    case 'primitive':
+      if (out.plane !== undefined) out.plane = planeRef(out.plane, 'params.plane');
+      return out;
+    case 'moveEdge':
+      if (out.edge !== undefined) out.edge = oneEdge(out.edge, 'params.edge');
+      return out;
+    case 'moveFace':
+      if (out.face !== undefined) out.face = oneFace(out.face, 'params.face');
       return out;
     case 'thicken': {
       const source = out.source as Json | undefined;
@@ -459,6 +481,19 @@ function defaults(kind: string, params: Json): Json {
       return { flip: false };
     case 'thicken':
       return { direction: 'outside', operation: 'new' };
+    case 'split':
+      // A profile split needs no plane; the stored feature always has one.
+      return { plane: { kind: 'plane', plane: 'XY', offset: 0 } };
+    case 'scale':
+      return { factor: 1, center: [0, 0, 0], copy: false };
+    case 'translate':
+      return { copy: false };
+    case 'primitive':
+      return {
+        plane: { kind: 'plane', plane: 'XY', offset: 0 },
+        center: [0, 0, 0],
+        operation: 'new',
+      };
     default:
       return {};
   }
@@ -551,6 +586,10 @@ export function featureLabel(kind: string, params: Json): string {
   if (kind === 'boolean') {
     const op = params.operation;
     return op === 'subtract' ? 'Subtract' : op === 'intersect' ? 'Intersect' : 'Union';
+  }
+  // A primitive is named after its shape (Box 1), like the Add tools do.
+  if (kind === 'primitive' && typeof params.shape === 'string' && params.shape in PRIMITIVE_LABEL) {
+    return PRIMITIVE_LABEL[params.shape as PrimitiveShape];
   }
   return FEATURE_KIND_SCHEMAS[kind]?.label ?? kind.charAt(0).toUpperCase() + kind.slice(1);
 }

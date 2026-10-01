@@ -16,6 +16,29 @@ import {
 } from '../../foundation/commands/registry.js';
 import { isPlanarFace, makeFaceRef } from '../../foundation/commands/store.js';
 import { createDraft } from '../../foundation/commands/featureDrafts.js';
+import { featureToolCommand } from '../../foundation/commands/featureToolCommand.js';
+import {
+  acceptAnyBody,
+  normalizeToBody,
+  registerPickPlan,
+} from '../../foundation/commands/pickSession.js';
+import { PRIMITIVE_LABEL, PRIMITIVE_SHAPES, type PrimitiveShape } from './features.js';
+import { createPrimitiveDraft } from './primitiveTools.js';
+
+// Scale started without bodies asks for them (tool before selection); Translate asks itself.
+registerPickPlan('transform.scale', {
+  label: 'Scale',
+  steps: [
+    {
+      role: 'Bodies',
+      prompt: 'Click the bodies to scale, then Next.',
+      min: 1,
+      max: Infinity,
+      accept: acceptAnyBody,
+      normalize: normalizeToBody,
+    },
+  ],
+});
 
 /** Selected edges if they all belong to one body, else `null`. */
 function edgesOfOneBody(ctx: CommandContext) {
@@ -171,7 +194,34 @@ export const BOOLEAN_COMMANDS: readonly Command[] = [
   },
 ];
 
-/** Move/Rotate and Delete. */
+const PRIMITIVE_KEYWORDS: Record<PrimitiveShape, string[]> = {
+  box: ['cube', 'block', 'cuboid', 'primitive', 'add'],
+  cylinder: ['rod', 'pin', 'peg', 'disc', 'primitive', 'add'],
+  sphere: ['ball', 'primitive', 'add'],
+  cone: ['frustum', 'taper', 'primitive', 'add'],
+  torus: ['ring', 'donut', 'o-ring', 'primitive', 'add'],
+};
+
+/**
+ * The "Add" menu (UI-02): primitive solids standing on the selected planar
+ * face or construction plane, else on the XY grid (`primitiveTools.ts`).
+ */
+export const PRIMITIVE_COMMANDS: readonly Command[] = PRIMITIVE_SHAPES.map((shape) => ({
+  id: `add.${shape}`,
+  label: PRIMITIVE_LABEL[shape],
+  group: 'add' as const,
+  keywords: PRIMITIVE_KEYWORDS[shape],
+  requiresKernel: true,
+  // Global creation tools: in the Add menu and search, not in the selection's toolbar.
+  adaptive: false,
+  availability: (ctx: CommandContext) => kernelNotReady(ctx) ?? { enabled: true },
+  run: (ctx: CommandContext) => {
+    const start = createPrimitiveDraft(shape, ctx);
+    if (start.ok) ctx.beginFeatureTool(start.draft);
+  },
+}));
+
+/** Move/Rotate, Translate, Scale and Delete. */
 export const TRANSFORM_COMMANDS: readonly Command[] = [
   {
     id: 'transform.moveRotate',
@@ -206,15 +256,17 @@ export const TRANSFORM_COMMANDS: readonly Command[] = [
         return { enabled: true, priority: 70 };
       }
       if (item.kind === 'edge') {
-        return {
-          enabled: false,
-          reason:
-            'Edges cannot be moved on their own with this kernel build (it lacks face replacement); move a face next to the edge, or the body.',
-        };
+        const notReady = kernelNotReady(ctx);
+        if (notReady) return notReady;
+        // A straight edge between planar faces moves; its faces tilt (Move Edge).
+        const start = createDraft('moveEdge', ctx);
+        return start.ok
+          ? { enabled: true, priority: 60 }
+          : { enabled: false, reason: start.reason };
       }
       return {
         enabled: false,
-        reason: 'Select one body, face or sketch profile to move or rotate.',
+        reason: 'Select one body, face, edge or sketch profile to move or rotate.',
       };
     },
     run: (ctx) => {
@@ -222,7 +274,16 @@ export const TRANSFORM_COMMANDS: readonly Command[] = [
       const item = ctx.selection[0]!;
       if (item.kind === 'body') ctx.beginMove(item.bodyId);
       else if (item.kind === 'sketchProfile') ctx.beginMoveSketch(item.featureId, item.regionKey);
-      else if (item.kind === 'face') {
+      else if (item.kind === 'edge') {
+        const start = createDraft('moveEdge', ctx);
+        if (start.ok) ctx.beginFeatureTool(start.draft);
+      } else if (item.kind === 'face') {
+        // A planar face moves in any direction (Move Face); a curved one along its normal.
+        const move = createDraft('moveFace', ctx);
+        if (move.ok) {
+          ctx.beginFeatureTool(move.draft);
+          return;
+        }
         const start = createDraft('offsetFace', ctx);
         if (start.ok && start.draft.kind === 'offsetFace') {
           ctx.beginFeatureTool({ ...start.draft, distance: 0, viaMove: true });
@@ -230,6 +291,20 @@ export const TRANSFORM_COMMANDS: readonly Command[] = [
       }
     },
   },
+  featureToolCommand({
+    id: 'transform.translate',
+    label: 'Translate',
+    group: 'transform',
+    kind: 'translate',
+    keywords: ['move point to point', 'snap', 'from to', 'vertex to vertex', 'copy'],
+  }),
+  featureToolCommand({
+    id: 'transform.scale',
+    label: 'Scale',
+    group: 'transform',
+    kind: 'scale',
+    keywords: ['resize', 'size', 'factor', 'fit test', 'shrink', 'grow', 'non-uniform'],
+  }),
   {
     id: 'transform.delete',
     label: 'Delete',

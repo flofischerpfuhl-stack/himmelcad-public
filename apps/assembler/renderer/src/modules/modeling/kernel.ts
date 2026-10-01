@@ -12,9 +12,12 @@ import {
   applyMirror,
   applyPattern,
   applyRotateAxis,
+  applyScale,
   applySplit,
   applyTransform,
+  applyTranslate,
 } from './kernel/bodyOps.js';
+import { applyPrimitive } from './kernel/primitives.js';
 import { applyDraft } from './kernel/draft.js';
 import { applyEmboss } from './kernel/emboss.js';
 import { applyHole } from './kernel/holes.js';
@@ -38,5 +41,8 @@ export const modelingKernel = defineKernelModule({
     draft: applyDraft,
     rib: applyRib,
     thicken: applyThicken,
+    scale: applyScale,
+    translate: applyTranslate,
+    primitive: applyPrimitive,
   },
 });

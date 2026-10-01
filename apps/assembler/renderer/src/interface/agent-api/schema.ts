@@ -441,6 +441,20 @@ const DEFS_TAIL: Record<string, JsonSchema> = {
           direction: ref('AxisRef'),
           count: { type: 'integer', minimum: 2, maximum: 200 },
           spacing: num,
+          spacingMode: {
+            enum: ['spacing', 'total'],
+            default: 'spacing',
+            description: '`total`: `spacing` (and `second.spacing`) is first to last instance.',
+          },
+          second: obj(
+            {
+              direction: ref('AxisRef'),
+              count: { type: 'integer', minimum: 1, maximum: 200 },
+              spacing: num,
+            },
+            ['direction', 'count', 'spacing'],
+            'A second direction: a grid of count × second.count instances (at most 1000).',
+          ),
         },
         ['kind', 'direction', 'count', 'spacing'],
       ),
@@ -450,6 +464,16 @@ const DEFS_TAIL: Record<string, JsonSchema> = {
           axis: ref('AxisRef'),
           count: { type: 'integer', minimum: 2, maximum: 200 },
           angle: { type: 'number', exclusiveMinimum: 0, maximum: 360 },
+          angleMode: {
+            enum: ['total', 'spacing'],
+            default: 'total',
+            description: '`spacing`: `angle` is between neighbours instead of the total.',
+          },
+          uniform: {
+            type: 'boolean',
+            default: false,
+            description: 'Copies keep their orientation (moved along the circle, not turned).',
+          },
         },
         ['kind', 'axis', 'count', 'angle'],
         '`angle` is the total angle in degrees; 360 spreads the instances evenly.',
@@ -511,7 +535,7 @@ const CORE_FEATURE_KIND_SCHEMAS: Record<string, FeatureKindSpec> = {
   extrude: {
     label: 'Extrude',
     summary:
-      'Extrudes sketch profiles (or pushes/pulls a planar face) along the sketch normal; negative distance goes the other way. Extent Distance / Through All / To Object, one side / symmetric / two sides (`distance2`), start offset; New/Join/Cut/Intersect.',
+      'Extrudes sketch profiles (or pushes/pulls a planar face) along the sketch normal; negative distance goes the other way. Extent Distance / Through All / To Object, one side / symmetric / two sides (`distance2`), start offset, taper angle; New/Join/Cut/Intersect.',
     params: obj(
       {
         profile: ref('ExtrudeProfile'),
@@ -540,6 +564,13 @@ const CORE_FEATURE_KIND_SCHEMAS: Record<string, FeatureKindSpec> = {
         startOffset: {
           type: 'number',
           description: 'The extrude starts this far from the profile along its normal (mm).',
+        },
+        taper: {
+          type: 'number',
+          minimum: -80,
+          maximum: 80,
+          description:
+            'Taper (draft) angle of the side walls in degrees: positive narrows the solid away from the start plane (holes widen), negative widens it; both sides of a symmetric/two-sided extrude narrow away from the start. Distance extent only; sides of lines, arcs and circles.',
         },
       },
       ['profile'],

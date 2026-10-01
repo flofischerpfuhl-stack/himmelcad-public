@@ -4,7 +4,13 @@
  * the first problem throws with a path-qualified message.
  */
 import type { Feature } from '../../foundation/document/document.js';
-import { MODELING_FEATURE_KINDS, type ModelingFeature } from './features.js';
+import {
+  MODELING_FEATURE_KINDS,
+  PRIMITIVE_SHAPES,
+  PRIMITIVE_SIZE_FIELDS,
+  type ModelingFeature,
+  type PrimitiveShape,
+} from './features.js';
 import { isPrintFeatureKind, validatePrintFeature } from './printFeatureFormat.js';
 import { validateAxisRef, validatePlaneRef } from '../../foundation/document/validation.js';
 import type { FormatHelpers } from '../../foundation/document/featureKinds.js';
@@ -67,13 +73,61 @@ export function validateModelingFeature(r: Rec, path: string, h: FormatHelpers):
       h.fail(`${path}.${field}`, 'expected a non-empty array of strings');
     }
   };
+  const vec3 = (field: string) => {
+    if (!isVec3(r[field])) h.fail(`${path}.${field}`, 'expected a Vec3');
+  };
+  const optionalPositive = (field: string) => {
+    if (r[field] !== undefined && !(isNumber(r[field]) && r[field] >= 0)) {
+      h.fail(`${path}.${field}`, 'expected a number ≥ 0');
+    }
+  };
   switch (r.kind as ModelingFeature['kind']) {
     case 'revolve':
       profile(r.profile, `${path}.profile`);
       axis(r.axis, `${path}.axis`);
       num('angle');
       operation();
+      if (r.helix !== undefined) {
+        const helix = r.helix;
+        if (!isRecord(helix)) h.fail(`${path}.helix`, 'expected an object');
+        if (!isNumber(helix.pitch)) h.fail(`${path}.helix.pitch`, 'expected a number');
+        if (!isNumber(helix.turns)) h.fail(`${path}.helix.turns`, 'expected a number');
+        if (helix.leftHanded !== undefined && typeof helix.leftHanded !== 'boolean') {
+          h.fail(`${path}.helix.leftHanded`, 'expected a boolean');
+        }
+      }
       break;
+    case 'scale':
+      stringList('bodyIds');
+      num('factor');
+      optionalStr('factorExpression');
+      if (r.factors !== undefined) vec3('factors');
+      vec3('center');
+      bool('copy');
+      break;
+    case 'translate':
+      stringList('bodyIds');
+      vec3('from');
+      vec3('to');
+      bool('copy');
+      break;
+    case 'primitive': {
+      if (!(PRIMITIVE_SHAPES as readonly unknown[]).includes(r.shape)) {
+        h.fail(`${path}.shape`, `expected one of ${PRIMITIVE_SHAPES.join(', ')}`);
+      }
+      plane(r.plane, `${path}.plane`);
+      vec3('center');
+      for (const field of ['width', 'depth', 'height', 'radius', 'radius2']) {
+        optionalPositive(field);
+        optionalStr(`${field}Expression`);
+      }
+      if (r.flip !== undefined) bool('flip');
+      for (const field of PRIMITIVE_SIZE_FIELDS[r.shape as PrimitiveShape]) {
+        if (r[field] === undefined) h.fail(`${path}.${field}`, 'expected a number');
+      }
+      operation();
+      break;
+    }
     case 'sweep': {
       profile(r.profile, `${path}.profile`);
       const p = r.path;
@@ -134,9 +188,29 @@ export function validateModelingFeature(r: Rec, path: string, h: FormatHelpers):
       if (p.kind === 'linear') {
         axis(p.direction, `${path}.pattern.direction`);
         if (!isNumber(p.spacing)) h.fail(`${path}.pattern.spacing`, 'expected a number');
+        if (
+          p.spacingMode !== undefined &&
+          p.spacingMode !== 'spacing' &&
+          p.spacingMode !== 'total'
+        ) {
+          h.fail(`${path}.pattern.spacingMode`, 'expected "spacing" or "total"');
+        }
+        if (p.second !== undefined) {
+          const s = p.second;
+          if (!isRecord(s)) h.fail(`${path}.pattern.second`, 'expected an object');
+          axis(s.direction, `${path}.pattern.second.direction`);
+          if (!isNumber(s.count)) h.fail(`${path}.pattern.second.count`, 'expected a number');
+          if (!isNumber(s.spacing)) h.fail(`${path}.pattern.second.spacing`, 'expected a number');
+        }
       } else if (p.kind === 'circular') {
         axis(p.axis, `${path}.pattern.axis`);
         if (!isNumber(p.angle)) h.fail(`${path}.pattern.angle`, 'expected a number');
+        if (p.angleMode !== undefined && p.angleMode !== 'total' && p.angleMode !== 'spacing') {
+          h.fail(`${path}.pattern.angleMode`, 'expected "total" or "spacing"');
+        }
+        if (p.uniform !== undefined && typeof p.uniform !== 'boolean') {
+          h.fail(`${path}.pattern.uniform`, 'expected a boolean');
+        }
       } else {
         h.fail(`${path}.pattern.kind`, 'expected "linear" or "circular"');
       }
@@ -145,6 +219,8 @@ export function validateModelingFeature(r: Rec, path: string, h: FormatHelpers):
     case 'split':
       str('bodyId');
       plane(r.plane, `${path}.plane`);
+      if (r.profile !== undefined) profile(r.profile, `${path}.profile`);
+      if (r.keepOriginal !== undefined) bool('keepOriginal');
       break;
     case 'transform':
       str('bodyId');

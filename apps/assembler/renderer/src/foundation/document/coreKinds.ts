@@ -7,6 +7,7 @@
  */
 import type { FeatureKindDefinition, FormatHelpers } from './featureKinds.js';
 import { registerFeatureKind } from './featureKinds.js';
+import { MAX_EXTRUDE_TAPER } from './document.js';
 import { fieldCheckers, isNumber, isRecord, isString } from './validation.js';
 
 type Rec = Record<string, unknown>;
@@ -95,6 +96,12 @@ function validateExtrudeExtent(r: Rec, path: string, h: FormatHelpers): void {
   }
   if (r.startOffset !== undefined && !isNumber(r.startOffset)) {
     h.fail(`${path}.startOffset`, 'expected a number');
+  }
+  if (r.taper !== undefined && !(isNumber(r.taper) && Math.abs(r.taper) <= MAX_EXTRUDE_TAPER)) {
+    h.fail(
+      `${path}.taper`,
+      `expected a number of degrees between -${MAX_EXTRUDE_TAPER} and ${MAX_EXTRUDE_TAPER}`,
+    );
   }
 }
 

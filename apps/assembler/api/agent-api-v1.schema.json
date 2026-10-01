@@ -1148,6 +1148,30 @@
             },
             "spacing": {
               "type": "number"
+            },
+            "spacingMode": {
+              "enum": ["spacing", "total"],
+              "default": "spacing",
+              "description": "`total`: `spacing` (and `second.spacing`) is first to last instance."
+            },
+            "second": {
+              "type": "object",
+              "properties": {
+                "direction": {
+                  "$ref": "#/$defs/AxisRef"
+                },
+                "count": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 200
+                },
+                "spacing": {
+                  "type": "number"
+                }
+              },
+              "required": ["direction", "count", "spacing"],
+              "additionalProperties": false,
+              "description": "A second direction: a grid of count × second.count instances (at most 1000)."
             }
           },
           "required": ["kind", "direction", "count", "spacing"],
@@ -1171,6 +1195,16 @@
               "type": "number",
               "exclusiveMinimum": 0,
               "maximum": 360
+            },
+            "angleMode": {
+              "enum": ["total", "spacing"],
+              "default": "total",
+              "description": "`spacing`: `angle` is between neighbours instead of the total."
+            },
+            "uniform": {
+              "type": "boolean",
+              "default": false,
+              "description": "Copies keep their orientation (moved along the circle, not turned)."
             }
           },
           "required": ["kind", "axis", "count", "angle"],
@@ -1487,7 +1521,7 @@
     },
     "extrude": {
       "label": "Extrude",
-      "summary": "Extrudes sketch profiles (or pushes/pulls a planar face) along the sketch normal; negative distance goes the other way. Extent Distance / Through All / To Object, one side / symmetric / two sides (`distance2`), start offset; New/Join/Cut/Intersect.",
+      "summary": "Extrudes sketch profiles (or pushes/pulls a planar face) along the sketch normal; negative distance goes the other way. Extent Distance / Through All / To Object, one side / symmetric / two sides (`distance2`), start offset, taper angle; New/Join/Cut/Intersect.",
       "params": {
         "type": "object",
         "properties": {
@@ -1530,6 +1564,12 @@
           "startOffset": {
             "type": "number",
             "description": "The extrude starts this far from the profile along its normal (mm)."
+          },
+          "taper": {
+            "type": "number",
+            "minimum": -80,
+            "maximum": 80,
+            "description": "Taper (draft) angle of the side walls in degrees: positive narrows the solid away from the start plane (holes widen), negative widens it; both sides of a symmetric/two-sided extrude narrow away from the start. Distance extent only; sides of lines, arcs and circles."
           }
         },
         "required": ["profile"],
@@ -1830,7 +1870,29 @@
             "minimum": -360,
             "maximum": 360,
             "default": 360,
-            "description": "Degrees; 360 is a full revolution, negative turns the other way."
+            "description": "Degrees; 360 is a full revolution, negative turns the other way. Ignored with `helix`."
+          },
+          "helix": {
+            "type": "object",
+            "properties": {
+              "pitch": {
+                "type": "number",
+                "description": "Rise per turn along the axis (mm); negative climbs against the axis direction. Its magnitude must exceed the profile extent along the axis (turns may not overlap)."
+              },
+              "turns": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "maximum": 200,
+                "description": "Number of turns (fractions allowed); height = |pitch| × turns."
+              },
+              "leftHanded": {
+                "type": "boolean",
+                "default": false
+              }
+            },
+            "required": ["pitch", "turns"],
+            "additionalProperties": false,
+            "description": "Helical revolve (springs, coils, thread ridges): the profile climbs `pitch` per turn while turning about the axis."
           },
           "operation": {
             "enum": ["new", "join", "cut", "intersect"],
@@ -2164,7 +2226,7 @@
     },
     "split": {
       "label": "Split",
-      "summary": "Splits a body by a plane into two bodies (the positive side becomes new).",
+      "summary": "Splits a body into two bodies: by a plane (the positive side becomes new) or, with `profile`, by a closed sketch profile/planar face projected through the body (the inside becomes new); `keepOriginal` keeps the body and makes both parts new bodies.",
       "params": {
         "type": "object",
         "properties": {
@@ -2174,10 +2236,18 @@
           },
           "plane": {
             "$ref": "#/$defs/SketchPlane"
+          },
+          "profile": {
+            "$ref": "#/$defs/ExtrudeProfile"
+          },
+          "keepOriginal": {
+            "type": "boolean",
+            "default": false
           }
         },
-        "required": ["bodyId", "plane"],
-        "additionalProperties": false
+        "required": ["bodyId"],
+        "additionalProperties": false,
+        "description": "Either `plane` or `profile` (which then wins)."
       }
     },
     "transform": {
@@ -2283,6 +2353,136 @@
         "additionalProperties": false
       }
     },
+    "scale": {
+      "label": "Scale",
+      "summary": "Scales bodies about `center`: uniformly by `factor`, or per world axis with `factors` (non-uniform needs the HimmelCAD OCCT build); `copy` keeps the originals and adds scaled copies (print fit tests).",
+      "params": {
+        "type": "object",
+        "properties": {
+          "bodyIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
+          },
+          "factor": {
+            "type": "number",
+            "minimum": 0.001,
+            "maximum": 1000,
+            "default": 1
+          },
+          "factorExpression": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Formula over document parameters, resolved into `factor`."
+          },
+          "factors": {
+            "$ref": "#/$defs/Vec3",
+            "description": "Per-axis factors along world X, Y, Z (each > 0); overrides `factor`."
+          },
+          "center": {
+            "$ref": "#/$defs/Vec3"
+          },
+          "copy": {
+            "type": "boolean",
+            "default": false
+          }
+        },
+        "required": ["bodyIds"],
+        "additionalProperties": false,
+        "description": "The centre defaults to the world origin."
+      }
+    },
+    "translate": {
+      "label": "Translate",
+      "summary": "Moves bodies point to point: by `to − from` (picked start and end points, world); `copy` keeps the originals and adds moved copies.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "bodyIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
+          },
+          "from": {
+            "$ref": "#/$defs/Vec3"
+          },
+          "to": {
+            "$ref": "#/$defs/Vec3"
+          },
+          "copy": {
+            "type": "boolean",
+            "default": false
+          }
+        },
+        "required": ["bodyIds", "from", "to"],
+        "additionalProperties": false
+      }
+    },
+    "primitive": {
+      "label": "Primitive",
+      "summary": "Adds a box, cylinder, sphere, cone or torus standing on a plane (world plane, planar face, construction plane), its base centred at `center` (projected onto the plane); New/Join/Cut/Intersect like Extrude. Sizes: box width (plane u) / depth (v) / height; cylinder radius / height; cone radius (base) / radius2 (top, 0 = pointed) / height; sphere radius; torus radius (ring) / radius2 (tube).",
+      "params": {
+        "type": "object",
+        "properties": {
+          "shape": {
+            "enum": ["box", "cylinder", "sphere", "cone", "torus"]
+          },
+          "plane": {
+            "$ref": "#/$defs/SketchPlane"
+          },
+          "center": {
+            "$ref": "#/$defs/Vec3"
+          },
+          "width": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "depth": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "height": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "radius": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "radius2": {
+            "type": "number",
+            "minimum": 0
+          },
+          "flip": {
+            "type": "boolean",
+            "default": false,
+            "description": "Grow to the other side of the plane: into a face (a pocket or hole with operation cut)."
+          },
+          "operation": {
+            "enum": ["new", "join", "cut", "intersect"],
+            "default": "new",
+            "description": "New body, or join into / cut from / intersect with `targetBodyId` (default: the most recently changed body)."
+          },
+          "targetBodyId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "resultBodyName": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": ["shape"],
+        "additionalProperties": false,
+        "description": "The plane defaults to XY at 0, the centre to the origin; the sizes the shape needs are required."
+      }
+    },
     "offsetFace": {
       "label": "Offset Face",
       "summary": "Offsets faces of one body along their normals: positive adds material, negative removes it (e.g. enlarges a hole). With one face, `mode` \"radius\"/\"diameter\" sets a cylindrical face to that size and \"total\" sets its distance to the parallel `opposite` face; `distance` is then that target value, re-measured on every evaluation.",
@@ -2327,6 +2527,60 @@
           }
         },
         "required": ["faces"],
+        "additionalProperties": false
+      }
+    },
+    "moveEdge": {
+      "label": "Move Edge",
+      "summary": "Moves a straight edge between two planar faces by `vector` (world, mm): each face tilts about its far side (the boundary farthest from the edge) so that it passes through the moved edge; the part of the vector along the edge changes nothing. Curved faces/edges and moves past the far side of a face are refused.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "edge": {
+            "$ref": "#/$defs/EdgeInput"
+          },
+          "vector": {
+            "$ref": "#/$defs/Vec3"
+          }
+        },
+        "required": ["edge", "vector"],
+        "additionalProperties": false
+      }
+    },
+    "moveFace": {
+      "label": "Move Face",
+      "summary": "Moves a planar face by `vector` (world, mm) in any direction: the part along its normal offsets it (like Offset Face), the part in its plane slides it — every planar neighbour sharing a straight edge tilts about its far side to follow. A face with a curved edge can only move along its normal. `rotation` then turns the face about a line in its plane (the neighbours follow).",
+      "params": {
+        "type": "object",
+        "properties": {
+          "face": {
+            "$ref": "#/$defs/FaceInput"
+          },
+          "vector": {
+            "$ref": "#/$defs/Vec3"
+          },
+          "rotation": {
+            "type": "object",
+            "properties": {
+              "point": {
+                "$ref": "#/$defs/Vec3"
+              },
+              "axis": {
+                "$ref": "#/$defs/Vec3"
+              },
+              "angle": {
+                "type": "number",
+                "minimum": -80,
+                "maximum": 80,
+                "description": "Degrees, right-hand about `axis`."
+              }
+            },
+            "required": ["point", "axis", "angle"],
+            "additionalProperties": false,
+            "description": "Turns the face about the line through `point` (moved with the face) along `axis` (projected into the face plane)."
+          }
+        },
+        "required": ["face", "vector"],
         "additionalProperties": false
       }
     },

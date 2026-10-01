@@ -15,7 +15,13 @@ import {
   type ExtrudeOperation,
   type Vec3,
 } from '../../../foundation/document/document.js';
-import type { LoftFeature, RevolveFeature, SweepFeature } from '../features.js';
+import {
+  MAX_HELIX_TURNS,
+  type LoftFeature,
+  type RevolveFeature,
+  type RevolveHelix,
+  type SweepFeature,
+} from '../features.js';
 import {
   assignFaceKeys,
   type FaceGeom,
@@ -37,7 +43,14 @@ import {
   type Line3,
   type ProfileSection,
 } from '../../../foundation/geometry-kernel/features/refs.js';
-import { cross, dot, normalize, sub } from '../../../foundation/geometry-kernel/features/rigid.js';
+import {
+  add,
+  cross,
+  dot,
+  normalize,
+  scale,
+  sub,
+} from '../../../foundation/geometry-kernel/features/rigid.js';
 
 interface Tool {
   shape: Shape3D;
@@ -51,6 +64,10 @@ export function applyRevolve(
   ctx: ReplayContextLike,
   kit: FeatureKit,
 ): void {
+  if (feature.helix) {
+    applyHelicalRevolve(feature, feature.helix, ctx, kit);
+    return;
+  }
   const degrees = feature.angle;
   if (!Number.isFinite(degrees) || Math.abs(degrees) < 0.1 || Math.abs(degrees) > 360) {
     kit.fail('Revolve angle must be between 0.1° and 360°');
@@ -94,6 +111,106 @@ export function applyRevolve(
     }
   });
   finishProfileSolid(kit, ctx, feature, fuseTools(kit, ctx, feature.id, tools), 'Revolve');
+}
+
+/**
+ * Helical revolve (springs, coils, thread ridges): the profile is swept
+ * along a helix through its centre about the axis (`BRepOffsetAPI_MakePipeShell`
+ * with the axis as fixed binormal), which moves it by the exact screw
+ * motion — a turn about the axis plus `pitch` along it per turn. Turns
+ * would overlap (an invalid, self-intersecting solid) when the profile
+ * reaches further along the axis than one pitch; that is refused.
+ */
+function applyHelicalRevolve(
+  feature: RevolveFeature,
+  helix: RevolveHelix,
+  ctx: ReplayContextLike,
+  kit: FeatureKit,
+): void {
+  const { pitch, turns } = helix;
+  if (!Number.isFinite(pitch) || Math.abs(pitch) < MIN_FEATURE_SIZE_MM) {
+    kit.fail(`The helix pitch must be at least ${MIN_FEATURE_SIZE_MM} mm in magnitude`);
+  }
+  if (!Number.isFinite(turns) || turns < 0.01 || turns > MAX_HELIX_TURNS) {
+    kit.fail(`The number of turns must be between 0.01 and ${MAX_HELIX_TURNS}`);
+  }
+  const axis = resolveAxis(kit, ctx, feature.axis);
+  // A negative pitch climbs against the axis direction.
+  const up = pitch < 0 ? negate(axis.dir) : axis.dir;
+  const rise = Math.abs(pitch);
+  const sections = profileSections(kit, ctx, feature.profile);
+  const tools = sections.map((section) => {
+    checkAxisOutsideProfile(kit, axis, section);
+    const along = section.outline.map((p) => dot(sub(p, axis.point), up));
+    const extent = Math.max(...along) - Math.min(...along);
+    if (turns > 1 - 1e-9 && extent >= rise - 1e-6) {
+      kit.fail(
+        `The turns would overlap: the profile is ${fmt(extent)} mm tall along the axis, more than the pitch of ${fmt(rise)} mm`,
+      );
+    }
+    const k = dot(sub(section.center, axis.point), up);
+    const foot = add(axis.point, scale(up, k));
+    const radial = sub(section.center, foot);
+    const radius = Math.hypot(...radial);
+    if (radius < MIN_FEATURE_SIZE_MM) kit.fail('The profile centre lies on the helix axis');
+    const spine = helixThrough(kit, rise, turns, radius, foot, up, radial, !!helix.leftHanded);
+    const wire = outerWire(kit, section.face);
+    const oc = kit.oc;
+    const builder = new oc.BRepOffsetAPI_MakePipeShell(spine.wrapped);
+    const binormal = new oc.gp_Dir(up[0], up[1], up[2]);
+    try {
+      // A fixed binormal (the axis) makes the section frame follow the screw motion exactly.
+      builder.SetMode(binormal);
+      builder.Add(wire.wrapped, false, false);
+      builder.Build();
+      if (!builder.IsDone())
+        kit.fail('Helical revolve failed: the profile cannot follow the helix');
+      builder.MakeSolid();
+      const shape = asSolid(kit, castRaw(builder.Shape()), 'Helical revolve');
+      return nameGenerated(kit, feature.id, shape, section, {
+        generated: (edge) => listShapes(kit, builder.Generated(edge.wrapped)),
+        first: safeShape(() => builder.FirstShape()),
+        last: safeShape(() => builder.LastShape()),
+      });
+    } catch (error) {
+      if (kit.isFailure(error)) throw error;
+      kit.fail(`Helical revolve failed: ${kit.describeError(error)}`);
+    } finally {
+      binormal.delete();
+      builder.delete();
+    }
+  });
+  finishProfileSolid(kit, ctx, feature, fuseTools(kit, ctx, feature.id, tools), 'Revolve');
+}
+
+/**
+ * A helix of `turns` turns about the axis through `foot` along `up`, of
+ * `radius`, climbing `rise` per turn, starting at `foot + radial` (so it
+ * passes through the profile centre).
+ */
+function helixThrough(
+  kit: FeatureKit,
+  rise: number,
+  turns: number,
+  radius: number,
+  foot: Vec3,
+  up: Vec3,
+  radial: Vec3,
+  leftHanded: boolean,
+): R.Wire {
+  const helix = R.makeHelix(rise, rise * turns, radius, foot, up, leftHanded);
+  // replicad starts the helix at the cylinder's own X direction: turn it onto the profile centre.
+  const [first] = kit.edgesOf(helix);
+  if (!first) kit.fail('Helical revolve failed: the helix is empty');
+  const start = sub(edgePointAt(kit.oc, first, 0), foot);
+  const startRadial = sub(start, scale(up, dot(start, up)));
+  const angle = Math.atan2(dot(cross(startRadial, radial), up), dot(startRadial, radial));
+  if (Math.abs(angle) < 1e-12) return helix;
+  return helix.rotate((angle * 180) / Math.PI, foot, up);
+}
+
+function fmt(value: number): string {
+  return String(Math.round(value * 1000) / 1000);
 }
 
 /** replicad wrapper of a raw builder result (the raw handle is deleted). */
@@ -351,7 +468,7 @@ function fuseTools(
 }
 
 /** New body, or join/cut into the target body (the extrude rule). */
-function finishProfileSolid(
+export function finishProfileSolid(
   kit: FeatureKit,
   ctx: ReplayContextLike,
   feature: {

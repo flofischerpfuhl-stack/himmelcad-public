@@ -20,6 +20,9 @@ bindings:
   # XCAF label names and children (STEP assembly import through
   # STEPCAFControl_Reader), see wrappers/himmelcad-xcaf.cpp.
   - symbol: HimmelcadXcaf
+  # Non-uniform (per-axis) Scale of bodies: a general affine map; OCCT
+  # converts the surfaces to NURBS where a similarity cannot carry them.
+  - symbol: BRepBuilderAPI_GTransform
 additionalCppFiles:
   - wrappers/himmelcad-offset.cpp
   - wrappers/himmelcad-xcaf.cpp
