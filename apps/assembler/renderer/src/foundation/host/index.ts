@@ -18,7 +18,10 @@ export {
   pickTextFile,
 } from './browserHost.js';
 
-let current: AssemblerHost | null = null;
+let installed: AssemblerHost | null = null;
+let desktop: { bridge: NonNullable<ReturnType<typeof desktopBridge>>; host: AssemblerHost } | null =
+  null;
+let browser: AssemblerHost | null = null;
 
 /**
  * Installs the product's host. The web product calls it from its first
@@ -26,14 +29,21 @@ let current: AssemblerHost | null = null;
  * (`slicers`, `automation`) when they are created.
  */
 export function installHost(next: AssemblerHost): void {
-  current = next;
+  installed = next;
 }
 
-/** The current platform host. */
+/**
+ * The current platform host. Without an install the choice follows
+ * `window.assembler` on every call (tests stub the bridge after the modules
+ * were imported), one adapter per bridge object.
+ */
 export function host(): AssemblerHost {
-  if (!current) {
-    const bridge = desktopBridge();
-    current = bridge ? createDesktopHost(bridge) : createBrowserHost();
+  if (installed) return installed;
+  const bridge = desktopBridge();
+  if (bridge) {
+    if (desktop?.bridge !== bridge) desktop = { bridge, host: createDesktopHost(bridge) };
+    return desktop.host;
   }
-  return current;
+  browser ??= createBrowserHost();
+  return browser;
 }

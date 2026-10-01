@@ -266,6 +266,9 @@ function writeRecoverySoon(): void {
 function ensureAutosave(): void {
   if (autosaveTimer) return;
   autosaveTimer = setInterval(() => {
+    // Only unsaved work needs a recovery copy: a saved project would otherwise be offered for
+    // recovery at the next start (the web app has no clean-close hook that clears it).
+    if (!useProjectStore.getState().dirty) return;
     void currentProjectPayload().then((text) => io.writeRecovery(text));
   }, AUTOSAVE_INTERVAL_MS);
   unref(autosaveTimer);
@@ -531,6 +534,8 @@ export const useProjectStore = create<ProjectFileState>((set, get) => ({
         dirty: false,
         lastSavedAt: new Date().toISOString(),
       });
+      // A recovery write still pending from the last edit would bring back what was just saved.
+      cancelRecoveryWrite();
       void io.clearRecovery();
     } finally {
       set({ saving: false, busyMessage: null });
@@ -554,6 +559,8 @@ export const useProjectStore = create<ProjectFileState>((set, get) => ({
         dirty: false,
         lastSavedAt: new Date().toISOString(),
       });
+      // A recovery write still pending from the last edit would bring back what was just saved.
+      cancelRecoveryWrite();
       void io.clearRecovery();
     } finally {
       set({ saving: false, busyMessage: null });
