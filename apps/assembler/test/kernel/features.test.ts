@@ -293,7 +293,7 @@ void test('revolve: an L-profile about a construction centre line of the same sk
       { kind: 'sketchLine', featureId: 's1', entityId: 'l99' },
     ),
   ]);
-  assert.equal(missing.errors.r2, 'Missing reference: line "l99" of "s1"');
+  assert.equal(missing.errors.r2, 'Missing reference: a line of "s1"');
   const notLine = await evaluate([
     sketch('c', 'XZ', 0, { kind: 'circle', cx: 20, cy: 0, radius: 2 }),
     revolve(

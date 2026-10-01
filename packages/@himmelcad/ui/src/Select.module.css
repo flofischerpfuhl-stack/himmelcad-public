@@ -92,7 +92,8 @@
   font: inherit;
 }
 
-.option:hover:not(:disabled) {
+.option:hover:not(:disabled),
+.option[data-keyboard-active='true']:not(:disabled) {
   background: var(--hc-hover-bg);
   color: var(--hc-fg-strong);
 }

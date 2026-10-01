@@ -2,6 +2,11 @@
  * Centered command-search popover (`X` / Ctrl+F). Fuzzy results from
  * `searchCommands`, recent commands when the query is empty, arrow-key /
  * Enter / Esc navigation. Running a command pushes it to recents.
+ *
+ * Escape (decided in Block 8, DESIGN-SYSTEM "Input consistency"): with a
+ * typed query the first Esc clears it and keeps the search open (the field
+ * reverts to its committed value, empty), the next Esc closes; with an empty
+ * query one Esc closes. The hint next to the field says which one happens.
  */
 import { Search } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
@@ -99,7 +104,8 @@ export function CommandSearch({ state, onClose, initialQuery }: CommandSearchPro
               }
             }}
           />
-          <span className={styles.hint}>Esc to close</span>
+          {/* One Esc per rung, said where it happens: a typed query is cleared first. */}
+          <span className={styles.hint}>{query !== '' ? 'Esc to clear' : 'Esc to close'}</span>
         </div>
         <div className={styles.list} role="listbox" aria-label="Command results">
           {isRecents ? <div className={styles.sectionLabel}>Recent</div> : null}

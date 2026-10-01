@@ -42,12 +42,37 @@ void test('ids of steps and bodies become History names; deleted steps are said 
       'Missing reference: body "body:feature-extrude-7"',
       'Missing reference: body of a deleted step',
     ],
-    // Messages that already name things, or keys without a better name, pass through.
+    // Naming keys become the step that made the geometry and its role (block 8).
+    ['Missing reference: face "gone:face" on "Body 1"', 'Missing reference: a face of "Body 1"'],
     [
-      'Missing reference: profile "c1" of "Sketch 1"',
-      'Missing reference: profile "c1" of "Sketch 1"',
+      'Missing reference: face "feature-extrude-2:end:0" on "Body 1"',
+      'Missing reference: the end face of "Body 1" created by "Extrude 2"',
     ],
-    ['Missing reference: face "r:start:0"', 'Missing reference: face "r:start:0"'],
+    [
+      'Missing reference: face "feature-extrude-2:side:0:l3#2" on "Body 1"',
+      'Missing reference: a side face of "Body 1" created by "Extrude 2"',
+    ],
+    [
+      'Missing reference: face "feature-extrude-9:start:0" on "Body 1"',
+      'Missing reference: the start face of "Body 1" created by a deleted step',
+    ],
+    ['Missing reference: face "r:start:0"', 'Missing reference: a face'],
+    [
+      'Missing reference: edge "feature-extrude-2:end:0|feature-extrude-2:side:0:l2" on "Body 1"',
+      'Missing reference: an edge of "Body 1" created by "Extrude 2"',
+    ],
+    [
+      'Missing reference: edge "feature-extrude-2:end:0|feature-pattern-5:new~1" on "Body 1"',
+      'Missing reference: an edge of "Body 1" between faces created by "Extrude 2" and "Pattern 1"',
+    ],
+    [
+      'Missing reference: profile "c1+l2@L" of "Sketch 1"',
+      'Missing reference: a profile of "Sketch 1"',
+    ],
+    ['Missing reference: line "l99" of "Sketch 1"', 'Missing reference: a line of "Sketch 1"'],
+    ['Missing reference: point "p7" of "Sketch 1"', 'Missing reference: a point of "Sketch 1"'],
+    // Other messages pass through.
+    ['Radius too large', 'Radius too large'],
   ];
   for (const [message, expected] of cases)
     assert.equal(nameMissingReference(message, names), expected);

@@ -258,8 +258,9 @@ void test('revolve angle change keeps references on the cap faces; a full turn r
     near(body.volume, sweep - (1 - Math.PI / 4) * 5, 0.15, `volume at ${angle}°`);
   }
   const full = await evaluate(doc(360));
-  assert.match(full.errors.f ?? '', /Missing reference: edge "r:end:0\|r:side:0:l2"/);
-  assert.match(full.errors.c ?? '', /Missing reference: face "r:start:0"/);
+  // Keys become words (`kernel/referenceNames.ts`): the step that made the face and its role.
+  assert.match(full.errors.f ?? '', /Missing reference: an edge of "[^"]+" created by "r"/);
+  assert.match(full.errors.c ?? '', /Missing reference: the start face of "[^"]+" created by "r"/);
 });
 
 // ---- sketch region redrawn -----------------------------------------------------------------
@@ -332,7 +333,7 @@ void test('sketch region redraw: best-effort rebind by the unchanged edges and b
     entities: two.entities.map((en) => (en.id === 'c1' ? { ...en, id: 'c9' } : en)),
   };
   const ambiguous = await evaluate([twoRenamed, cx]);
-  assert.match(ambiguous.errors.x ?? '', /Missing reference: profile "c1"/);
+  assert.match(ambiguous.errors.x ?? '', /Missing reference: a profile of "c"/);
 });
 
 // ---- v1 keys of coplanar faces -------------------------------------------------------------
