@@ -1870,14 +1870,15 @@ export function Viewport(props: ViewportProps): JSX.Element {
     [
       beginOrbit,
       contextMenuAt,
-      cursorPivot,
       doubleTap,
       endOrbit,
       finishBox,
       handleClick,
       historyGesture,
+      rayAtClient,
       startGlide,
       updateBox,
+      zoomDepthPointAt,
     ],
   );
 
