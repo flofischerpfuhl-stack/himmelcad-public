@@ -251,3 +251,9 @@
   width: 64px;
   font-size: 13px;
 }
+/* The Next step button (Translate, Align, Rotate Around Axis) and Cancel/Done. */
+:global(html[data-hc-touch]) .pill button,
+:global(html[data-hc-touch]) .actions button {
+  min-height: 36px;
+  padding-inline: 12px;
+}
