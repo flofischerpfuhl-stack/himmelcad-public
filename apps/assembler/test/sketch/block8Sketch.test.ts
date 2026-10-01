@@ -3,7 +3,10 @@
  * they were made (SK-12), solved by the real planeGCS solver.
  */
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import test from 'node:test';
+import { inflateSync } from 'node:zlib';
 
 import { addCircle, addRectangle } from '../../renderer/src/foundation/sketch-solver/builders.js';
 import {
@@ -47,6 +50,17 @@ import {
   type Vec2,
 } from '../../renderer/src/foundation/sketch-solver/types.js';
 import { loadNodeSolver } from './nodeSolver.js';
+import { installNodeFonts } from './nodeFont.js';
+import {
+  fontLabel,
+  listSketchFonts,
+  loadSketchFont,
+  setSystemFontProvider,
+  systemFontsAvailable,
+  textOutline,
+  textOutlineOf,
+} from '../../renderer/src/foundation/sketch-solver/text/fonts.js';
+import { parseOutline } from '../../renderer/src/foundation/sketch-solver/text/outline.js';
 
 function snap(pos: Vec2, extra: Partial<Inference> = {}): Inference {
   return { pos, hints: [], guides: [], ...extra };
@@ -409,6 +423,144 @@ void test('sketch fillet/chamfer (SK-14): line–arc corners, tangent and dimens
   const spline = roundCorner(b.result().sketch, p1, 1, 'fillet');
   assert.ok('reason' in spline && /spline/.test(spline.reason));
 });
+
+void test('text (SK-11): alignment shifts the stored outline; installed fonts load through a provider, collections split', async () => {
+  installNodeFonts();
+  const inter = await loadSketchFont('inter');
+  const left = textOutlineOf(inter, 'HC');
+  const center = textOutlineOf(inter, 'HC', 'center');
+  const right = textOutlineOf(inter, 'HC', 'right');
+  const xs = (outline: string) =>
+    parseOutline(outline).flatMap((c) => c.flatMap((seg) => seg.map((p) => p[0])));
+  const minX = (o: string) => Math.min(...xs(o));
+  const maxX = (o: string) => Math.max(...xs(o));
+  assert.ok(Math.abs(minX(center.outline) - (minX(left.outline) - left.width / 2)) < 1e-3);
+  assert.ok(maxX(right.outline) <= 1e-3, 'right: the text ends at the anchor');
+  assert.equal(center.width, left.width);
+  // Installed fonts: a provider (the desktop app's Local Font Access) gives the bytes.
+  assert.equal(systemFontsAvailable(), false, 'tests and headless: bundled only');
+  await assert.rejects(loadSketchFont('system:Inter-Regular'), /not available here/);
+  const ttf = await interSfnt();
+  // A two-font collection of that font: the provider hands out the .ttc bytes.
+  const ttc = makeCollection([ttf, ttf]);
+  const listed: string[] = [];
+  setSystemFontProvider({
+    list: async () => [
+      { id: 'system:Inter-Regular', label: 'Inter Regular', source: 'system', family: 'Inter' },
+    ],
+    bytes: async (info) => {
+      listed.push(info.id);
+      return ttc;
+    },
+  });
+  try {
+    const fonts = await listSketchFonts();
+    assert.deepEqual(
+      fonts.map((f) => [f.id, f.source]),
+      [
+        ['inter', 'bundled'],
+        ['system:Inter-Regular', 'system'],
+      ],
+    );
+    const system = await textOutline('system:Inter-Regular', 'HC');
+    assert.deepEqual(listed, ['system:Inter-Regular']);
+    assert.equal(system.width.toFixed(4), left.width.toFixed(4), 'same glyphs from the collection');
+    assert.equal(fontLabel('system:Inter-Regular'), 'Inter Regular');
+    // A document's installed font that is not on this computer keeps a readable name.
+    assert.equal(fontLabel('system:Some-Font'), 'Some-Font');
+  } finally {
+    setSystemFontProvider(null);
+  }
+  // The file validator knows the alignment field.
+  const sketch: SketchData = {
+    entities: [
+      { id: 'p1', kind: 'point', x: 0, y: 0 },
+      {
+        id: 't1',
+        kind: 'text',
+        anchor: 'p1',
+        text: 'HC',
+        height: 5,
+        angle: 0,
+        font: 'system:Arial',
+        align: 'center',
+        outline: center.outline,
+      },
+    ],
+    constraints: [],
+    dimensions: [],
+  };
+  assert.equal(validateSketchData(sketch as never), null);
+  const bad = {
+    ...sketch,
+    entities: [sketch.entities[0], { ...sketch.entities[1], align: 'top' }],
+  };
+  assert.match(validateSketchData(bad as never)?.path ?? '', /align/);
+});
+
+/** The bundled Inter WOFF as a plain sfnt (what an installed `.ttf`/`.otf` file holds). */
+async function interSfnt(): Promise<ArrayBuffer> {
+  const require = createRequire(import.meta.url);
+  const woff = await readFile(
+    require.resolve('@fontsource/inter/files/inter-latin-400-normal.woff'),
+  );
+  const view = new DataView(woff.buffer, woff.byteOffset, woff.byteLength);
+  const numTables = view.getUint16(12);
+  const tables: { tag: number; checksum: number; data: Uint8Array }[] = [];
+  for (let i = 0; i < numTables; i += 1) {
+    const at = 44 + 20 * i;
+    const offset = view.getUint32(at + 4);
+    const compLength = view.getUint32(at + 8);
+    const origLength = view.getUint32(at + 12);
+    const raw = woff.subarray(offset, offset + compLength);
+    tables.push({
+      tag: view.getUint32(at),
+      checksum: view.getUint32(at + 16),
+      data: compLength < origLength ? new Uint8Array(inflateSync(raw)) : new Uint8Array(raw),
+    });
+  }
+  let size = 12 + 16 * numTables;
+  for (const t of tables) size += (t.data.length + 3) & ~3;
+  const out = new Uint8Array(size);
+  const ov = new DataView(out.buffer);
+  ov.setUint32(0, view.getUint32(4)); // flavor
+  ov.setUint16(4, numTables);
+  let at = 12 + 16 * numTables;
+  tables.forEach((t, i) => {
+    const rec = 12 + 16 * i;
+    ov.setUint32(rec, t.tag);
+    ov.setUint32(rec + 4, t.checksum);
+    ov.setUint32(rec + 8, at);
+    ov.setUint32(rec + 12, t.data.length);
+    out.set(t.data, at);
+    at += (t.data.length + 3) & ~3;
+  });
+  return out.buffer;
+}
+
+/** A TrueType collection of `fonts` (each a standalone sfnt), as `.ttc` files are laid out. */
+function makeCollection(fonts: ArrayBuffer[]): ArrayBuffer {
+  const header = 12 + 4 * fonts.length;
+  const total = header + fonts.reduce((n, f) => n + f.byteLength, 0);
+  const out = new Uint8Array(total);
+  const view = new DataView(out.buffer);
+  view.setUint32(0, 0x74746366);
+  view.setUint32(4, 0x00010000);
+  view.setUint32(8, fonts.length);
+  let at = header;
+  fonts.forEach((font, i) => {
+    view.setUint32(12 + 4 * i, at);
+    out.set(new Uint8Array(font), at);
+    // Table offsets inside a collection are relative to the file start.
+    const numTables = view.getUint16(at + 4);
+    for (let t = 0; t < numTables; t += 1) {
+      const field = at + 12 + 16 * t + 8;
+      view.setUint32(field, view.getUint32(field) + at);
+    }
+    at += font.byteLength;
+  });
+  return out.buffer;
+}
 
 void test('pattern records follow deletions: copies may go, sources or the direction line end the record', () => {
   const c = addCircle(EMPTY_SKETCH, [0, 0], 2, { size: true, position: true });

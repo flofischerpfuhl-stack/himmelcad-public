@@ -455,9 +455,10 @@ class Sketch:
         """Regular polygon inscribed in (``inscribed=False``: around) a construction circle. Returns the line ids."""
         return list(self.doc.client.add_polygon(self._ensure(), center, radius, sides=sides, inscribed=inscribed, angle=angle)["lineIds"])
 
-    def text(self, text: str, height: float, *, position: tuple[float, float] = (0.0, 0.0), angle: float = 0.0) -> str:
-        """Text (cap ``height`` mm, baseline starting at ``position``); every glyph is a profile. Returns its entity id."""
-        result = self.doc.client.add_text(self._ensure(), text, position, height, angle=angle)
+    def text(self, text: str, height: float, *, position: tuple[float, float] = (0.0, 0.0), angle: float = 0.0, font: str = "inter", align: str = "left") -> str:
+        """Text (cap ``height`` mm, anchored at ``position`` on the baseline: its start, centre or end by ``align``);
+        every glyph is a profile. ``font``: an id from ``client.fonts()``. Returns its entity id."""
+        result = self.doc.client.add_text(self._ensure(), text, position, height, angle=angle, font=font, align=align)
         missing = result.get("missingCharacters") or []
         if missing:
             raise AssemblerError(raw_code="invalidParams", message=f"characters not in the font: {' '.join(missing)}", hint="Use Latin characters.")

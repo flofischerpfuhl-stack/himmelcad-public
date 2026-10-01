@@ -108,11 +108,12 @@ export interface SketchSpline extends EntityBase {
 }
 
 /**
- * Text as sketch geometry. `anchor` is the start of the baseline; the
- * glyph outlines are stored (normalized: `1` = `height`, the cap height)
- * so a document evaluates without the font. `outline` is SVG path data
- * (M/L/Q/C/Z) in those units, baseline start at the origin, v up.
- * Every closed glyph contour is a profile curve (region keys `<id>.<n>`).
+ * Text as sketch geometry. `anchor` is on the baseline: its start, middle
+ * or end (`align`); the glyph outlines are stored (normalized: `1` =
+ * `height`, the cap height) so a document evaluates without the font.
+ * `outline` is SVG path data (M/L/Q/C/Z) in those units with the anchor at
+ * the origin (already shifted for the alignment), v up. Every closed glyph
+ * contour is a profile curve (region keys `<id>.<n>`).
  */
 export interface SketchText extends EntityBase {
   kind: 'text';
@@ -122,8 +123,10 @@ export interface SketchText extends EntityBase {
   height: number;
   /** Rotation of the baseline, degrees counter-clockwise. */
   angle: number;
-  /** Font id (see `sketch/text/fonts.ts`). */
+  /** Font id: a bundled font (`inter`) or an installed one (`system:<PostScript name>`), see `text/fonts.ts`. */
   font: string;
+  /** Where the anchor sits on the baseline (absent = the start, `left`). Block 8. */
+  align?: 'center' | 'right';
   outline: string;
 }
 

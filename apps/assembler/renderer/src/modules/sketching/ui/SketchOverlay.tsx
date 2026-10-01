@@ -51,11 +51,7 @@ import {
 import { projectedIds } from '../../../foundation/sketch-solver/projection.js';
 import { detectRegions, loopPolygon } from '../../../foundation/sketch-solver/regions.js';
 import { useSketchStore, type ProjectionPick } from '../session.js';
-import {
-  DEFAULT_SKETCH_FONT,
-  loadedSketchFont,
-  textOutlineOf,
-} from '../../../foundation/sketch-solver/text/fonts.js';
+import { loadedSketchFont, textOutlineOf } from '../../../foundation/sketch-solver/text/fonts.js';
 import { parseOutline, placeContours } from '../../../foundation/sketch-solver/text/outline.js';
 import {
   segmentStart,
@@ -189,23 +185,55 @@ function mmPerPxAt(api: SketchViewApi, uv: Vec2): number {
   return px > 1e-9 ? 1 / px : 1;
 }
 
-/** Glyph outlines of the text the Text tool is placing/editing (font loaded), sketch coordinates. */
-function textToolPreview(sketch: SketchData, tool: SketchTool, cursor: Vec2 | null): Vec2[][] {
-  if (tool.kind !== 'text') return [];
+/** Where the Text tool's text sits: anchor, baseline angle, cap height, width (mm) and alignment. */
+interface TextPlacement {
+  anchor: Vec2;
+  /** The anchor point entity of an edited text (moved through the solver). */
+  anchorId: string | null;
+  angle: number;
+  height: number;
+  /** Advance width, mm (0 until the font is loaded). */
+  width: number;
+  align: 'left' | 'center' | 'right';
+  contours: Vec2[][];
+}
+
+/** The text the Text tool is placing/editing (glyphs once the font is loaded), sketch coordinates. */
+function textToolPlacement(
+  sketch: SketchData,
+  tool: SketchTool,
+  cursor: Vec2 | null,
+): TextPlacement | null {
+  if (tool.kind !== 'text') return null;
   const t = tool;
-  const font = loadedSketchFont(DEFAULT_SKETCH_FONT);
-  if (!font || t.text.trim() === '') return [];
   let anchor: Vec2 | null = t.anchor?.pos ?? null;
+  let anchorId: string | null = null;
   if (t.editing) {
     const e = sketch.entities.find((x) => x.id === t.editing);
-    anchor = e?.kind === 'text' ? pointPos(entityMap(sketch), e.anchor) : null;
+    anchorId = e?.kind === 'text' ? e.anchor : null;
+    anchor = anchorId ? pointPos(entityMap(sketch), anchorId) : null;
   }
   anchor ??= cursor;
-  if (!anchor) return [];
-  const outline = textOutlineOf(font, t.text).outline;
-  return placeContours(parseOutline(outline), anchor, t.height, t.angle).map((contour) =>
-    sampleCurve({ kind: 'bezier', segs: contour }),
-  );
+  if (!anchor) return null;
+  const font = loadedSketchFont(t.font);
+  const placed = { anchor, anchorId, angle: t.angle, height: t.height, align: t.align };
+  if (!font || t.text.trim() === '') return { ...placed, width: 0, contours: [] };
+  const outline = textOutlineOf(font, t.text, t.align);
+  return {
+    ...placed,
+    width: outline.width * t.height,
+    contours: placeContours(parseOutline(outline.outline), anchor, t.height, t.angle).map(
+      (contour) => sampleCurve({ kind: 'bezier', segs: contour }),
+    ),
+  };
+}
+
+/** The rotation handle of the text gizmo: beyond the text's end along its baseline. */
+function textRotateHandle(p: TextPlacement): Vec2 {
+  const k = p.align === 'center' ? 0.5 : p.align === 'right' ? 1 : 0;
+  const reach = Math.max(0, p.width * (1 - k)) + Math.max(p.height * 0.8, 2);
+  const a = (p.angle * Math.PI) / 180;
+  return [p.anchor[0] + Math.cos(a) * reach, p.anchor[1] + Math.sin(a) * reach];
 }
 
 export function SketchOverlay({
@@ -257,6 +285,13 @@ export function SketchOverlay({
     along: number;
   } | null>(null);
   const dragRef = useRef<DragGesture | null>(null);
+  /** A drag of the text placement gizmo (move the anchor / turn the baseline). */
+  const gizmoRef = useRef<{
+    kind: 'move' | 'rotate';
+    pointerId: number;
+    anchor: Vec2;
+    anchorId: string | null;
+  } | null>(null);
   const [box, setBox] = useState<SketchBox | null>(null);
   const boxRef = useRef<SketchBox | null>(null);
   boxRef.current = box;
@@ -512,6 +547,20 @@ export function SketchOverlay({
   const onPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
     event.stopPropagation();
     const uv = uvOf(event);
+    const gizmo = gizmoRef.current;
+    if (gizmo && uv) {
+      const store = useSketchStore.getState();
+      if (gizmo.kind === 'move') {
+        if (gizmo.anchorId) store.drag([uv]);
+        else store.setToolOption({ anchor: { pos: uv } });
+      } else {
+        const raw = (Math.atan2(uv[1] - gizmo.anchor[1], uv[0] - gizmo.anchor[0]) * 180) / Math.PI;
+        // Whole degrees; within 3° of a multiple of 15° it snaps there.
+        const snapped = Math.round(raw / 15) * 15;
+        store.setToolOption({ angle: Math.abs(raw - snapped) < 3 ? snapped : Math.round(raw) });
+      }
+      return;
+    }
     const drag = dragRef.current;
     if (drag) {
       if (
@@ -543,6 +592,14 @@ export function SketchOverlay({
   };
 
   const onPointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
+    const gizmo = gizmoRef.current;
+    if (gizmo && gizmo.pointerId === event.pointerId) {
+      gizmoRef.current = null;
+      event.stopPropagation();
+      // An edited text's anchor moved through the solver: one undo step.
+      if (gizmo.kind === 'move' && gizmo.anchorId) void useSketchStore.getState().endDrag();
+      return;
+    }
     const drag = dragRef.current;
     dragRef.current = null;
     if (!drag || drag.pointerId !== event.pointerId) return;
@@ -784,7 +841,16 @@ export function SketchOverlay({
     void store.deleteSelection();
   };
 
-  const textPreview = tool ? textToolPreview(display, tool, cursor) : [];
+  const textPlacement = tool ? textToolPlacement(display, tool, cursor) : null;
+  const textPreview = textPlacement?.contours ?? [];
+  // The placement gizmo: move (anchor) and rotate handles once the text has a place.
+  const textGizmo =
+    tool?.kind === 'text' && textPlacement && (tool.anchor !== null || tool.editing !== null)
+      ? {
+          move: api.toScreen(textPlacement.anchor),
+          rotate: api.toScreen(textRotateHandle(textPlacement)),
+        }
+      : null;
 
   /** Shift+drag of a dimension chip: screen delta → label layout in the sketch plane. */
   const moveLabel = (
@@ -1013,6 +1079,61 @@ export function SketchOverlay({
           const d = pathOf(c, api, true);
           return d ? <path key={`t${i}`} d={d} className={styles.preview} /> : null;
         })}
+        {textGizmo?.move && textGizmo.rotate && textPlacement ? (
+          <g data-text-gizmo="">
+            <line
+              x1={textGizmo.move[0]}
+              y1={textGizmo.move[1]}
+              x2={textGizmo.rotate[0]}
+              y2={textGizmo.rotate[1]}
+              className={styles.gizmoLine}
+            />
+            {(['move', 'rotate'] as const).map((kind) => {
+              const at = textGizmo[kind]!;
+              const start = (event: React.PointerEvent) => {
+                if (event.button !== 0) return;
+                event.stopPropagation();
+                rootRef.current?.setPointerCapture(event.pointerId);
+                gizmoRef.current = {
+                  kind,
+                  pointerId: event.pointerId,
+                  anchor: textPlacement.anchor,
+                  anchorId: textPlacement.anchorId,
+                };
+                if (kind === 'move' && textPlacement.anchorId) {
+                  useSketchStore.getState().beginDrag([textPlacement.anchorId]);
+                }
+              };
+              return kind === 'move' ? (
+                <rect
+                  key={kind}
+                  x={at[0] - 6}
+                  y={at[1] - 6}
+                  width={12}
+                  height={12}
+                  rx={2}
+                  className={styles.gizmoHandle}
+                  data-text-gizmo-move=""
+                  role="button"
+                  aria-label="Move text"
+                  onPointerDown={start}
+                />
+              ) : (
+                <circle
+                  key={kind}
+                  cx={at[0]}
+                  cy={at[1]}
+                  r={6.5}
+                  className={styles.gizmoHandle}
+                  data-text-gizmo-rotate=""
+                  role="button"
+                  aria-label="Rotate text"
+                  onPointerDown={start}
+                />
+              );
+            })}
+          </g>
+        ) : null}
         {inference?.guides.map(([a, b], i) => {
           const d = pathOf([a, b], api);
           return d ? <path key={`guide${i}`} d={d} className={styles.guide} /> : null;

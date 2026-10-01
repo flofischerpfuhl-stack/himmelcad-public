@@ -101,8 +101,11 @@
 .textPanel {
   position: absolute;
   top: 100px;
-  left: 50%;
-  transform: translateX(-50%);
+  /* Centred without a transform: a transform would offset the fixed menus of its Selects. */
+  left: 0;
+  right: 0;
+  margin-inline: auto;
+  width: max-content;
   display: flex;
   align-items: flex-end;
   gap: var(--hc-space-2);
@@ -116,6 +119,29 @@
 
 .textPanel input[aria-label='Text content'] {
   min-width: 200px;
+}
+
+.fontSelect {
+  width: 200px;
+}
+
+.textPanelRows {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.panelRow {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--hc-space-2);
+}
+
+.panelRow .inlineField {
+  flex-shrink: 0;
+}
+
+.textField {
+  flex: 1;
 }
 
 .textPanel.centered {

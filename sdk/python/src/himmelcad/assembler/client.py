@@ -20,7 +20,7 @@ API_VERSION = 1
 METHODS = (
     "api.hello", "api.describe",
     "document.get", "features.list", "feature.get", "bodies.list", "body.get",
-    "faces.list", "edges.list", "sketches.list", "datums.list", "selection.get", "selection.set",
+    "faces.list", "edges.list", "sketches.list", "sketch.fonts", "datums.list", "selection.get", "selection.set",
     "parameters.list", "parameter.create", "parameter.edit", "parameter.delete",
     "measure.get", "measure.distance", "measure.angle", "measure.area", "measure.volume",
     "feature.create", "feature.edit", "feature.delete", "feature.suppress", "feature.rename",
@@ -214,9 +214,13 @@ class AssemblerClient:
         """Regular polygon inscribed in (or circumscribed about) a construction circle of ``radius``."""
         return self.call("sketch.addPolygon", {"featureId": feature_id, "center": list(center), "radius": radius, "sides": sides, "inscribed": inscribed, "angle": angle, "construction": construction})
 
-    def add_text(self, feature_id: str, text: str, position: tuple[float, float], height: float, *, angle: float = 0.0, font: str = "inter", construction: bool = False) -> Mapping[str, Any]:
-        """Text (cap ``height`` mm) starting at ``position``; every glyph is a profile."""
-        return self.call("sketch.addText", {"featureId": feature_id, "text": text, "position": list(position), "height": height, "angle": angle, "font": font, "construction": construction})
+    def add_text(self, feature_id: str, text: str, position: tuple[float, float], height: float, *, angle: float = 0.0, font: str = "inter", align: str = "left", construction: bool = False) -> Mapping[str, Any]:
+        """Text (cap ``height`` mm) anchored at ``position`` (``align``: the anchor is the baseline's start, centre or end); every glyph is a profile. ``font``: an id from :meth:`fonts`."""
+        return self.call("sketch.addText", {"featureId": feature_id, "text": text, "position": list(position), "height": height, "angle": angle, "font": font, "align": align, "construction": construction})
+
+    def fonts(self) -> list[Mapping[str, Any]]:
+        """Fonts for sketch text: the bundled Inter, plus the computer's installed fonts in the desktop app (once listed there)."""
+        return self.call("sketch.fonts")
 
     def mirror_sketch(self, feature_id: str, ids: list[str], axis: str) -> Mapping[str, Any]:
         """Mirrors sketch curves/points about the line ``axis`` (symmetric constraints)."""

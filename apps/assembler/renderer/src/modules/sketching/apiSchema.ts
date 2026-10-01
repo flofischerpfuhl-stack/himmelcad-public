@@ -35,6 +35,14 @@ export const SKETCHES_LIST_METHODS: Record<string, MethodSpec> = {
     result:
       '[{featureId, name, plane, frame: {origin,u,v,normal}, entities, constraints, dimensions, patterns: [{id, kind, sources, count, count2?, lines?, center?, angle?, created}], regions: [{key, area, sample, center, holes, entityIds}], consumed}]',
   },
+  'sketch.fonts': {
+    kind: 'query',
+    capability: 'document.read',
+    summary:
+      'Fonts for sketch.addText: the bundled Inter (always, also headless) and — in the desktop app, once the user has listed them — the fonts installed on the computer (ids `system:<PostScript name>`). Text stores its outline, so documents never need the font again.',
+    params: obj({}),
+    result: '[{id, label, source: "bundled"|"system", family?, style?}]',
+  },
 };
 
 /** In the order of the published contract. */
@@ -255,7 +263,7 @@ export const SKETCH_EDIT_METHODS: Record<string, MethodSpec> = {
     capability: 'document.write',
     transactional: true,
     summary:
-      'Adds text (font Inter, SIL OFL 1.1) with its baseline starting at `position`: `height` is the cap height (mm), `angle` degrees. Every glyph becomes a closed profile (counters stay open) for extrude/emboss.',
+      'Adds text at `position` (its anchor on the baseline: start, middle or end by `align`): `height` is the cap height (mm), `angle` degrees, `font` a sketch.fonts id (default the bundled Inter, SIL OFL 1.1). Every glyph becomes a closed profile (counters stay open) for extrude/emboss.',
     params: obj(
       {
         featureId: str,
@@ -263,7 +271,8 @@ export const SKETCH_EDIT_METHODS: Record<string, MethodSpec> = {
         position: ref('Vec2'),
         height: positive,
         angle: num,
-        font: { enum: ['inter'], default: 'inter' },
+        font: { type: 'string', default: 'inter' },
+        align: { enum: ['left', 'center', 'right'], default: 'left' },
         construction: { type: 'boolean', default: false },
         expectedRevision: revision,
       },

@@ -99,6 +99,9 @@ export function validateSketchData(raw: Raw): SketchValidationError | null {
       for (const field of ['text', 'font', 'outline']) {
         if (!isString(e[field])) return { path: `${path}.${field}`, message: 'expected a string' };
       }
+      if (e.align !== undefined && e.align !== 'center' && e.align !== 'right') {
+        return { path: `${path}.align`, message: 'expected "center" or "right"' };
+      }
     }
     if (e.kind === 'spline') {
       if (e.mode !== 'control' && e.mode !== 'fit') {

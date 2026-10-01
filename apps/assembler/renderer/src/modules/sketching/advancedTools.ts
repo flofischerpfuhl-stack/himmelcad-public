@@ -21,6 +21,7 @@ import {
   type Curve2,
 } from '../../foundation/sketch-solver/geometry.js';
 import type { Inference, SketchHit } from './inference.js';
+import { DEFAULT_SKETCH_FONT, type TextAlign } from '../../foundation/sketch-solver/text/fonts.js';
 import {
   circularPattern,
   cornerCurves,
@@ -107,6 +108,10 @@ export type AdvancedTool =
       text: string;
       height: number;
       angle: number;
+      /** Font id (bundled or installed, `text/fonts.ts`). */
+      font: string;
+      /** Where the anchor sits on the baseline. */
+      align: TextAlign;
       /** Existing text entity being edited (its anchor stays). */
       editing: string | null;
     };
@@ -206,7 +211,16 @@ export function initialAdvancedTool(
     case 'project':
       return { kind };
     case 'text':
-      return { kind, anchor: null, text: 'Text', height: 10, angle: 0, editing: null };
+      return {
+        kind,
+        anchor: null,
+        text: 'Text',
+        height: 10,
+        angle: 0,
+        font: DEFAULT_SKETCH_FONT,
+        align: 'left',
+        editing: null,
+      };
   }
 }
 

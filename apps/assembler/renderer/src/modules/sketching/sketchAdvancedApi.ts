@@ -222,10 +222,20 @@ export async function advancedSketchEdit(
       const font = typeof p.font === 'string' ? p.font : DEFAULT_SKETCH_FONT;
       if (!fontInfo(font)) {
         throw new ApiError('invalidParams', `Unknown font "${font}"`, {
-          hint: `Fonts: ${DEFAULT_SKETCH_FONT}`,
+          hint: 'sketch.fonts lists the fonts available here.',
         });
       }
-      const outline = await textOutline(font, text);
+      const align = p.align === 'center' || p.align === 'right' ? p.align : 'left';
+      let outline: Awaited<ReturnType<typeof textOutline>>;
+      try {
+        outline = await textOutline(font, text, align);
+      } catch (error) {
+        throw new ApiError(
+          'invalidParams',
+          error instanceof Error ? error.message : `The font "${font}" could not be loaded`,
+          { hint: 'sketch.fonts lists the fonts available here.' },
+        );
+      }
       const b = new SketchBuilder(data);
       const anchor = b.pointFor(snapOf(position, p.anchorPointId));
       const id = b.id('t');
@@ -237,6 +247,7 @@ export async function advancedSketchEdit(
         height,
         angle: typeof p.angle === 'number' ? p.angle : 0,
         font,
+        ...(align !== 'left' ? { align } : {}),
         outline: outline.outline,
         ...(construction ? { construction: true } : {}),
       });

@@ -8,6 +8,9 @@
  * buttons, shortcuts and command search always agree.
  */
 import {
+  AlignCenter,
+  AlignLeft,
+  AlignRight,
   ArrowDownToLine,
   Check,
   Circle,
@@ -31,9 +34,17 @@ import {
   X,
   type LucideIcon,
 } from 'lucide-react';
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { Button, NumberInput, Tooltip } from '@himmelcad/ui';
+import { Button, NumberInput, Select, Tooltip } from '@himmelcad/ui';
+
+import {
+  fontLabel,
+  knownSketchFonts,
+  listSketchFonts,
+  loadSketchFont,
+  systemFontsAvailable,
+} from '../../../foundation/sketch-solver/text/fonts.js';
 
 import fieldStyles from '../../../platform/widgets/ExpressionField.module.css';
 import { findCommand } from '../../../foundation/commands/registry.js';
@@ -159,10 +170,12 @@ export function toolPrompt(tool: SketchTool): string {
     case 'project':
       return 'Click body edges or faces to project them into the sketch. Esc ends.';
     case 'text':
-      if (tool.editing) return 'Change the text, its height or rotation, then Update.';
+      if (tool.editing) {
+        return 'Change the text, font or size; drag the handles to move or turn it; then Update.';
+      }
       return tool.anchor
-        ? 'Type the text, set height and rotation, then Place.'
-        : 'Click where the text starts (baseline, left).';
+        ? 'Type the text, pick font and size; drag the handles to move or turn it; then Place.'
+        : 'Click where the text goes (its anchor on the baseline).';
   }
 }
 
@@ -468,7 +481,60 @@ function ToolOptions({ tool }: { tool: SketchTool }): JSX.Element | null {
   }
 }
 
-/** Text content, height and rotation while the Text tool places or edits a text. */
+/**
+ * The font menu of the text panel: the bundled font, then the fonts
+ * installed on the computer (desktop app; listed when the panel opens, or on
+ * "Show installed fonts" when the platform needs a click for it).
+ */
+function FontPicker({ value, onChange }: { value: string; onChange: (id: string) => void }) {
+  const [fonts, setFonts] = useState(() => knownSketchFonts());
+  const [state, setState] = useState<'idle' | 'loading' | 'failed'>('idle');
+  const canList = systemFontsAvailable();
+  const load = useCallback(() => {
+    setState('loading');
+    void listSketchFonts().then((list) => {
+      setFonts(list);
+      setState(list.some((f) => f.source === 'system') ? 'idle' : 'failed');
+    });
+  }, []);
+  const tried = useRef(false);
+  useEffect(() => {
+    // Once per panel; already listed fonts (an earlier panel) need no new listing.
+    if (!canList || tried.current || knownSketchFonts().some((f) => f.source === 'system')) return;
+    tried.current = true;
+    load();
+  }, [canList, load]);
+  // A document's font that is not listed here (another computer's installed font) stays visible.
+  const options = fonts.some((f) => f.id === value)
+    ? fonts
+    : [
+        ...fonts,
+        { id: value, label: `${fontLabel(value)} (not installed)`, source: 'system' as const },
+      ];
+  return (
+    <label className={styles.inlineField}>
+      <span>Font</span>
+      <Select
+        aria-label="Text font"
+        wrapClassName={styles.fontSelect}
+        value={value}
+        options={options.map((f) => ({
+          value: f.id,
+          label: f.source === 'bundled' ? `${f.label} (bundled)` : f.label,
+        }))}
+        onChange={(event) => onChange(event.target.value)}
+      />
+      {canList && state === 'failed' ? (
+        <Button variant="secondary" size="small" onClick={load}>
+          Show installed fonts
+        </Button>
+      ) : null}
+      {state === 'loading' ? <span className={styles.count}>Loading fonts…</span> : null}
+    </label>
+  );
+}
+
+/** Text content, font, alignment, height and rotation while the Text tool places or edits a text. */
 function TextPanel({ tool }: { tool: Extract<SketchTool, { kind: 'text' }> }): JSX.Element | null {
   const inputRef = useRef<HTMLInputElement>(null);
   const setOption = useSketchStore((s) => s.setToolOption);
@@ -479,66 +545,100 @@ function TextPanel({ tool }: { tool: Extract<SketchTool, { kind: 'text' }> }): J
     inputRef.current?.select();
   }, [active, tool.editing]);
   if (!active) return null;
+  const pickFont = (font: string) => {
+    setOption({ font });
+    // Loaded for the live preview; a font that fails is reported when the text is placed.
+    void loadSketchFont(font)
+      .then(() => setOption({ font }))
+      .catch(() => undefined);
+  };
   const commit = () => void useSketchStore.getState().commitText();
   return (
     <div
-      className={styles.textPanel}
+      className={`${styles.textPanel} ${styles.textPanelRows}`}
       role="group"
       aria-label="Text"
       onPointerDown={(event) => event.stopPropagation()}
     >
-      <label className={fieldStyles.field}>
-        <span className={fieldStyles.label}>Text</span>
-        <div className={fieldStyles.wrap}>
-          <input
-            ref={inputRef}
-            className={fieldStyles.input}
-            value={tool.text}
-            aria-label="Text content"
-            onChange={(event) => setOption({ text: event.currentTarget.value })}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') {
-                event.preventDefault();
-                event.stopPropagation();
-                commit();
-              }
-            }}
-          />
+      <div className={styles.panelRow}>
+        <label className={`${fieldStyles.field} ${styles.textField}`}>
+          <span className={fieldStyles.label}>Text</span>
+          <div className={fieldStyles.wrap}>
+            <input
+              ref={inputRef}
+              className={fieldStyles.input}
+              value={tool.text}
+              aria-label="Text content"
+              onChange={(event) => setOption({ text: event.currentTarget.value })}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  commit();
+                }
+              }}
+            />
+          </div>
+        </label>
+        <Button variant="primary" size="small" icon={<Check size={13} />} onClick={commit}>
+          {tool.editing ? 'Update' : 'Place'}
+        </Button>
+        <Button
+          variant="secondary"
+          size="small"
+          aria-label="Cancel text"
+          icon={<X size={13} />}
+          onClick={() => useSketchStore.getState().setTool('select')}
+        />
+      </div>
+      <div className={styles.panelRow}>
+        <FontPicker value={tool.font} onChange={pickFont} />
+        <div className={styles.row} role="radiogroup" aria-label="Text alignment">
+          {(
+            [
+              ['left', 'Align left (anchor at the start)', AlignLeft],
+              ['center', 'Align centre (anchor in the middle)', AlignCenter],
+              ['right', 'Align right (anchor at the end)', AlignRight],
+            ] as const
+          ).map(([align, label, Icon]) => (
+            <Tooltip key={align} content={label}>
+              <button
+                type="button"
+                role="radio"
+                aria-checked={tool.align === align}
+                aria-label={label}
+                className={`${styles.option} ${tool.align === align ? styles.optionActive : ''}`}
+                onClick={() => setOption({ align })}
+              >
+                <Icon size={13} aria-hidden />
+              </button>
+            </Tooltip>
+          ))}
         </div>
-      </label>
-      <label className={styles.inlineField}>
-        <span>Height</span>
-        <NumberInput
-          aria-label="Text height"
-          value={tool.height}
-          min={0.1}
-          step={1}
-          unit="mm"
-          onCommit={(n) => setOption({ height: n })}
-        />
-      </label>
-      <label className={styles.inlineField}>
-        <span>Rotation</span>
-        <NumberInput
-          aria-label="Text rotation"
-          value={tool.angle}
-          min={-360}
-          max={360}
-          step={15}
-          unit="°"
-          onCommit={(n) => setOption({ angle: n })}
-        />
-      </label>
-      <Button variant="primary" size="small" icon={<Check size={13} />} onClick={commit}>
-        {tool.editing ? 'Update' : 'Place'}
-      </Button>
-      <Button
-        variant="secondary"
-        size="small"
-        aria-label="Cancel text"
-        icon={<X size={13} />}
-        onClick={() => useSketchStore.getState().setTool('select')}
-      />
+        <label className={styles.inlineField}>
+          <span>Height</span>
+          <NumberInput
+            aria-label="Text height"
+            value={tool.height}
+            min={0.1}
+            step={1}
+            unit="mm"
+            onCommit={(n) => setOption({ height: n })}
+          />
+        </label>
+        <label className={styles.inlineField}>
+          <span>Rotation</span>
+          <NumberInput
+            aria-label="Text rotation"
+            value={tool.angle}
+            min={-360}
+            max={360}
+            step={15}
+            unit="°"
+            onCommit={(n) => setOption({ angle: n })}
+          />
+        </label>
+      </div>
     </div>
   );
 }
