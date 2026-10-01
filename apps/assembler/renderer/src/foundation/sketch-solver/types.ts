@@ -108,11 +108,12 @@ export interface SketchSpline extends EntityBase {
 }
 
 /**
- * Text as sketch geometry. `anchor` is the start of the baseline; the
- * glyph outlines are stored (normalized: `1` = `height`, the cap height)
- * so a document evaluates without the font. `outline` is SVG path data
- * (M/L/Q/C/Z) in those units, baseline start at the origin, v up.
- * Every closed glyph contour is a profile curve (region keys `<id>.<n>`).
+ * Text as sketch geometry. `anchor` is on the baseline: its start, middle
+ * or end (`align`); the glyph outlines are stored (normalized: `1` =
+ * `height`, the cap height) so a document evaluates without the font.
+ * `outline` is SVG path data (M/L/Q/C/Z) in those units with the anchor at
+ * the origin (already shifted for the alignment), v up. Every closed glyph
+ * contour is a profile curve (region keys `<id>.<n>`).
  */
 export interface SketchText extends EntityBase {
   kind: 'text';
@@ -122,8 +123,10 @@ export interface SketchText extends EntityBase {
   height: number;
   /** Rotation of the baseline, degrees counter-clockwise. */
   angle: number;
-  /** Font id (see `sketch/text/fonts.ts`). */
+  /** Font id: a bundled font (`inter`) or an installed one (`system:<PostScript name>`), see `text/fonts.ts`. */
   font: string;
+  /** Where the anchor sits on the baseline (absent = the start, `left`). Block 8. */
+  align?: 'center' | 'right';
   outline: string;
 }
 
@@ -258,6 +261,47 @@ export interface RegionSignature {
   box: [number, number, number, number];
 }
 
+/**
+ * A sketch pattern (Shapr3D "Pattern (Sketch)" with its pattern constraint):
+ * the record that keeps a linear or circular repetition editable after it
+ * was made — count, second-direction count and total angle can change and
+ * the copies are rebuilt (`modules/sketching/operations.ts`
+ * `editPattern`). The copies stay tied to the sources by `translate` /
+ * `rotate` constraints, so dimension edits move them without the record.
+ *
+ * - `linear`: `lines[0]` (and `lines[1]` for a second direction) are
+ *   construction lines from the base point (`line.a`, a point of the
+ *   sources) to its first copy along that direction (`line.b`, kept when the
+ *   copies are rebuilt); their length dimension is the spacing and
+ *   their direction the pattern direction. Instance (i, j) = sources moved by
+ *   i × line 1 + j × line 2; `count` × `count2` instances, the sources included.
+ * - `circular`: `count` instances about point `center` spread over `angle`
+ *   degrees (360 = a full turn, instances `angle / count` apart; less spreads
+ *   them from first to last).
+ *
+ * `created` lists every entity a rebuild replaces (the copies' points and
+ * curves). Additive in schema 2 (Block 8); a sketch without `patterns` reads
+ * as before.
+ */
+export interface SketchPattern {
+  /** `pat<n>`. */
+  id: string;
+  kind: 'linear' | 'circular';
+  /** The patterned curves and loose points of the original instance. */
+  sources: string[];
+  count: number;
+  /** Linear: instances along the second direction (absent = one direction). */
+  count2?: number;
+  /** Linear: the direction line(s), see above. */
+  lines?: string[];
+  /** Circular: centre point id. */
+  center?: string;
+  /** Circular: total angle, degrees. */
+  angle?: number;
+  /** Entities created for the copies (points and curves), replaced on a rebuild. */
+  created: string[];
+}
+
 /** The solver-relevant content of a sketch feature. */
 export interface SketchData {
   entities: SketchEntity[];
@@ -267,6 +311,8 @@ export interface SketchData {
   projections?: SketchProjection[];
   /** Region fingerprints for geometric re-binding (absent = none recorded). */
   regionMemory?: RegionSignature[];
+  /** Editable sketch patterns (absent = none). */
+  patterns?: SketchPattern[];
 }
 
 export const EMPTY_SKETCH: SketchData = { entities: [], constraints: [], dimensions: [] };
@@ -279,6 +325,7 @@ export function sketchDataOf(source: SketchData): SketchData {
     dimensions: source.dimensions,
     ...(source.projections ? { projections: source.projections } : {}),
     ...(source.regionMemory ? { regionMemory: source.regionMemory } : {}),
+    ...(source.patterns ? { patterns: source.patterns } : {}),
   };
 }
 
@@ -357,7 +404,7 @@ export function radiusOf(
  * every id of that prefix already in the sketch or handed out before.
  * Prefixes in use: `p` point, `l` line, `c` circle, `a` arc, `e`
  * ellipse, `ea` elliptical arc, `s` spline, `t` text, `k` constraint,
- * `m` dimension, `j` projection.
+ * `m` dimension, `j` projection, `pat` pattern.
  */
 export function idAllocator(sketch: SketchData): (prefix: string) => string {
   const next = new Map<string, number>();
@@ -366,6 +413,7 @@ export function idAllocator(sketch: SketchData): (prefix: string) => string {
     ...sketch.constraints,
     ...sketch.dimensions,
     ...(sketch.projections ?? []),
+    ...(sketch.patterns ?? []),
   ];
   return (prefix) => {
     let n = next.get(prefix);

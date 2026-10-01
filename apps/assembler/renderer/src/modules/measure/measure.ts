@@ -407,7 +407,79 @@ function planeOf(r: Resolved): { point: Vec3; normal: Vec3 } | null {
 
 const PARALLEL_TOLERANCE_DEG = 1e-4;
 
+/**
+ * The X/Y/Z components of a distance from `a` to `b` (absolute, world axes;
+ * secondary read-outs, Shapr3D "X/Y/Z components").
+ */
+export function componentValues(a: Vec3, b: Vec3, approx = false): MeasureValue[] {
+  const d = sub(b, a);
+  // Touching items (distance 0) have no components worth a row.
+  if (len(d) < 1e-9) return [];
+  return (['X', 'Y', 'Z'] as const).map((axis, i) => ({
+    label: `Δ${axis}`,
+    kind: 'length' as const,
+    value: Math.abs(d[i]!),
+    secondary: true,
+    ...(approx ? { approx: true } : {}),
+  }));
+}
+
+/**
+ * Sums over several items (Shapr3D: lengths of several edges, areas of
+ * several faces, volumes/masses of several bodies). One value per kind that
+ * occurs at least twice; `secondary` when they accompany a pair measurement.
+ */
+function totalValues(
+  items: readonly Pick<Resolved, 'ref' | 'edge' | 'face' | 'body'>[],
+  ctx: Pick<MeasureContext, 'materials'>,
+  secondary = false,
+): MeasureValue[] {
+  const edges = items.filter((r) => r.edge);
+  const faces = items.filter((r) => r.face);
+  const bodies = items.filter((r) => !r.edge && !r.face && r.body);
+  const out: MeasureValue[] = [];
+  const flag = secondary ? { secondary: true } : {};
+  if (edges.length >= 2) {
+    const total = edges.reduce((sum, r) => sum + r.edge!.length, 0);
+    out.push({
+      label: `Total length (${edges.length} edges)`,
+      kind: 'length',
+      value: total,
+      ...flag,
+    });
+  }
+  if (faces.length >= 2) {
+    const total = faces.reduce((sum, r) => sum + r.face!.area, 0);
+    out.push({ label: `Total area (${faces.length} faces)`, kind: 'area', value: total, ...flag });
+  }
+  if (bodies.length >= 2) {
+    let volume = 0;
+    let mass = 0;
+    let approx = false;
+    for (const r of bodies) {
+      const isMesh = r.ref.kind === 'mesh';
+      const v = isMesh ? meshVolume(r.body!.mesh.positions, r.body!.mesh.indices) : r.body!.volume;
+      approx ||= isMesh;
+      volume += v;
+      mass += massValue(v, isMesh ? undefined : ctx.materials?.get(r.body!.id)).value;
+    }
+    const a = approx ? { approx } : {};
+    out.push(
+      { label: 'Total volume', kind: 'volume', value: volume, ...a, ...flag },
+      { label: 'Total mass (solid)', kind: 'mass', value: mass, ...a, ...flag },
+    );
+  }
+  return out;
+}
+
 function measurePair(a: Resolved, b: Resolved, ctx: MeasureContext): Measurement {
+  const pair = measurePairOnly(a, b, ctx);
+  // Two edges / two faces also show their sum (secondary), like several items do.
+  const totals = pair.pending || pair.note ? [] : totalValues([a, b], ctx, true);
+  return totals.length > 0 ? { ...pair, values: [...pair.values, ...totals] } : pair;
+}
+
+function measurePairOnly(a: Resolved, b: Resolved, ctx: MeasureContext): Measurement {
   const subject = `${a.name} → ${b.name}`;
   const pa = anchorPoint(a);
   const pb = anchorPoint(b);
@@ -418,12 +490,7 @@ function measurePair(a: Resolved, b: Resolved, ctx: MeasureContext): Measurement
     return {
       title: bothCircles ? 'Centre distance' : 'Point to point',
       subject,
-      values: [
-        { label: 'Distance', kind: 'length', value: len(d) },
-        { label: 'ΔX', kind: 'length', value: Math.abs(d[0]), secondary: true },
-        { label: 'ΔY', kind: 'length', value: Math.abs(d[1]), secondary: true },
-        { label: 'ΔZ', kind: 'length', value: Math.abs(d[2]), secondary: true },
-      ],
+      values: [{ label: 'Distance', kind: 'length', value: len(d) }, ...componentValues(pa, pb)],
       graphics: [{ kind: 'segment', a: pa, b: pb }],
     };
   }
@@ -447,7 +514,10 @@ function measurePair(a: Resolved, b: Resolved, ctx: MeasureContext): Measurement
       return {
         title: 'Parallel faces',
         subject,
-        values: [{ label: 'Distance', kind: 'length', value: distance }],
+        values: [
+          { label: 'Distance', kind: 'length', value: distance },
+          ...componentValues(foot, planeB.point),
+        ],
         graphics: [{ kind: 'segment', a: foot, b: planeB.point }],
       };
     }
@@ -465,7 +535,10 @@ function measurePair(a: Resolved, b: Resolved, ctx: MeasureContext): Measurement
       return {
         title: 'Parallel edges',
         subject,
-        values: [{ label: 'Distance', kind: 'length', value: len(perp) }],
+        values: [
+          { label: 'Distance', kind: 'length', value: len(perp) },
+          ...componentValues(sub(lineB.point, perp), lineB.point),
+        ],
         graphics: [{ kind: 'segment', a: sub(lineB.point, perp), b: lineB.point }],
       };
     }
@@ -485,7 +558,10 @@ function measurePair(a: Resolved, b: Resolved, ctx: MeasureContext): Measurement
       return {
         title: 'Edge parallel to face',
         subject,
-        values: [{ label: 'Distance', kind: 'length', value: distance }],
+        values: [
+          { label: 'Distance', kind: 'length', value: distance },
+          ...componentValues(foot, line.point),
+        ],
         graphics: [{ kind: 'segment', a: foot, b: line.point }],
       };
     }
@@ -499,12 +575,15 @@ function measurePair(a: Resolved, b: Resolved, ctx: MeasureContext): Measurement
   }
   const result = kernel ?? approxDistance(a, b);
   if (result) {
-    values.unshift({
-      label: 'Minimum distance',
-      kind: 'length',
-      value: result.distance,
-      ...(result.approx ? { approx: true } : {}),
-    });
+    values.unshift(
+      {
+        label: 'Minimum distance',
+        kind: 'length',
+        value: result.distance,
+        ...(result.approx ? { approx: true } : {}),
+      },
+      ...componentValues(result.pointA, result.pointB, result.approx),
+    );
     graphics.unshift({ kind: 'segment', a: result.pointA, b: result.pointB });
   }
   if (values.length === 0) {
@@ -740,20 +819,12 @@ export function measure(refs: readonly MeasureRef[], ctx: MeasureContext): Measu
   if (items.every((r) => r.ref.kind === 'body' || r.ref.kind === 'mesh')) {
     const min: Vec3 = [Infinity, Infinity, Infinity];
     const max: Vec3 = [-Infinity, -Infinity, -Infinity];
-    let volume = 0;
-    let mass = 0;
-    let approx = false;
     for (const r of items) {
       const body = r.body!;
       for (let i = 0; i < 3; i += 1) {
         min[i] = Math.min(min[i]!, body.min[i]!);
         max[i] = Math.max(max[i]!, body.max[i]!);
       }
-      const isMesh = r.ref.kind === 'mesh';
-      const v = isMesh ? meshVolume(body.mesh.positions, body.mesh.indices) : body.volume;
-      approx ||= isMesh;
-      volume += v;
-      mass += massValue(v, isMesh ? undefined : ctx.materials?.get(body.id)).value;
     }
     return {
       title: `${items.length} bodies`,
@@ -762,10 +833,32 @@ export function measure(refs: readonly MeasureRef[], ctx: MeasureContext): Measu
         { label: 'Width (X)', kind: 'length', value: max[0] - min[0] },
         { label: 'Depth (Y)', kind: 'length', value: max[1] - min[1] },
         { label: 'Height (Z)', kind: 'length', value: max[2] - min[2] },
-        { label: 'Total volume', kind: 'volume', value: volume, ...(approx ? { approx } : {}) },
-        { label: 'Total mass (solid)', kind: 'mass', value: mass, ...(approx ? { approx } : {}) },
+        ...totalValues(items, ctx),
       ],
       graphics: boxGraphics(min, max),
+    };
+  }
+  // Several edges / faces (and bodies): their sums, per kind (Shapr3D "sums over several items").
+  const totals = totalValues(items, ctx);
+  if (totals.length > 0) {
+    const kinds = [
+      ['edge', items.filter((r) => r.edge).length],
+      ['face', items.filter((r) => r.face).length],
+      ['body', items.filter((r) => !r.edge && !r.face && r.body).length],
+      ['point', items.filter((r) => r.point).length],
+    ] as const;
+    const parts = kinds
+      .filter(([, n]) => n > 0)
+      .map(
+        ([kind, n]) =>
+          `${n} ${kind === 'body' ? (n === 1 ? 'body' : 'bodies') : n === 1 ? kind : `${kind}s`}`,
+      );
+    // No viewport label: a sum belongs to no single item (the panel shows it).
+    return {
+      title: `${items.length} items`,
+      subject: parts.join(', '),
+      values: totals,
+      graphics: [],
     };
   }
   return {
@@ -773,7 +866,7 @@ export function measure(refs: readonly MeasureRef[], ctx: MeasureContext): Measu
     subject: `${items.length} items`,
     values: [],
     graphics: [],
-    note: 'Select one or two items (or several bodies).',
+    note: 'Select one or two items, or several edges, faces or bodies to sum them.',
   };
 }
 

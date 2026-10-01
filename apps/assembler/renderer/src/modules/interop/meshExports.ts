@@ -1,5 +1,5 @@
 /**
- * File › Export STL (all bodies / the selected body) and Export 3MF: the
+ * File › Export STL (all bodies / the selected body), Export 3MF and Export OBJ: the
  * evaluated display meshes plus the visible reference meshes, written
  * through the runtime's save dialog or download (`persistence.ts`). 3MF
  * objects carry the user's body names and `setAppearance` colours. Each
@@ -11,6 +11,7 @@ import { referenceMeshToBody } from '../../foundation/commands/referenceMesh.js'
 import { useAssemblerStore } from '../../foundation/commands/store.js';
 import * as io from '../../foundation/document/persistence.js';
 import { exportBodyStl, stlBufferForMeshes } from '../../foundation/geometry-kernel/stlExport.js';
+import { objBytes } from '../../foundation/geometry-kernel/objExport.js';
 import { buildThreeMf } from '../../foundation/geometry-kernel/threeMf.js';
 
 function sanitizeFileName(name: string): string {
@@ -69,6 +70,24 @@ export async function export3mf(): Promise<boolean> {
     `${sanitizeFileName(doc.projectName)}.3mf`,
     [{ name: '3MF', extensions: ['3mf'] }],
     'model/3mf',
+  );
+  return result !== null;
+}
+
+/** One OBJ (an object per body, named after its Items name) of every evaluated body and visible reference mesh. */
+export async function exportObj(): Promise<boolean> {
+  const doc = useAssemblerStore.getState();
+  const visibleMeshes = doc.referenceMeshes.filter((m) => !m.hidden);
+  if (doc.evaluation.bodies.length === 0 && visibleMeshes.length === 0) return false;
+  const bytes = objBytes([
+    ...withDisplayNames(doc.evaluation.bodies, useItemsStore.getState()),
+    ...visibleMeshes.map(referenceMeshToBody),
+  ]);
+  const result = await io.exportBinary(
+    bytes,
+    `${sanitizeFileName(doc.projectName)}.obj`,
+    [{ name: 'OBJ', extensions: ['obj'] }],
+    'model/obj',
   );
   return result !== null;
 }

@@ -40,7 +40,7 @@ import {
   type WorldAxis,
 } from '../../foundation/document/document.js';
 
-import { defineDraftTool } from '../../foundation/commands/draftTools.js';
+import { defineDraftTool, draftPickOf } from '../../foundation/commands/draftTools.js';
 import type { SelectionItem } from '../../foundation/commands/store.js';
 
 export type PlaneMode = ConstructionPlaneDef['kind'];
@@ -227,10 +227,11 @@ function angleAround(cyl: { axis: Vec3; center: Vec3 }, point: Vec3): number {
 // ---- start ----------------------------------------------------------------------------------
 
 function selectionPicks(selection: readonly SelectionItem[]): ConstructionPick[] {
-  return selection.filter(
-    (s): s is Exclude<SelectionItem, { kind: 'feature' } | { kind: 'mesh' }> =>
-      s.kind !== 'feature' && s.kind !== 'mesh',
-  );
+  // A selected sketch line (SEL-12) is a sketch-line pick.
+  return selection.flatMap((s) => {
+    const pick = draftPickOf(s);
+    return pick ? [pick] : [];
+  });
 }
 
 export function emptyPlaneDraft(

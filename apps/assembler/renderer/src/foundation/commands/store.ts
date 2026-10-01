@@ -86,7 +86,9 @@ export type SelectionItem =
   /** A reference mesh (imported STL) — always selected as a whole, never per-triangle/per-face. */
   | { kind: 'mesh'; meshId: string }
   /** A construction plane or axis (`model/construction.ts`), by its feature id. */
-  | { kind: 'datum'; featureId: string };
+  | { kind: 'datum'; featureId: string }
+  /** One curve (line, arc, circle, spline, …) of a sketch, outside sketch mode (SEL-12). */
+  | { kind: 'sketchCurve'; featureId: string; entityId: string };
 
 /** Explicit lifecycle every tool session moves through. `cancel()` is valid from any of these except after commit. */
 export type ToolPhase = 'collectingReferences' | 'preview' | 'numericEditing' | 'committing';
@@ -271,6 +273,26 @@ export interface ViewState {
   sectionPlane: SectionPlane | null;
   /** 2D "section only": just the cut regions and their outlines. */
   sectionOnly: boolean;
+  /** Surface opacity of the X-Ray display mode, 0.05..0.95 (Shapr3D 26.90 "adjustable opacity"). */
+  xrayOpacity: number;
+  /** World plane the grid lies in (Shapr3D grid planes XY/YZ/ZX). */
+  gridPlane: GridPlane;
+}
+
+/** World plane of the viewport grid. */
+export type GridPlane = 'XY' | 'XZ' | 'YZ';
+
+export function isGridPlane(value: unknown): value is GridPlane {
+  return value === 'XY' || value === 'XZ' || value === 'YZ';
+}
+
+/** Default X-Ray surface opacity (the value the mode always had). */
+export const DEFAULT_XRAY_OPACITY = 0.32;
+
+/** An X-Ray opacity within the allowed range (`null` for a non-number). */
+export function clampXrayOpacity(value: unknown): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+  return Math.min(0.95, Math.max(0.05, value));
 }
 
 export interface PanelsState {
@@ -451,6 +473,9 @@ export interface AssemblerState extends AssemblerStateExtensions {
     key: 'edgesVisible' | 'hiddenEdgesVisible' | 'axesVisible' | 'sectionOnly',
     value: boolean,
   ) => void;
+  /** X-Ray surface opacity (clamped to 0.05..0.95); view state, not undo-tracked. */
+  setXrayOpacity: (value: number) => void;
+  setGridPlane: (plane: GridPlane) => void;
   /** Sets (or clears) the face-aligned section plane; the offset restarts at the face. */
   setSectionPlane: (plane: SectionPlane | null) => void;
   /**
@@ -589,6 +614,8 @@ function selectionKeysEqual(a: SelectionItem, b: SelectionItem): boolean {
       return b.kind === 'mesh' && a.meshId === b.meshId;
     case 'datum':
       return b.kind === 'datum' && a.featureId === b.featureId;
+    case 'sketchCurve':
+      return b.kind === 'sketchCurve' && a.featureId === b.featureId && a.entityId === b.entityId;
   }
 }
 
@@ -630,6 +657,14 @@ function remapSelectionItem(
       return item;
     case 'datum':
       return evaluation.datums?.some((d) => d.featureId === item.featureId) ? item : null;
+    case 'sketchCurve':
+      return evaluation.sketches.some(
+        (s) =>
+          s.featureId === item.featureId &&
+          (s.curves ?? []).some((curve) => curve.entityId === item.entityId),
+      )
+        ? item
+        : null;
   }
 }
 
@@ -1545,9 +1580,17 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
       axesVisible: true,
       sectionPlane: null,
       sectionOnly: false,
+      xrayOpacity: DEFAULT_XRAY_OPACITY,
+      gridPlane: 'XY',
     },
     setDisplayMode: (mode) => set((s) => ({ viewState: { ...s.viewState, displayMode: mode } })),
     setViewToggle: (key, value) => set((s) => ({ viewState: { ...s.viewState, [key]: value } })),
+    setGridPlane: (gridPlane) => set((s) => ({ viewState: { ...s.viewState, gridPlane } })),
+    setXrayOpacity: (value) => {
+      const xrayOpacity = clampXrayOpacity(value);
+      if (xrayOpacity === null) return;
+      set((s) => ({ viewState: { ...s.viewState, xrayOpacity } }));
+    },
     setSectionPlane: (plane) =>
       set((s) => ({
         viewState: {

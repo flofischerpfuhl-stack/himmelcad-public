@@ -153,6 +153,11 @@ export interface SceneInput {
    * emphasised — while a tool takes an axis (Revolve, Pattern).
    */
   pickSketchLines?: boolean;
+  /**
+   * Every sketch curve is a pick target (`sketchCurve`) and selected/hovered
+   * curves are highlighted — while no tool runs (SEL-12).
+   */
+  pickSketchCurves?: boolean;
   /** Device pixel ratio (`viewportHeightPx` is in device pixels); selection lines are ≈3 CSS px wide. */
   dpr?: number;
   /** Bodies of a fillet/chamfer/shell/boolean preview: opaque, edges in the preview accent. */
@@ -179,6 +184,10 @@ export interface SceneInput {
   hiddenEdgesVisible?: boolean;
   /** World axes. Default `true`. */
   axesVisible?: boolean;
+  /** Surface opacity in X-Ray mode. Default 0.32. */
+  xrayOpacity?: number;
+  /** World plane of the grid (default XY); the ground shadow needs XY. */
+  gridPlane?: 'XY' | 'XZ' | 'YZ';
   /** Material per body id ("Visualized"). */
   materials?: ReadonlyMap<string, MaterialId>;
   /** Screen-space ambient occlusion and the ground contact shadow. Default `true`. */
@@ -420,8 +429,18 @@ export function buildScene(input: SceneInput): BuiltScene {
   const highQuality = input.highQuality ?? true;
   const lineInk = isWireframe || isXray ? input.colors.wire : input.colors.bodyEdge;
 
-  // ---- Grid (XY plane, z = 0) ----------------------------------------------
+  // ---- Grid (XY plane by default; XZ / YZ when chosen) ------------------------
   const gridExtent = Math.min(20000, Math.max(200, input.pose.distance * 6));
+  const gridPlane = input.gridPlane ?? 'XY';
+  // Grid (a, b) → world: the plane's two axes, the third coordinate 0.
+  const onGrid = (a: number, b: number): Vec3 =>
+    gridPlane === 'XY' ? [a, b, 0] : gridPlane === 'XZ' ? [a, 0, b] : [0, a, b];
+  const targetOnGrid: [number, number] =
+    gridPlane === 'XY'
+      ? [input.pose.target[0], input.pose.target[1]]
+      : gridPlane === 'XZ'
+        ? [input.pose.target[0], input.pose.target[2]]
+        : [input.pose.target[1], input.pose.target[2]];
   if (input.gridVisible && !sectionOnly) {
     const step = Math.max(0.001, input.gridStep);
     const extent = gridExtent;
@@ -437,20 +456,20 @@ export function buildScene(input: SceneInput): BuiltScene {
       const target = isMajor ? major : minor;
       const color = isMajor ? input.colors.gridMajor : input.colors.gridMinor;
       const fadeAt = (x: number, y: number): number => {
-        const d = Math.hypot(x - input.pose.target[0], y - input.pose.target[1]);
+        const d = Math.hypot(x - targetOnGrid[0], y - targetOnGrid[1]);
         return Math.max(0, 1 - d / fadeRadius) * (isMajor ? 0.55 : 0.28);
       };
       pushFlatLine(
         target,
-        [coord, -extent, 0],
-        [coord, extent, 0],
+        onGrid(coord, -extent),
+        onGrid(coord, extent),
         color,
         Math.min(fadeAt(coord, -extent), fadeAt(coord, extent)) || 0.05,
       );
       pushFlatLine(
         target,
-        [-extent, coord, 0],
-        [extent, coord, 0],
+        onGrid(-extent, coord),
+        onGrid(extent, coord),
         color,
         Math.min(fadeAt(-extent, coord), fadeAt(extent, coord)) || 0.05,
       );
@@ -559,7 +578,7 @@ export function buildScene(input: SceneInput): BuiltScene {
 
     const opaque = !isXray && !isExtrudePreview;
     if (!isWireframe && !sectionOnly) {
-      const alpha = isXray ? 0.32 : isExtrudePreview ? 0.55 : 1;
+      const alpha = isXray ? (input.xrayOpacity ?? 0.32) : isExtrudePreview ? 0.55 : 1;
       const materialId = input.materials?.get(body.id);
       lit.push({
         positions,
@@ -782,6 +801,34 @@ export function buildScene(input: SceneInput): BuiltScene {
       (item.regionKey === undefined || item.regionKey === regionKey);
     const outline = { positions: [] as number[], colors: [] as number[] };
     const fill = { positions: [] as number[], colors: [] as number[] };
+    // Sketch line highlights go into the frame after the sketch's own outline (the shared
+    // `overlays` are flushed above; drawn before the outline they would z-fight with it).
+    const curveHighlights: DrawBatch[] = [];
+    const sketchCurveLines = (
+      segments: Float32Array,
+      color: readonly [number, number, number],
+      widthPx: number,
+    ) => {
+      curveHighlights.push({
+        kind: 'lines',
+        segments,
+        color: rgba(color, 1),
+        widthPx,
+        depthTest: true,
+      });
+      curveHighlights.push({
+        kind: 'lines',
+        segments,
+        color: rgba(color, 0.4),
+        widthPx,
+        depthTest: false,
+      });
+    };
+    const curveMatches = (item: SelectionItem | null, entityId: string): boolean =>
+      item?.kind === 'sketchCurve' &&
+      item.featureId === sketch.featureId &&
+      item.entityId === entityId;
+    const curvePicks: { entityId: string; segments: Float32Array }[] = [];
     // Curves (open ones and construction geometry included) in the plain sketch colour.
     for (const curve of sketch.curves ?? []) {
       for (let i = 0; i + 1 < curve.points.length; i += 1) {
@@ -798,7 +845,7 @@ export function buildScene(input: SceneInput): BuiltScene {
         const b = curve.points[curve.points.length - 1]!;
         const segment = new Float32Array([...a, ...b]);
         // Axis candidates: drawn solid and wide enough to hit, on top of the profile fill.
-        thickEdges(segment, input.colors.sketchOutline, 2);
+        sketchCurveLines(segment, input.colors.sketchOutline, 2);
         idBatches.push({
           positions: buildPolylineRibbon(segment, eye, edgeHitWidth(input.pose.distance) * 1.5),
           id: pickTable.add({
@@ -809,7 +856,51 @@ export function buildScene(input: SceneInput): BuiltScene {
           mode: 'triangles',
           onTop: true,
         });
+        continue;
       }
+      if (!input.pickSketchCurves || curve.points.length < 2) continue;
+      // SEL-12: every curve of a shown sketch is pickable while no tool runs (depth-tested
+      // like body edges, so a body in front keeps its clicks).
+      const pairs: number[] = [];
+      for (let i = 0; i + 1 < curve.points.length; i += 1) {
+        pairs.push(...curve.points[i]!, ...curve.points[i + 1]!);
+      }
+      const segments = new Float32Array(pairs);
+      const selected = input.selection.some((item) => curveMatches(item, curve.entityId));
+      const hovered = !selected && curveMatches(input.hover, curve.entityId);
+      if (selected || hovered) {
+        sketchCurveLines(
+          segments,
+          selected ? input.colors.selection : input.colors.hover,
+          HIGHLIGHT_EDGE_PX,
+        );
+      }
+      curvePicks.push({ entityId: curve.entityId, segments });
+    }
+    if (curvePicks.length > 0 && !input.forExport) {
+      const baseId = pickTable.addRange(
+        curvePicks.map((c) => ({
+          kind: 'sketchCurve',
+          featureId: sketch.featureId,
+          entityId: c.entityId,
+        })),
+      );
+      const total = curvePicks.reduce((n, c) => n + c.segments.length, 0);
+      const segments = new Float32Array(total);
+      const localIndex = new Float32Array(total / 6);
+      let offset = 0;
+      curvePicks.forEach((c, index) => {
+        segments.set(c.segments, offset);
+        localIndex.fill(index, offset / 6, (offset + c.segments.length) / 6);
+        offset += c.segments.length;
+      });
+      idBatches.push({
+        kind: 'lines',
+        segments,
+        localIndex,
+        baseId,
+        widthPx: EDGE_HIT_PX * hitScale,
+      });
     }
     for (const profile of sketch.profiles) {
       const selected = input.selection.some((item) => matches(item, profile.key));
@@ -857,6 +948,7 @@ export function buildScene(input: SceneInput): BuiltScene {
       mode: 'triangles',
       depthTest: true,
     });
+    flat.push(...curveHighlights);
   }
 
   // ---- Construction planes and axes ---------------------------------------------
@@ -1325,6 +1417,7 @@ export function buildScene(input: SceneInput): BuiltScene {
   if (
     highQuality &&
     input.gridVisible &&
+    gridPlane === 'XY' &&
     // The removed half of a section would still cast a shadow: none while cutting.
     !sectionOn &&
     shadowCasters.length > 0 &&

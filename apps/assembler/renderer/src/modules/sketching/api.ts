@@ -19,6 +19,7 @@ import type { Feature } from '../../foundation/document/document.js';
 import { consumedSketchIds, parseDerivedSketchId } from '../../foundation/document/sketchUsage.js';
 import type { EvaluationResult } from '../../foundation/geometry-kernel/types.js';
 import { rememberRegions } from '../../foundation/sketch-solver/regionMemory.js';
+import { listSketchFonts } from '../../foundation/sketch-solver/text/fonts.js';
 import type { SketchFeature } from '../../foundation/sketch-solver/sketchFeature.js';
 import type {
   SketchConstraintKind,
@@ -88,6 +89,7 @@ async function listSketches(ctx: ApiContext, p: Json): Promise<Json[]> {
         entities: sketch.entities,
         constraints: sketch.constraints,
         dimensions: sketch.dimensions,
+        patterns: sketch.patterns ?? [],
         regions: describeRegions(sketch, evaluated),
       };
     })
@@ -233,6 +235,11 @@ export const SKETCHING_API: ApiContribution = {
         'sketches.list': {
           spec: SKETCHES_LIST_METHODS['sketches.list']!,
           handler: (ctx, p) => listSketches(ctx, p),
+        },
+        'sketch.fonts': {
+          spec: SKETCHES_LIST_METHODS['sketch.fonts']!,
+          handler: async () =>
+            (await listSketchFonts()).map(({ file: _file, ...font }): Json => ({ ...font })),
         },
       },
     },

@@ -1297,6 +1297,25 @@
           },
           "required": ["kind", "featureId"],
           "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "sketchCurve"
+            },
+            "featureId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "entityId": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": ["kind", "featureId", "entityId"],
+          "additionalProperties": false,
+          "description": "One curve of a sketch (sketches.list entity id), selected outside sketch mode."
         }
       ]
     },
@@ -1506,6 +1525,13 @@
               "type": "object"
             },
             "description": "Region fingerprints {key, sample, area, box} recorded on every write (geometric re-binding of redrawn profiles); maintained by the server."
+          },
+          "patterns": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            },
+            "description": "Editable sketch patterns {id, kind: \"linear\"|\"circular\", sources, count, count2?, lines?, center?, angle?, created}; created by sketch.pattern, changed with sketch.editPattern."
           },
           "profiles": {
             "type": "array",
@@ -2584,6 +2610,51 @@
         "additionalProperties": false
       }
     },
+    "referenceImage": {
+      "label": "Image",
+      "summary": "Reference image (no body): a picture on a plane, created with image.insert. feature.edit changes `center` [u, v], `width` (mm; the height follows), `rotation` (degrees) and `opacity` (0.05–1).",
+      "params": {
+        "type": "object",
+        "properties": {
+          "imageId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "fileName": {
+            "type": "string",
+            "minLength": 1
+          },
+          "pixelWidth": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "pixelHeight": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "plane": {
+            "$ref": "#/$defs/SketchPlane"
+          },
+          "center": {
+            "$ref": "#/$defs/Vec2"
+          },
+          "width": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "rotation": {
+            "type": "number"
+          },
+          "opacity": {
+            "type": "number",
+            "minimum": 0.05,
+            "maximum": 1
+          }
+        },
+        "required": ["imageId", "pixelWidth", "pixelHeight", "plane", "center", "width"],
+        "additionalProperties": false
+      }
+    },
     "hole": {
       "label": "Hole",
       "summary": "Simple, counterbored or countersunk holes on a planar face, blind or through all, several per feature. Standard sizes are presets of the tool (ISO 273 clearance M2-M10, tap drill, DIN 974-1 counterbores, ISO 15065 countersinks) and are stored as plain diameters; `thread` is a cosmetic label only (no thread geometry).",
@@ -2981,7 +3052,19 @@
         "required": [],
         "additionalProperties": false
       },
-      "result": "[{featureId, name, plane, frame: {origin,u,v,normal}, entities, constraints, dimensions, regions: [{key, area, sample, center, holes, entityIds}], consumed}]"
+      "result": "[{featureId, name, plane, frame: {origin,u,v,normal}, entities, constraints, dimensions, patterns: [{id, kind, sources, count, count2?, lines?, center?, angle?, created}], regions: [{key, area, sample, center, holes, entityIds}], consumed}]"
+    },
+    "sketch.fonts": {
+      "kind": "query",
+      "capability": "document.read",
+      "summary": "Fonts for sketch.addText: the bundled Inter (always, also headless) and — in the desktop app, once the user has listed them — the fonts installed on the computer (ids `system:<PostScript name>`). Text stores its outline, so documents never need the font again.",
+      "params": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "result": "[{id, label, source: \"bundled\"|\"system\", family?, style?}]"
     },
     "datums.list": {
       "kind": "query",
@@ -3145,7 +3228,7 @@
     "measure.get": {
       "kind": "query",
       "capability": "document.read",
-      "summary": "The Measure panel's measurement of 1..n items (one body: size/volume/mass/area; one edge: length or radius/diameter; one face: area (+ cylinder diameter); two items: exact minimum distance from the kernel, parallel distance or angle; several bodies: combined box/volume/mass). Values carry `unit` (mm, mm², mm³, deg, g); `approx` marks mesh estimates.",
+      "summary": "The Measure panel's measurement of 1..n items (one body: size/volume/mass/area; one edge: length or radius/diameter; one face: area (+ cylinder diameter); two items: exact minimum distance from the kernel, parallel distance or angle, each distance with its ΔX/ΔY/ΔZ components; several bodies: combined box/volume/mass; several edges/faces/bodies: total length/area/volume/mass). Values carry `unit` (mm, mm², mm³, deg, g); `approx` marks mesh estimates.",
       "params": {
         "type": "object",
         "properties": {
@@ -3171,7 +3254,7 @@
     "measure.distance": {
       "kind": "query",
       "capability": "document.read",
-      "summary": "Exact minimum distance between two bodies/faces/edges/points (kernel BRepExtrema_DistShapeShape) and the closest points.",
+      "summary": "Exact minimum distance between two bodies/faces/edges/points (kernel BRepExtrema_DistShapeShape), the closest points and the X/Y/Z components of the distance (`delta`, absolute).",
       "params": {
         "type": "object",
         "properties": {
@@ -3190,7 +3273,7 @@
         "required": ["a", "b"],
         "additionalProperties": false
       },
-      "result": "{distance, pointA, pointB, unit: \"mm\", exact: true}"
+      "result": "{distance, pointA, pointB, delta: [dx, dy, dz], unit: \"mm\", exact: true}"
     },
     "measure.angle": {
       "kind": "query",
@@ -3853,7 +3936,7 @@
       "kind": "command",
       "capability": "document.write",
       "transactional": true,
-      "summary": "Adds text (font Inter, SIL OFL 1.1) with its baseline starting at `position`: `height` is the cap height (mm), `angle` degrees. Every glyph becomes a closed profile (counters stay open) for extrude/emboss.",
+      "summary": "Adds text at `position` (its anchor on the baseline: start, middle or end by `align`): `height` is the cap height (mm), `angle` degrees, `font` a sketch.fonts id (default the bundled Inter, SIL OFL 1.1). Every glyph becomes a closed profile (counters stay open) for extrude/emboss.",
       "params": {
         "type": "object",
         "properties": {
@@ -3876,8 +3959,12 @@
             "type": "number"
           },
           "font": {
-            "enum": ["inter"],
+            "type": "string",
             "default": "inter"
+          },
+          "align": {
+            "enum": ["left", "center", "right"],
+            "default": "left"
           },
           "construction": {
             "type": "boolean",
@@ -3933,7 +4020,7 @@
       "kind": "command",
       "capability": "document.write",
       "transactional": true,
-      "summary": "Repeats curves/points `ids`: linear (`direction`, `spacing` — a spacing dimension drives every copy) or circular (`center`, `angle` total degrees, 360 = full turn); `count` includes the original.",
+      "summary": "Repeats curves/points `ids`: linear (`direction`, `spacing` — a spacing dimension drives every copy; with `count2`, `direction2`, `spacing2` a grid in two directions) or circular (`center`, `angle` total degrees, 360 = full turn); `count` includes the original. The pattern is recorded (`patternId`) so count/count2/angle stay editable (sketch.editPattern).",
       "params": {
         "type": "object",
         "properties": {
@@ -3965,6 +4052,18 @@
             "type": "number",
             "exclusiveMinimum": 0
           },
+          "count2": {
+            "type": "integer",
+            "minimum": 2,
+            "maximum": 200
+          },
+          "direction2": {
+            "$ref": "#/$defs/Vec2"
+          },
+          "spacing2": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
           "center": {
             "$ref": "#/$defs/Vec2"
           },
@@ -3984,13 +4083,96 @@
         "required": ["featureId", "ids", "count"],
         "additionalProperties": false
       },
+      "result": "{featureId, patternId, createdIds, dof, regions, revision, committed}"
+    },
+    "sketch.editPattern": {
+      "kind": "command",
+      "capability": "document.write",
+      "transactional": true,
+      "summary": "Changes a recorded sketch pattern (sketches.list → patterns): `count`, `count2` (two-direction linear patterns) or `angle` (circular, total degrees). The copies are rebuilt from the sources; spacing dimensions, direction lines and the centre stay.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "featureId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "patternId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 2,
+            "maximum": 200
+          },
+          "count2": {
+            "type": "integer",
+            "minimum": 2,
+            "maximum": 200
+          },
+          "angle": {
+            "type": "number"
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Optimistic concurrency: the command fails with `conflict` unless the document revision still equals this value."
+          }
+        },
+        "required": ["featureId", "patternId"],
+        "additionalProperties": false
+      },
+      "result": "{featureId, patternId, pattern, dof, regions, revision, committed}"
+    },
+    "sketch.offset": {
+      "kind": "command",
+      "capability": "document.write",
+      "transactional": true,
+      "summary": "Offsets each curve of `ids` with its chain (connected curves; `single: true` only the curve) by `distance`: closed loops to the `outside` (default) or `inside`, open chains to the `left`/`right` of the curve direction. Lines and arcs offset exactly; ellipses, elliptical arcs and splines become fit splines through their true offset. New, unconstrained geometry.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "featureId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
+          },
+          "distance": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "side": {
+            "enum": ["outside", "inside", "left", "right"],
+            "default": "outside"
+          },
+          "single": {
+            "type": "boolean",
+            "default": false
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Optimistic concurrency: the command fails with `conflict` unless the document revision still equals this value."
+          }
+        },
+        "required": ["featureId", "ids", "distance"],
+        "additionalProperties": false
+      },
       "result": "{featureId, createdIds, dof, regions, revision, committed}"
     },
     "sketch.roundCorner": {
       "kind": "command",
       "capability": "document.write",
       "transactional": true,
-      "summary": "Fillets (radius `size`) or chamfers (set-back `size`) the corner at point `point` between two lines; the corner point stays as a virtual sharp so dimensions to it survive.",
+      "summary": "Fillets (radius `size`, tangent to both curves) or chamfers (set-back `size`, a chord on arcs) the corner at point `point` between two lines, a line and an arc, or two arcs; the corner point stays as a virtual sharp so dimensions to it survive. Splines and ellipses are refused with the reason.",
       "params": {
         "type": "object",
         "properties": {
@@ -4017,6 +4199,37 @@
           }
         },
         "required": ["featureId", "point", "size"],
+        "additionalProperties": false
+      },
+      "result": "{featureId, createdIds, dof, regions, revision, committed}"
+    },
+    "sketch.disconnect": {
+      "kind": "command",
+      "capability": "document.write",
+      "transactional": true,
+      "summary": "Disconnect (Shapr3D): curves meeting at each given shared point get a point of their own (same position; the first curve keeps the original with its constraints/dimensions); given coincident constraints, or those on a given point, are removed. The curves can then move apart.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "featureId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Optimistic concurrency: the command fails with `conflict` unless the document revision still equals this value."
+          }
+        },
+        "required": ["featureId", "ids"],
         "additionalProperties": false
       },
       "result": "{featureId, createdIds, dof, regions, revision, committed}"
@@ -4053,6 +4266,37 @@
         "additionalProperties": false
       },
       "result": "{featureId, projectionId, entityIds, dof, regions, revision, committed}"
+    },
+    "sketch.unlinkProjection": {
+      "kind": "command",
+      "capability": "document.write",
+      "transactional": true,
+      "summary": "Unlinks projected geometry (Shapr3D `Linked` off): `ids` are projection ids or ids of projected curves/points. The geometry stays as ordinary sketch geometry (free, editable, construction flag kept) and no longer follows its source; project again to link.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "featureId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Optimistic concurrency: the command fails with `conflict` unless the document revision still equals this value."
+          }
+        },
+        "required": ["featureId", "ids"],
+        "additionalProperties": false
+      },
+      "result": "{featureId, unlinked, entityIds, dof, regions, revision, committed}"
     },
     "sketch.setReference": {
       "kind": "command",
@@ -4222,6 +4466,37 @@
       "kind": "command",
       "capability": "document.read",
       "summary": "3MF package (3MF Core + Materials): one welded, manifold object per body with its name and colour, build items with transforms.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "bodyIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Headless only (capability filesystem.write). Omit to receive base64 bytes."
+          },
+          "resolution": {
+            "enum": ["current", "coarse", "standard", "fine"],
+            "default": "current",
+            "description": "`current`: the evaluated display mesh. Presets re-tessellate the exact B-rep: coarse 0.1 mm / 0.5 rad, standard 0.025 mm / 0.25 rad, fine 0.005 mm / 0.1 rad (chordal / angular deflection)."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "result": "{mediaType, byteLength, triangles, data?: base64, path?}"
+    },
+    "export.obj": {
+      "kind": "command",
+      "capability": "document.read",
+      "summary": "Wavefront OBJ of all (or the given) bodies: one object per body named after it, shared vertices with normals, millimetres; no materials (use 3MF or STEP for colours).",
       "params": {
         "type": "object",
         "properties": {
@@ -4845,6 +5120,103 @@
         "additionalProperties": false
       },
       "result": "{featureId, bodyId, check: {triangles, faces, flipped, inverted, volume}, summary, revision, committed}"
+    },
+    "image.insert": {
+      "kind": "command",
+      "capability": "document.write",
+      "transactional": true,
+      "summary": "Inserts a PNG/JPEG picture (`path` headless, or base64 `data` + `fileName`) as a reference image (History step `referenceImage`, Shapr3D canvas) on a plane: centre `center` [u, v] in the plane frame, `width` mm (default: longer side 100 mm; the height follows the aspect ratio), `rotation` degrees, `opacity` 0.05–1 (default 0.6). The picture is stored in the project file.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "data": {
+            "type": "string",
+            "minLength": 1
+          },
+          "fileName": {
+            "type": "string",
+            "minLength": 1
+          },
+          "plane": {
+            "description": "A world plane {kind: \"plane\", plane: \"XY\"|\"XZ\"|\"YZ\", offset}, a planar face {kind: \"face\", face: FaceInput} or a construction plane {kind: \"construction\", featureId}; default XY.",
+            "type": "object"
+          },
+          "center": {
+            "$ref": "#/$defs/Vec2"
+          },
+          "width": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "rotation": {
+            "type": "number"
+          },
+          "opacity": {
+            "type": "number",
+            "minimum": 0.05,
+            "maximum": 1
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Optimistic concurrency: the command fails with `conflict` unless the document revision still equals this value."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "result": "{featureId, imageId, pixelWidth, pixelHeight, width, height, revision, committed}"
+    },
+    "image.calibrate": {
+      "kind": "command",
+      "capability": "document.write",
+      "transactional": true,
+      "summary": "Scales a reference image so that points `a` and `b` (plane [u, v], or world [x, y, z] projected onto its plane) are `distance` mm apart; it scales about `a`.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "featureId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "a": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 2,
+            "maxItems": 3
+          },
+          "b": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 2,
+            "maxItems": 3
+          },
+          "distance": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Optimistic concurrency: the command fails with `conflict` unless the document revision still equals this value."
+          }
+        },
+        "required": ["featureId", "a", "b", "distance"],
+        "additionalProperties": false
+      },
+      "result": "{featureId, center, width, revision, committed}"
     }
   },
   "limits": {

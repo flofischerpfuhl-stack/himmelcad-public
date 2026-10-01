@@ -34,13 +34,18 @@ import {
 } from '../../foundation/geometry-kernel/meshExport.js';
 import { stlBytes } from '../../foundation/geometry-kernel/stlExport.js';
 import { buildThreeMf } from '../../foundation/geometry-kernel/threeMf.js';
+import { objBytes } from '../../foundation/geometry-kernel/objExport.js';
 import type { Body, EvaluationResult } from '../../foundation/geometry-kernel/types.js';
 import type { Feature } from '../../foundation/document/document.js';
 import type { SketchFeature } from '../../foundation/sketch-solver/sketchFeature.js';
 import { resolveParameterValues } from '../../foundation/document/parameters.js';
 import { IGES_UNAVAILABLE, stepExportOptions } from '../../modules/interop/interopApi.js';
 import { stepAssemblyFromItems } from '../../modules/interop/stepTree.js';
-import { useItemsStore } from '../../foundation/commands/items.js';
+import { useItemsStore, withDisplayNames } from '../../foundation/commands/items.js';
+import {
+  collectProjectSections,
+  loadProjectSections,
+} from '../../foundation/document/projectSections.js';
 import {
   ProjectFormatError,
   loadProjectFile,
@@ -268,6 +273,7 @@ export class AgentSession {
         return this.undoRedo(method === 'history.undo');
       case 'export.stl':
       case 'export.3mf':
+      case 'export.obj':
       case 'export.step':
       case 'export.iges':
         return this.exportBodies(method, p);
@@ -844,7 +850,7 @@ export class AgentSession {
     let bytes: Uint8Array;
     let mediaType: string;
     let triangles: number | undefined;
-    if (method === 'export.stl' || method === 'export.3mf') {
+    if (method === 'export.stl' || method === 'export.3mf' || method === 'export.obj') {
       const meshes = await this.exportMeshes(
         p,
         bodies.map((b) => b.id),
@@ -858,6 +864,9 @@ export class AgentSession {
           p.format === 'ascii' ? 'ascii' : 'binary',
         );
         mediaType = 'model/stl';
+      } else if (method === 'export.obj') {
+        bytes = objBytes(withDisplayNames(meshed, useItemsStore.getState()));
+        mediaType = 'model/obj';
       } else {
         bytes = buildThreeMf(meshed, { title: this.store.getState().projectName });
         mediaType = 'model/3mf';
@@ -1015,7 +1024,10 @@ export class AgentSession {
     this.guardDiscard('Starting a new project');
     const name = typeof p.name === 'string' ? p.name : 'Untitled';
     if (this.host.project) this.host.project.newProject(name);
-    else this.store.getState().loadDocument([], { projectName: name });
+    else {
+      this.store.getState().loadDocument([], { projectName: name });
+      loadProjectSections(null);
+    }
     await this.store.getState().whenSettled();
     return { projectName: name, revision: this.revision };
   }
@@ -1046,6 +1058,8 @@ export class AgentSession {
         projectName: project.projectName,
         parameters: project.parameters,
       });
+      // Headless: the modules' top-level fields (e.g. reference-image pictures) too.
+      loadProjectSections(project);
     }
     await this.store.getState().whenSettled();
     const evaluation = this.store.getState().evaluation;
@@ -1063,6 +1077,8 @@ export class AgentSession {
     const text = this.host.project
       ? await this.host.project.text(typeof p.name === 'string' ? p.name : undefined)
       : saveProjectFile({
+          // Headless: the modules' top-level fields (e.g. reference-image pictures), no view state.
+          ...(await collectProjectSections()).fields,
           projectName: typeof p.name === 'string' ? p.name : state.projectName,
           features: state.features,
           parameters: state.parameters,

@@ -1,9 +1,39 @@
 /**
  * Dimension expressions: `+ - * /`, parentheses, unary minus, decimal
- * numbers (`,` accepted as decimal separator), an optional trailing `mm` /
- * `°` / `deg`, and references to other dimensions of the same sketch by
- * name (`d1`, `d2`, …). No `eval`: a small recursive-descent parser.
+ * numbers (`,` accepted as decimal separator), units after any number
+ * (lengths `mm cm m in ft` and `"` / `'`, converted to millimetres; angles
+ * `° deg rad`, converted to degrees: `10 mm + 1 in` is 35.4), and
+ * references to other dimensions of the same sketch or to document
+ * parameters by name (`d1`, `wall`, …). No `eval`: a small
+ * recursive-descent parser.
  */
+
+/** Factor to the document's base unit (mm, degrees) per unit word after a number. */
+export const EXPRESSION_UNITS: Readonly<Record<string, number>> = {
+  mm: 1,
+  cm: 10,
+  m: 1000,
+  in: 25.4,
+  inch: 25.4,
+  '"': 25.4,
+  ft: 304.8,
+  "'": 304.8,
+  um: 0.001,
+  deg: 1,
+  '°': 1,
+  rad: 180 / Math.PI,
+};
+
+// Longest first so `mm` wins over `m` and `inch` over `in`.
+const UNIT_PATTERN = new RegExp(
+  `^\\s*(` +
+    Object.keys(EXPRESSION_UNITS)
+      .sort((a, b) => b.length - a.length)
+      .map((u) => u.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+      .join('|') +
+    `)(?![A-Za-z0-9_])`,
+  'i',
+);
 
 type Token =
   | { kind: 'number'; value: number }
@@ -38,8 +68,12 @@ function tokenize(input: string): Token[] | null {
     }
     const num = /^(\d+\.?\d*|\.\d+)/.exec(src.slice(i));
     if (num) {
-      tokens.push({ kind: 'number', value: Number(num[1]) });
       i += num[1]!.length;
+      // An optional unit right after the number (`1 in`, `2.5cm`, `90°`).
+      const unit = UNIT_PATTERN.exec(src.slice(i));
+      const factor = unit ? EXPRESSION_UNITS[unit[1]!.toLowerCase()] : undefined;
+      if (unit && factor !== undefined) i += unit[0].length;
+      tokens.push({ kind: 'number', value: Number(num[1]) * (factor ?? 1) });
       continue;
     }
     const name = /^[A-Za-z_][A-Za-z0-9_]*/.exec(src.slice(i));
@@ -169,6 +203,12 @@ export function parseDimensionExpression(input: string): ParsedExpression | null
       return v !== null && Number.isFinite(v) ? v : null;
     },
   };
+}
+
+/** The value of an expression without names (`12 + 3.5`, `1 in + 2 mm`), or `null`. */
+export function evaluateConstantExpression(input: string): number | null {
+  const parsed = parseDimensionExpression(input);
+  return parsed && parsed.refs.length === 0 ? parsed.evaluate(() => null) : null;
 }
 
 /** `true` when the text is just a number (no operators, no references). */

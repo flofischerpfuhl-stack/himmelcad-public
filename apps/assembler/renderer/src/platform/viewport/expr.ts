@@ -6,6 +6,8 @@
  * case rather than applying `NaN`.
  */
 
+import { evaluateConstantExpression } from '../../foundation/document/expressions.js';
+
 type TokenKind = 'number' | 'op' | 'lparen' | 'rparen' | 'end';
 interface Token {
   kind: TokenKind;
@@ -140,6 +142,12 @@ function parsePrimary(state: ParseState): number | null {
  * division by zero.
  */
 export function parseExpression(input: string): number | null {
+  const value = parsePlain(input);
+  // Units (`1 in + 2 mm`, `90°`) through the document's expression parser.
+  return value ?? evaluateConstantExpression(input);
+}
+
+function parsePlain(input: string): number | null {
   const tokens = tokenize(input);
   if (!tokens) return null;
   const state: ParseState = { tokens, pos: 0 };

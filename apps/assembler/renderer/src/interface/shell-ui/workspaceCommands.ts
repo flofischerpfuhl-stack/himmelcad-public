@@ -23,6 +23,7 @@ import { useDisplayDialogs } from '../../modules/display/dialogs.js';
 import {
   bodyRowKey,
   datumRowKey,
+  imageRowKey,
   meshRowKey,
   sketchRowKey,
   useItemsStore,
@@ -37,21 +38,27 @@ function selectedBodyIds(ctx: AssemblerState): string[] {
     .map((s) => s.bodyId);
 }
 
-/** Row key of the Items entry that owns a selection item, or `null`. */
-export function itemsRowKeyFor(item: SelectionItem): string | null {
+/** Row key of the Items entry that owns a selection item, or `null` (a reference-image step has one). */
+export function itemsRowKeyFor(
+  item: SelectionItem,
+  features: readonly { id: string; kind: string }[] = [],
+): string | null {
   switch (item.kind) {
     case 'body':
     case 'face':
     case 'edge':
       return bodyRowKey(item.bodyId);
     case 'sketchProfile':
+    case 'sketchCurve':
       return sketchRowKey(item.featureId);
     case 'mesh':
       return meshRowKey(item.meshId);
     case 'datum':
       return datumRowKey(item.featureId);
     case 'feature':
-      return null;
+      return features.some((f) => f.id === item.featureId && f.kind === 'referenceImage')
+        ? imageRowKey(item.featureId)
+        : null;
   }
 }
 
@@ -90,11 +97,11 @@ export const WORKSPACE_COMMANDS: readonly Command[] = [
     keywords: ['find', 'locate', 'items panel', 'tree'],
     adaptive: false,
     availability: (ctx) => {
-      const key = ctx.selection[0] ? itemsRowKeyFor(ctx.selection[0]) : null;
+      const key = ctx.selection[0] ? itemsRowKeyFor(ctx.selection[0], ctx.features) : null;
       return key ? enabled : { enabled: false, reason: 'Select a body, face, edge or sketch.' };
     },
     run: (ctx) => {
-      const key = ctx.selection[0] ? itemsRowKeyFor(ctx.selection[0]) : null;
+      const key = ctx.selection[0] ? itemsRowKeyFor(ctx.selection[0], ctx.features) : null;
       if (!key) return;
       if (!ctx.panels.items) ctx.setPanelVisible('items', true);
       useWorkspaceStore.getState().revealInItems(key);
@@ -161,7 +168,7 @@ export const WORKSPACE_COMMANDS: readonly Command[] = [
     availability: () => enabled,
     run: (ctx) => {
       const keys = ctx.selection
-        .map(itemsRowKeyFor)
+        .map((item) => itemsRowKeyFor(item, ctx.features))
         .filter((k): k is string => k !== null)
         .filter((k, i, all) => all.indexOf(k) === i);
       useItemsStore.getState().createFolder({ keys });

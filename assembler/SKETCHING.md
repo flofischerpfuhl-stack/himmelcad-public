@@ -62,7 +62,8 @@ A `sketch` feature (`model/document.ts`, `sketch/types.ts`) stores:
   points; counter-clockwise), `ellipse`, `ellipticArc`, `spline`, `text`
   (see "Advanced sketching"), each optionally `construction`;
 - optional `projections` (projected body geometry with its source
-  reference) and `regionMemory` (region fingerprints), both additive — the
+  reference), `regionMemory` (region fingerprints) and `patterns`
+  (editable pattern records, Block 8), all additive — the
   schema stays 2; a file with the new entity kinds fails loudly ("unknown
   entity kind") in older builds;
 - **constraints** `{ id, kind, refs }`: coincident, horizontal, vertical,
@@ -73,9 +74,11 @@ A `sketch` feature (`model/document.ts`, `sketch/types.ts`) stores:
   horizontalDistance, verticalDistance, radius, diameter, angle (degrees);
   `driven: true` marks a reference dimension; `offset`/`along` place the
   label.
-  Expressions are `+ - * /` with parentheses and names of other dimensions of
-  the sketch (`d1 / 2 + 3`), evaluated in dependency order; cycles, unknown
-  names and non-positive results are rejected (`sketch/expressions.ts`).
+  Expressions are `+ - * /` with parentheses, names of other dimensions of
+  the sketch or document parameters (`d1 / 2 + 3`, `wall * 2`) and units
+  after any number (`1 in + 5 mm`, `90° - 1 rad`; Block 8), evaluated in
+  dependency order; cycles, unknown names and non-positive results are
+  rejected (`foundation/document/expressions.ts`).
 
 The reserved point id `origin` is the sketch origin (fixed, never stored).
 Entity positions are always the **last solved state**, so the kernel never
@@ -344,6 +347,61 @@ per outline sample, per render) — fixed in `model/modeling.ts` /
 - **Move a region.** Move/Rotate on a sketch profile moves its points in the
   sketch plane (one tile, no normal arrow; `sketch/moveRegion.ts`).
 
+## Block 8 (2026-10-01, branch `asm/b8-sketch-20261001`)
+
+- **Sketch curves outside sketch mode (SEL-12).** Sketch lines, arcs,
+  circles, splines … are pickable in the model (selection kind
+  `sketchCurve`, one id batch per sketch; hover/selection highlight). The
+  adaptive bar then offers **Edit Sketch** (opens the sketch with the curve
+  selected), **Delete from Sketch** and **Toggle Construction** (one undo
+  step each); Delete removes the curve; double-click opens the sketch.
+  Tools that take sketch lines (revolve axis …) accept the selection.
+- **Patterns (SK-12).** Linear patterns in one or two directions (Pattern
+  options "1/2 directions", Count 2; a grid of `count × count2`), circular
+  patterns as before. Every pattern is recorded (`SketchData.patterns`:
+  kind, sources, counts, direction lines / centre, angle, created ids), so
+  selecting any copy in Select shows the **Pattern panel**: count, second
+  count and total angle are editable later (the copies are rebuilt, one
+  undo step). The direction line's handle is the first copy, so planeGCS
+  sees no coincident duplicate. API `sketch.pattern` (`count2`,
+  `direction2`, `spacing2`, returns `patternId`), `sketch.editPattern`.
+- **Offset (SK-09).** Splines and ellipses offset as fit splines on their
+  true offset (refused where the distance exceeds the curvature radius);
+  mixed chains stay connected (trimmed or mitred joints). Several loops at
+  once show one arrow each; clicking an arrow flips that loop; "Single"
+  offsets one curve instead of its chain. API `sketch.offset`
+  (`outside|inside|left|right`, `single`).
+- **Fillet/chamfer on arcs (SK-14).** Corners between a line and an arc or
+  two arcs: tangent fillet arc with a radius dimension, or a chamfer chord;
+  the virtual sharp stays as before. Spline/ellipse corners and tangent
+  corners are refused with the reason.
+- **Text (SK-11).** Font picker with the bundled Inter plus **installed
+  system fonts** (Local Font Access in the desktop app; collections split;
+  "Show installed fonts" asks once; headless/tests keep Inter only, so
+  documents evaluate deterministically from their stored outlines),
+  alignment left/centre/right (`SketchText.align`, the stored outline is
+  shifted), and an on-canvas gizmo: drag the anchor, rotate with the ring
+  handle (15° snaps). API `sketch.addText` `font` (`inter` or
+  `system:<PostScript name>`) and `align`; query `sketch.fonts`.
+- **Disconnect (CON-02).** With a shared point (or a coincident
+  constraint) selected, Disconnect gives each curve its own point; the
+  first keeps the original's constraints. API `sketch.disconnect`.
+- **Unlink projections (SK-15).** Selecting projected geometry shows
+  "Projected from …" with a **Linked** toggle; switching it off keeps the
+  curves as ordinary, editable geometry that no longer follows the source.
+  The lost-source warning offers Unlink. API `sketch.unlinkProjection`.
+- **Circle size (SK-05).** The Circle tool offers Diameter / Radius (a
+  sketching preference in `localStorage`): value chip, typed value and the
+  Dimension tool on a circle follow it.
+- **Units in expressions (CON-08).** See the data model above; the
+  History-card fields and dimension labels accept them too.
+
+Tests: `test/sketch/block8Sketch.test.ts`, `block8SketchMore.test.ts`,
+`test/model/block8Selection.test.ts`; Python
+`sdk/python/tests/test_assembler_block8_sketch.py`. Screens:
+`D:\AgentWork\HimmelCAD-Assembler\shots\block8-sketch\` (`shots.mjs` in
+`D:\AgentWork\HimmelCAD-Assembler\block8-sketch\`).
+
 ## Tests
 
 `test/sketch/curves.test.ts` (spline math, exact curve areas and
@@ -378,17 +436,20 @@ calibration).
 
 ## Known limits and next steps
 
-- No construction planes/axes; no parabola/hyperbola; no offset of splines
-  or ellipses; no point-on-spline constraint (splines take coincident on
+- No parabola/hyperbola; no point-on-spline constraint (splines take coincident on
   their end points and endpoint tangency only); a spline tangent to an
   ellipse/elliptical arc is not supported; ellipse minor radius must stay ≤
   the major radius (planeGCS; a dimension forcing the opposite fails).
 - Fit splines through many points are smooth but not curvature-continuous
   at their handles; after a trim a spline becomes a control-point spline
   with triple knots (dragging a pole then gives C0 joints).
-- Text: one line, one font (Inter Latin); editing re-generates the whole
-  text (region keys of a changed text change, re-pick them). Shapr3D
-  "text on a path" is not implemented.
+- Text: one line; installed fonts only in the desktop app (Local Font
+  Access, granted by Electron; a browser asks); a document keeps its glyph
+  outlines, so a font missing on another machine only matters when the text
+  is edited there (the picker shows it as "not installed"). Editing
+  re-generates the whole text (region keys of a changed text change,
+  re-pick them). Shapr3D "text on a path" is not implemented; one panel
+  instead of Shapr3D's Continue/Done steps.
 - Project: parallel projection only (no wrap onto curved faces); tilted
   circles/ellipses/B-spline edges become fit splines through 12–16 points
   (approximate); a face projects its boundary edges, not the silhouette of
@@ -396,11 +457,12 @@ calibration).
   gained an edge) freezes with "project it again". Projection reads the
   current bodies, so it only works for sources that exist before the sketch
   in the history.
-- Sketch patterns and mirrors: count/angle cannot be edited after creation
-  (the spacing dimension can); patterned text is not supported; the linear
-  pattern's direction line is a construction line (dimension/constrain it
-  to fix the direction).
-- Sketch fillet/chamfer: line–line corners only.
+- Sketch patterns: patterns made before Block 8 have no record and cannot
+  be edited (re-create them); patterned text is not supported; the linear
+  pattern's direction lines are construction lines (dimension/constrain
+  them to fix the directions). Mirrors are not editable after creation.
+- Sketch fillet/chamfer: line and arc corners; spline/ellipse corners and
+  corners that are already tangent are refused.
 - Label de-cluttering is greedy (chips move along their normal, badges to
   the nearest free slot); very dense sketches can still overlap.
 - Region keys use entity ids; a redrawn profile re-binds by its recorded
@@ -411,7 +473,7 @@ calibration).
 - planeGCS may converge to a mirrored solution for large dimension jumps
   (same as FreeCAD); undo restores the previous state.
 - Sketches on non-XY planes draw their own light grid in the overlay; the
-  WebGL grid stays on world XY.
+  WebGL grid lies on the chosen world plane (XY/XZ/YZ, Display menu).
 - Revolve, Sweep and Loft read profiles through `regions` like Extrude; a
   sweep path is a region's outer outline (open sketch curves are not a sweep
   path yet).

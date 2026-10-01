@@ -378,6 +378,47 @@ export function projectedEntities(sketch: SketchData): SketchEntity[] {
   return sketch.entities.filter((e) => ids.has(e.id));
 }
 
+/** The projection an entity (a projected curve or one of its points) belongs to, if any. */
+export function projectionOf(sketch: SketchData, entityId: string): SketchProjection | null {
+  const projections = sketch.projections ?? [];
+  if (projections.length === 0) return null;
+  const map = entityMap(sketch);
+  for (const projection of projections) {
+    for (const id of projection.entities) {
+      if (id === entityId) return projection;
+      const e = map.get(id);
+      if (!e) continue;
+      if (entityPointIds(e).includes(entityId)) return projection;
+      if (e.kind === 'spline' && e.points.includes(entityId)) return projection;
+    }
+  }
+  return null;
+}
+
+/**
+ * Unlinks projections (Shapr3D "Linked" off): the records of the
+ * projections `ids` name (projection ids, or any of their curves/points)
+ * go; the geometry stays as ordinary sketch geometry — free for the solver,
+ * editable, construction flag kept — and no longer follows its source.
+ * `null` when none of `ids` is projected.
+ */
+export function unlinkProjections(sketch: SketchData, ids: readonly string[]): EditResult | null {
+  const drop = new Set<string>();
+  for (const id of ids) {
+    const direct = (sketch.projections ?? []).find((p) => p.id === id);
+    const projection = direct ?? projectionOf(sketch, id);
+    if (projection) drop.add(projection.id);
+  }
+  if (drop.size === 0) return null;
+  const kept = (sketch.projections ?? []).filter((p) => !drop.has(p.id));
+  const unlinked = (sketch.projections ?? []).filter((p) => drop.has(p.id));
+  return {
+    sketch: { ...sketch, projections: kept },
+    optional: [],
+    select: unlinked.flatMap((p) => p.entities),
+  };
+}
+
 /** Ids of every entity (curves and their points) that belongs to a projection. */
 export function projectedIds(sketch: SketchData): Set<string> {
   return new Set(projectedEntities(sketch).map((e) => e.id));

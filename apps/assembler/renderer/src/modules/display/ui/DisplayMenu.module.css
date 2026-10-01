@@ -122,6 +122,28 @@
   text-align: left;
 }
 
+.sliderRow {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: var(--hc-space-2);
+  min-height: 26px;
+  padding-left: 22px;
+}
+
+.sliderLabel {
+  font-size: 11px;
+  color: var(--hc-fg-muted);
+}
+
+.sliderValue {
+  min-width: 34px;
+  text-align: right;
+  font-family: var(--hc-font-mono);
+  font-size: 10px;
+  color: var(--hc-fg-subtle);
+}
+
 .note {
   margin: var(--hc-space-1) 0 0;
   font-size: 11px;

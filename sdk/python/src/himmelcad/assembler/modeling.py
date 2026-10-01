@@ -360,6 +360,8 @@ class Sketch:
         self.dimensions: list[dict[str, str]] = []
         #: What `Document.import_dxf` reported (curves, connected end points, units, skipped entities).
         self.import_report: dict[str, Any] | None = None
+        #: Id of the last sketch pattern made with :meth:`pattern` (for :meth:`edit_pattern`).
+        self.last_pattern_id: str | None = None
 
     @property
     def id(self) -> str:
@@ -453,9 +455,10 @@ class Sketch:
         """Regular polygon inscribed in (``inscribed=False``: around) a construction circle. Returns the line ids."""
         return list(self.doc.client.add_polygon(self._ensure(), center, radius, sides=sides, inscribed=inscribed, angle=angle)["lineIds"])
 
-    def text(self, text: str, height: float, *, position: tuple[float, float] = (0.0, 0.0), angle: float = 0.0) -> str:
-        """Text (cap ``height`` mm, baseline starting at ``position``); every glyph is a profile. Returns its entity id."""
-        result = self.doc.client.add_text(self._ensure(), text, position, height, angle=angle)
+    def text(self, text: str, height: float, *, position: tuple[float, float] = (0.0, 0.0), angle: float = 0.0, font: str = "inter", align: str = "left") -> str:
+        """Text (cap ``height`` mm, anchored at ``position`` on the baseline: its start, centre or end by ``align``);
+        every glyph is a profile. ``font``: an id from ``client.fonts()``. Returns its entity id."""
+        result = self.doc.client.add_text(self._ensure(), text, position, height, angle=angle, font=font, align=align)
         missing = result.get("missingCharacters") or []
         if missing:
             raise AssemblerError(raw_code="invalidParams", message=f"characters not in the font: {' '.join(missing)}", hint="Use Latin characters.")
@@ -466,16 +469,33 @@ class Sketch:
         axis_id = axis.entity_id if isinstance(axis, SketchLine) else axis
         return list(self.doc.client.mirror_sketch(self.id, list(ids), axis_id)["createdIds"])
 
-    def pattern(self, ids: Sequence[str], count: int, *, spacing: float | None = None, direction: tuple[float, float] = (1.0, 0.0), center: tuple[float, float] | None = None, angle: float = 360.0) -> list[str]:
-        """Linear pattern (``spacing`` along ``direction``) or circular (``center``, total ``angle``). Returns the created ids."""
+    def pattern(self, ids: Sequence[str], count: int, *, spacing: float | None = None, direction: tuple[float, float] = (1.0, 0.0), count2: int | None = None, spacing2: float | None = None, direction2: tuple[float, float] = (0.0, 1.0), center: tuple[float, float] | None = None, angle: float = 360.0) -> list[str]:
+        """Linear pattern (``spacing`` along ``direction``; with ``count2``/``spacing2`` a grid along
+        ``direction2`` too) or circular (``center``, total ``angle``). Returns the created ids; the
+        pattern's id is :attr:`last_pattern_id` (for :meth:`edit_pattern`)."""
         client = self.doc.client
         if center is not None:
             result = client.pattern_sketch(self.id, list(ids), count, mode="circular", center=center, angle=angle)
         else:
             if spacing is None:
                 raise ValueError("a linear pattern needs spacing")
-            result = client.pattern_sketch(self.id, list(ids), count, direction=direction, spacing=spacing)
+            if count2 is not None and spacing2 is None:
+                raise ValueError("a second direction needs spacing2")
+            result = client.pattern_sketch(self.id, list(ids), count, direction=direction, spacing=spacing, count2=count2, direction2=direction2 if count2 is not None else None, spacing2=spacing2)
+        self.last_pattern_id = result.get("patternId")
         return list(result["createdIds"])
+
+    def edit_pattern(self, pattern_id: str | None = None, *, count: int | None = None, count2: int | None = None, angle: float | None = None) -> Mapping[str, Any]:
+        """Changes a sketch pattern (default: the last one made here); its copies are rebuilt."""
+        target = pattern_id or self.last_pattern_id
+        if not target:
+            raise ValueError("no pattern id given and no pattern made on this sketch")
+        return self.doc.client.edit_pattern(self.id, target, count=count, count2=count2, angle=angle)
+
+    def offset(self, ids: Sequence[str], distance: float, *, side: str = "outside", single: bool = False) -> list[str]:
+        """Offsets the chains through ``ids`` (each loop to ``side``: outside/inside for closed loops,
+        left/right for open chains). Returns the created ids."""
+        return list(self.doc.client.offset_sketch(self.id, list(ids), distance, side=side, single=single)["createdIds"])
 
     def fillet_corner(self, point: str, radius: float) -> list[str]:
         """Rounds the corner at sketch point ``point`` between two lines."""

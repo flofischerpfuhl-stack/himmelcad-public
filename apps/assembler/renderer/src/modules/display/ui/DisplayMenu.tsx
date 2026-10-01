@@ -16,13 +16,15 @@ import {
   MenuSeparator,
   MenuSubmenu,
   Radio,
+  Select,
+  Slider,
   Tooltip,
   registerEscapeRung,
 } from '@himmelcad/ui';
 
 import { COMMANDS, findCommand } from '../../../foundation/commands/registry.js';
 import { usePreferences } from '../../../platform/input/preferences.js';
-import type { AssemblerState } from '../../../foundation/commands/store.js';
+import { isGridPlane, type AssemblerState } from '../../../foundation/commands/store.js';
 import {
   DISPLAY_MODE_ENTRIES,
   activeDisplayEntry,
@@ -156,6 +158,21 @@ export function DisplayMenu({ state }: { state: AssemblerState }): JSX.Element {
               </div>
             ))}
           </div>
+          {view.displayMode === 'xray' ? (
+            <label className={styles.sliderRow}>
+              <span className={styles.sliderLabel}>X-Ray opacity</span>
+              <Slider
+                min={5}
+                max={95}
+                step={5}
+                value={Math.round(view.xrayOpacity * 100)}
+                valueText={`${Math.round(view.xrayOpacity * 100)} %`}
+                aria-label="X-Ray opacity"
+                onValueChange={(percent) => state.setXrayOpacity(percent / 100)}
+              />
+              <span className={styles.sliderValue}>{Math.round(view.xrayOpacity * 100)} %</span>
+            </label>
+          ) : null}
           <div className={styles.separator} role="separator" />
           <div className={styles.sectionTitle}>Show</div>
           <div className={styles.toggles}>
@@ -167,6 +184,24 @@ export function DisplayMenu({ state }: { state: AssemblerState }): JSX.Element {
             )}
             {toggle('display.hiddenEdges', view.hiddenEdgesVisible, 'Hidden edges (dashed)')}
             {toggle('display.grid', view.gridVisible, 'Grid')}
+            {view.gridVisible ? (
+              <label className={styles.sliderRow}>
+                <span className={styles.sliderLabel}>Grid plane</span>
+                <Select
+                  aria-label="Grid plane"
+                  value={view.gridPlane}
+                  options={[
+                    { value: 'XY', label: 'XY (floor)' },
+                    { value: 'XZ', label: 'XZ (front)' },
+                    { value: 'YZ', label: 'YZ (side)' },
+                  ]}
+                  onChange={(event) => {
+                    const plane = event.currentTarget.value;
+                    if (isGridPlane(plane)) state.setGridPlane(plane);
+                  }}
+                />
+              </label>
+            ) : null}
             {toggle('display.axes', view.axesVisible, 'Axes')}
           </div>
           <div className={styles.separator} role="separator" />

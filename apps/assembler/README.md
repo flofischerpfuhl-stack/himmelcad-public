@@ -225,6 +225,26 @@ Parity round 2 (branch `asm/parity2-20260930`):
 - Sketch additions (3D snaps, arc ends-then-bulge, 3-point rectangle, First/
   Last selected, continue previous sketch): `assembler/SKETCHING.md`.
 
+Block 8, sketch stream (branch `asm/b8-sketch-20261001`):
+
+- **Sketch curves outside sketch mode**: pick a line/arc/curve in the model;
+  Edit Sketch opens it with the curve selected, Delete from Sketch, Toggle
+  Construction (`SKETCHING.md` › Block 8, with patterns in two directions
+  editable later, spline/ellipse offsets with per-loop arrows, fillets on
+  arcs, installed fonts + alignment + text gizmo, Disconnect, Unlink, circle
+  radius/diameter, units in expressions).
+- **Reference images** (`renderer/src/modules/canvas`): Add › Image… puts a
+  PNG/JPEG on the selected planar face / construction plane (else XY) as a
+  History step; width, centre, rotation and opacity on its card, an opacity
+  slider under its selected Items row, Calibrate Image (two points + the real
+  distance); pictures are saved in the project (`images`).
+- **Measure**: sums over several edges/faces/bodies, ΔX/ΔY/ΔZ of a distance.
+- **Display**: X-Ray opacity slider; grid plane XY/XZ/YZ; Export image Body
+  edges toggle. **Export OBJ**. **Ctrl+A** in Items selects the listed rows.
+- Readable missing-reference messages (`the end face of "Body 1" created by
+"Extrude 2"`); command search Esc clears first, then closes; the shared
+  Select opens with Arrow keys and closes only itself on Escape.
+
 ## 3D printing (Print mode, build plate, exports, slicer handoff)
 
 `P` (or "Print" in the left dock's mode group) opens the Printability
@@ -291,7 +311,11 @@ manifold objects, names, colours, item transforms) and Open in Slicer
   view state (display mode, section, grid, panels, last camera preset, saved
   views), Items names/folders (`items`) and STL reference meshes
   (`referenceMeshes`, gzip+base64 via `meshCodec.ts`); all three are
-  optional and additive, so no schema bump. Dirty tracking covers features,
+  optional and additive, so no schema bump. Block 8 adds, also additive:
+  `images` (reference-image pictures, base64, only those a step uses),
+  `SketchData.patterns`, `SketchText.align`, `viewState.display.xrayOpacity`/
+  `gridPlane` (written only when not default) and the `referenceImage`
+  feature kind (older builds refuse a file containing one: unknown kind). Dirty tracking covers features,
   Items, saved views and reference meshes; the feature-id counter is reseeded
   from each loaded document.
 - STL import (File > Import STL…, binary or ASCII, `kernel/stlImport.ts`):

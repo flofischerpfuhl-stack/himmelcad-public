@@ -17,6 +17,8 @@ export type PickTarget =
   | { kind: 'sketchProfile'; featureId: string; regionKey?: string }
   /** A straight sketch line (construction included); pickable only while a tool takes an axis. */
   | { kind: 'sketchLine'; featureId: string; entityId: string }
+  /** Any curve of a shown sketch, pickable while no tool runs (SEL-12: select it, Edit Sketch). */
+  | { kind: 'sketchCurve'; featureId: string; entityId: string }
   /** A construction plane or axis (`model/construction.ts`). */
   | { kind: 'datum'; featureId: string }
   | { kind: 'extrudeHandle' }

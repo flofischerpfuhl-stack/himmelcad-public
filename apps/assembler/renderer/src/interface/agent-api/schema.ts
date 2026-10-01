@@ -491,6 +491,11 @@ const DEFS_TAIL: Record<string, JsonSchema> = {
         'One region of a sketch (`regionKey`), or every region.',
       ),
       obj({ kind: { const: 'feature' }, featureId: str }, ['kind', 'featureId']),
+      obj(
+        { kind: { const: 'sketchCurve' }, featureId: str, entityId: str },
+        ['kind', 'featureId', 'entityId'],
+        'One curve of a sketch (sketches.list entity id), selected outside sketch mode.',
+      ),
     ],
   },
 };
@@ -522,6 +527,12 @@ const CORE_FEATURE_KIND_SCHEMAS: Record<string, FeatureKindSpec> = {
           items: { type: 'object' },
           description:
             'Region fingerprints {key, sample, area, box} recorded on every write (geometric re-binding of redrawn profiles); maintained by the server.',
+        },
+        patterns: {
+          type: 'array',
+          items: { type: 'object' },
+          description:
+            'Editable sketch patterns {id, kind: "linear"|"circular", sources, count, count2?, lines?, center?, angle?, created}; created by sketch.pattern, changed with sketch.editPattern.',
         },
         profiles: {
           type: 'array',
@@ -912,6 +923,14 @@ const METHODS_TAIL: Record<string, MethodSpec> = {
     capability: 'document.read',
     summary:
       '3MF package (3MF Core + Materials): one welded, manifold object per body with its name and colour, build items with transforms.',
+    params: meshExportParams({}),
+    result: '{mediaType, byteLength, triangles, data?: base64, path?}',
+  },
+  'export.obj': {
+    kind: 'command',
+    capability: 'document.read',
+    summary:
+      'Wavefront OBJ of all (or the given) bodies: one object per body named after it, shared vertices with normals, millimetres; no materials (use 3MF or STEP for colours).',
     params: meshExportParams({}),
     result: '{mediaType, byteLength, triangles, data?: base64, path?}',
   },

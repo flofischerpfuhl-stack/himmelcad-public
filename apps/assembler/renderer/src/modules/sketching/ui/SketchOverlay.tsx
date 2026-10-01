@@ -51,11 +51,8 @@ import {
 import { projectedIds } from '../../../foundation/sketch-solver/projection.js';
 import { detectRegions, loopPolygon } from '../../../foundation/sketch-solver/regions.js';
 import { useSketchStore, type ProjectionPick } from '../session.js';
-import {
-  DEFAULT_SKETCH_FONT,
-  loadedSketchFont,
-  textOutlineOf,
-} from '../../../foundation/sketch-solver/text/fonts.js';
+import { useSketchPreferences } from '../sketchPreferences.js';
+import { loadedSketchFont, textOutlineOf } from '../../../foundation/sketch-solver/text/fonts.js';
 import { parseOutline, placeContours } from '../../../foundation/sketch-solver/text/outline.js';
 import {
   segmentStart,
@@ -129,6 +126,7 @@ const FIELD_LABEL: Record<ValueField, string> = {
   height: 'Height',
   distance: 'Offset distance',
   count: 'Count',
+  count2: 'Count 2',
   spacing: 'Spacing',
   angle: 'Angle',
   major: 'First radius',
@@ -188,23 +186,55 @@ function mmPerPxAt(api: SketchViewApi, uv: Vec2): number {
   return px > 1e-9 ? 1 / px : 1;
 }
 
-/** Glyph outlines of the text the Text tool is placing/editing (font loaded), sketch coordinates. */
-function textToolPreview(sketch: SketchData, tool: SketchTool, cursor: Vec2 | null): Vec2[][] {
-  if (tool.kind !== 'text') return [];
+/** Where the Text tool's text sits: anchor, baseline angle, cap height, width (mm) and alignment. */
+interface TextPlacement {
+  anchor: Vec2;
+  /** The anchor point entity of an edited text (moved through the solver). */
+  anchorId: string | null;
+  angle: number;
+  height: number;
+  /** Advance width, mm (0 until the font is loaded). */
+  width: number;
+  align: 'left' | 'center' | 'right';
+  contours: Vec2[][];
+}
+
+/** The text the Text tool is placing/editing (glyphs once the font is loaded), sketch coordinates. */
+function textToolPlacement(
+  sketch: SketchData,
+  tool: SketchTool,
+  cursor: Vec2 | null,
+): TextPlacement | null {
+  if (tool.kind !== 'text') return null;
   const t = tool;
-  const font = loadedSketchFont(DEFAULT_SKETCH_FONT);
-  if (!font || t.text.trim() === '') return [];
   let anchor: Vec2 | null = t.anchor?.pos ?? null;
+  let anchorId: string | null = null;
   if (t.editing) {
     const e = sketch.entities.find((x) => x.id === t.editing);
-    anchor = e?.kind === 'text' ? pointPos(entityMap(sketch), e.anchor) : null;
+    anchorId = e?.kind === 'text' ? e.anchor : null;
+    anchor = anchorId ? pointPos(entityMap(sketch), anchorId) : null;
   }
   anchor ??= cursor;
-  if (!anchor) return [];
-  const outline = textOutlineOf(font, t.text).outline;
-  return placeContours(parseOutline(outline), anchor, t.height, t.angle).map((contour) =>
-    sampleCurve({ kind: 'bezier', segs: contour }),
-  );
+  if (!anchor) return null;
+  const font = loadedSketchFont(t.font);
+  const placed = { anchor, anchorId, angle: t.angle, height: t.height, align: t.align };
+  if (!font || t.text.trim() === '') return { ...placed, width: 0, contours: [] };
+  const outline = textOutlineOf(font, t.text, t.align);
+  return {
+    ...placed,
+    width: outline.width * t.height,
+    contours: placeContours(parseOutline(outline.outline), anchor, t.height, t.angle).map(
+      (contour) => sampleCurve({ kind: 'bezier', segs: contour }),
+    ),
+  };
+}
+
+/** The rotation handle of the text gizmo: beyond the text's end along its baseline. */
+function textRotateHandle(p: TextPlacement): Vec2 {
+  const k = p.align === 'center' ? 0.5 : p.align === 'right' ? 1 : 0;
+  const reach = Math.max(0, p.width * (1 - k)) + Math.max(p.height * 0.8, 2);
+  const a = (p.angle * Math.PI) / 180;
+  return [p.anchor[0] + Math.cos(a) * reach, p.anchor[1] + Math.sin(a) * reach];
 }
 
 export function SketchOverlay({
@@ -256,6 +286,13 @@ export function SketchOverlay({
     along: number;
   } | null>(null);
   const dragRef = useRef<DragGesture | null>(null);
+  /** A drag of the text placement gizmo (move the anchor / turn the baseline). */
+  const gizmoRef = useRef<{
+    kind: 'move' | 'rotate';
+    pointerId: number;
+    anchor: Vec2;
+    anchorId: string | null;
+  } | null>(null);
   const [box, setBox] = useState<SketchBox | null>(null);
   const boxRef = useRef<SketchBox | null>(null);
   boxRef.current = box;
@@ -300,6 +337,7 @@ export function SketchOverlay({
   // 3D snaps: the body geometry seen along the sketch normal (far edges in orthographic view only).
   const bodies = useAssemblerStore((s) => s.evaluation.bodies);
   const orthographic = usePreferences((p) => p.projection === 'orthographic');
+  const circleDimension = useSketchPreferences((p) => p.circleDimension);
   const frame = session?.frame ?? null;
   const bodyTargets = useMemo(
     () => (frame && drawing ? bodySnapTargets(bodies, frame, { orthographic }) : null),
@@ -323,7 +361,10 @@ export function SketchOverlay({
   const hit = display && cursor ? hitTest(display, cursor, scale) : null;
   const preview =
     session && display && tool
-      ? toolPreview(display, tool, inference, hit, { construction: session.construction })
+      ? toolPreview(display, tool, inference, hit, {
+          construction: session.construction,
+          circleDimension,
+        })
       : null;
 
   // ---- keyboard ------------------------------------------------------------------------
@@ -511,6 +552,20 @@ export function SketchOverlay({
   const onPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
     event.stopPropagation();
     const uv = uvOf(event);
+    const gizmo = gizmoRef.current;
+    if (gizmo && uv) {
+      const store = useSketchStore.getState();
+      if (gizmo.kind === 'move') {
+        if (gizmo.anchorId) store.drag([uv]);
+        else store.setToolOption({ anchor: { pos: uv } });
+      } else {
+        const raw = (Math.atan2(uv[1] - gizmo.anchor[1], uv[0] - gizmo.anchor[0]) * 180) / Math.PI;
+        // Whole degrees; within 3° of a multiple of 15° it snaps there.
+        const snapped = Math.round(raw / 15) * 15;
+        store.setToolOption({ angle: Math.abs(raw - snapped) < 3 ? snapped : Math.round(raw) });
+      }
+      return;
+    }
     const drag = dragRef.current;
     if (drag) {
       if (
@@ -542,6 +597,14 @@ export function SketchOverlay({
   };
 
   const onPointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
+    const gizmo = gizmoRef.current;
+    if (gizmo && gizmo.pointerId === event.pointerId) {
+      gizmoRef.current = null;
+      event.stopPropagation();
+      // An edited text's anchor moved through the solver: one undo step.
+      if (gizmo.kind === 'move' && gizmo.anchorId) void useSketchStore.getState().endDrag();
+      return;
+    }
     const drag = dragRef.current;
     dragRef.current = null;
     if (!drag || drag.pointerId !== event.pointerId) return;
@@ -783,7 +846,16 @@ export function SketchOverlay({
     void store.deleteSelection();
   };
 
-  const textPreview = tool ? textToolPreview(display, tool, cursor) : [];
+  const textPlacement = tool ? textToolPlacement(display, tool, cursor) : null;
+  const textPreview = textPlacement?.contours ?? [];
+  // The placement gizmo: move (anchor) and rotate handles once the text has a place.
+  const textGizmo =
+    tool?.kind === 'text' && textPlacement && (tool.anchor !== null || tool.editing !== null)
+      ? {
+          move: api.toScreen(textPlacement.anchor),
+          rotate: api.toScreen(textRotateHandle(textPlacement)),
+        }
+      : null;
 
   /** Shift+drag of a dimension chip: screen delta → label layout in the sketch plane. */
   const moveLabel = (
@@ -958,10 +1030,115 @@ export function SketchOverlay({
             <circle key={`pp${i}`} cx={s[0]} cy={s[1]} r={3} className={styles.previewPoint} />
           ) : null;
         })}
+        {preview?.arrows?.map((arrow) => {
+          const s = api.toScreen(arrow.at);
+          const ahead = api.toScreen([
+            arrow.at[0] + arrow.dir[0] * scale,
+            arrow.at[1] + arrow.dir[1] * scale,
+          ]);
+          if (!s || !ahead) return null;
+          const dx = ahead[0] - s[0];
+          const dy = ahead[1] - s[1];
+          const l = Math.hypot(dx, dy) || 1;
+          const [ux, uy] = [dx / l, dy / l];
+          const tip: [number, number] = [s[0] + ux * 30, s[1] + uy * 30];
+          const head = `M${tip[0]} ${tip[1]}L${tip[0] - ux * 9 - uy * 5} ${tip[1] - uy * 9 + ux * 5}L${tip[0] - ux * 9 + uy * 5} ${tip[1] - uy * 9 - ux * 5}Z`;
+          return (
+            <g
+              key={`arrow${arrow.index}`}
+              className={styles.offsetArrow}
+              data-offset-arrow={arrow.index}
+              role="button"
+              aria-label={`Flip loop ${arrow.index + 1}`}
+              onPointerDown={(event) => {
+                if (event.button !== 0) return;
+                event.stopPropagation();
+                useSketchStore.getState().flipOffsetLoop(arrow.index);
+              }}
+            >
+              <circle
+                cx={s[0] + ux * 18}
+                cy={s[1] + uy * 18}
+                r={16}
+                className={styles.offsetArrowHit}
+              />
+              <line
+                x1={s[0] + ux * 4}
+                y1={s[1] + uy * 4}
+                x2={tip[0] - ux * 6}
+                y2={tip[1] - uy * 6}
+                className={styles.offsetArrowHalo}
+              />
+              <line
+                x1={s[0] + ux * 4}
+                y1={s[1] + uy * 4}
+                x2={tip[0] - ux * 6}
+                y2={tip[1] - uy * 6}
+                className={styles.offsetArrowShaft}
+              />
+              <path d={head} className={styles.offsetArrowHead} />
+            </g>
+          );
+        })}
         {textPreview.map((c, i) => {
           const d = pathOf(c, api, true);
           return d ? <path key={`t${i}`} d={d} className={styles.preview} /> : null;
         })}
+        {textGizmo?.move && textGizmo.rotate && textPlacement ? (
+          <g data-text-gizmo="">
+            <line
+              x1={textGizmo.move[0]}
+              y1={textGizmo.move[1]}
+              x2={textGizmo.rotate[0]}
+              y2={textGizmo.rotate[1]}
+              className={styles.gizmoLine}
+            />
+            {(['move', 'rotate'] as const).map((kind) => {
+              const at = textGizmo[kind]!;
+              const start = (event: React.PointerEvent) => {
+                if (event.button !== 0) return;
+                event.stopPropagation();
+                rootRef.current?.setPointerCapture(event.pointerId);
+                gizmoRef.current = {
+                  kind,
+                  pointerId: event.pointerId,
+                  anchor: textPlacement.anchor,
+                  anchorId: textPlacement.anchorId,
+                };
+                if (kind === 'move' && textPlacement.anchorId) {
+                  useSketchStore.getState().beginDrag([textPlacement.anchorId]);
+                }
+              };
+              return kind === 'move' ? (
+                <rect
+                  key={kind}
+                  x={at[0] - 6}
+                  y={at[1] - 6}
+                  width={12}
+                  height={12}
+                  rx={2}
+                  className={styles.gizmoHandle}
+                  data-text-gizmo-move=""
+                  role="button"
+                  aria-label="Move text"
+                  onPointerDown={start}
+                />
+              ) : (
+                <circle
+                  key={kind}
+                  cx={at[0]}
+                  cy={at[1]}
+                  r={6.5}
+                  className={styles.gizmoHandle}
+                  data-text-gizmo-rotate=""
+                  role="button"
+                  aria-label="Rotate text"
+                  onPointerDown={start}
+                />
+              );
+            })}
+          </g>
+        ) : null}
         {inference?.guides.map(([a, b], i) => {
           const d = pathOf([a, b], api);
           return d ? <path key={`guide${i}`} d={d} className={styles.guide} /> : null;
@@ -1010,7 +1187,7 @@ export function SketchOverlay({
             const at = api.toScreen(chip.at);
             if (!at) return null;
             const angle = chip.field === 'angle';
-            const count = chip.field === 'count';
+            const count = chip.field === 'count' || chip.field === 'count2';
             return (
               <ToolValueChip
                 key={chip.field}
@@ -1018,11 +1195,13 @@ export function SketchOverlay({
                 display={
                   chip.field === 'diameter'
                     ? `Ø ${Math.round(chip.value * 100) / 100}`
-                    : count
-                      ? `× ${Math.round(chip.value)}`
-                      : angle
-                        ? `${Math.round(chip.value * 100) / 100}°`
-                        : `${Math.round(chip.value * 100) / 100}`
+                    : chip.field === 'radius'
+                      ? `R ${Math.round(chip.value * 100) / 100}`
+                      : count
+                        ? `× ${Math.round(chip.value)}`
+                        : angle
+                          ? `${Math.round(chip.value * 100) / 100}°`
+                          : `${Math.round(chip.value * 100) / 100}`
                 }
                 x={at[0] + 16}
                 y={at[1] - 16 + index * 26}

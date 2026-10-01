@@ -178,7 +178,12 @@ export function relevantFeatureIds(
   const bodyIds = new Set<string>();
   const seeds = new Set<string>();
   for (const item of selection) {
-    if (item.kind === 'feature' || item.kind === 'sketchProfile' || item.kind === 'datum') {
+    if (
+      item.kind === 'feature' ||
+      item.kind === 'sketchProfile' ||
+      item.kind === 'datum' ||
+      item.kind === 'sketchCurve'
+    ) {
       seeds.add(item.featureId);
     } else if (item.kind !== 'mesh') bodyIds.add(item.bodyId); // reference meshes have no steps
   }

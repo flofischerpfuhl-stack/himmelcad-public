@@ -772,6 +772,8 @@ export function Viewport(props: ViewportProps): JSX.Element {
         edgesVisible: current.viewState.edgesVisible,
         hiddenEdgesVisible: current.viewState.hiddenEdgesVisible,
         axesVisible: current.viewState.axesVisible,
+        xrayOpacity: current.viewState.xrayOpacity,
+        gridPlane: current.viewState.gridPlane,
         materials: bodyMaterials(current.features, activeFeatureCount(current)),
         highQuality: usePreferences.getState().renderQuality === 'high',
         gridVisible: current.viewState.gridVisible,
@@ -796,6 +798,8 @@ export function Viewport(props: ViewportProps): JSX.Element {
         // Sketch drawing previews are drawn by the sketch overlay (`sketch/ui/SketchOverlay.tsx`).
         sketchPreview: null,
         pickSketchLines: toolView.pickSketchLines ?? false,
+        // SEL-12: sketch curves are selectable while no tool runs.
+        pickSketchCurves: !currentTool,
         previewNewBodyIds: scene.previewNewBodyIds,
         angleHandles,
         guides: scene.toolHandles.guides,
@@ -880,6 +884,7 @@ export function Viewport(props: ViewportProps): JSX.Element {
           forExport: true,
           hover: null,
           gridVisible: input.gridVisible && request.grid,
+          ...(request.edges !== undefined ? { edgesVisible: request.edges } : {}),
           axesVisible: (input.axesVisible ?? true) && request.grid,
           extrudeHandle: null,
           moveHandle: null,
@@ -939,7 +944,7 @@ export function Viewport(props: ViewportProps): JSX.Element {
           ...(pick.regionKey !== undefined && !wholeBody ? { regionKey: pick.regionKey } : {}),
         };
       }
-      if (pick.kind === 'datum') return pick;
+      if (pick.kind === 'datum' || pick.kind === 'sketchCurve') return pick;
       // A reference mesh is always selected as a whole — never per-face
       // (it has exactly one synthetic whole-mesh "face" for picking, see
       // `referenceMeshToBody`, but that must never surface as a face
@@ -1240,7 +1245,13 @@ export function Viewport(props: ViewportProps): JSX.Element {
                 }
               : item.kind === 'edge' && toolRay
                 ? { ...item, ray: toolRay }
-                : item;
+                : item.kind === 'sketchCurve'
+                  ? {
+                      kind: 'sketchLine' as const,
+                      featureId: item.featureId,
+                      entityId: item.entityId,
+                    }
+                  : item;
           store.updateFeatureDraft((draft, evaluation) =>
             acceptPick(draft, toolPick, evaluation, store.features),
           );
@@ -1248,7 +1259,8 @@ export function Viewport(props: ViewportProps): JSX.Element {
         return;
       }
       const throughAll = viewportShell().selectThrough();
-      if (!isDouble && !tool) {
+      // A sketch curve under the pointer is the pick (SEL-12): no overlap popup for it.
+      if (!isDouble && !tool && pick?.kind !== 'sketchCurve') {
         // Overlapping geometry (or Select Through): let the user choose.
         const ctx = queryContext();
         const host = hostRef.current;

@@ -21,12 +21,15 @@ import {
   type Curve2,
 } from '../../foundation/sketch-solver/geometry.js';
 import type { Inference, SketchHit } from './inference.js';
+import { DEFAULT_SKETCH_FONT, type TextAlign } from '../../foundation/sketch-solver/text/fonts.js';
 import {
   circularPattern,
+  cornerCurves,
   cornerLines,
   linearPattern,
   mirrorGeometry,
   roundCorner,
+  type PatternDirection,
 } from './operations.js';
 import {
   buildArcSlot,
@@ -90,6 +93,12 @@ export type AdvancedTool =
       spacing: number | null;
       /** Circular: total angle, degrees (360 = full turn). */
       angle: number;
+      /** Linear: one direction, or two (a grid; Shapr3D "1–2 directions"). */
+      directions: 1 | 2;
+      /** Linear, two directions: instances along the second direction. */
+      count2: number;
+      /** Linear, two directions: the first direction once placed (then the second is placed). */
+      first: PatternDirection | null;
     }
   | { kind: 'corner'; mode: 'fillet' | 'chamfer'; pointId: string | null }
   | { kind: 'project' }
@@ -99,6 +108,10 @@ export type AdvancedTool =
       text: string;
       height: number;
       angle: number;
+      /** Font id (bundled or installed, `text/fonts.ts`). */
+      font: string;
+      /** Where the anchor sits on the baseline. */
+      align: TextAlign;
       /** Existing text entity being edited (its anchor stays). */
       editing: string | null;
     };
@@ -120,7 +133,14 @@ export function isAdvancedTool(tool: { kind: string }): tool is AdvancedTool {
   return (ADVANCED_TOOL_KINDS as readonly string[]).includes(tool.kind);
 }
 
-export type AdvancedValueField = 'count' | 'spacing' | 'angle' | 'major' | 'minor' | 'size';
+export type AdvancedValueField =
+  | 'count'
+  | 'count2'
+  | 'spacing'
+  | 'angle'
+  | 'major'
+  | 'minor'
+  | 'size';
 
 type Field =
   | AdvancedValueField
@@ -182,13 +202,25 @@ export function initialAdvancedTool(
         count: 3,
         spacing: null,
         angle: 360,
+        directions: 1,
+        count2: 2,
+        first: null,
       };
     case 'corner':
       return { kind, mode: 'fillet', pointId: null };
     case 'project':
       return { kind };
     case 'text':
-      return { kind, anchor: null, text: 'Text', height: 10, angle: 0, editing: null };
+      return {
+        kind,
+        anchor: null,
+        text: 'Text',
+        height: 10,
+        angle: 0,
+        font: DEFAULT_SKETCH_FONT,
+        align: 'left',
+        editing: null,
+      };
   }
 }
 
@@ -553,10 +585,10 @@ function reducePattern(
     return { tool };
   }
   if (event.type === 'value') {
-    if (event.field === 'count') {
+    if (event.field === 'count' || event.field === 'count2') {
       const count = Math.round(event.value);
       if (count < 2 || count > 200) return { tool, notice: 'Use 2 to 200 instances.' };
-      return { tool: { ...tool, count } };
+      return { tool: event.field === 'count' ? { ...tool, count } : { ...tool, count2: count } };
     }
     if (event.field === 'angle' && tool.mode === 'circular') {
       if (!(Math.abs(event.value) > 0) || Math.abs(event.value) > 360) return { tool };
@@ -579,12 +611,16 @@ function reducePattern(
   return { tool: { ...tool, ids: [], step: 'geometry' }, edit };
 }
 
-/** Direction and spacing of a linear pattern for a cursor position. */
+/**
+ * Direction and spacing of a linear pattern for a cursor position: the
+ * first direction, or — once it is placed in a two-direction pattern — the
+ * second (its cursor marks the last instance along that direction).
+ */
 export function linearPlacement(
   sketch: SketchData,
   tool: Extract<AdvancedTool, { kind: 'pattern' }>,
   cursor: Vec2,
-): { direction: Vec2; spacing: number; horizontal?: boolean; vertical?: boolean } | null {
+): PatternDirection | null {
   const base = patternBase(sketch, tool.ids);
   if (!base) return null;
   const d = sub(cursor, base);
@@ -596,9 +632,25 @@ export function linearPlacement(
     : snap.vertical
       ? [0, Math.sign(d[1]) || 1]
       : normalize(d);
+  const count = tool.first ? tool.count2 : tool.count;
   // The cursor marks the last instance: spacing = distance / (count - 1).
-  const spacing = tool.spacing ?? length / Math.max(1, tool.count - 1);
+  const spacing = tool.spacing ?? length / Math.max(1, count - 1);
   return { direction, spacing, ...snap };
+}
+
+/** The edit a two-direction placement makes (`null` when the directions coincide). */
+export function gridPattern(
+  sketch: SketchData,
+  tool: Extract<AdvancedTool, { kind: 'pattern' }>,
+  second: PatternDirection,
+): EditResult | null {
+  const first = tool.first;
+  if (!first) return null;
+  return linearPattern(sketch, tool.ids, tool.count, first.direction, first.spacing, {
+    ...(first.horizontal ? { horizontal: true } : {}),
+    ...(first.vertical ? { vertical: true } : {}),
+    second: { ...second, count: tool.count2 },
+  });
 }
 
 function placeLinear(
@@ -608,12 +660,22 @@ function placeLinear(
 ): AdvancedStep {
   const placement = linearPlacement(sketch, tool, cursor);
   if (!placement || !(placement.spacing >= MIN_SIZE)) return { tool };
+  const done = { ...tool, ids: [], step: 'geometry' as const, spacing: null, first: null };
+  if (tool.directions === 2 && !tool.first) {
+    // Two directions: the first click fixes direction 1, the next places direction 2.
+    return { tool: { ...tool, first: placement, spacing: null } };
+  }
+  if (tool.first) {
+    const edit = gridPattern(sketch, tool, placement);
+    if (!edit) return { tool, notice: 'Place the second direction across the first one.' };
+    return { tool: done, edit };
+  }
   const edit = linearPattern(sketch, tool.ids, tool.count, placement.direction, placement.spacing, {
     ...(placement.horizontal ? { horizontal: true } : {}),
     ...(placement.vertical ? { vertical: true } : {}),
   });
   if (!edit) return { tool, notice: 'Nothing to pattern: select curves or points first.' };
-  return { tool: { ...tool, ids: [], step: 'geometry', spacing: null }, edit };
+  return { tool: done, edit };
 }
 
 // ---- fillet / chamfer --------------------------------------------------------------------
@@ -633,9 +695,11 @@ function reduceCorner(
   if (!tool.pointId) {
     if (event.type !== 'click') return { tool };
     const pointId = event.hit?.kind === 'point' ? event.hit.id : (event.snap.pointId ?? null);
-    if (!pointId) return { tool, notice: 'Click a corner point between two lines.' };
+    if (!pointId) return { tool, notice: 'Click a corner point between two lines or arcs.' };
     const lines = cornerLines(sketch, pointId);
-    if ('reason' in lines) return { tool, notice: lines.reason };
+    // Line–line corners, or corners with arcs (SK-14).
+    const curves = 'reason' in lines ? cornerCurves(sketch, pointId) : lines;
+    if ('reason' in curves) return { tool, notice: curves.reason };
     return { tool: { ...tool, pointId } };
   }
   const size =
@@ -789,15 +853,19 @@ export function advancedPreview(
       }
       if (tool.mode === 'linear') {
         const placement = linearPlacement(sketch, tool, c);
-        const edit = placement
-          ? linearPattern(sketch, tool.ids, tool.count, placement.direction, placement.spacing)
-          : null;
+        const edit = !placement
+          ? null
+          : tool.first
+            ? gridPattern(sketch, tool, placement)
+            : linearPattern(sketch, tool.ids, tool.count, placement.direction, placement.spacing);
         return {
           ...EMPTY,
           curves: addedCurves(sketch, edit),
           highlight: tool.ids,
           chips: [
-            { field: 'count', value: tool.count, at: c },
+            tool.first
+              ? { field: 'count2', value: tool.count2, at: c }
+              : { field: 'count', value: tool.count, at: c },
             { field: 'spacing', value: placement?.spacing ?? 0, at: [c[0], c[1]] },
           ],
         };

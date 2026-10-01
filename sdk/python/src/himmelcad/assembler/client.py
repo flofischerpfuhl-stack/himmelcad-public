@@ -20,21 +20,23 @@ API_VERSION = 1
 METHODS = (
     "api.hello", "api.describe",
     "document.get", "features.list", "feature.get", "bodies.list", "body.get",
-    "faces.list", "edges.list", "sketches.list", "datums.list", "selection.get", "selection.set",
+    "faces.list", "edges.list", "sketches.list", "sketch.fonts", "datums.list", "selection.get", "selection.set",
     "parameters.list", "parameter.create", "parameter.edit", "parameter.delete",
     "measure.get", "measure.distance", "measure.angle", "measure.area", "measure.volume",
     "feature.create", "feature.edit", "feature.delete", "feature.suppress", "feature.rename",
     "sketch.addProfile", "sketch.addPolyline", "sketch.addArc", "sketch.addConstraint",
     "sketch.addDimension", "sketch.setDimension", "sketch.deleteItems",
     "sketch.addSpline", "sketch.addEllipse", "sketch.addSlot", "sketch.addPolygon", "sketch.addText",
-    "sketch.mirror", "sketch.pattern", "sketch.roundCorner", "sketch.project", "sketch.setReference",
+    "sketch.mirror", "sketch.pattern", "sketch.editPattern", "sketch.offset", "sketch.roundCorner", "sketch.disconnect",
+    "sketch.project", "sketch.unlinkProjection", "sketch.setReference",
     "transaction.begin", "transaction.preview", "transaction.commit", "transaction.cancel",
     "history.undo", "history.redo",
-    "export.stl", "export.3mf", "export.step", "import.step",
+    "export.stl", "export.3mf", "export.obj", "export.step", "import.step",
     "project.new", "project.open", "project.save",
     "export.meshStats", "print.analyze", "print.orientations", "print.placeOnPlate", "print.orient",
     "interop.formats", "import.mesh", "import.dxf", "export.dxf", "mesh.toSolid",
     "import.iges", "export.iges",
+    "image.insert", "image.calibrate",
 )
 
 
@@ -129,11 +131,14 @@ class AssemblerClient:
         return self.call("parameters.list")
 
     def measure(self, items: Sequence[Mapping[str, Any]], *, scope: str | None = None) -> Mapping[str, Any]:
-        """The Measure panel's measurement of 1..n targets (``{"kind": "body"|"face"|"edge"|"point", ...}``)."""
+        """The Measure panel's measurement of 1..n targets (``{"kind": "body"|"face"|"edge"|"point", ...}``).
+
+        Several edges/faces/bodies also give their sums ("Total length (n edges)", "Total area (n faces)",
+        "Total volume"); distances come with their ΔX/ΔY/ΔZ components (secondary values)."""
         return self.call("measure.get", {"items": [dict(i) for i in items], "scope": scope})
 
     def measure_distance(self, a: Mapping[str, Any], b: Mapping[str, Any], *, scope: str | None = None) -> Mapping[str, Any]:
-        """Exact minimum distance (kernel) between two targets and the closest points."""
+        """Exact minimum distance (kernel) between two targets, the closest points and ``delta`` (absolute X/Y/Z components)."""
         return self.call("measure.distance", {"a": dict(a), "b": dict(b), "scope": scope})
 
     def measure_angle(self, a: Mapping[str, Any], b: Mapping[str, Any], *, scope: str | None = None) -> Mapping[str, Any]:
@@ -210,17 +215,29 @@ class AssemblerClient:
         """Regular polygon inscribed in (or circumscribed about) a construction circle of ``radius``."""
         return self.call("sketch.addPolygon", {"featureId": feature_id, "center": list(center), "radius": radius, "sides": sides, "inscribed": inscribed, "angle": angle, "construction": construction})
 
-    def add_text(self, feature_id: str, text: str, position: tuple[float, float], height: float, *, angle: float = 0.0, font: str = "inter", construction: bool = False) -> Mapping[str, Any]:
-        """Text (cap ``height`` mm) starting at ``position``; every glyph is a profile."""
-        return self.call("sketch.addText", {"featureId": feature_id, "text": text, "position": list(position), "height": height, "angle": angle, "font": font, "construction": construction})
+    def add_text(self, feature_id: str, text: str, position: tuple[float, float], height: float, *, angle: float = 0.0, font: str = "inter", align: str = "left", construction: bool = False) -> Mapping[str, Any]:
+        """Text (cap ``height`` mm) anchored at ``position`` (``align``: the anchor is the baseline's start, centre or end); every glyph is a profile. ``font``: an id from :meth:`fonts`."""
+        return self.call("sketch.addText", {"featureId": feature_id, "text": text, "position": list(position), "height": height, "angle": angle, "font": font, "align": align, "construction": construction})
+
+    def fonts(self) -> list[Mapping[str, Any]]:
+        """Fonts for sketch text: the bundled Inter, plus the computer's installed fonts in the desktop app (once listed there)."""
+        return self.call("sketch.fonts")
 
     def mirror_sketch(self, feature_id: str, ids: list[str], axis: str) -> Mapping[str, Any]:
         """Mirrors sketch curves/points about the line ``axis`` (symmetric constraints)."""
         return self.call("sketch.mirror", {"featureId": feature_id, "ids": list(ids), "axis": axis})
 
-    def pattern_sketch(self, feature_id: str, ids: list[str], count: int, *, mode: str = "linear", direction: tuple[float, float] | None = None, spacing: float | None = None, center: tuple[float, float] | None = None, center_point_id: str | None = None, angle: float | None = None) -> Mapping[str, Any]:
-        """Linear (``direction``, ``spacing``) or circular (``center``, ``angle``) sketch pattern."""
-        return self.call("sketch.pattern", {"featureId": feature_id, "ids": list(ids), "count": count, "mode": mode, "direction": list(direction) if direction else None, "spacing": spacing, "center": list(center) if center else None, "centerPointId": center_point_id, "angle": angle})
+    def pattern_sketch(self, feature_id: str, ids: list[str], count: int, *, mode: str = "linear", direction: tuple[float, float] | None = None, spacing: float | None = None, count2: int | None = None, direction2: tuple[float, float] | None = None, spacing2: float | None = None, center: tuple[float, float] | None = None, center_point_id: str | None = None, angle: float | None = None) -> Mapping[str, Any]:
+        """Linear (``direction``, ``spacing``; with ``count2``/``direction2``/``spacing2`` a two-direction grid) or circular (``center``, ``angle``) sketch pattern. The result's ``patternId`` keeps it editable (:meth:`edit_pattern`)."""
+        return self.call("sketch.pattern", {"featureId": feature_id, "ids": list(ids), "count": count, "mode": mode, "direction": list(direction) if direction else None, "spacing": spacing, "count2": count2, "direction2": list(direction2) if direction2 else None, "spacing2": spacing2, "center": list(center) if center else None, "centerPointId": center_point_id, "angle": angle})
+
+    def edit_pattern(self, feature_id: str, pattern_id: str, *, count: int | None = None, count2: int | None = None, angle: float | None = None) -> Mapping[str, Any]:
+        """Changes a recorded sketch pattern's ``count``, ``count2`` (two directions) or ``angle`` (circular); the copies are rebuilt."""
+        return self.call("sketch.editPattern", {"featureId": feature_id, "patternId": pattern_id, "count": count, "count2": count2, "angle": angle})
+
+    def offset_sketch(self, feature_id: str, ids: list[str], distance: float, *, side: str = "outside", single: bool = False) -> Mapping[str, Any]:
+        """Offsets each curve's chain (``single``: only the curve) by ``distance``: closed loops ``outside``/``inside``, open chains ``left``/``right``."""
+        return self.call("sketch.offset", {"featureId": feature_id, "ids": list(ids), "distance": distance, "side": side, "single": single})
 
     def round_corner(self, feature_id: str, point: str, size: float, *, mode: str = "fillet") -> Mapping[str, Any]:
         """Fillets (radius) or chamfers (set-back) the corner at ``point`` between two lines."""
@@ -229,6 +246,14 @@ class AssemblerClient:
     def project(self, feature_id: str, *, edge: Mapping[str, Any] | None = None, face: Mapping[str, Any] | None = None, construction: bool = True) -> Mapping[str, Any]:
         """Projects a body edge or face outline into the sketch (associative)."""
         return self.call("sketch.project", {"featureId": feature_id, "edge": dict(edge) if edge else None, "face": dict(face) if face else None, "construction": construction})
+
+    def disconnect(self, feature_id: str, ids: list[str]) -> Mapping[str, Any]:
+        """Disconnect: curves meeting at the given shared points get their own points (coincidences removed)."""
+        return self.call("sketch.disconnect", {"featureId": feature_id, "ids": list(ids)})
+
+    def unlink_projection(self, feature_id: str, ids: list[str]) -> Mapping[str, Any]:
+        """Unlinks projected geometry (projection ids or projected curve/point ids): it stays, free and editable."""
+        return self.call("sketch.unlinkProjection", {"featureId": feature_id, "ids": list(ids)})
 
     def set_reference(self, feature_id: str, dimension: str, reference: bool = True) -> Mapping[str, Any]:
         """Turns a dimension into a reference (driven) dimension, or back with ``reference=False``."""
@@ -253,16 +278,16 @@ class AssemblerClient:
         return self.call("history.redo")
 
     def export(self, fmt: str, *, body_ids: list[str] | None = None, resolution: str | None = None, stl_format: str | None = None, **step: Any) -> bytes:
-        """Returns the exported file bytes (``fmt``: ``stl``, ``3mf``, ``step`` or ``iges``).
+        """Returns the exported file bytes (``fmt``: ``stl``, ``3mf``, ``obj``, ``step`` or ``iges``).
 
-        ``resolution`` (STL/3MF): ``current`` (display mesh), ``coarse``, ``standard`` or ``fine``;
+        ``resolution`` (STL/3MF/OBJ): ``current`` (display mesh), ``coarse``, ``standard`` or ``fine``;
         ``stl_format``: ``binary`` (default) or ``ascii``. STEP options (keyword arguments):
         ``schema`` (``AP242``/``AP214``), ``unit`` (``mm``/``cm``/``m``/``in``), ``structure``
         (``flat``/``folders``) and ``visible_only``. IGES options (HimmelCAD OCCT build only):
         ``unit``, ``mode`` (``faces``/``brep``) and ``visible_only``.
         """
         params: dict[str, Any] = {"bodyIds": body_ids}
-        if fmt in ("stl", "3mf"):
+        if fmt in ("stl", "3mf", "obj"):
             params["resolution"] = resolution
         if fmt == "stl":
             params["format"] = stl_format
@@ -380,6 +405,43 @@ class AssemblerClient:
     def mesh_to_solid(self, mesh_id: str, *, name: str | None = None, hide_mesh: bool | None = None) -> Mapping[str, Any]:
         """Converts a closed reference mesh into a solid body (one step); fails with the reason otherwise."""
         return self.call("mesh.toSolid", {"meshId": mesh_id, "name": name, "hideMesh": hide_mesh})
+
+    # ---- reference images (canvas) -------------------------------------------------------------
+    def insert_image(
+        self,
+        path: str | Path,
+        *,
+        plane: Mapping[str, Any] | None = None,
+        center: tuple[float, float] | None = None,
+        width: float | None = None,
+        rotation: float | None = None,
+        opacity: float | None = None,
+        name: str | None = None,
+    ) -> Mapping[str, Any]:
+        """A PNG/JPEG picture as a reference image (History step, stored in the project) on `plane`:
+        `{"kind": "plane", "plane": "XY", "offset": 0}`, `{"kind": "face", "face": ...}` or
+        `{"kind": "construction", "featureId": ...}`; `width` mm (the height follows), `opacity` 0.05-1."""
+        return self.call(
+            "image.insert",
+            {
+                **_file_params(Path(path)),
+                "plane": dict(plane) if plane else None,
+                "center": list(center) if center is not None else None,
+                "width": width,
+                "rotation": rotation,
+                "opacity": opacity,
+                "name": name,
+            },
+        )
+
+    def calibrate_image(
+        self, feature_id: str, a: tuple[float, ...], b: tuple[float, ...], distance: float
+    ) -> Mapping[str, Any]:
+        """Scales a reference image so points `a` and `b` (plane `(u, v)` or world `(x, y, z)`) are
+        `distance` mm apart; it scales about `a`."""
+        return self.call(
+            "image.calibrate", {"featureId": feature_id, "a": list(a), "b": list(b), "distance": distance}
+        )
 
     def new_project(self, name: str | None = None) -> Mapping[str, Any]:
         return self.call("project.new", {"name": name})

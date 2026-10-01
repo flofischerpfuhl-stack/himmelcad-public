@@ -16,6 +16,7 @@ import {
   isPlanarFace,
   useAssemblerStore,
   type AssemblerState,
+  type GridPlane,
 } from '../../foundation/commands/store.js';
 import { sectionPlaneFromFace } from './viewDisplay.js';
 import { sendCamera } from '../../platform/viewport/cameraChannel.js';
@@ -71,6 +72,11 @@ const sectionOn = (ctx: AssemblerState): CommandAvailability =>
   ctx.viewState.sectionEnabled
     ? enabled
     : { enabled: false, reason: 'Turn Section View on first.' };
+
+/** XY → XZ → YZ → XY (Shapr3D grid planes). */
+export function nextGridPlane(plane: GridPlane): GridPlane {
+  return plane === 'XY' ? 'XZ' : plane === 'XZ' ? 'YZ' : 'XY';
+}
 
 export const DISPLAY_COMMANDS: readonly Command[] = [
   ...DISPLAY_MODE_ENTRIES.map(
@@ -132,6 +138,20 @@ export const DISPLAY_COMMANDS: readonly Command[] = [
     adaptive: false,
     availability: (ctx) => ({ enabled: true, recommended: ctx.viewState.gridVisible }),
     run: (ctx) => ctx.setGridVisible(!ctx.viewState.gridVisible),
+  },
+  {
+    id: 'display.gridPlane',
+    get label() {
+      return `Grid Plane: ${currentView().gridPlane} (next: ${nextGridPlane(currentView().gridPlane)})`;
+    },
+    group: 'display',
+    keywords: ['grid', 'plane', 'xy', 'xz', 'yz', 'zx', 'floor', 'wall', 'display'],
+    adaptive: false,
+    availability: (ctx) =>
+      ctx.viewState.gridVisible
+        ? { enabled: true }
+        : { enabled: false, reason: 'The grid is hidden (Alt+G shows it).' },
+    run: (ctx) => ctx.setGridPlane(nextGridPlane(ctx.viewState.gridPlane)),
   },
   {
     id: 'display.axes',

@@ -100,6 +100,12 @@
       "paths": ["renderer/src/modules/construction/"]
     },
     {
+      "id": "canvas",
+      "layer": "domain",
+      "summary": "Reference images (canvas): pictures on a plane, their placement, opacity and calibration, the stored pictures, commands and API methods.",
+      "paths": ["renderer/src/modules/canvas/"]
+    },
+    {
       "id": "parameters",
       "layer": "domain",
       "summary": "Document parameters UI and edits: planning/committing parameter changes, the Parameters panel, parameter API methods.",

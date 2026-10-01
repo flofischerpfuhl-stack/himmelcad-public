@@ -1,0 +1,81 @@
+/* Calibrate Image overlay: prompt pill, picked points and the distance field. */
+.capture {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+/* While points are picked, left clicks land here (other buttons orbit/pan via the canvas). */
+.capturing {
+  pointer-events: auto;
+  cursor: crosshair;
+}
+
+.pill {
+  position: absolute;
+  top: 60px;
+  left: 0;
+  right: 0;
+  margin-inline: auto;
+  width: max-content;
+  display: flex;
+  align-items: center;
+  gap: var(--hc-space-2);
+  padding: var(--hc-space-1) var(--hc-space-1) var(--hc-space-1) var(--hc-space-3);
+  background: var(--hc-bg-island);
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-lg);
+  box-shadow: var(--hc-shadow-island);
+  pointer-events: auto;
+  white-space: nowrap;
+  cursor: default;
+}
+
+.pillTitle {
+  font-family: var(--hc-font-ui);
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--hc-fg-strong);
+}
+
+.pillPrompt {
+  font-family: var(--hc-font-ui);
+  font-size: 12px;
+  color: var(--hc-fg-muted);
+}
+
+.svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.line {
+  stroke: var(--hc-geometry-selection);
+  stroke-width: 2;
+  stroke-dasharray: 6 4;
+}
+
+.marker {
+  fill: var(--hc-bg-island);
+  stroke: var(--hc-geometry-selection);
+  stroke-width: 2;
+}
+
+.field {
+  width: 110px;
+}
+
+/* History card of an image step. */
+.slider {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.cardButton {
+  justify-self: start;
+}

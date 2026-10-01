@@ -8,6 +8,9 @@
  * buttons, shortcuts and command search always agree.
  */
 import {
+  AlignCenter,
+  AlignLeft,
+  AlignRight,
   ArrowDownToLine,
   Check,
   Circle,
@@ -28,18 +31,31 @@ import {
   SquareDashed,
   TriangleAlert,
   Type,
+  Unlink,
   X,
   type LucideIcon,
 } from 'lucide-react';
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { Button, NumberInput, Tooltip } from '@himmelcad/ui';
+import { Button, Checkbox, NumberInput, Select, Tooltip } from '@himmelcad/ui';
+
+import {
+  fontLabel,
+  knownSketchFonts,
+  listSketchFonts,
+  loadSketchFont,
+  systemFontsAvailable,
+} from '../../../foundation/sketch-solver/text/fonts.js';
 
 import fieldStyles from '../../../platform/widgets/ExpressionField.module.css';
 import { findCommand } from '../../../foundation/commands/registry.js';
 import { useAssemblerStore } from '../../../foundation/commands/store.js';
 import { CONSTRAINT_INFO } from '../constraintRules.js';
+import { patternOf, type PatternPatch } from '../operations.js';
 import { useSketchStore, type SketchSession } from '../session.js';
+import { useSketchPreferences } from '../sketchPreferences.js';
+import { projectionOf } from '../../../foundation/sketch-solver/projection.js';
+import type { SketchPattern, SketchProjection } from '../../../foundation/sketch-solver/types.js';
 import type { SketchTool, SketchToolKind } from '../tools.js';
 import styles from './SketchChrome.module.css';
 
@@ -92,7 +108,9 @@ export function toolPrompt(tool: SketchTool): string {
       if (tool.tangent || !tool.end) return 'Click the end point.';
       return 'Move to bend the arc, click or type its height.';
     case 'circle':
-      return tool.center ? 'Click to set the size or type a diameter.' : 'Click the centre.';
+      return tool.center
+        ? `Click to set the size or type a ${useSketchPreferences.getState().circleDimension}.`
+        : 'Click the centre.';
     case 'rectangle':
       if (tool.mode === 'threePoint') {
         if (!tool.first) return 'Click the start of the base line.';
@@ -109,8 +127,10 @@ export function toolPrompt(tool: SketchTool): string {
       return 'Click the segments to remove.';
     case 'offset':
       return tool.curveId
-        ? 'Move to a side, click or type a distance.'
-        : 'Click the curve or chain to offset.';
+        ? 'Move to a side, click or type a distance. Click another curve to add its loop.'
+        : tool.mode === 'single'
+          ? 'Click the curve to offset.'
+          : 'Click the curve or chain to offset.';
     case 'dimension':
       return tool.first
         ? 'Click a second item, or click empty space to place the dimension.'
@@ -141,20 +161,26 @@ export function toolPrompt(tool: SketchTool): string {
         : 'Click the line to mirror about.';
     case 'pattern':
       if (tool.step === 'geometry') return 'Click the curves to repeat, then Enter (or Next).';
-      return tool.mode === 'linear'
-        ? 'Move along the direction and click where the last copy goes, or type the spacing.'
-        : 'Click the centre of the pattern.';
+      if (tool.mode === 'circular') return 'Click the centre of the pattern.';
+      if (tool.directions === 2) {
+        return tool.first
+          ? 'Second direction: click where its last copy goes, or type the spacing.'
+          : 'First direction: click where its last copy goes, or type the spacing.';
+      }
+      return 'Move along the direction and click where the last copy goes, or type the spacing.';
     case 'corner':
       return tool.pointId
         ? `Move to size the ${tool.mode === 'fillet' ? 'fillet' : 'chamfer'}, click or type it.`
-        : 'Click a corner between two lines.';
+        : 'Click a corner between two lines or arcs.';
     case 'project':
       return 'Click body edges or faces to project them into the sketch. Esc ends.';
     case 'text':
-      if (tool.editing) return 'Change the text, its height or rotation, then Update.';
+      if (tool.editing) {
+        return 'Change the text, font or size; drag the handles to move or turn it; then Update.';
+      }
       return tool.anchor
-        ? 'Type the text, set height and rotation, then Place.'
-        : 'Click where the text starts (baseline, left).';
+        ? 'Type the text, pick font and size; drag the handles to move or turn it; then Place.'
+        : 'Click where the text goes (its anchor on the baseline).';
   }
 }
 
@@ -210,6 +236,18 @@ function Modes<T extends string>(props: {
   );
 }
 
+/** Circle tool: size circles by diameter or radius (value chip and Dimension tool; a user preference). */
+function CircleSizeOption(): JSX.Element {
+  const current = useSketchPreferences((p) => p.circleDimension);
+  const set = useSketchPreferences((p) => p.setCircleDimension);
+  return (
+    <div className={styles.row} role="radiogroup" aria-label="Circle size">
+      <Option value="diameter" current={current} label="Diameter" onSelect={set} />
+      <Option value="radius" current={current} label="Radius" onSelect={set} />
+    </div>
+  );
+}
+
 function ToolOptions({ tool }: { tool: SketchTool }): JSX.Element | null {
   const setOption = useSketchStore((s) => s.setToolOption);
   const dispatch = useSketchStore((s) => s.dispatch);
@@ -226,6 +264,8 @@ function ToolOptions({ tool }: { tool: SketchTool }): JSX.Element | null {
           ]}
         />
       );
+    case 'circle':
+      return <CircleSizeOption />;
     case 'arc':
       return (
         <Modes
@@ -321,6 +361,28 @@ function ToolOptions({ tool }: { tool: SketchTool }): JSX.Element | null {
           ]}
         />
       );
+    case 'offset':
+      return (
+        <div className={styles.row} role="group" aria-label="Offset options">
+          <Option
+            value="chain"
+            current={tool.mode}
+            label="Chain"
+            onSelect={() => setOption({ mode: 'chain' })}
+          />
+          <Option
+            value="single"
+            current={tool.mode}
+            label="Single"
+            onSelect={() => setOption({ mode: 'single' })}
+          />
+          {tool.loops.length > 1 ? (
+            <span className={styles.count}>
+              {tool.loops.length} loops · click an arrow to flip its side
+            </span>
+          ) : null}
+        </div>
+      );
     case 'corner':
       return (
         <Modes
@@ -387,7 +449,37 @@ function ToolOptions({ tool }: { tool: SketchTool }): JSX.Element | null {
                 onCommit={(n) => setOption({ angle: n })}
               />
             </label>
-          ) : null}
+          ) : (
+            <>
+              <span className={styles.separator} aria-hidden />
+              <Option
+                value={1}
+                current={tool.directions}
+                label="1 direction"
+                onSelect={() => setOption({ directions: 1 })}
+              />
+              <Option
+                value={2}
+                current={tool.directions}
+                label="2 directions"
+                onSelect={() => setOption({ directions: 2 })}
+              />
+              {tool.directions === 2 ? (
+                <label className={styles.inlineField}>
+                  <span>Count 2</span>
+                  <NumberInput
+                    aria-label="Pattern count, second direction"
+                    value={tool.count2}
+                    min={2}
+                    max={200}
+                    step={1}
+                    precision={0}
+                    onCommit={(n) => setOption({ count2: n })}
+                  />
+                </label>
+              ) : null}
+            </>
+          )}
           {tool.step === 'geometry' ? (
             <>
               <span className={styles.count}>{tool.ids.length} selected</span>
@@ -408,7 +500,60 @@ function ToolOptions({ tool }: { tool: SketchTool }): JSX.Element | null {
   }
 }
 
-/** Text content, height and rotation while the Text tool places or edits a text. */
+/**
+ * The font menu of the text panel: the bundled font, then the fonts
+ * installed on the computer (desktop app; listed when the panel opens, or on
+ * "Show installed fonts" when the platform needs a click for it).
+ */
+function FontPicker({ value, onChange }: { value: string; onChange: (id: string) => void }) {
+  const [fonts, setFonts] = useState(() => knownSketchFonts());
+  const [state, setState] = useState<'idle' | 'loading' | 'failed'>('idle');
+  const canList = systemFontsAvailable();
+  const load = useCallback(() => {
+    setState('loading');
+    void listSketchFonts().then((list) => {
+      setFonts(list);
+      setState(list.some((f) => f.source === 'system') ? 'idle' : 'failed');
+    });
+  }, []);
+  const tried = useRef(false);
+  useEffect(() => {
+    // Once per panel; already listed fonts (an earlier panel) need no new listing.
+    if (!canList || tried.current || knownSketchFonts().some((f) => f.source === 'system')) return;
+    tried.current = true;
+    load();
+  }, [canList, load]);
+  // A document's font that is not listed here (another computer's installed font) stays visible.
+  const options = fonts.some((f) => f.id === value)
+    ? fonts
+    : [
+        ...fonts,
+        { id: value, label: `${fontLabel(value)} (not installed)`, source: 'system' as const },
+      ];
+  return (
+    <label className={styles.inlineField}>
+      <span>Font</span>
+      <Select
+        aria-label="Text font"
+        wrapClassName={styles.fontSelect}
+        value={value}
+        options={options.map((f) => ({
+          value: f.id,
+          label: f.source === 'bundled' ? `${f.label} (bundled)` : f.label,
+        }))}
+        onChange={(event) => onChange(event.target.value)}
+      />
+      {canList && state === 'failed' ? (
+        <Button variant="secondary" size="small" onClick={load}>
+          Show installed fonts
+        </Button>
+      ) : null}
+      {state === 'loading' ? <span className={styles.count}>Loading fonts…</span> : null}
+    </label>
+  );
+}
+
+/** Text content, font, alignment, height and rotation while the Text tool places or edits a text. */
 function TextPanel({ tool }: { tool: Extract<SketchTool, { kind: 'text' }> }): JSX.Element | null {
   const inputRef = useRef<HTMLInputElement>(null);
   const setOption = useSketchStore((s) => s.setToolOption);
@@ -419,70 +564,230 @@ function TextPanel({ tool }: { tool: Extract<SketchTool, { kind: 'text' }> }): J
     inputRef.current?.select();
   }, [active, tool.editing]);
   if (!active) return null;
+  const pickFont = (font: string) => {
+    setOption({ font });
+    // Loaded for the live preview; a font that fails is reported when the text is placed.
+    void loadSketchFont(font)
+      .then(() => setOption({ font }))
+      .catch(() => undefined);
+  };
   const commit = () => void useSketchStore.getState().commitText();
   return (
     <div
-      className={styles.textPanel}
+      className={`${styles.textPanel} ${styles.textPanelRows}`}
       role="group"
       aria-label="Text"
       onPointerDown={(event) => event.stopPropagation()}
     >
-      <label className={fieldStyles.field}>
-        <span className={fieldStyles.label}>Text</span>
-        <div className={fieldStyles.wrap}>
-          <input
-            ref={inputRef}
-            className={fieldStyles.input}
-            value={tool.text}
-            aria-label="Text content"
-            onChange={(event) => setOption({ text: event.currentTarget.value })}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') {
-                event.preventDefault();
-                event.stopPropagation();
-                commit();
-              }
-            }}
-          />
+      <div className={styles.panelRow}>
+        <label className={`${fieldStyles.field} ${styles.textField}`}>
+          <span className={fieldStyles.label}>Text</span>
+          <div className={fieldStyles.wrap}>
+            <input
+              ref={inputRef}
+              className={fieldStyles.input}
+              value={tool.text}
+              aria-label="Text content"
+              onChange={(event) => setOption({ text: event.currentTarget.value })}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  commit();
+                }
+              }}
+            />
+          </div>
+        </label>
+        <Button variant="primary" size="small" icon={<Check size={13} />} onClick={commit}>
+          {tool.editing ? 'Update' : 'Place'}
+        </Button>
+        <Button
+          variant="secondary"
+          size="small"
+          aria-label="Cancel text"
+          icon={<X size={13} />}
+          onClick={() => useSketchStore.getState().setTool('select')}
+        />
+      </div>
+      <div className={styles.panelRow}>
+        <FontPicker value={tool.font} onChange={pickFont} />
+        <div className={styles.row} role="radiogroup" aria-label="Text alignment">
+          {(
+            [
+              ['left', 'Align left (anchor at the start)', AlignLeft],
+              ['center', 'Align centre (anchor in the middle)', AlignCenter],
+              ['right', 'Align right (anchor at the end)', AlignRight],
+            ] as const
+          ).map(([align, label, Icon]) => (
+            <Tooltip key={align} content={label}>
+              <button
+                type="button"
+                role="radio"
+                aria-checked={tool.align === align}
+                aria-label={label}
+                className={`${styles.option} ${tool.align === align ? styles.optionActive : ''}`}
+                onClick={() => setOption({ align })}
+              >
+                <Icon size={13} aria-hidden />
+              </button>
+            </Tooltip>
+          ))}
         </div>
-      </label>
-      <label className={styles.inlineField}>
-        <span>Height</span>
-        <NumberInput
-          aria-label="Text height"
-          value={tool.height}
-          min={0.1}
-          step={1}
-          unit="mm"
-          onCommit={(n) => setOption({ height: n })}
-        />
-      </label>
-      <label className={styles.inlineField}>
-        <span>Rotation</span>
-        <NumberInput
-          aria-label="Text rotation"
-          value={tool.angle}
-          min={-360}
-          max={360}
-          step={15}
-          unit="°"
-          onCommit={(n) => setOption({ angle: n })}
-        />
-      </label>
-      <Button variant="primary" size="small" icon={<Check size={13} />} onClick={commit}>
-        {tool.editing ? 'Update' : 'Place'}
-      </Button>
-      <Button
-        variant="secondary"
-        size="small"
-        aria-label="Cancel text"
-        icon={<X size={13} />}
-        onClick={() => useSketchStore.getState().setTool('select')}
-      />
+        <label className={styles.inlineField}>
+          <span>Height</span>
+          <NumberInput
+            aria-label="Text height"
+            value={tool.height}
+            min={0.1}
+            step={1}
+            unit="mm"
+            onCommit={(n) => setOption({ height: n })}
+          />
+        </label>
+        <label className={styles.inlineField}>
+          <span>Rotation</span>
+          <NumberInput
+            aria-label="Text rotation"
+            value={tool.angle}
+            min={-360}
+            max={360}
+            step={15}
+            unit="°"
+            onCommit={(n) => setOption({ angle: n })}
+          />
+        </label>
+      </div>
     </div>
   );
 }
 
+/**
+ * Shapr3D: selecting an element of a sketch pattern brings its controls
+ * back. With the Select tool and a pattern element selected, its count
+ * (and second count / total angle) can be changed; the copies are rebuilt
+ * as one undo step.
+ */
+function PatternPanel({ session }: { session: SketchSession }): JSX.Element | null {
+  const pattern = selectedPattern(session);
+  if (!pattern) return null;
+  const edit = (patch: PatternPatch) =>
+    void useSketchStore.getState().editPattern(pattern.id, patch);
+  return (
+    <div
+      className={`${styles.textPanel} ${styles.centered}`}
+      role="group"
+      aria-label="Pattern"
+      data-sketch-pattern-panel=""
+      onPointerDown={(event) => event.stopPropagation()}
+    >
+      <span className={styles.panelTitle}>
+        {pattern.kind === 'linear' ? 'Linear pattern' : 'Circular pattern'}
+      </span>
+      <label className={styles.inlineField}>
+        <span>Count</span>
+        <NumberInput
+          aria-label="Pattern count"
+          value={pattern.count}
+          min={2}
+          max={200}
+          step={1}
+          precision={0}
+          onCommit={(n) => edit({ count: n })}
+        />
+      </label>
+      {pattern.count2 !== undefined ? (
+        <label className={styles.inlineField}>
+          <span>Count 2</span>
+          <NumberInput
+            aria-label="Pattern count, second direction"
+            value={pattern.count2}
+            min={2}
+            max={200}
+            step={1}
+            precision={0}
+            onCommit={(n) => edit({ count2: n })}
+          />
+        </label>
+      ) : null}
+      {pattern.kind === 'circular' ? (
+        <label className={styles.inlineField}>
+          <span>Angle</span>
+          <NumberInput
+            aria-label="Pattern angle"
+            value={pattern.angle ?? 360}
+            min={-360}
+            max={360}
+            step={15}
+            unit="°"
+            onCommit={(n) => edit({ angle: n })}
+          />
+        </label>
+      ) : (
+        <span className={styles.count}>Spacing: edit its dimension</span>
+      )}
+    </div>
+  );
+}
+
+/** The recorded pattern the sketch selection belongs to (Select tool only). */
+export function selectedPattern(session: SketchSession): SketchPattern | null {
+  if (session.tool.kind !== 'select') return null;
+  for (const id of session.selection) {
+    const pattern = patternOf(session.sketch, id);
+    if (pattern) return pattern;
+  }
+  return null;
+}
+
+/** The projection a selected curve/point belongs to (Select tool), if any. */
+export function selectedProjection(session: SketchSession): SketchProjection | null {
+  if (session.tool.kind !== 'select') return null;
+  for (const id of session.selection) {
+    const projection = projectionOf(session.sketch, id);
+    if (projection) return projection;
+  }
+  return null;
+}
+
+/**
+ * Projected geometry selected (Shapr3D "Linked" toggle): linked geometry is
+ * fixed and follows its source; switching Linked off keeps it as ordinary,
+ * editable sketch geometry (one undo step; re-project to link again).
+ */
+function ProjectionPanel({ session }: { session: SketchSession }): JSX.Element | null {
+  const projection = selectedProjection(session);
+  const status = useAssemblerStore(
+    (s) =>
+      s.evaluation.sketches
+        .find((sk) => sk.featureId === session.featureId)
+        ?.projections?.find((p) => p.id === projection?.id)?.status ?? 'ok',
+  );
+  if (!projection || selectedPattern(session)) return null;
+  const source = projection.source.kind === 'edge' ? 'an edge' : 'a face outline';
+  return (
+    <div
+      className={`${styles.textPanel} ${styles.centered}`}
+      role="group"
+      aria-label="Projected geometry"
+      data-sketch-projection-panel=""
+      onPointerDown={(event) => event.stopPropagation()}
+    >
+      <span className={styles.panelTitle}>Projected from {source}</span>
+      <Checkbox
+        label="Linked"
+        checked
+        aria-label="Linked to its source"
+        onChange={() => void useSketchStore.getState().unlinkProjection([projection.id])}
+      />
+      <span className={styles.count}>
+        {status === 'ok'
+          ? 'Follows the source; turn off to edit it freely'
+          : 'Source missing: kept where it was'}
+      </span>
+    </div>
+  );
+}
 function ProjectionWarning({ featureId }: { featureId: string }): JSX.Element | null {
   const evaluated = useAssemblerStore((s) =>
     s.evaluation.sketches.find((sk) => sk.featureId === featureId),
@@ -500,13 +805,45 @@ function ProjectionWarning({ featureId }: { featureId: string }): JSX.Element | 
         {text}
         {broken.length > 1 ? ` (+${broken.length - 1} more)` : ''}
       </span>
+      <Button
+        variant="quiet"
+        size="small"
+        onClick={() => void useSketchStore.getState().unlinkProjection(broken.map((p) => p.id))}
+      >
+        Unlink
+      </Button>
     </div>
+  );
+}
+
+/** Disconnect (Shapr3D): splits the selected shared point so the curves can move apart. */
+function DisconnectButton(): JSX.Element {
+  const main = useAssemblerStore((s) => s);
+  useSketchStore((s) => s.session?.selection);
+  const command = findCommand('sketch.disconnect');
+  const availability = command?.availability(main) ?? { enabled: false };
+  return (
+    <Tooltip
+      content={availability.enabled ? 'Disconnect' : `Disconnect — ${availability.reason ?? ''}`}
+    >
+      <button
+        type="button"
+        aria-label="Disconnect"
+        className={styles.tool}
+        disabled={!availability.enabled}
+        onClick={() => command?.run(main)}
+      >
+        <Unlink size={15} />
+      </button>
+    </Tooltip>
   );
 }
 
 export function SketchChrome(): JSX.Element | null {
   const session = useSketchStore((s) => s.session);
   const main = useAssemblerStore((s) => s);
+  // The circle prompt names the size kind.
+  useSketchPreferences((p) => p.circleDimension);
   if (!session) return null;
   const status = statusText(session);
   const name =
@@ -589,6 +926,8 @@ export function SketchChrome(): JSX.Element | null {
         <ProjectionWarning featureId={session.featureId} />
       )}
       {session.tool.kind === 'text' ? <TextPanel tool={session.tool} /> : null}
+      <PatternPanel session={session} />
+      <ProjectionPanel session={session} />
       <div
         className={styles.palette}
         onPointerDown={(event) => event.stopPropagation()}
@@ -633,6 +972,7 @@ export function SketchChrome(): JSX.Element | null {
               </Tooltip>
             );
           })}
+          <DisconnectButton />
         </div>
       </div>
     </>

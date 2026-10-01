@@ -89,11 +89,15 @@
   display: flex;
   align-items: baseline;
   gap: var(--hc-space-2);
-  min-width: 0;
+  flex-shrink: 0;
+  max-width: 60%;
 }
 
 .optionLabel {
   font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .optionGroup {
@@ -105,7 +109,7 @@
   display: flex;
   align-items: center;
   gap: var(--hc-space-2);
-  flex-shrink: 0;
+  min-width: 0;
 }
 
 .optionShortcut {
@@ -117,6 +121,11 @@
 .optionReason {
   font-size: 10px;
   color: var(--hc-fg-subtle);
+  text-align: right;
+}
+
+.optionShortcut {
+  flex-shrink: 0;
 }
 
 .empty {

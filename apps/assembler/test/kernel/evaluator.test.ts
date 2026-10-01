@@ -162,7 +162,7 @@ void test('stable references: removing the referenced face yields a Missing refe
     f.id === 'feature-extrude-2' ? { ...f, suppressed: true } : f,
   );
   const result = await evaluator.evaluate(suppressed);
-  assert.match(result.errors['feature-fillet-3'] ?? '', /^Missing reference: edge /);
+  assert.match(result.errors['feature-fillet-3'] ?? '', /^Missing reference: an edge /);
   assert.equal(result.warnings['feature-fillet-3'], undefined);
   // The rest of the history still evaluates: plate with the hole, no fillet.
   const plate = body(result);
@@ -174,7 +174,7 @@ void test('stable references: removing the referenced face yields a Missing refe
   );
   const split = await evaluator.evaluate(separate);
   assert.equal(split.bodies.length, 2);
-  assert.match(split.errors['feature-fillet-3'] ?? '', /^Missing reference: edge /);
+  assert.match(split.errors['feature-fillet-3'] ?? '', /^Missing reference: an edge /);
 });
 
 void test('face push/pull keeps the face identity; chamfer, shell, move and booleans evaluate', async () => {

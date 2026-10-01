@@ -8,3 +8,4 @@ import '../foundation/sketch-solver/sketchFeature.js';
 import '../modules/modeling/kernel.js';
 import '../modules/direct-edit/kernel.js';
 import '../modules/construction/kernel.js';
+import '../modules/canvas/kernel.js';

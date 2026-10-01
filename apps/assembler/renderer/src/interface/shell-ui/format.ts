@@ -16,6 +16,7 @@ const KIND_LABELS: Record<SelectionItem['kind'], [string, string]> = {
   feature: ['feature', 'features'],
   mesh: ['reference mesh', 'reference meshes'],
   datum: ['plane or axis', 'planes and axes'],
+  sketchCurve: ['sketch curve', 'sketch curves'],
 };
 
 /** `"1 face"`, `"2 edges & 1 body"`, `""` for an empty selection. */

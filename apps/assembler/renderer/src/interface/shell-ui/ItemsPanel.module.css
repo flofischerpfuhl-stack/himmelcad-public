@@ -198,3 +198,13 @@
     transition: none;
   }
 }
+
+/* Opacity slider under a selected image row. */
+.rowExtra {
+  padding-top: 2px;
+  padding-bottom: var(--hc-space-2);
+  padding-right: var(--hc-space-3);
+  font-family: var(--hc-font-ui);
+  font-size: 11px;
+  color: var(--hc-fg-muted);
+}

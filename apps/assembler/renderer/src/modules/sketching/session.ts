@@ -34,12 +34,15 @@ import {
   useAssemblerStore,
 } from '../../foundation/commands/store.js';
 import { initialAdvancedTool } from './advancedTools.js';
+import { disconnectPoints, editPattern, type PatternPatch } from './operations.js';
+import { useSketchPreferences } from './sketchPreferences.js';
 import { constraintInfo, planConstraint } from './constraintRules.js';
 import {
   deleteItems,
   SketchBuilder,
   toggleConstruction,
   type EditResult,
+  type SnapTarget,
 } from '../../foundation/sketch-solver/edits.js';
 import { isPlainNumber } from '../../foundation/document/expressions.js';
 import {
@@ -47,6 +50,7 @@ import {
   adoptProjectedEntities,
   edgeSampleFromSegments,
   projectSource,
+  unlinkProjections,
   type EdgeSample,
 } from '../../foundation/sketch-solver/projection.js';
 import { pointIdsOf } from '../../foundation/sketch-solver/moveRegion.js';
@@ -55,12 +59,13 @@ import { usePreferences } from '../../platform/input/preferences.js';
 import { getSketchSolver } from '../../foundation/sketch-solver/solverProvider.js';
 import type { SolveResult } from '../../foundation/sketch-solver/solverTypes.js';
 import {
-  DEFAULT_SKETCH_FONT,
   loadSketchFont,
   textOutline,
+  type TextAlign,
 } from '../../foundation/sketch-solver/text/fonts.js';
 import {
   initialTool,
+  offsetToolFor,
   reduceTool,
   toolInProgress,
   type SketchTool,
@@ -143,6 +148,20 @@ export interface SketchToolOptions {
   angle: number;
   text: string;
   height: number;
+  /** Linear pattern: one or two directions. */
+  directions: 1 | 2;
+  /** Linear pattern: instances along the second direction. */
+  count2: number;
+  /** Text: font id and alignment at the anchor. */
+  font: string;
+  align: TextAlign;
+  /** Text not placed yet: where its anchor goes (the placement gizmo's move handle). */
+  anchor: SnapTarget;
+}
+
+/** The stored alignment field of a text (absent for the default, left). */
+function alignField(align: TextAlign): { align?: 'center' | 'right' } {
+  return align === 'left' ? {} : { align };
 }
 
 export interface SketchCameraRequest {
@@ -180,12 +199,22 @@ export interface SketchState {
    * text content/height/rotation.
    */
   setToolOption: (patch: Partial<SketchToolOptions>) => void;
+  /** Offset with several loops: turns loop `index` to its other side (its arrow was clicked). */
+  flipOffsetLoop: (index: number) => void;
   /** Places the text being edited by the Text tool (one undo step). Resolves `true` when added. */
   commitText: () => Promise<boolean>;
   /** Opens the Text tool on an existing text entity. */
   editText: (textId: string) => void;
   /** Projects a body edge/face into the sketch (Project tool). Resolves a reason when not possible. */
   projectItem: (pick: ProjectionPick) => Promise<string | null>;
+  /**
+   * Changes a recorded sketch pattern's count / second count / total angle:
+   * its copies are rebuilt (one session undo step). Resolves the reason when
+   * the change does not apply, else `null`.
+   */
+  editPattern: (patternId: string, patch: PatternPatch) => Promise<string | null>;
+  /** Unlinks the projections of `ids` (Linked off): their geometry stays, free and editable (one undo step). */
+  unlinkProjection: (ids: readonly string[]) => Promise<boolean>;
   /** Applies the offer of the current problem (add the rejected dimension as a reference). */
   acceptOffer: () => Promise<boolean>;
   /** Toggles a dimension between driving and reference (driven). */
@@ -204,6 +233,8 @@ export interface SketchState {
   clearSelection: () => void;
   deleteSelection: () => Promise<void>;
   toggleConstructionOfSelection: () => Promise<void>;
+  /** Disconnect: curves meeting at the selected point(s) get their own points (one undo step); the reason when nothing is connected. */
+  disconnectSelection: () => Promise<string | null>;
   /** Adds constraint(s) of `kind` to the selection; returns the reason when not applicable. */
   applyConstraint: (kind: SketchConstraintKind) => Promise<string | null>;
   /** Sets a dimension from typed text (number or expression). Resolves `true` when accepted. */
@@ -296,13 +327,22 @@ function carryOptions(tool: SketchTool, previous: SketchTool): SketchTool {
     case 'ellipse':
     case 'corner':
       return { ...tool, mode: (previous as typeof tool).mode } as SketchTool;
+    case 'offset':
+      return { ...tool, mode: (previous as typeof tool).mode };
     case 'polygon': {
       const p = previous as typeof tool;
       return { ...tool, sides: p.sides, inscribed: p.inscribed };
     }
     case 'pattern': {
       const p = previous as typeof tool;
-      return { ...tool, mode: p.mode, count: p.count, angle: p.angle };
+      return {
+        ...tool,
+        mode: p.mode,
+        count: p.count,
+        angle: p.angle,
+        directions: p.directions,
+        count2: p.count2,
+      };
     }
     default:
       return tool;
@@ -345,11 +385,23 @@ function applyToolOption(tool: SketchTool, option: Partial<SketchToolOptions>): 
         : tool;
     case 'corner':
       return mode === 'fillet' || mode === 'chamfer' ? { ...tool, mode } : tool;
+    case 'offset':
+      // Switching chain/single restarts the pick (the loops depend on it).
+      return mode === 'chain' || mode === 'single'
+        ? { ...tool, mode, curveId: null, loops: [] }
+        : tool;
     case 'pattern': {
       let next = tool;
-      if (mode === 'linear' || mode === 'circular') next = { ...next, mode };
+      if (mode === 'linear' || mode === 'circular') next = { ...next, mode, first: null };
       if (option.count !== undefined && option.count >= 2 && option.count <= 200) {
         next = { ...next, count: Math.round(option.count) };
+      }
+      if (option.count2 !== undefined && option.count2 >= 2 && option.count2 <= 200) {
+        next = { ...next, count2: Math.round(option.count2) };
+      }
+      if (option.directions === 1 || option.directions === 2) {
+        // Switching directions restarts the placement (a placed first direction is dropped).
+        next = { ...next, directions: option.directions, first: null };
       }
       if (
         option.angle !== undefined &&
@@ -367,6 +419,11 @@ function applyToolOption(tool: SketchTool, option: Partial<SketchToolOptions>): 
         next = { ...next, height: option.height };
       if (option.angle !== undefined && Number.isFinite(option.angle))
         next = { ...next, angle: option.angle };
+      if (option.font !== undefined && option.font !== '') next = { ...next, font: option.font };
+      if (option.align === 'left' || option.align === 'center' || option.align === 'right')
+        next = { ...next, align: option.align };
+      // Gizmo placement: the anchor of a text not placed yet moves with the move handle.
+      if (option.anchor !== undefined && !next.editing) next = { ...next, anchor: option.anchor };
       return next;
     }
     default:
@@ -548,6 +605,8 @@ export const useSketchStore = create<SketchState>((set, get) => {
         ...sketch,
         // A sketch whose last projection was deleted must drop the stored list too.
         ...(session.baseline.projections && !sketch.projections ? { projections: [] } : {}),
+        // …and one whose last pattern record went away.
+        ...(session.baseline.patterns && !sketch.patterns ? { patterns: [] } : {}),
       });
     }
   };
@@ -692,8 +751,11 @@ export const useSketchStore = create<SketchState>((set, get) => {
       let tool = initialTool(kind, session.selection);
       // Keep the chosen options (modes, sides, counts) when re-selecting the tool.
       tool = carryOptions(tool, previous);
+      // Offset on selected curves: every selected loop at once (Shapr3D per-loop arrows).
+      if (tool.kind === 'offset' && session.selection.length > 0) {
+        tool = offsetToolFor(session.sketch, session.selection, tool.mode);
+      }
       if (tool.kind === 'text') {
-        void loadSketchFont(DEFAULT_SKETCH_FONT).catch(() => undefined);
         const selected = session.sketch.entities.find(
           (e) =>
             e.kind === 'text' && session.selection.length === 1 && session.selection[0] === e.id,
@@ -705,8 +767,11 @@ export const useSketchStore = create<SketchState>((set, get) => {
             text: selected.text,
             height: selected.height,
             angle: selected.angle,
+            font: selected.font,
+            align: selected.align ?? 'left',
           };
         }
+        void loadSketchFont(tool.font).catch(() => undefined);
       }
       // Pressing A while drawing lines continues with a tangent arc from the last point.
       if (
@@ -734,6 +799,19 @@ export const useSketchStore = create<SketchState>((set, get) => {
       if (next !== session.tool) patch({ tool: next, notice: null });
     },
 
+    flipOffsetLoop: (index) => {
+      const session = get().session;
+      const tool = session?.tool;
+      if (tool?.kind !== 'offset' || !tool.loops[index]) return;
+      patch({
+        tool: {
+          ...tool,
+          loops: tool.loops.map((l, i) => (i === index ? { ...l, flip: !l.flip } : l)),
+        },
+        notice: null,
+      });
+    },
+
     commitText: async () => {
       const session = get().session;
       const tool = session?.tool;
@@ -753,7 +831,7 @@ export const useSketchStore = create<SketchState>((set, get) => {
       }
       let outline: Awaited<ReturnType<typeof textOutline>>;
       try {
-        outline = await textOutline(DEFAULT_SKETCH_FONT, content);
+        outline = await textOutline(tool.font, content, tool.align);
       } catch (error) {
         patch({
           notice: `The font could not be loaded: ${error instanceof Error ? error.message : String(error)}`,
@@ -774,8 +852,9 @@ export const useSketchStore = create<SketchState>((set, get) => {
                       text: content,
                       height: tool.height,
                       angle: tool.angle,
-                      font: DEFAULT_SKETCH_FONT,
+                      font: tool.font,
                       outline: outline.outline,
+                      ...alignField(tool.align),
                     }
                   : e,
               ),
@@ -794,7 +873,8 @@ export const useSketchStore = create<SketchState>((set, get) => {
           text: content,
           height: tool.height,
           angle: tool.angle,
-          font: DEFAULT_SKETCH_FONT,
+          font: tool.font,
+          ...alignField(tool.align),
           outline: outline.outline,
           ...(get().session?.construction ? { construction: true } : {}),
         });
@@ -806,6 +886,8 @@ export const useSketchStore = create<SketchState>((set, get) => {
             ...initialAdvancedTool('text'),
             height: tool.height,
             angle: tool.angle,
+            font: tool.font,
+            align: tool.align,
           } as SketchTool,
           notice:
             outline.missing.length > 0
@@ -820,7 +902,7 @@ export const useSketchStore = create<SketchState>((set, get) => {
       const session = get().session;
       const text = session?.sketch.entities.find((e) => e.id === textId);
       if (!session || text?.kind !== 'text') return;
-      void loadSketchFont(DEFAULT_SKETCH_FONT).catch(() => undefined);
+      void loadSketchFont(text.font).catch(() => undefined);
       patch({
         tool: {
           ...initialAdvancedTool('text'),
@@ -828,6 +910,8 @@ export const useSketchStore = create<SketchState>((set, get) => {
           text: text.text,
           height: text.height,
           angle: text.angle,
+          font: text.font,
+          align: text.align ?? 'left',
         } as SketchTool,
         selection: [text.id],
         notice: null,
@@ -871,6 +955,25 @@ export const useSketchStore = create<SketchState>((set, get) => {
       const ok = await applyEdit((sketch) => addProjection(sketch, source!, curves, true));
       return ok ? null : 'The projection could not be added.';
     },
+
+    editPattern: async (patternId, patchValues) => {
+      let reason: string | null = null;
+      const ok = await applyEdit((sketch) => {
+        const edit = editPattern(sketch, patternId, patchValues);
+        if ('reason' in edit) {
+          reason = edit.reason;
+          return null;
+        }
+        return edit;
+      });
+      if (reason) {
+        patch({ notice: reason });
+        return reason;
+      }
+      return ok ? null : 'The pattern could not be changed (see the sketch message).';
+    },
+
+    unlinkProjection: (ids) => applyEdit((sketch) => unlinkProjections(sketch, ids)),
 
     acceptOffer: async () => {
       const offer = pendingOffer;
@@ -932,6 +1035,7 @@ export const useSketchStore = create<SketchState>((set, get) => {
         if (!session) return;
         const step = reduceTool(session.sketch, session.tool, event, {
           construction: session.construction,
+          circleDimension: useSketchPreferences.getState().circleDimension,
         });
         if (!step.edit) {
           patch({ tool: step.tool, notice: step.notice ?? null });
@@ -981,6 +1085,25 @@ export const useSketchStore = create<SketchState>((set, get) => {
         optional: [],
         select: [],
       }));
+    },
+
+    disconnectSelection: async () => {
+      const session = get().session;
+      if (!session) return 'Not sketching.';
+      let reason: string | null = null;
+      const ok = await applyEdit((sketch) => {
+        const edit = disconnectPoints(sketch, session.selection);
+        if ('reason' in edit) {
+          reason = edit.reason;
+          return null;
+        }
+        return edit;
+      });
+      if (reason) {
+        patch({ notice: reason });
+        return reason;
+      }
+      return ok ? null : 'The points could not be disconnected.';
     },
 
     toggleConstructionOfSelection: async () => {

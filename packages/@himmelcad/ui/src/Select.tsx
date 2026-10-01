@@ -15,6 +15,7 @@ import {
 import { ChevronDown } from 'lucide-react';
 
 import styles from './Select.module.css';
+import { registerEscapeRung } from './escapeLadder.js';
 
 export interface SelectOption {
   value: string;
@@ -65,8 +66,38 @@ function flattenLabel(node: ReactNode): string {
 }
 
 /**
+ * Keyboard step of an open (or opening) select list, as a native select
+ * behaves: arrows move over enabled options, Home/End jump, Enter/Space
+ * pick. Returns the next active index, `'pick'` or `null` (key not handled).
+ */
+export function selectKeyStep(
+  key: string,
+  active: number,
+  options: readonly Pick<SelectOption, 'disabled'>[],
+): number | 'pick' | null {
+  const enabled = options.map((o, i) => (o.disabled ? -1 : i)).filter((i) => i >= 0);
+  if (enabled.length === 0) return null;
+  if (key === 'Enter' || key === ' ') return 'pick';
+  if (key === 'Home') return enabled[0]!;
+  if (key === 'End') return enabled[enabled.length - 1]!;
+  if (key === 'ArrowDown') return enabled.find((i) => i > active) ?? enabled[enabled.length - 1]!;
+  if (key === 'ArrowUp') {
+    const before = enabled.filter((i) => i < active);
+    return before.length > 0 ? before[before.length - 1]! : enabled[0]!;
+  }
+  return null;
+}
+
+/**
  * Custom dropdown — no native OS select popup.
  * Accepts either `options` or classic `<option>` children for drop-in use.
+ *
+ * Intended behaviour (checked in Assembler Block 8): a pointer click on the
+ * trigger opens and closes the list (like a native select). From the
+ * keyboard, Alt+ArrowDown / ArrowDown / ArrowUp open it, arrows move,
+ * Enter/Space pick, Tab closes. Escape closes only the list — it is the
+ * UIP-D14 `menu` rung, so an open list inside a dialog does not also close
+ * the dialog — and returns focus to the trigger.
  */
 export function Select({
   wrapClassName,
@@ -113,6 +144,8 @@ export function Select({
     });
   }, [open]);
 
+  const [activeIndex, setActiveIndex] = useState(-1);
+
   useEffect(() => {
     if (!open) return;
     const onDoc = (e: MouseEvent): void => {
@@ -122,16 +155,55 @@ export function Select({
       // menu is portaled-like fixed inside root, so root contains it
       setOpen(false);
     };
+    const close = (): boolean => {
+      setOpen(false);
+      buttonRef.current?.focus();
+      return true;
+    };
+    // The open list is the `menu` rung of the shared Escape ladder (apps that install it);
+    // the plain listener covers apps without the ladder.
+    const unregister = registerEscapeRung('menu', close);
     const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') setOpen(false);
+      if (e.key === 'Escape' && !e.defaultPrevented) close();
     };
     document.addEventListener('mousedown', onDoc);
     document.addEventListener('keydown', onKey);
     return () => {
+      unregister();
       document.removeEventListener('mousedown', onDoc);
       document.removeEventListener('keydown', onKey);
     };
   }, [open]);
+
+  const openList = (): void => {
+    setActiveIndex(selected ? Math.max(0, options.indexOf(selected)) : 0);
+    setOpen(true);
+  };
+
+  const onTriggerKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>): void => {
+    if (disabled) return;
+    if (!open) {
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault();
+        openList();
+      }
+      return;
+    }
+    if (event.key === 'Tab') {
+      setOpen(false);
+      return;
+    }
+    const step = selectKeyStep(event.key, activeIndex, options);
+    if (step === null) return;
+    event.preventDefault();
+    if (step === 'pick') {
+      const option = options[activeIndex];
+      if (option && !option.disabled) pick(option.value);
+      else setOpen(false);
+      return;
+    }
+    setActiveIndex(step);
+  };
 
   const pick = (next: string): void => {
     if (!controlled) setInternal(next);
@@ -163,8 +235,11 @@ export function Select({
         aria-controls={listId}
         aria-label={ariaLabel}
         onClick={() => {
-          if (!disabled) setOpen((v) => !v);
+          if (disabled) return;
+          if (open) setOpen(false);
+          else openList();
         }}
+        onKeyDown={onTriggerKeyDown}
       >
         <span className={styles.value}>{label}</span>
         <ChevronDown size={14} className={styles.chevron} aria-hidden />
@@ -172,7 +247,7 @@ export function Select({
       {name ? <input type="hidden" name={name} value={current} readOnly /> : null}
       {open && !disabled ? (
         <ul id={listId} className={styles.menu} style={menuStyle} role="listbox" tabIndex={-1}>
-          {options.map((opt) => {
+          {options.map((opt, index) => {
             const active = opt.value === current;
             return (
               <li key={opt.value} role="presentation">
@@ -182,6 +257,8 @@ export function Select({
                   aria-selected={active}
                   disabled={opt.disabled}
                   title={opt.disabled ? opt.description : undefined}
+                  data-keyboard-active={index === activeIndex ? 'true' : undefined}
+                  tabIndex={-1}
                   className={active ? `${styles.option} ${styles.optionActive}` : styles.option}
                   onClick={() => {
                     if (!opt.disabled) pick(opt.value);

@@ -320,6 +320,12 @@ export const TRANSFORM_COMMANDS: readonly Command[] = [
         if (deleteFace?.availability(ctx).enabled) deleteFace.run(ctx);
         return;
       }
+      // Sketch curves selected outside sketch mode leave their sketch (sketching module).
+      if (ctx.selection.every((item) => item.kind === 'sketchCurve')) {
+        const deleteCurves = registeredCommand('sketch.deleteCurves');
+        if (deleteCurves?.availability(ctx).enabled) deleteCurves.run(ctx);
+        return;
+      }
       for (const item of ctx.selection) {
         if (item.kind === 'feature' || item.kind === 'sketchProfile' || item.kind === 'datum') {
           ctx.deleteFeature(item.featureId);

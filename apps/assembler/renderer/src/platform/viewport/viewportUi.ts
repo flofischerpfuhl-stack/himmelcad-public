@@ -13,6 +13,8 @@ export interface ImageRenderRequest {
   height: number;
   transparent: boolean;
   grid: boolean;
+  /** Body edge lines; absent = as in the view. */
+  edges?: boolean;
 }
 
 export interface RenderedImage {

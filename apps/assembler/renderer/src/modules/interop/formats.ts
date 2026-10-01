@@ -94,6 +94,13 @@ export const STEP_EXPORT_FORMATS: readonly (Omit<FormatInfo, 'target'> & { sourc
     keeps: 'welded manifold objects, names, colours, placements',
   },
   {
+    format: 'obj',
+    label: 'OBJ',
+    extensions: ['obj'],
+    source: 'bodies and visible reference meshes',
+    keeps: 'one object per body with its name, shared vertices and normals, mm; no materials',
+  },
+  {
     format: 'dxf',
     label: 'DXF',
     extensions: ['dxf'],

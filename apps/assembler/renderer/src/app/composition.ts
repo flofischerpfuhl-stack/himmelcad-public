@@ -11,6 +11,7 @@ import '../foundation/commands/projectFields.js';
 import { installModules, type AssemblerModule } from '../foundation/commands/module.js';
 import { agentApiModule } from '../interface/agent-api/module.js';
 import { shellUiModule } from '../interface/shell-ui/module.js';
+import { canvasModule } from '../modules/canvas/module.js';
 import { constructionModule } from '../modules/construction/module.js';
 import { directEditModule } from '../modules/direct-edit/module.js';
 import { displayModule } from '../modules/display/module.js';
@@ -29,6 +30,7 @@ export const ASSEMBLER_MODULES: readonly AssemblerModule[] = [
   modelingModule,
   directEditModule,
   constructionModule,
+  canvasModule,
   parametersModule,
   measureModule,
   displayModule,

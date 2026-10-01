@@ -10,6 +10,7 @@ import {
   CornerDownRight,
   DraftingCompass,
   Egg,
+  Eraser,
   FlipHorizontal2,
   Grid2x2,
   Hexagon,
@@ -28,6 +29,7 @@ import {
   TextCursorInput,
   Trash2,
   Type,
+  Unlink,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -60,5 +62,8 @@ export const SKETCH_COMMAND_ICONS: Record<string, LucideIcon> = {
   'sketch.project': ArrowDownToLine,
   'sketch.toggleReference': Ruler,
   'sketch.editText': TextCursorInput,
+  'sketch.deleteCurves': Eraser,
+  'sketch.curvesConstruction': SquareDashed,
+  'sketch.disconnect': Unlink,
   ...Object.fromEntries(CONSTRAINT_INFO.map((c) => [`sketch.constrain.${c.kind}`, Link2])),
 };

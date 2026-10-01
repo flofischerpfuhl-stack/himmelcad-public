@@ -230,6 +230,58 @@
   stroke-linecap: round;
 }
 
+/* Text placement gizmo: move (square at the anchor) and rotate (circle past the text's end). */
+.gizmoLine {
+  stroke: var(--hc-geometry-active-preview);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+}
+
+.gizmoHandle {
+  pointer-events: all;
+  cursor: grab;
+  fill: var(--hc-bg-island);
+  stroke: var(--hc-geometry-active-preview);
+  stroke-width: 2;
+}
+
+.gizmoHandle:hover {
+  fill: var(--hc-geometry-active-preview);
+}
+
+/* Offset with several loops: one clickable direction arrow per loop. */
+.offsetArrow {
+  pointer-events: all;
+  cursor: pointer;
+}
+
+.offsetArrowHit {
+  fill: transparent;
+}
+
+.offsetArrowHalo {
+  stroke: var(--hc-bg-void);
+  stroke-width: 6;
+  stroke-linecap: round;
+}
+
+.offsetArrowShaft {
+  stroke: var(--hc-geometry-active-preview);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+}
+
+.offsetArrowHead {
+  fill: var(--hc-geometry-active-preview);
+  stroke: var(--hc-bg-void);
+  stroke-width: 1.5;
+  paint-order: stroke;
+}
+
+.offsetArrow:hover .offsetArrowShaft {
+  stroke-width: 3;
+}
+
 .srOnly {
   position: absolute;
   width: 1px;

@@ -33,7 +33,15 @@ export const SKETCHES_LIST_METHODS: Record<string, MethodSpec> = {
       'Sketches with frame, entities, constraints, dimensions and their detected profiles (regions with stable keys, the boundary entity ids and world-space centres).',
     params: obj({ scope }),
     result:
-      '[{featureId, name, plane, frame: {origin,u,v,normal}, entities, constraints, dimensions, regions: [{key, area, sample, center, holes, entityIds}], consumed}]',
+      '[{featureId, name, plane, frame: {origin,u,v,normal}, entities, constraints, dimensions, patterns: [{id, kind, sources, count, count2?, lines?, center?, angle?, created}], regions: [{key, area, sample, center, holes, entityIds}], consumed}]',
+  },
+  'sketch.fonts': {
+    kind: 'query',
+    capability: 'document.read',
+    summary:
+      'Fonts for sketch.addText: the bundled Inter (always, also headless) and — in the desktop app, once the user has listed them — the fonts installed on the computer (ids `system:<PostScript name>`). Text stores its outline, so documents never need the font again.',
+    params: obj({}),
+    result: '[{id, label, source: "bundled"|"system", family?, style?}]',
   },
 };
 
@@ -255,7 +263,7 @@ export const SKETCH_EDIT_METHODS: Record<string, MethodSpec> = {
     capability: 'document.write',
     transactional: true,
     summary:
-      'Adds text (font Inter, SIL OFL 1.1) with its baseline starting at `position`: `height` is the cap height (mm), `angle` degrees. Every glyph becomes a closed profile (counters stay open) for extrude/emboss.',
+      'Adds text at `position` (its anchor on the baseline: start, middle or end by `align`): `height` is the cap height (mm), `angle` degrees, `font` a sketch.fonts id (default the bundled Inter, SIL OFL 1.1). Every glyph becomes a closed profile (counters stay open) for extrude/emboss.',
     params: obj(
       {
         featureId: str,
@@ -263,7 +271,8 @@ export const SKETCH_EDIT_METHODS: Record<string, MethodSpec> = {
         position: ref('Vec2'),
         height: positive,
         angle: num,
-        font: { enum: ['inter'], default: 'inter' },
+        font: { type: 'string', default: 'inter' },
+        align: { enum: ['left', 'center', 'right'], default: 'left' },
         construction: { type: 'boolean', default: false },
         expectedRevision: revision,
       },
@@ -293,7 +302,7 @@ export const SKETCH_EDIT_METHODS: Record<string, MethodSpec> = {
     capability: 'document.write',
     transactional: true,
     summary:
-      'Repeats curves/points `ids`: linear (`direction`, `spacing` — a spacing dimension drives every copy) or circular (`center`, `angle` total degrees, 360 = full turn); `count` includes the original.',
+      'Repeats curves/points `ids`: linear (`direction`, `spacing` — a spacing dimension drives every copy; with `count2`, `direction2`, `spacing2` a grid in two directions) or circular (`center`, `angle` total degrees, 360 = full turn); `count` includes the original. The pattern is recorded (`patternId`) so count/count2/angle stay editable (sketch.editPattern).',
     params: obj(
       {
         featureId: str,
@@ -302,12 +311,53 @@ export const SKETCH_EDIT_METHODS: Record<string, MethodSpec> = {
         count: { type: 'integer', minimum: 2, maximum: 200 },
         direction: ref('Vec2'),
         spacing: positive,
+        count2: { type: 'integer', minimum: 2, maximum: 200 },
+        direction2: ref('Vec2'),
+        spacing2: positive,
         center: ref('Vec2'),
         centerPointId: str,
         angle: num,
         expectedRevision: revision,
       },
       ['featureId', 'ids', 'count'],
+    ),
+    result: '{featureId, patternId, createdIds, dof, regions, revision, committed}',
+  },
+  'sketch.editPattern': {
+    kind: 'command',
+    capability: 'document.write',
+    transactional: true,
+    summary:
+      'Changes a recorded sketch pattern (sketches.list → patterns): `count`, `count2` (two-direction linear patterns) or `angle` (circular, total degrees). The copies are rebuilt from the sources; spacing dimensions, direction lines and the centre stay.',
+    params: obj(
+      {
+        featureId: str,
+        patternId: str,
+        count: { type: 'integer', minimum: 2, maximum: 200 },
+        count2: { type: 'integer', minimum: 2, maximum: 200 },
+        angle: num,
+        expectedRevision: revision,
+      },
+      ['featureId', 'patternId'],
+    ),
+    result: '{featureId, patternId, pattern, dof, regions, revision, committed}',
+  },
+  'sketch.offset': {
+    kind: 'command',
+    capability: 'document.write',
+    transactional: true,
+    summary:
+      'Offsets each curve of `ids` with its chain (connected curves; `single: true` only the curve) by `distance`: closed loops to the `outside` (default) or `inside`, open chains to the `left`/`right` of the curve direction. Lines and arcs offset exactly; ellipses, elliptical arcs and splines become fit splines through their true offset. New, unconstrained geometry.',
+    params: obj(
+      {
+        featureId: str,
+        ids: { type: 'array', items: str, minItems: 1 },
+        distance: positive,
+        side: { enum: ['outside', 'inside', 'left', 'right'], default: 'outside' },
+        single: { type: 'boolean', default: false },
+        expectedRevision: revision,
+      },
+      ['featureId', 'ids', 'distance'],
     ),
     result: '{featureId, createdIds, dof, regions, revision, committed}',
   },
@@ -316,7 +366,7 @@ export const SKETCH_EDIT_METHODS: Record<string, MethodSpec> = {
     capability: 'document.write',
     transactional: true,
     summary:
-      'Fillets (radius `size`) or chamfers (set-back `size`) the corner at point `point` between two lines; the corner point stays as a virtual sharp so dimensions to it survive.',
+      'Fillets (radius `size`, tangent to both curves) or chamfers (set-back `size`, a chord on arcs) the corner at point `point` between two lines, a line and an arc, or two arcs; the corner point stays as a virtual sharp so dimensions to it survive. Splines and ellipses are refused with the reason.',
     params: obj(
       {
         featureId: str,
@@ -326,6 +376,22 @@ export const SKETCH_EDIT_METHODS: Record<string, MethodSpec> = {
         expectedRevision: revision,
       },
       ['featureId', 'point', 'size'],
+    ),
+    result: '{featureId, createdIds, dof, regions, revision, committed}',
+  },
+  'sketch.disconnect': {
+    kind: 'command',
+    capability: 'document.write',
+    transactional: true,
+    summary:
+      'Disconnect (Shapr3D): curves meeting at each given shared point get a point of their own (same position; the first curve keeps the original with its constraints/dimensions); given coincident constraints, or those on a given point, are removed. The curves can then move apart.',
+    params: obj(
+      {
+        featureId: str,
+        ids: { type: 'array', items: str, minItems: 1 },
+        expectedRevision: revision,
+      },
+      ['featureId', 'ids'],
     ),
     result: '{featureId, createdIds, dof, regions, revision, committed}',
   },
@@ -346,6 +412,22 @@ export const SKETCH_EDIT_METHODS: Record<string, MethodSpec> = {
       ['featureId'],
     ),
     result: '{featureId, projectionId, entityIds, dof, regions, revision, committed}',
+  },
+  'sketch.unlinkProjection': {
+    kind: 'command',
+    capability: 'document.write',
+    transactional: true,
+    summary:
+      'Unlinks projected geometry (Shapr3D `Linked` off): `ids` are projection ids or ids of projected curves/points. The geometry stays as ordinary sketch geometry (free, editable, construction flag kept) and no longer follows its source; project again to link.',
+    params: obj(
+      {
+        featureId: str,
+        ids: { type: 'array', items: str, minItems: 1 },
+        expectedRevision: revision,
+      },
+      ['featureId', 'ids'],
+    ),
+    result: '{featureId, unlinked, entityIds, dof, regions, revision, committed}',
   },
   'sketch.setReference': {
     kind: 'command',

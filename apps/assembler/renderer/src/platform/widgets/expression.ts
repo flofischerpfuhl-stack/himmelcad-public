@@ -6,7 +6,14 @@
  * Returns `null` for anything that isn't a fully-consumed, finite numeric
  * expression (empty input, trailing garbage, division producing NaN/Infinity).
  */
+
+import { evaluateConstantExpression } from '../../foundation/document/expressions.js';
 export function evaluateExpression(input: string): number | null {
+  // Units (`1 in + 2 mm`, `90°`) through the document's expression parser.
+  return evaluatePlain(input) ?? evaluateConstantExpression(input);
+}
+
+function evaluatePlain(input: string): number | null {
   const src = input.trim().replace(',', '.');
   if (src === '') return null;
   let pos = 0;
