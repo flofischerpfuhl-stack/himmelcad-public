@@ -211,12 +211,45 @@ module, order, validate, include? })` for a top-level field (typed by
 - `COMMAND_ORDER.measureTools` (1150) — Pin measurement / Measure points,
   right after the display block they used to end.
 
-Still planned for phase B (agents A/B): `tools` (the generic feature tool's
-`createDraft`/`draftToFeature` per kind, now one switch in
-`model/featureTools.ts`), DOM overlays of the viewport (sketch overlay,
-dimension labels, measure overlay, now JSX in `Viewport.tsx`) and a
-tool-handle provider (now `viewport/toolHandles.ts` called from
-`Viewport.tsx`/`scene.ts`).
+Added in phase B (agent B, modeling/direct-edit, and the `store.ts`/`Viewport.tsx` wave):
+
+- **Tool sessions** (`commands/store.ts`) — `ToolSessionMap` (augmentable;
+  the core keeps `feature` and `pick`) and `registerToolKind({ kind,
+provisional, commit, emptyClickFinishes })`: the core runs the shared
+  lifecycle (kernel preview, kernel-checked Done, Cancel), the kind says
+  what it previews and commits through a `ToolCommit`. `StoreCore.tools`
+  (`endPreview`, `updatePreviewTool`) for the module's slice actions.
+  Modeling's Extrude, Fillet/Chamfer, Shell, Boolean and Move/Rotate live in
+  `modules/modeling/tools.ts` (sessions + slice).
+- **Generic feature tool** (`commands/featureDrafts.ts`) — the dispatcher
+  over A's draft-tool registry (`draftTools.ts`); every kind (modelling,
+  print-part, direct-edit, construction) is a registered `DraftTool`.
+  Optional hooks added by augmentation: `picksSketchLines`,
+  `ghostsModifiedBodies`, `acceptEmptyClick`. `featureToolCommand.ts`
+  builds a tool's command from its draft.
+- **Viewport tool provider** (`platform/viewport/toolViews.ts`,
+  `ModuleUi.viewportTools`) — per tool session kind: `view` (body/sketch
+  transforms, accents, ghosts, handles, arrow, gizmo, datum highlights,
+  sketch-line picking, typed values, value labels), `beginDrag`,
+  `applyHandleValue`, `click`. The feature tool's view comes from the
+  drafts (`featureToolView.ts`). `section.ts` holds `AxisHandle` and the
+  section plane, `commands/viewBounds.ts` the visible bounds.
+- **Viewport hooks** (`platform/viewport/viewportHooks.ts`,
+  `ModuleUi.viewportClicks`/`viewportDatums`) — clicks while no tool runs
+  (Measure › Points, Section › Face, History "Fix…") and extra scene datums
+  (the Fix ghost); `setViewportShell` (installed by the shell's UI part)
+  hands over camera commands, Select Through, Save View and the pose probe.
+  DOM overlays and modes are A's `domOverlays.ts` (sketch overlay, measure
+  overlay).
+- **Icons** — `ModuleUi.featureIcons`/`commandIcons`; the shell's
+  `icons.ts` falls back to them.
+- **Smaller contracts** — `geometry-kernel/features/occtApi.ts` (the
+  replicad surface for module evaluators), `geometry-kernel/edgeCurves.ts`,
+  `document/sketchVisibility.ts` (consumed sketches from the kind
+  registry), `document/blendOptions.ts` `PRINT_CLEARANCES`,
+  `registry.ts` `registeredCommand`, `COMMAND_ORDER.directEdit` /
+  `modelingFeaturesTail` and `API_ORDER.featureKinds.{modeling,
+construction, modelingTail, directEdit}` (published orders unchanged).
 
 Compositions (`renderer/src/app`):
 
@@ -345,6 +378,18 @@ second wave after the parallel moves.
   measure overlay, dimension labels) as `viewportOverlays`/a DOM-overlay
   slot; removes `viewport → sketching/measure/display` ×9 and
   `viewport → shell-ui` ×4 (Fix ghosts, workspace, preferences reads).
+
+_Result (branch `asm/modB-20260930`, with A and C merged)_: modeling
+and direct-edit are migrated (`modules/{modeling,direct-edit}`: kinds,
+evaluators via `occtApi.ts`, draft tools, tool sessions + store slice,
+commands, API kind schemas, History cards, icons, viewport tools); the
+store core and the viewport name no domain module; the allowlist is empty
+(53 → 0 with A's and C's work). From C's `schema.ts` note, `INTEROP_METHODS`
+is now published by interop's `api.methods` (same block order) and the
+construction kind schemas by construction's `api.featureKinds`; left for
+the integrator: the five `measure.*` specs still sit at the head of the
+core `METHODS_TAIL` block (moving them needs that block split at the same
+position) — allowed, not a violation.
 
 **Agent C — interop, measure, display** (≈ 9 800 lines)
 

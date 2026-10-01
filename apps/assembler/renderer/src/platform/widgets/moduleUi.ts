@@ -18,6 +18,12 @@ import {
 } from '../viewport/domOverlays.js';
 import { registerViewportOverlay, type ViewportOverlayProvider } from '../viewport/overlays.js';
 import { registerViewportTool, type ViewportToolProvider } from '../viewport/toolViews.js';
+import {
+  registerViewportClick,
+  registerViewportDatums,
+  type ViewportClickHandler,
+  type ViewportDatumProvider,
+} from '../viewport/viewportHooks.js';
 
 export interface PanelProps {
   state: AssemblerState;
@@ -81,6 +87,10 @@ export interface ModuleUi {
   viewportDomOverlays?: readonly ViewportDomOverlay[];
   /** What the module tells the viewport while its mode runs (`viewport/domOverlays.ts`). */
   viewportModes?: readonly ViewportMode[];
+  /** Clicks the module takes while no tool runs (`viewport/viewportHooks.ts`). */
+  viewportClicks?: readonly ViewportClickHandler[];
+  /** Extra datums the module draws in the scene (`viewport/viewportHooks.ts`). */
+  viewportDatums?: readonly ViewportDatumProvider[];
   /** Icons of the module's feature kinds (History cards, Items). */
   featureIcons?: Readonly<Partial<Record<string, LucideIcon>>>;
   /** Icons of the module's commands (toolbar, menus, search). */
@@ -122,6 +132,8 @@ export function installModuleUis(uis: readonly ModuleUi[]): void {
     for (const tool of ui.viewportTools ?? []) registerViewportTool(tool);
     for (const overlay of ui.viewportDomOverlays ?? []) registerViewportDomOverlay(overlay);
     for (const mode of ui.viewportModes ?? []) registerViewportMode(mode);
+    for (const click of ui.viewportClicks ?? []) registerViewportClick(click);
+    for (const datums of ui.viewportDatums ?? []) registerViewportDatums(datums);
     for (const [kind, icon] of Object.entries(ui.featureIcons ?? {})) {
       if (icon) featureIcons.set(kind, icon);
     }

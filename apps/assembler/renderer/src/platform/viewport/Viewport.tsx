@@ -5,9 +5,20 @@ import type {
   EvaluatedSketch,
   EvaluationResult,
 } from '../../foundation/geometry-kernel/types.js';
-import { useSketchStore } from '../../modules/sketching/session.js';
-import { SketchOverlay } from '../../modules/sketching/ui/SketchOverlay.js';
-import { useSketchViewport } from '../../modules/sketching/ui/useSketchViewport.js';
+import {
+  modeHiddenFeatureIds,
+  modeOwnsKeyboard,
+  openPickInMode,
+  viewportDomOverlays,
+  type ViewportDomHost,
+} from './domOverlays.js';
+import type { CameraCommand } from './cameraChannel.js';
+import {
+  extraViewportDatums,
+  offerViewportClick,
+  subscribeViewportDatums,
+  viewportShell,
+} from './viewportHooks.js';
 
 import { consumedSketchIds, isSketchVisible } from '../../foundation/document/sketchVisibility.js';
 import { visibleBounds, type Bounds3 } from '../../foundation/commands/viewBounds.js';
@@ -19,7 +30,6 @@ import {
 } from '../../foundation/commands/referenceMesh.js';
 import {
   findFace,
-  isPlanarFace,
   isPreviewTool,
   useAssemblerStore,
   type AssemblerState,
@@ -63,11 +73,6 @@ import { SelectThroughChip } from './SelectThroughChip.js';
 import { boxSelectionIn, candidatesAt, type ViewportQueryContext } from './viewportQueries.js';
 import { isAmbiguous } from './pickCandidates.js';
 import { usePreferences } from '../input/preferences.js';
-import {
-  setCameraPoseProbe,
-  useWorkspaceStore,
-  type CameraCommand,
-} from '../../interface/shell-ui/workspace.js';
 import { displayBodyName, useItemsStore } from '../../foundation/commands/items.js';
 import { subscribeViewportOverlays, viewportOverlayBatches } from './overlays.js';
 import { DimensionLabel } from './DimensionLabel.js';
@@ -83,7 +88,6 @@ import type { PickTarget, ToolHandleKind } from './picking.js';
 import { buildScene, type BuiltScene, type SceneDatum, type SceneInput } from './scene.js';
 import { encodePng } from './imageExport.js';
 import { setImageRenderer, useViewportUi } from './viewportUi.js';
-import { sectionAtFace } from '../../modules/display/displayCommands.js';
 import { readViewportColors, type ViewportColors } from './theme.js';
 import {
   handleTip,
@@ -94,13 +98,6 @@ import {
   type SectionView,
 } from './section.js';
 import { bodyMaterials } from './displayModes.js';
-import { MeasureOverlay } from '../../modules/measure/ui/MeasureOverlay.js';
-import {
-  snapMeasurePoint,
-  snapPoints,
-  type Vec3 as MeasureVec3,
-} from '../../modules/measure/measure.js';
-import { useMeasureStore } from '../../modules/measure/measureStore.js';
 import { rayCastFaces } from './pickCandidates.js';
 import { ViewCube } from './ViewCube.js';
 import { applyFeatureHandleValue, featureToolView } from './featureToolView.js';
@@ -114,7 +111,6 @@ import {
   type ToolView,
 } from './toolViews.js';
 import { acceptPick, draftAcceptEmptyClick } from '../../foundation/commands/featureDrafts.js';
-import { applyFixPick, useFixStore } from '../../interface/shell-ui/fixReference.js';
 
 import { addPick } from '../../foundation/commands/pickSession.js';
 import { emptyClickFinishes } from '../../foundation/commands/toolFinish.js';
@@ -178,37 +174,6 @@ interface SceneModel {
   datums: SceneDatum[];
 }
 
-/** History "Fix…": the missing reference's last known place, drawn in the error colour. */
-function fixGhostDatums(s: AssemblerState): SceneDatum[] {
-  const session = useFixStore.getState().session;
-  const ghost = session?.missing.ghost;
-  if (!session || !ghost || s.activeTool) return [];
-  const base = { featureId: `fix:${session.featureId}`, state: 'error' as const, ghost: true };
-  if (ghost.kind === 'plane') {
-    return [{ ...base, kind: 'plane', frame: ghost.frame, center: ghost.center, size: ghost.size }];
-  }
-  if (ghost.kind === 'axis') {
-    const frame = { origin: ghost.point, u: ghost.dir, v: ghost.dir, normal: ghost.dir };
-    return [{ ...base, kind: 'axis', frame, center: ghost.point, size: ghost.size }];
-  }
-  // A point: a small cross of two segments.
-  const p = ghost.point;
-  return (
-    [
-      [1, 0, 0],
-      [0, 1, 0],
-      [0, 0, 1],
-    ] as Vec3[]
-  ).map((dir, i) => ({
-    ...base,
-    featureId: `${base.featureId}:${i}`,
-    kind: 'axis' as const,
-    frame: { origin: p, u: dir, v: dir, normal: dir },
-    center: p,
-    size: 3,
-  }));
-}
-
 /** Construction planes/axes of the shown evaluation, with their highlight state. */
 function sceneDatums(
   s: AssemblerState,
@@ -237,7 +202,7 @@ function sceneDatums(
           ? ('hovered' as const)
           : ('normal' as const),
     }));
-  return [...out, ...fixGhostDatums(s)];
+  return [...out, ...extraViewportDatums(s)];
 }
 
 function sceneModel(s: AssemblerState): SceneModel {
@@ -268,10 +233,10 @@ function sceneModel(s: AssemblerState): SceneModel {
   const consumed = consumedSketchIds(s.features);
   const shown = new Set(view.shownSketchIds ?? []);
   // The sketch being edited in sketch mode is drawn by the sketch overlay instead.
-  const editing = useSketchStore.getState().session?.featureId ?? null;
+  const editing = new Set(modeHiddenFeatureIds());
   const sketches = allSketches.filter(
     (sketch) =>
-      sketch.featureId !== editing &&
+      !editing.has(sketch.featureId) &&
       (shown.has(sketch.featureId) ||
         isSketchVisible(sketch.featureId, consumed, s.sketchVisibility) ||
         s.selection.some((i) => i.kind === 'sketchProfile' && i.featureId === sketch.featureId) ||
@@ -502,10 +467,10 @@ export function Viewport(props: ViewportProps): JSX.Element {
       }),
     [],
   );
-  // History "Fix…" ghosts redraw with their session.
+  // Datums the modules and the shell add (History "Fix…" ghosts) redraw on their own changes.
   useEffect(
     () =>
-      useFixStore.subscribe(() => {
+      subscribeViewportDatums(() => {
         dirtyRef.current = true;
       }),
     [],
@@ -621,7 +586,6 @@ export function Viewport(props: ViewportProps): JSX.Element {
   }, [state.viewState.cameraRequest, animateTo, visibleBodies, hostAspect]);
 
   // ---- Workspace camera commands (home, fit selection, cube edges/corners, roll, saved views, look at face)
-  const cameraCommand = useWorkspaceStore((s) => s.cameraCommand);
   const lastWorkspaceCameraNonce = useRef<number | null>(null);
   const applyCameraCommand = useCallback(
     (command: CameraCommand) => {
@@ -675,10 +639,16 @@ export function Viewport(props: ViewportProps): JSX.Element {
     [animateTo, visibleBodies, hostAspect],
   );
   useEffect(() => {
-    if (!cameraCommand || cameraCommand.nonce === lastWorkspaceCameraNonce.current) return;
-    lastWorkspaceCameraNonce.current = cameraCommand.nonce;
-    applyCameraCommand(cameraCommand.command);
-  }, [cameraCommand, applyCameraCommand]);
+    const shell = viewportShell();
+    const apply = () => {
+      const cameraCommand = shell.cameraCommand();
+      if (!cameraCommand || cameraCommand.nonce === lastWorkspaceCameraNonce.current) return;
+      lastWorkspaceCameraNonce.current = cameraCommand.nonce;
+      applyCameraCommand(cameraCommand.command);
+    };
+    apply();
+    return shell.subscribeCameraCommand(apply);
+  }, [applyCameraCommand]);
 
   // ---- Projection / field of view / theme / pointer settings --------------------------------
   const projection = usePreferences((p) => p.projection);
@@ -713,11 +683,11 @@ export function Viewport(props: ViewportProps): JSX.Element {
 
   // The live camera, for "Save view".
   useEffect(() => {
-    setCameraPoseProbe(() => poseRef.current);
-    return () => setCameraPoseProbe(null);
+    viewportShell().setCameraPoseProbe(() => poseRef.current);
+    return () => viewportShell().setCameraPoseProbe(null);
   }, []);
 
-  const selectThrough = useWorkspaceStore((s) => s.selectThrough);
+  const selectThrough = viewportShell().useSelectThrough();
   const [box, setBox] = useState<BoxState | null>(null);
   const boxRef = useRef<BoxState | null>(null);
   boxRef.current = box;
@@ -1017,8 +987,11 @@ export function Viewport(props: ViewportProps): JSX.Element {
     [rayAtClient],
   );
 
-  // Sketch mode: camera normal to the sketch plane + the overlay's screen mapping.
-  const sketch = useSketchViewport({ hostRef, poseRef, animRef, dirtyRef, rayAtClient, pickAt });
+  /** What the modules' DOM overlays get from the viewport (`domOverlays.ts`). */
+  const domHost = useMemo<ViewportDomHost>(
+    () => ({ hostRef, poseRef, animRef, dirtyRef, rayAtClient, pickAt, project: projectHost }),
+    [rayAtClient, pickAt, projectHost],
+  );
 
   /** The pointer as a running tool sees it (ray, picking). */
   const toolPointer = useCallback(
@@ -1126,49 +1099,30 @@ export function Viewport(props: ViewportProps): JSX.Element {
 
   const [popupAdditive, setPopupAdditive] = useState(false);
 
-  /** Measure > Points: the snapped world point under the pointer becomes a measured point. */
-  const pickMeasurePoint = useCallback(
-    (clientX: number, clientY: number, touch: boolean) => {
-      const host = hostRef.current;
-      if (!host) return;
-      const rect = host.getBoundingClientRect();
-      const bodies = visibleBodies();
-      const vp = viewProjectionMatrix(poseRef.current, rect.width / Math.max(1, rect.height));
-      const project = (p: MeasureVec3): [number, number] | null => {
-        const s = projectToScreen(vp, p, rect.width, rect.height);
-        return s ? [s[0], s[1]] : null;
-      };
+  /** The first visible surface point under the pointer that Section View does not cut away. */
+  const surfacePointAt = useCallback(
+    (clientX: number, clientY: number): Vec3 | null => {
       const ray = rayAtClient(clientX, clientY);
-      let surface: MeasureVec3 | null = null;
-      if (ray) {
-        const s = useAssemblerStore.getState();
-        const clip = s.viewState.sectionEnabled ? sectionClip(sectionViewOf(s)) : null;
-        for (const hit of rayCastFaces(bodies, ray)) {
-          const dir = ray.direction;
-          const p: MeasureVec3 = [
-            ray.origin[0] + dir[0] * hit.t,
-            ray.origin[1] + dir[1] * hit.t,
-            ray.origin[2] + dir[2] * hit.t,
-          ];
-          // Faces cut away by Section View are not there to click.
-          if (
-            clip &&
-            p[0] * clip.normal[0] + p[1] * clip.normal[1] + p[2] * clip.normal[2] > clip.offset
-          ) {
-            continue;
-          }
-          surface = p;
-          break;
+      if (!ray) return null;
+      const s = useAssemblerStore.getState();
+      const clip = s.viewState.sectionEnabled ? sectionClip(sectionViewOf(s)) : null;
+      for (const hit of rayCastFaces(visibleBodies(), ray)) {
+        const dir = ray.direction;
+        const p: Vec3 = [
+          ray.origin[0] + dir[0] * hit.t,
+          ray.origin[1] + dir[1] * hit.t,
+          ray.origin[2] + dir[2] * hit.t,
+        ];
+        // Faces cut away by Section View are not there to click.
+        if (
+          clip &&
+          p[0] * clip.normal[0] + p[1] * clip.normal[1] + p[2] * clip.normal[2] > clip.offset
+        ) {
+          continue;
         }
+        return p;
       }
-      const snapped = snapMeasurePoint(
-        snapPoints(bodies),
-        project,
-        [clientX - rect.left, clientY - rect.top],
-        touch ? 20 : 10,
-        surface,
-      );
-      if (snapped) useMeasureStore.getState().addPoint(snapped.point, snapped.label);
+      return null;
     },
     [visibleBodies, rayAtClient],
   );
@@ -1186,22 +1140,29 @@ export function Viewport(props: ViewportProps): JSX.Element {
 
       const store = useAssemblerStore.getState();
       const tool = store.activeTool;
-      // Measure > Points: clicks place measured points (snapped to vertices,
-      // midpoints and circle centres near the pointer, else on the face).
-      if (!tool && store.viewState.measureEnabled && useMeasureStore.getState().pointMode) {
-        pickMeasurePoint(clientX, clientY, touch);
-        return;
-      }
       const pick = pickAt(clientX, clientY);
-      // Section > Face: the clicked planar face becomes the section plane.
-      if (!tool && useViewportUi.getState().sectionFacePick) {
-        if (pick?.kind === 'face' && isPlanarFace(store.evaluation, pick.bodyId, pick.faceKey)) {
-          sectionAtFace(store, pick.bodyId, pick.faceKey);
-          useViewportUi.getState().setSectionFacePick(false);
-        } else {
-          useWorkspaceStore.getState().notify('Click a planar face for the section plane.');
-        }
-        return;
+      // No tool: the modules' and the shell's clicks first (Measure › Points, Section › Face,
+      // History "Fix…").
+      if (!tool) {
+        const host = hostRef.current;
+        const rect = host?.getBoundingClientRect();
+        const handled =
+          rect !== undefined &&
+          offerViewportClick({
+            state: store,
+            pick,
+            item: selectionFromPick(pick, isDouble),
+            isDouble,
+            touch,
+            hostPoint: [clientX - rect.left, clientY - rect.top],
+            project: (p) => {
+              const sp = projectHost(p);
+              return sp ? [sp[0], sp[1]] : null;
+            },
+            visibleBodies,
+            surfacePoint: () => surfacePointAt(clientX, clientY),
+          });
+        if (handled) return;
       }
       // Tool before selection: clicks fill the pick session's reference steps.
       if (tool?.kind === 'pick') {
@@ -1223,11 +1184,6 @@ export function Viewport(props: ViewportProps): JSX.Element {
           isDouble,
         })
       ) {
-        return;
-      } // History "Fix…": the click is the replacement reference.
-      if (!tool && useFixStore.getState().session) {
-        const item = selectionFromPick(pick, isDouble);
-        if (item) void applyFixPick(item);
         return;
       }
       if (tool?.kind === 'feature') {
@@ -1288,7 +1244,7 @@ export function Viewport(props: ViewportProps): JSX.Element {
         }
         return;
       }
-      const ws = useWorkspaceStore.getState();
+      const throughAll = viewportShell().selectThrough();
       if (!isDouble && !tool) {
         // Overlapping geometry (or Select Through): let the user choose.
         const ctx = queryContext();
@@ -1299,10 +1255,10 @@ export function Viewport(props: ViewportProps): JSX.Element {
           const y = clientY - rect.top;
           const candidates = candidatesAt(ctx, x, y, {
             radius: touch ? TOUCH_PICK_RADIUS_PX : PICK_RADIUS_PX,
-            selectThrough: ws.selectThrough,
+            selectThrough: throughAll,
             names: candidateNames(),
           });
-          if (isAmbiguous(candidates, ws.selectThrough)) {
+          if (isAmbiguous(candidates, throughAll)) {
             setPopupAdditive(additive);
             setPopup({ x, y, candidates });
             return;
@@ -1317,11 +1273,8 @@ export function Viewport(props: ViewportProps): JSX.Element {
         if (!additive) store.clearSelection();
         return;
       }
-      // Double-clicking a sketch opens it in sketch mode (Shapr3D).
-      if (isDouble && pick.kind === 'sketchProfile') {
-        useSketchStore.getState().begin({ featureId: pick.featureId });
-        return;
-      }
+      // A double click may open the pick in a mode (a sketch in sketch mode, Shapr3D).
+      if (isDouble && openPickInMode(pick)) return;
       const item = selectionFromPick(pick, isDouble);
       if (!item) return;
       store.select(item, { additive });
@@ -1333,7 +1286,9 @@ export function Viewport(props: ViewportProps): JSX.Element {
       candidateNames,
       facePickPoint,
       rayAtClient,
-      pickMeasurePoint,
+      surfacePointAt,
+      projectHost,
+      visibleBodies,
     ],
   );
 
@@ -1360,7 +1315,7 @@ export function Viewport(props: ViewportProps): JSX.Element {
         rect,
         mode,
         current.filter,
-        useWorkspaceStore.getState().selectThrough,
+        viewportShell().selectThrough(),
       );
       const store = useAssemblerStore.getState();
       store.setSelection(mergeSelection(store.selection, result, additive));
@@ -1722,7 +1677,7 @@ export function Viewport(props: ViewportProps): JSX.Element {
     stateRef.current.requestCamera(preset);
   }, []);
   const sendCamera = useCallback(
-    (command: CameraCommand) => useWorkspaceStore.getState().sendCamera(command),
+    (command: CameraCommand) => viewportShell().sendCamera(command),
     [],
   );
   const onPopupHover = useCallback(
@@ -1747,7 +1702,7 @@ export function Viewport(props: ViewportProps): JSX.Element {
       ) {
         return;
       }
-      if (useSketchStore.getState().session) return;
+      if (modeOwnsKeyboard()) return;
       const s = useAssemblerStore.getState();
       if (s.activeTool?.phase === 'numericEditing') return;
       const only = s.selection.length === 1 ? s.selection[0] : undefined;
@@ -1938,10 +1893,10 @@ export function Viewport(props: ViewportProps): JSX.Element {
             prefs.projection === 'orthographic' ? 'perspective' : 'orthographic',
           );
         }}
-        onSaveView={() => useWorkspaceStore.getState().saveCurrentView()}
+        onSaveView={() => viewportShell().saveCurrentView()}
       />
       {selectThrough ? (
-        <SelectThroughChip onTurnOff={() => useWorkspaceStore.getState().setSelectThrough(false)} />
+        <SelectThroughChip onTurnOff={() => viewportShell().setSelectThrough(false)} />
       ) : null}
       {box ? (
         <SelectionBox
@@ -1975,8 +1930,9 @@ export function Viewport(props: ViewportProps): JSX.Element {
           onClose={onPopupClose}
         />
       ) : null}
-      {sketch.session ? <SketchOverlay api={sketch.api} tick={tick} /> : null}
-      {state.viewState.measureEnabled ? <MeasureOverlay tick={tick} project={projectHost} /> : null}
+      {viewportDomOverlays().map(({ id, component: Overlay }) => (
+        <Overlay key={id} host={domHost} tick={tick} />
+      ))}
       {labels.map(({ label, screen }) =>
         screen ? (
           <DimensionLabel

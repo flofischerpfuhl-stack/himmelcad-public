@@ -36,7 +36,7 @@ import { ApiError } from '../../foundation/commands/api/errors.js';
 import { resolveFaceInput } from '../../foundation/commands/api/references.js';
 
 import type { MethodSpec } from '../../foundation/commands/api/contract.js';
-import type { ApiContribution } from '../../foundation/commands/api/registry.js';
+import { API_ORDER, type ApiContribution } from '../../foundation/commands/api/registry.js';
 import type { JsonSchema } from '../../foundation/commands/api/validate.js';
 
 type Json = Record<string, unknown>;
@@ -580,6 +580,15 @@ export function stepExportOptions(
  * the published order.
  */
 export const INTEROP_API: ApiContribution = {
+  // The specs of interop.formats, import.*, export.dxf, mesh.toSolid (block API_ORDER.methods.interop).
+  methods: [
+    {
+      order: API_ORDER.methods.interop,
+      methods: Object.fromEntries(
+        Object.entries(INTEROP_METHODS).map(([name, spec]) => [name, { spec }]),
+      ),
+    },
+  ],
   handlers: {
     'import.step': (ctx, p) => importStep(ctx, p),
     'import.iges': (ctx, p) => importIges(ctx, p),

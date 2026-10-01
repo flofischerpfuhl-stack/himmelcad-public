@@ -1,47 +1,5 @@
 {
   "$comment": "Known module-direction violations of HimmelCAD Assembler (scripts/check-assembler-modules.mjs). Phase B of the ADR 0032 restructure drives this list to zero; it may only shrink. Regenerate with --write-allowlist after removing violations, never to admit new ones.",
   "version": 1,
-  "violations": [
-    {
-      "from": "viewport",
-      "to": "display",
-      "rule": "upward",
-      "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
-      "edges": [
-        "renderer/src/platform/viewport/Viewport.tsx -> renderer/src/modules/display/displayCommands.ts"
-      ]
-    },
-    {
-      "from": "viewport",
-      "to": "measure",
-      "rule": "upward",
-      "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
-      "edges": [
-        "renderer/src/platform/viewport/Viewport.tsx -> renderer/src/modules/measure/measure.ts",
-        "renderer/src/platform/viewport/Viewport.tsx -> renderer/src/modules/measure/measureStore.ts",
-        "renderer/src/platform/viewport/Viewport.tsx -> renderer/src/modules/measure/ui/MeasureOverlay.tsx"
-      ]
-    },
-    {
-      "from": "viewport",
-      "to": "shell-ui",
-      "rule": "upward",
-      "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
-      "edges": [
-        "renderer/src/platform/viewport/Viewport.tsx -> renderer/src/interface/shell-ui/fixReference.ts",
-        "renderer/src/platform/viewport/Viewport.tsx -> renderer/src/interface/shell-ui/workspace.ts"
-      ]
-    },
-    {
-      "from": "viewport",
-      "to": "sketching",
-      "rule": "upward",
-      "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
-      "edges": [
-        "renderer/src/platform/viewport/Viewport.tsx -> renderer/src/modules/sketching/session.ts",
-        "renderer/src/platform/viewport/Viewport.tsx -> renderer/src/modules/sketching/ui/SketchOverlay.tsx",
-        "renderer/src/platform/viewport/Viewport.tsx -> renderer/src/modules/sketching/ui/useSketchViewport.ts"
-      ]
-    }
-  ]
+  "violations": []
 }

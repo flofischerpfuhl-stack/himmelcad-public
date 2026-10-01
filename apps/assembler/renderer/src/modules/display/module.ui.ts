@@ -11,6 +11,7 @@ import { AnalysisLegend } from './ui/AnalysisLegend.js';
 import { ColourDialog } from './ui/ColourDialog.js';
 import { ExportImageDialog } from './ui/ExportImageDialog.js';
 import { SectionPanel } from './ui/SectionControls.js';
+import { SECTION_FACE_CLICK } from './viewportClicks.js';
 
 export const displayUi = defineModuleUi({
   id: 'display',
@@ -22,4 +23,6 @@ export const displayUi = defineModuleUi({
   ],
   // The GPU tier's render-quality preset (software rasterizer: standard quality).
   install: probeGpuTier,
+  // Section › Face: the next click on a planar face sets the section plane.
+  viewportClicks: [SECTION_FACE_CLICK],
 });

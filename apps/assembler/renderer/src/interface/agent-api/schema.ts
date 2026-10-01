@@ -25,11 +25,7 @@
  */
 import { API_ERROR_CODES } from '../../foundation/commands/api/errors.js';
 import { MESH_RESOLUTION_SCHEMA } from '../../modules/print/api.js';
-import {
-  INTEROP_METHODS,
-  STEP_EXPORT_PARAMS,
-  STEP_IMPORT_STRUCTURE,
-} from '../../modules/interop/interopApi.js';
+import { STEP_EXPORT_PARAMS, STEP_IMPORT_STRUCTURE } from '../../modules/interop/interopApi.js';
 import { BLEND_OPTION_PARAMS } from '../../modules/modeling/printSchema.js';
 import type { FeatureKindSpec, MethodSpec } from '../../foundation/commands/api/contract.js';
 import {
@@ -656,88 +652,6 @@ const CORE_FEATURE_KIND_SCHEMAS: Record<string, FeatureKindSpec> = {
         triangles: { type: 'integer', minimum: 0 },
       },
       ['data', 'fileName', 'triangles'],
-    ),
-  },
-};
-
-/**
- * The construction kinds' parameter schemas, between the modelling blocks
- * (`API_ORDER.featureKinds.construction`). Phase B: they move into the
- * construction module's `api` with that order.
- */
-const CONSTRUCTION_FEATURE_KIND_SCHEMAS: Record<string, FeatureKindSpec> = {
-  constructionPlane: {
-    label: 'Plane',
-    summary:
-      'Construction plane (no body): offset from a plane/face, at an angle about an axis, through three points, midplane between two parallel planes/faces, or tangent to a cylindrical face. Usable as a sketch plane, mirror/split plane and section plane by `{kind: "construction", featureId}`.',
-    params: obj(
-      {
-        definition: {
-          oneOf: [
-            obj({ kind: { const: 'offset' }, base: ref('SketchPlane'), distance: num }, [
-              'kind',
-              'base',
-              'distance',
-            ]),
-            obj(
-              {
-                kind: { const: 'angle' },
-                base: ref('SketchPlane'),
-                axis: ref('AxisRef'),
-                angle: num,
-              },
-              ['kind', 'base', 'axis', 'angle'],
-              'Through `axis` (parallel to `base`), turned `angle` degrees from `base`.',
-            ),
-            obj(
-              {
-                kind: { const: 'threePoints' },
-                points: { type: 'array', items: ref('PointRef'), minItems: 3, maxItems: 3 },
-              },
-              ['kind', 'points'],
-            ),
-            obj({ kind: { const: 'midplane' }, a: ref('SketchPlane'), b: ref('SketchPlane') }, [
-              'kind',
-              'a',
-              'b',
-            ]),
-            obj(
-              { kind: { const: 'tangent' }, face: ref('FaceInput'), angle: num },
-              ['kind', 'face', 'angle'],
-              '`angle` degrees around the cylinder axis, from the axis frame u.',
-            ),
-          ],
-        },
-        flip: { type: 'boolean', default: false },
-      },
-      ['definition'],
-    ),
-  },
-  constructionAxis: {
-    label: 'Axis',
-    summary:
-      'Construction axis (no body): along a straight edge (a circular edge: its axis), through two points, the axis of a cylindrical face, or the intersection of two planes. Usable as revolve/pattern/rotate axis and mirror line by `{kind: "construction", featureId}`.',
-    params: obj(
-      {
-        definition: {
-          oneOf: [
-            obj({ kind: { const: 'edge' }, edge: ref('EdgeInput') }, ['kind', 'edge']),
-            obj({ kind: { const: 'twoPoints' }, a: ref('PointRef'), b: ref('PointRef') }, [
-              'kind',
-              'a',
-              'b',
-            ]),
-            obj({ kind: { const: 'cylinder' }, face: ref('FaceInput') }, ['kind', 'face']),
-            obj({ kind: { const: 'planes' }, a: ref('SketchPlane'), b: ref('SketchPlane') }, [
-              'kind',
-              'a',
-              'b',
-            ]),
-          ],
-        },
-        flip: { type: 'boolean', default: false },
-      },
-      ['definition'],
     ),
   },
 };
@@ -1453,14 +1367,10 @@ registerApiContribution('agent-api', {
     { order: API_ORDER.defs.coreMid, defs: DEFS_MID },
     { order: API_ORDER.defs.coreTail, defs: DEFS_TAIL },
   ],
-  featureKinds: [
-    { order: API_ORDER.featureKinds.core, kinds: CORE_FEATURE_KIND_SCHEMAS },
-    { order: API_ORDER.featureKinds.construction, kinds: CONSTRUCTION_FEATURE_KIND_SCHEMAS },
-  ],
+  featureKinds: [{ order: API_ORDER.featureKinds.core, kinds: CORE_FEATURE_KIND_SCHEMAS }],
   methods: [
     { order: API_ORDER.methods.coreHead, methods: spec(METHODS_HEAD) },
     { order: API_ORDER.methods.coreTail, methods: spec(METHODS_TAIL) },
-    { order: API_ORDER.methods.interop, methods: spec(INTEROP_METHODS) },
   ],
 });
 
