@@ -6,11 +6,15 @@ import { Button, Checkbox, Dialog, Select, Slider } from '@himmelcad/ui';
 
 import {
   usePreferences,
+  type Handedness,
   type LengthUnit,
   type Projection,
+  type TabletLayoutSetting,
   type ThemeName,
   type ToolbarLabels,
 } from '../../platform/input/preferences.js';
+import type { FingerDrawing } from '../../platform/input/pointer.js';
+import { useTabletLayout } from '../../platform/input/tabletLayout.js';
 import { useWorkspaceStore } from './workspace.js';
 import {
   NAVIGATION_PRESETS,
@@ -47,6 +51,14 @@ export function SettingsDialog(): JSX.Element {
   const prefs = usePreferences();
   const set = prefs.setPreference;
   const close = () => useWorkspaceStore.getState().setSettingsOpen(false);
+  const device = useTabletLayout((s) => s.environment.touch);
+  const tablet = useTabletLayout((s) => s.tablet);
+  const deviceText =
+    device === 'primary'
+      ? 'This device: touch screen'
+      : device === 'secondary'
+        ? 'This device: touch screen and mouse'
+        : 'This device: mouse and keyboard';
 
   return (
     <Dialog
@@ -177,6 +189,120 @@ export function SettingsDialog(): JSX.Element {
             aria-label="Animate camera"
             checked={prefs.animateCamera}
             onChange={(e) => set('animateCamera', e.currentTarget.checked)}
+          />
+        </Row>
+
+        <h3 className={styles.section}>Touch and pen</h3>
+        <Row
+          label="Tablet layout"
+          hint={`${deviceText} · larger targets, labels, number keypad${tablet ? ' (on)' : ''}`}
+        >
+          <Select
+            aria-label="Tablet layout"
+            value={prefs.tabletLayout}
+            options={[
+              { value: 'auto', label: 'Automatic' },
+              { value: 'on', label: 'On' },
+              { value: 'off', label: 'Off' },
+            ]}
+            onChange={(e) => set('tabletLayout', e.currentTarget.value as TabletLayoutSetting)}
+          />
+        </Row>
+        <Row label="Tools" hint="The hand without the pen taps the tools">
+          <Select
+            aria-label="Tool side"
+            value={prefs.handedness}
+            options={[
+              { value: 'right', label: 'Left (right-handed)' },
+              { value: 'left', label: 'Right (left-handed)' },
+            ]}
+            onChange={(e) => set('handedness', e.currentTarget.value as Handedness)}
+          />
+        </Row>
+        <Row
+          label="Finger in sketches"
+          hint={
+            prefs.fingerDrawing === 'auto'
+              ? prefs.penSeen
+                ? 'A pen was used here: the pen draws, fingers navigate'
+                : 'Fingers draw until a pen is used'
+              : prefs.fingerDrawing === 'pen'
+                ? 'Only the pen draws; fingers navigate and select'
+                : 'Fingers draw too; two fingers navigate'
+          }
+        >
+          <Select
+            aria-label="Finger in sketches"
+            value={prefs.fingerDrawing}
+            options={[
+              { value: 'auto', label: 'Automatic' },
+              { value: 'pen', label: 'Pen only draws' },
+              { value: 'touch', label: 'Touch draws too' },
+            ]}
+            onChange={(e) => set('fingerDrawing', e.currentTarget.value as FingerDrawing)}
+          />
+        </Row>
+        <Row label="Pen shapes" hint="A stroke becomes a line, arc, circle or rectangle">
+          <Checkbox
+            aria-label="Pen strokes become shapes"
+            checked={prefs.penShapes}
+            onChange={(e) => set('penShapes', e.currentTarget.checked)}
+          />
+        </Row>
+        <Row label="Scribble to erase" hint="Scribbling over sketch curves deletes them">
+          <Checkbox
+            aria-label="Scribble to erase"
+            checked={prefs.scribbleErase}
+            onChange={(e) => set('scribbleErase', e.currentTarget.checked)}
+          />
+        </Row>
+        <Row
+          label="Palm rejection"
+          hint="Ignore a hand resting on the screen while the pen is used"
+        >
+          <Checkbox
+            aria-label="Palm rejection"
+            checked={prefs.palmRejection}
+            onChange={(e) => set('palmRejection', e.currentTarget.checked)}
+          />
+        </Row>
+        <Row
+          label="Number keypad"
+          hint="On-screen keypad for values; automatic: with the tablet layout"
+        >
+          <Select
+            aria-label="Number keypad"
+            value={prefs.numericKeypad}
+            options={[
+              { value: 'auto', label: 'Automatic' },
+              { value: 'on', label: 'Always' },
+              { value: 'off', label: 'Off' },
+            ]}
+            onChange={(e) => set('numericKeypad', e.currentTarget.value as TabletLayoutSetting)}
+          />
+        </Row>
+        <Row
+          label="Undo/Redo gestures"
+          hint="Two-finger tap undoes, three-finger tap redoes; or swipe three fingers"
+        >
+          <Checkbox
+            aria-label="Undo and redo gestures"
+            checked={prefs.touchUndoGestures}
+            onChange={(e) => set('touchUndoGestures', e.currentTarget.checked)}
+          />
+        </Row>
+        <Row label="Twist to roll" hint="Turning two fingers rolls the view">
+          <Checkbox
+            aria-label="Twist to roll"
+            checked={prefs.twistRoll}
+            onChange={(e) => set('twistRoll', e.currentTarget.checked)}
+          />
+        </Row>
+        <Row label="Inertia" hint="The view keeps gliding after a flick">
+          <Checkbox
+            aria-label="Inertia"
+            checked={prefs.touchInertia}
+            onChange={(e) => set('touchInertia', e.currentTarget.checked)}
           />
         </Row>
 

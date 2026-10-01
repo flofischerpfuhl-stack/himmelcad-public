@@ -235,3 +235,19 @@
   font-family: var(--hc-font-ui);
   font-size: 11px;
 }
+
+/* Tablet layout: finger-sized pill controls. */
+:global(html[data-hc-touch]) .badgeOption,
+:global(html[data-hc-touch]) .refChip {
+  min-height: 36px;
+  padding: 6px 12px;
+  font-size: 13px;
+}
+:global(html[data-hc-touch]) .pillField {
+  min-height: 36px;
+  font-size: 13px;
+}
+:global(html[data-hc-touch]) .pillField input {
+  width: 64px;
+  font-size: 13px;
+}

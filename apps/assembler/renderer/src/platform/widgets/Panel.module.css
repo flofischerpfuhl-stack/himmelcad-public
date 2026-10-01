@@ -96,11 +96,10 @@
   outline-offset: 1px;
 }
 
-@media (pointer: coarse) {
-  .headerButton {
-    width: 36px;
-    height: 36px;
-  }
+/* Tablet layout (touch primary, or Settings > Touch and pen > Tablet layout: On). */
+:global(html[data-hc-touch]) .headerButton {
+  width: 36px;
+  height: 36px;
 }
 
 .body {
@@ -113,4 +112,27 @@
   font-size: 12px;
   color: var(--hc-fg-subtle);
   text-align: center;
+}
+
+/* Left-handed: Items opens next to the tool column on the right, the right stack moves left. */
+:global(html[data-hc-hand='left']) .itemsPlacement {
+  left: auto;
+  right: 68px;
+}
+:global(html[data-hc-hand='left']) .rightStack {
+  right: auto;
+  left: 12px;
+}
+
+/* Tablet layout: the right dock's controls are taller, the stack starts lower; Items
+   clears the wider tool column. */
+:global(html[data-hc-touch]) .rightStack {
+  top: 412px;
+}
+:global(html[data-hc-touch]) .itemsPlacement {
+  left: 82px;
+}
+:global(html[data-hc-touch][data-hc-hand='left']) .itemsPlacement {
+  left: auto;
+  right: 82px;
 }

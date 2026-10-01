@@ -356,13 +356,18 @@
   }
 }
 
-@media (pointer: coarse) {
-  .close,
-  .iconButton {
-    width: 40px;
-    height: 40px;
-  }
+/* Tablet layout (touch primary, or Settings > Touch and pen > Tablet layout: On). */
+:global(html[data-hc-touch]) .close,
+:global(html[data-hc-touch]) .iconButton {
+  width: 40px;
+  height: 40px;
+}
+:global(html[data-hc-touch]) .recentActions {
+  opacity: 1;
+}
 
+/* No hover on this device: the recent project actions are always shown. */
+@media (hover: none) {
   .recentActions {
     opacity: 1;
   }

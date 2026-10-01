@@ -4,13 +4,14 @@
  * the selection is non-empty and no tool is active — and, at the bottom,
  * the Section View / Isolate / Measure mode toggles.
  */
-import { Boxes, Crosshair, Layers, Scan, Search } from 'lucide-react';
+import { Boxes, Crosshair, Layers, Redo2, Scan, Search, Undo2 } from 'lucide-react';
 
 import { Tooltip } from '@himmelcad/ui';
 
 import { findCommand } from '../../foundation/commands/registry.js';
 import { registeredModeButtons } from '../../platform/widgets/moduleUi.js';
 import { usePreferences } from '../../platform/input/preferences.js';
+import { effectiveToolbarLabels, useTabletLayout } from '../../platform/input/tabletLayout.js';
 
 type SketchIconType = (typeof GROUP_ICON)['sketch'];
 import { AdaptiveToolbar } from './AdaptiveToolbar.js';
@@ -25,7 +26,14 @@ export interface LeftDockProps {
 }
 
 export function LeftDock({ state, onOpenSearch }: LeftDockProps): JSX.Element {
-  const labels = usePreferences((p) => p.labels);
+  // Tablet layout: no hover, so the captions show instead of hover tips.
+  const tablet = useTabletLayout((s) => s.tablet);
+  const labels = effectiveToolbarLabels(
+    usePreferences((p) => p.labels),
+    tablet,
+  );
+  // Left-handed: the column is on the right edge, its menus open towards the canvas.
+  const menuAlign = usePreferences((p) => (p.handedness === 'left' ? 'right' : 'left'));
   const tip = (text: string) => (labels === 'hover' ? text : undefined);
   const trigger = (Icon: SketchIconType, text: string) =>
     labels === 'always' ? (
@@ -86,6 +94,7 @@ export function LeftDock({ state, onOpenSearch }: LeftDockProps): JSX.Element {
             getState={() => state}
             tooltip={tip('Sketch')}
             triggerClassName={styles.iconButton}
+            align={menuAlign}
             trigger={trigger(SketchIcon, 'Sketch')}
           />
           <CommandGroupMenu
@@ -94,6 +103,7 @@ export function LeftDock({ state, onOpenSearch }: LeftDockProps): JSX.Element {
             getState={() => state}
             tooltip={tip('Add')}
             triggerClassName={styles.iconButton}
+            align={menuAlign}
             trigger={trigger(AddIcon, 'Add')}
             emptyHint="No Add commands in Phase 0"
           />
@@ -103,6 +113,7 @@ export function LeftDock({ state, onOpenSearch }: LeftDockProps): JSX.Element {
             getState={() => state}
             tooltip={tip('Construct')}
             triggerClassName={styles.iconButton}
+            align={menuAlign}
             trigger={trigger(ConstructIcon, 'Construct')}
           />
           <CommandGroupMenu
@@ -111,6 +122,7 @@ export function LeftDock({ state, onOpenSearch }: LeftDockProps): JSX.Element {
             getState={() => state}
             tooltip={tip('Transform')}
             triggerClassName={styles.iconButton}
+            align={menuAlign}
             trigger={trigger(TransformIcon, 'Transform')}
           />
           <CommandGroupMenu
@@ -119,12 +131,40 @@ export function LeftDock({ state, onOpenSearch }: LeftDockProps): JSX.Element {
             getState={() => state}
             tooltip={tip('Tools')}
             triggerClassName={styles.iconButton}
+            align={menuAlign}
             trigger={trigger(ToolsIcon, 'Tools')}
           />
         </div>
       )}
 
       <div className={styles.spacer} />
+
+      {tablet ? (
+        // Undo/Redo within reach of the tool hand (the gestures do the same: two-finger tap,
+        // three-finger tap; assembler/TOUCH.md).
+        <div className={`${styles.group} ${styles.historyGroup}`}>
+          <button
+            type="button"
+            className={styles.iconButton}
+            aria-label="Undo"
+            title={state.history.canUndo ? 'Undo (two-finger tap)' : 'Nothing to undo'}
+            disabled={!state.history.canUndo}
+            onClick={() => state.undo()}
+          >
+            <Undo2 size={18} />
+          </button>
+          <button
+            type="button"
+            className={styles.iconButton}
+            aria-label="Redo"
+            title={state.history.canRedo ? 'Redo (three-finger tap)' : 'Nothing to redo'}
+            disabled={!state.history.canRedo}
+            onClick={() => state.redo()}
+          >
+            <Redo2 size={18} />
+          </button>
+        </div>
+      ) : null}
 
       <div className={styles.group}>
         <Tooltip content={sectionAvailability.reason ?? 'Section View'}>

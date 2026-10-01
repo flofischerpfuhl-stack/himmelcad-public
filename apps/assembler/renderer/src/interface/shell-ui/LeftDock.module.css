@@ -110,18 +110,44 @@
   height: 44px;
 }
 
-@media (pointer: coarse) {
-  .iconButton {
-    width: 44px;
-    height: 44px;
-  }
-  .modeButton {
-    min-height: 40px;
-  }
+/* Tablet layout (touch primary, or Settings > Touch and pen > Tablet layout: On). */
+:global(html[data-hc-touch]) .iconButton {
+  width: 44px;
+  height: 44px;
+}
+:global(html[data-hc-touch]) .modeButton {
+  min-height: 40px;
 }
 
 @media (prefers-reduced-motion: reduce) {
   .iconButton {
     transition: none;
   }
+}
+
+/* Left-handed (Settings › Touch and pen › Tools): the tool column moves to the right edge. */
+:global(html[data-hc-hand='left']) .root {
+  left: auto;
+  right: 12px;
+  align-items: flex-end;
+}
+
+/* Tablet layout: Undo/Redo within reach of the tool hand (Shapr3D's iPad keeps them visible). */
+.historyGroup .iconButton:disabled {
+  color: var(--hc-fg-disabled, var(--hc-fg-subtle));
+  cursor: default;
+  background: transparent;
+}
+
+/* Tablet layout: a wider column so the captions (shown instead of hover tips) fit. */
+:global(html[data-hc-touch]) .root {
+  width: 60px;
+}
+:global(html[data-hc-touch]) .iconButton:has(.labelled) {
+  width: 56px;
+  height: 50px;
+}
+:global(html[data-hc-touch]) .caption {
+  max-width: 54px;
+  font-size: 10px;
 }

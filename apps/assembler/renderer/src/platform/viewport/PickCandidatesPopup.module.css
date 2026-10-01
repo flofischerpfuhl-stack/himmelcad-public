@@ -63,8 +63,7 @@
   color: var(--hc-fg-subtle);
 }
 
-@media (pointer: coarse) {
-  .row {
-    min-height: 40px;
-  }
+/* Tablet layout (touch primary, or Settings > Touch and pen > Tablet layout: On). */
+:global(html[data-hc-touch]) .row {
+  min-height: 40px;
 }

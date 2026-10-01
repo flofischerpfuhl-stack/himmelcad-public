@@ -134,3 +134,21 @@
   outline: 2px solid var(--hc-focus-ring);
   outline-offset: 1px;
 }
+
+/* Left-handed: the view cube sits top left, the bar keeps clear of it. */
+:global(html[data-hc-hand='left']) .root {
+  left: 172px;
+  right: 12px;
+}
+
+/* Tablet layout: finger-sized buttons and menus. */
+:global(html[data-hc-touch]) .root {
+  height: 48px;
+}
+:global(html[data-hc-touch]) .iconButton {
+  width: 40px;
+  height: 40px;
+}
+:global(html[data-hc-touch]) .menuTrigger {
+  padding: 10px 12px;
+}

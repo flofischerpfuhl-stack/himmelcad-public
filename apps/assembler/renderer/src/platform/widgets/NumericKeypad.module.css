@@ -19,13 +19,14 @@
   -webkit-user-select: none;
 }
 
-/* Right-handed: tools and keypad on the left (the free hand), left-handed: on the right. */
+/* Right-handed: tools and keypad on the left (the free hand), left-handed: on the right;
+   beside the tool column and its mode buttons. */
 .left {
-  left: 76px;
+  left: 132px;
 }
 
 .right {
-  right: 76px;
+  right: 132px;
 }
 
 .display {

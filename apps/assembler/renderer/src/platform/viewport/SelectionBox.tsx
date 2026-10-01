@@ -47,8 +47,12 @@ export function SelectionBox(props: SelectionBoxProps): JSX.Element {
               type="button"
               className={`${styles.chip} ${styles.chipButton} ${f.active ? styles.chipActive : ''}`}
               aria-pressed={f.active}
-              // The finger holding the box keeps its pointer; this one only picks the filter.
-              onPointerDown={(event) => event.stopPropagation()}
+              // The finger holding the box keeps its pointer; this one only picks the filter —
+              // on touch down: browsers send no click for a tap while another finger is down.
+              onPointerDown={(event) => {
+                event.stopPropagation();
+                props.onFilter?.(index);
+              }}
               onClick={() => props.onFilter?.(index)}
             >
               {f.label}
