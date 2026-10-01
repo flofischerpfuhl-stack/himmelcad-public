@@ -32,9 +32,9 @@
 .meta {
   font-variant-numeric: tabular-nums;
   /* Narrow windows (tablets, the web app): the address and last method shorten instead of
-     covering the tool session's Cancel/Done row. */
+     covering the status strip or the tool session's Cancel/Done row. */
   min-width: 0;
-  max-width: 34vw;
+  max-width: 22vw;
   overflow: hidden;
   text-overflow: ellipsis;
 }
