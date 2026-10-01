@@ -303,6 +303,30 @@ export function zoomTowards(pose: CameraPose, factor: number, anchor: Vec3 | nul
 }
 
 /**
+ * One zoom step anchored at the pointer's pixel (owner rule 2026-10-01): the
+ * anchor is on the pointer `ray` (`unprojectRay`), so the pixel under the
+ * cursor stays where it is, over the model or over empty background.
+ * Orthographic: the view scales about that pixel, no depth is involved.
+ * Perspective: the eye dollies along the cursor ray towards view depth
+ * `depth` (the pivot rules' estimate), which only sets the step size — a
+ * zoom-in never passes it, so it does not go through a surface. Without a
+ * usable depth (none, or behind the eye) the target's depth is used.
+ */
+export function zoomAtRay(
+  pose: CameraPose,
+  factor: number,
+  ray: { origin: Vec3; direction: Vec3 },
+  depth: number | null,
+): CameraPose {
+  const d =
+    isOrthographic(pose) || depth === null || !(depth > pose.distance * 1e-4)
+      ? pose.distance
+      : depth;
+  const anchor = pointAtViewDepth(pose, ray, d);
+  return zoomTowards(pose, factor, anchor);
+}
+
+/**
  * Changes the field of view (`0` = orthographic) keeping the apparent size
  * of the target plane: the distance is scaled so the visible height at the
  * target stays the same.

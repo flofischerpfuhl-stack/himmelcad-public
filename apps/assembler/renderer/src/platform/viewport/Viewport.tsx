@@ -53,6 +53,7 @@ import {
 import {
   DEFAULT_POSE,
   fitPose,
+  isOrthographic,
   lerpPose,
   orbitAbout,
   pan as panPose,
@@ -65,7 +66,7 @@ import {
   withFov,
   withFovAt,
   worldPerPixel as cameraWorldPerPixel,
-  zoomTowards,
+  zoomAtRay,
   type CameraPose,
   type CameraPresetName,
 } from './camera.js';
@@ -312,7 +313,14 @@ type DragMode =
   | { kind: 'orbit'; started?: boolean }
   | { kind: 'pan' }
   /** Pen + Alt drag: vertical movement zooms towards where the drag started. */
-  | { kind: 'zoom'; anchor: Vec3 | null }
+  | {
+      kind: 'zoom';
+      /** The pixel the zoom stays anchored at (where the pen went down). */
+      x: number;
+      y: number;
+      /** Perspective: the point whose depth sets the step (pivot rules), or `null`. */
+      depthPoint: Vec3 | null;
+    }
   /** A drag the running tool started on its own handle (arrow, gizmo, centre). */
   | { kind: 'tool'; drag: ToolDrag }
   | {
@@ -393,7 +401,7 @@ function preferredFov(): number {
   return wantedFov(prefs.projection, prefs.fov, { sketching: false, standardView: false });
 }
 
-/** A wheel burst keeps its zoom anchor while the cursor stays within this (CSS px) … */
+/** A wheel burst keeps its depth point (perspective step) while the cursor stays within this (CSS px) … */
 const WHEEL_PIVOT_SLOP_PX = 4;
 /** … and the wheel pauses for less than this (ms). */
 const WHEEL_BURST_MS = 300;
@@ -523,10 +531,20 @@ export function Viewport(props: ViewportProps): JSX.Element {
   /** The pivot dot, shown while an orbit runs. */
   const [orbitDot, setOrbitDot] = useState<{ point: Vec3; rule: PivotRule } | null>(null);
   const pickFrameRef = useRef<PickFrame | null>(null);
-  /** The zoom anchor of the current wheel burst. */
-  const wheelAnchorRef = useRef<{ x: number; y: number; time: number; point: Vec3 } | null>(null);
-  /** The anchor of a pen navigation by hover (Shift/Alt + hover), per modifier. */
-  const penHoverPivotRef = useRef<{ nav: string; point: Vec3 | null } | null>(null);
+  /** The current wheel burst: where it started and the point setting its perspective step. */
+  const wheelBurstRef = useRef<{
+    x: number;
+    y: number;
+    time: number;
+    depthPoint: Vec3 | null;
+  } | null>(null);
+  /** A pen navigation by hover (Shift/Alt + hover): its modifier, start pixel and depth point. */
+  const penHoverNavRef = useRef<{
+    nav: string;
+    x: number;
+    y: number;
+    depthPoint: Vec3 | null;
+  } | null>(null);
   const lastPivotRef = useRef<PivotProbe | null>(null);
 
   const state = useAssemblerStore();
@@ -802,7 +820,7 @@ export function Viewport(props: ViewportProps): JSX.Element {
   /** Camera glide after a flick. */
   const glideRef = useRef<Glide | null>(null);
   /** Zoom anchor of the running two-finger gesture. */
-  const pinchAnchorRef = useRef<Vec3 | null>(null);
+  const pinchDepthRef = useRef<Vec3 | null>(null);
   /** Where the pen hovered last (pen + modifier hover navigates). */
   const penHoverRef = useRef<{ x: number; y: number } | null>(null);
   /** Long-press feedback ring (host px) until the finger moves or lifts. */
@@ -1124,12 +1142,13 @@ export function Viewport(props: ViewportProps): JSX.Element {
     [],
   );
 
-  const rayAtClient = useCallback((clientX: number, clientY: number) => {
+  /** The pointer ray at a client point for `pose` (default: the current camera). */
+  const rayAtClient = useCallback((clientX: number, clientY: number, pose?: CameraPose) => {
     const host = hostRef.current;
     if (!host) return null;
     const rect = host.getBoundingClientRect();
     const aspect = rect.width / Math.max(1, rect.height);
-    const vp = viewProjectionMatrix(poseRef.current, aspect);
+    const vp = viewProjectionMatrix(pose ?? poseRef.current, aspect);
     return unprojectRay(vp, clientX - rect.left, clientY - rect.top, rect.width, rect.height);
   }, []);
 
@@ -1224,6 +1243,17 @@ export function Viewport(props: ViewportProps): JSX.Element {
       return { point, rule };
     },
     [rayAtClient],
+  );
+
+  /**
+   * The point whose depth sets a perspective zoom step at a client point (the
+   * pivot rules on the depth window), or `null` in orthographic views — they
+   * scale about the cursor's pixel and need no depth, so nothing is read.
+   */
+  const zoomDepthPointAt = useCallback(
+    (clientX: number, clientY: number): Vec3 | null =>
+      isOrthographic(poseRef.current) ? null : (cursorPivot(clientX, clientY)?.point ?? null),
+    [cursorPivot],
   );
 
   /** The pivot an orbit starting at a client point turns about (Settings › Navigation › Orbit around). */
@@ -1786,8 +1816,9 @@ export function Viewport(props: ViewportProps): JSX.Element {
           case 'transformStart':
             setPressRing(null);
             glideRef.current = null;
-            // Pinch zoom anchors at the fingers' midpoint, by the same pivot rules.
-            pinchAnchorRef.current = cursorPivot(e.cx, e.cy)?.point ?? null;
+            // Pinch zoom stays anchored at the fingers' midpoint; the pivot rules' depth there
+            // sets the perspective step (and the pan's depth).
+            pinchDepthRef.current = zoomDepthPointAt(e.cx, e.cy);
             break;
           case 'orbit':
             poseRef.current = orbitAbout(poseRef.current, e.dx, e.dy, pivotRef.current);
@@ -1798,17 +1829,21 @@ export function Viewport(props: ViewportProps): JSX.Element {
             startGlide('orbit', e.vx, e.vy);
             break;
           case 'transform': {
-            const anchor = pinchAnchorRef.current;
-            // The fingers move the content at the anchor's depth 1:1.
+            const depthPoint = pinchDepthRef.current;
+            // The fingers move the content at that depth 1:1.
             let pose = panPose(
               poseRef.current,
               e.dx,
               e.dy,
               host.clientHeight,
-              anchor ? viewDepthOf(poseRef.current, anchor) : undefined,
+              depthPoint ? viewDepthOf(poseRef.current, depthPoint) : undefined,
             );
             if (e.scale !== 1 && e.scale > 0) {
-              pose = zoomTowards(pose, 1 / e.scale, anchor);
+              const ray = rayAtClient(e.cx, e.cy, pose);
+              if (ray) {
+                const depth = depthPoint ? viewDepthOf(pose, depthPoint) : null;
+                pose = zoomAtRay(pose, 1 / e.scale, ray, depth);
+              }
             }
             if (e.rotation !== 0 && usePreferences.getState().twistRoll) {
               pose = rollBy(pose, e.rotation);
@@ -1980,8 +2015,13 @@ export function Viewport(props: ViewportProps): JSX.Element {
       if (penNav === 'orbit') mode = { kind: 'orbit' };
       else if (penNav === 'pan') mode = { kind: 'pan' };
       else if (penNav === 'zoom') {
-        // Pen + Alt drag zooms at the point under the pen (the pivot rules).
-        mode = { kind: 'zoom', anchor: cursorPivot(event.clientX, event.clientY)?.point ?? null };
+        // Pen + Alt drag zooms at the pixel where the pen went down.
+        mode = {
+          kind: 'zoom',
+          x: event.clientX,
+          y: event.clientY,
+          depthPoint: zoomDepthPointAt(event.clientX, event.clientY),
+        };
       } else if (action === 'orbit') mode = { kind: 'orbit' };
       else if (action === 'pan') mode = { kind: 'pan' };
       else if (event.button === 0) {
@@ -2010,7 +2050,7 @@ export function Viewport(props: ViewportProps): JSX.Element {
       // A drag that hides the gizmo (its centre being placed) redraws it at once.
       if (mode.kind === 'tool' && mode.drag.hidesGizmo) dirtyRef.current = true;
     },
-    [findHandleHit, pickAt, onTouchDown, popup, applyGestures, cursorPivot],
+    [findHandleHit, pickAt, onTouchDown, popup, applyGestures, zoomDepthPointAt],
   );
 
   const onPointerMove = useCallback(
@@ -2029,35 +2069,40 @@ export function Viewport(props: ViewportProps): JSX.Element {
         });
         const last = penHoverRef.current;
         penHoverRef.current = { x: event.clientX, y: event.clientY };
-        if (!nav && penHoverPivotRef.current) {
-          if (penHoverPivotRef.current.nav === 'orbit') endOrbit();
-          penHoverPivotRef.current = null;
+        if (penHoverNavRef.current && penHoverNavRef.current.nav !== nav) {
+          if (penHoverNavRef.current.nav === 'orbit') endOrbit();
+          penHoverNavRef.current = null;
         }
         if (nav && last) {
           const dx = event.clientX - last.x;
           const dy = event.clientY - last.y;
           const height = hostRef.current?.clientHeight ?? 800;
-          // The pivot is set once when a modifier starts the hover navigation.
-          if (penHoverPivotRef.current?.nav !== nav) {
-            if (nav === 'orbit') {
-              beginOrbit({ x: last.x, y: last.y });
-              penHoverPivotRef.current = { nav, point: pivotRef.current };
-            } else {
-              penHoverPivotRef.current = {
-                nav,
-                point: nav === 'zoom' ? (cursorPivot(last.x, last.y)?.point ?? null) : null,
-              };
-            }
+          // Decided once when a modifier starts the hover navigation: the orbit pivot, or the
+          // zoom's pixel and depth point.
+          if (!penHoverNavRef.current) {
+            if (nav === 'orbit') beginOrbit({ x: last.x, y: last.y });
+            penHoverNavRef.current = {
+              nav,
+              x: last.x,
+              y: last.y,
+              depthPoint: nav === 'zoom' ? zoomDepthPointAt(last.x, last.y) : null,
+            };
           }
+          const hover = penHoverNavRef.current;
           if (nav === 'orbit') {
             poseRef.current = orbitAbout(poseRef.current, dx, dy, pivotRef.current);
           } else if (nav === 'pan') poseRef.current = panPose(poseRef.current, dx, dy, height);
           else {
-            poseRef.current = zoomTowards(
-              poseRef.current,
-              Math.exp(dy * PEN_ZOOM_PER_PX),
-              penHoverPivotRef.current.point,
-            );
+            const ray = rayAtClient(hover.x, hover.y);
+            if (ray) {
+              const pose = poseRef.current;
+              poseRef.current = zoomAtRay(
+                pose,
+                Math.exp(dy * PEN_ZOOM_PER_PX),
+                ray,
+                hover.depthPoint ? viewDepthOf(pose, hover.depthPoint) : null,
+              );
+            }
           }
           animRef.current = null;
           dirtyRef.current = true;
@@ -2134,7 +2179,16 @@ export function Viewport(props: ViewportProps): JSX.Element {
         poseRef.current = panPose(poseRef.current, dx, dy, height);
         dirtyRef.current = true;
       } else if (mode.kind === 'zoom') {
-        poseRef.current = zoomTowards(poseRef.current, Math.exp(dy * PEN_ZOOM_PER_PX), mode.anchor);
+        const ray = rayAtClient(mode.x, mode.y);
+        if (ray) {
+          const pose = poseRef.current;
+          poseRef.current = zoomAtRay(
+            pose,
+            Math.exp(dy * PEN_ZOOM_PER_PX),
+            ray,
+            mode.depthPoint ? viewDepthOf(pose, mode.depthPoint) : null,
+          );
+        }
         dirtyRef.current = true;
       } else if (mode.kind === 'tool') {
         mode.drag.move(toolPointer(event.clientX, event.clientY, event.shiftKey));
@@ -2172,7 +2226,7 @@ export function Viewport(props: ViewportProps): JSX.Element {
       toolPointer,
       beginOrbit,
       endOrbit,
-      cursorPivot,
+      zoomDepthPointAt,
     ],
   );
 
@@ -2226,28 +2280,37 @@ export function Viewport(props: ViewportProps): JSX.Element {
       animRef.current = null;
       glideRef.current = null;
       const factor = Math.exp(event.deltaY * 0.0012);
-      // One anchor per wheel burst (the pivot rules: into a bore, not behind it), kept while
-      // the cursor barely moves.
+      // The zoom stays anchored at the cursor's pixel (zoomAtRay). In perspective the step
+      // heads for the depth under the cursor, read once per wheel burst (the pivot rules: into
+      // a bore, not through the surface) and kept while the cursor barely moves.
       const now = performance.now();
-      const burst = wheelAnchorRef.current;
-      let anchor: Vec3 | null;
+      let burst = wheelBurstRef.current;
       if (
-        burst &&
-        now - burst.time < WHEEL_BURST_MS &&
-        Math.hypot(event.clientX - burst.x, event.clientY - burst.y) <= WHEEL_PIVOT_SLOP_PX
+        !burst ||
+        now - burst.time >= WHEEL_BURST_MS ||
+        Math.hypot(event.clientX - burst.x, event.clientY - burst.y) > WHEEL_PIVOT_SLOP_PX
       ) {
-        burst.time = now;
-        anchor = burst.point;
-      } else {
-        anchor = cursorPivot(event.clientX, event.clientY)?.point ?? null;
-        wheelAnchorRef.current = anchor
-          ? { x: event.clientX, y: event.clientY, time: now, point: anchor }
-          : null;
+        burst = {
+          x: event.clientX,
+          y: event.clientY,
+          time: now,
+          depthPoint: zoomDepthPointAt(event.clientX, event.clientY),
+        };
+        wheelBurstRef.current = burst;
       }
-      poseRef.current = zoomTowards(poseRef.current, factor, anchor);
+      burst.time = now;
+      const ray = rayAtClient(event.clientX, event.clientY);
+      if (!ray) return;
+      const pose = poseRef.current;
+      poseRef.current = zoomAtRay(
+        pose,
+        factor,
+        ray,
+        burst.depthPoint ? viewDepthOf(pose, burst.depthPoint) : null,
+      );
       dirtyRef.current = true;
     },
-    [cursorPivot],
+    [zoomDepthPointAt, rayAtClient],
   );
 
   const onCubePreset = useCallback((preset: CameraPresetName) => {

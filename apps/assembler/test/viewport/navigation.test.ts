@@ -22,6 +22,7 @@ import {
   viewProjectionMatrix,
   withFov,
   withFovAt,
+  zoomAtRay,
   zoomTowards,
   type CameraPose,
 } from '../../renderer/src/platform/viewport/camera.js';
@@ -220,6 +221,52 @@ void test('zoom and pan at the pivot keep it under the cursor (into a bore, not 
     ...(eyeOf(zoomed).map((v, i) => v - pivot[i]!) as [number, number, number]),
   );
   near(d1, d0 * 0.5, 1e-6 * d0, 'eye halfway to the pivot');
+});
+
+void test('zoom keeps the cursor pixel fixed, over the model and over empty background', () => {
+  // Owner rule: the screen point under the cursor stays put. Orthographic scales about the pixel
+  // (no depth); perspective dollies along the cursor ray, the depth only sets the step.
+  const cursor: [number, number] = [612, 173];
+  for (const start of [perspective, orthographic, { ...perspective, fov: 70, roll: 0.3 }]) {
+    const ray0 = unprojectRay(viewProjectionMatrix(start, ASPECT), cursor[0], cursor[1], W, H)!;
+    // Two points on the cursor ray: the whole ray must keep projecting onto the cursor pixel.
+    const nearPoint = pointAtViewDepth(start, ray0, 90)!;
+    const farPoint = pointAtViewDepth(start, ray0, 600)!;
+    const cases: { name: string; depthPoint: Vec3 | null }[] = [
+      { name: 'over the model (surface depth)', depthPoint: pointAtViewDepth(start, ray0, 140)! },
+      { name: 'over empty background (no depth)', depthPoint: null },
+      {
+        name: 'empty background, model-centre depth',
+        depthPoint: pointAtViewDepth(start, ray0, 260)!,
+      },
+    ];
+    for (const c of cases) {
+      let pose = start;
+      for (const factor of [0.8, 0.8, 0.8, 0.8, 1.25, 0.7, 1.4, 0.9]) {
+        const ray = unprojectRay(viewProjectionMatrix(pose, ASPECT), cursor[0], cursor[1], W, H)!;
+        pose = zoomAtRay(pose, factor, ray, c.depthPoint ? viewDepthOf(pose, c.depthPoint) : null);
+        for (const p of [nearPoint, farPoint, ...(c.depthPoint ? [c.depthPoint] : [])]) {
+          const s = projectToScreen(viewProjectionMatrix(pose, ASPECT), p, W, H);
+          // Points the eye has passed or almost reached (perspective, zoomed far in) are skipped:
+          // the Float32 matrices lose precision right in front of the eye.
+          if (!s || viewDepthOf(pose, p) < start.distance * 0.1) continue;
+          // Sub-pixel: a few hundredths of a pixel (Float32 matrices).
+          near(s[0], cursor[0], 0.1, `${c.name} x (fov ${start.fov})`);
+          near(s[1], cursor[1], 0.1, `${c.name} y (fov ${start.fov})`);
+        }
+      }
+      assert.notEqual(pose.distance, start.distance, 'it zoomed');
+    }
+  }
+  // Perspective: the step heads for the depth under the cursor and never passes it.
+  let pose = perspective;
+  const ray = unprojectRay(viewProjectionMatrix(pose, ASPECT), cursor[0], cursor[1], W, H)!;
+  const surface = pointAtViewDepth(pose, ray, 120)!;
+  for (let i = 0; i < 60; i += 1) {
+    const r = unprojectRay(viewProjectionMatrix(pose, ASPECT), cursor[0], cursor[1], W, H)!;
+    pose = zoomAtRay(pose, 0.8, r, viewDepthOf(pose, surface));
+  }
+  assert.ok(viewDepthOf(pose, surface) > 0, 'still in front of the surface');
 });
 
 void test('a projection change keeps the pivot plane: same place, same size', () => {
