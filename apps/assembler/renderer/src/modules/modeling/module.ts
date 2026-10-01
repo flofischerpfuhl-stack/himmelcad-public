@@ -7,7 +7,7 @@ import { COMMAND_ORDER } from '../../foundation/commands/registry.js';
 import { defineAssemblerModule } from '../../foundation/commands/module.js';
 import { MODELING_API } from './api.js';
 import { BLEND_RULE_COMMANDS } from './blendCommands.js';
-import './drafts.js';
+import { MODELING_DRAFT_TOOL, PRINT_DRAFT_TOOL } from './drafts.js';
 import { FEATURE_COMMANDS, PROFILE_FEATURE_COMMANDS } from './featureCommands.js';
 import {
   BOOLEAN_COMMANDS,
@@ -28,5 +28,6 @@ export const modelingModule = defineAssemblerModule({
     { order: COMMAND_ORDER.transform, commands: TRANSFORM_COMMANDS },
   ],
   api: MODELING_API,
+  draftTools: [MODELING_DRAFT_TOOL, PRINT_DRAFT_TOOL],
   storeSlice: modelingToolsSlice,
 });

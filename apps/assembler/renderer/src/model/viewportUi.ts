@@ -5,6 +5,8 @@
  */
 import { create } from 'zustand';
 
+import { publishLiveGridStep } from '../platform/viewport/liveGrid.js';
+
 export interface ImageRenderRequest {
   width: number;
   height: number;
@@ -63,6 +65,8 @@ export const useViewportUi = create<ViewportUiState>((set, get) => ({
   setSectionFacePick: (on) => set({ sectionFacePick: on }),
   liveGridStep: null,
   setLiveGridStep: (step) => {
+    // Also published below the domain modules (`platform/viewport/liveGrid.ts`) for sketch snapping.
+    publishLiveGridStep(step);
     if (get().liveGridStep !== step) set({ liveGridStep: step });
   },
 }));

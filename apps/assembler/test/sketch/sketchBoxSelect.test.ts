@@ -8,7 +8,7 @@ import {
   nextSketchBoxFilter,
   sketchBoxFilterForKey,
   sketchBoxSelect,
-} from '../../renderer/src/sketch/ui/sketchBoxSelect.js';
+} from '../../renderer/src/modules/sketching/ui/sketchBoxSelect.js';
 
 // A 10 x 10 rectangle at the origin; screen = (u, -v).
 const sketch = addRectangle(EMPTY_SKETCH, [0, 0], [10, 10]).sketch;

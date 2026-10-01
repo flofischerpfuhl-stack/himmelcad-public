@@ -2,7 +2,8 @@
  * Home screen (Shapr3D-like start dashboard): shown when the app starts
  * without a file (Settings › Home at start) and via File › Home
  * (Ctrl+Shift+H). New project, Open…, project templates built by the agent
- * API (`templates/projectTemplates.ts` — real, editable histories), recent
+ * API (registered by the modules, `foundation/commands/projectTemplates.ts`;
+ * real, editable histories), recent
  * projects with the thumbnail stored in each `.hcasm` at Save, a crash
  * recovery offer, and a short "Getting started" card whose keys come from
  * the command registry.
@@ -12,18 +13,7 @@
  * (`useGlobalKeyboard.ts`). Unsaved changes are asked about by the same
  * dialog as New/Open (`projectStore.ts` pending actions).
  */
-import {
-  Box,
-  Cable,
-  CornerDownRight,
-  FilePlus,
-  FolderOpen,
-  LifeBuoy,
-  Package,
-  Trash2,
-  X,
-  type LucideIcon,
-} from 'lucide-react';
+import { Box, FilePlus, FolderOpen, LifeBuoy, Trash2, X, type LucideIcon } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { Button, Spinner, registerEscapeRung } from '@himmelcad/ui';
@@ -39,15 +29,12 @@ import {
 } from '../../foundation/document/persistence.js';
 import { useProjectStore } from './project/projectStore.js';
 import { useWorkspaceStore } from './workspace.js';
-import { PROJECT_TEMPLATES, type ProjectTemplateId } from '../../templates/projectTemplates.js';
+import { projectTemplates } from '../../foundation/commands/projectTemplates.js';
+import { TEMPLATE_ICONS } from '../../modules/templates/icons.js';
 import styles from './HomeScreen.module.css';
 
-const TEMPLATE_ICON: Record<ProjectTemplateId, LucideIcon> = {
-  blank: FilePlus,
-  enclosure: Package,
-  bracket: CornerDownRight,
-  cableClip: Cable,
-};
+/** A template's card icon (its module's, else a generic part). */
+const templateIcon = (id: string): LucideIcon => TEMPLATE_ICONS[id] ?? Box;
 
 /** Five first shortcuts; keys are read from the command registry so they never drift. */
 const GETTING_STARTED: { keys: string; commandId?: string; text: string }[] = [
@@ -262,8 +249,8 @@ export function HomeScreen(): JSX.Element | null {
               New from template
             </h2>
             <div className={styles.templates}>
-              {PROJECT_TEMPLATES.map((template) => {
-                const Icon = TEMPLATE_ICON[template.id];
+              {projectTemplates().map((template) => {
+                const Icon = templateIcon(template.id);
                 return (
                   <button
                     key={template.id}

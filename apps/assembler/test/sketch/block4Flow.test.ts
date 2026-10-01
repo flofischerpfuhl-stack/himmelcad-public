@@ -18,10 +18,10 @@ import {
 } from '../../renderer/src/foundation/commands/shortcuts.js';
 import type { ExtrudeFeature } from '../../renderer/src/foundation/document/document.js';
 import { useAssemblerStore } from '../../renderer/src/foundation/commands/store.js';
-import { hitTest, infer } from '../../renderer/src/sketch/inference.js';
-import { useSketchStore } from '../../renderer/src/sketch/session.js';
+import { hitTest, infer } from '../../renderer/src/modules/sketching/inference.js';
+import { useSketchStore } from '../../renderer/src/modules/sketching/session.js';
 import { setSketchSolverFactory } from '../../renderer/src/foundation/sketch-solver/solverProvider.js';
-import { segmentStart } from '../../renderer/src/sketch/tools.js';
+import { segmentStart } from '../../renderer/src/modules/sketching/tools.js';
 import type { Vec2 } from '../../renderer/src/foundation/sketch-solver/types.js';
 import { createNodeKernelAdapter } from '../kernel/nodeKernel.js';
 import { loadNodeSolver } from './nodeSolver.js';

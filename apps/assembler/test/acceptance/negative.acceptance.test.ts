@@ -8,7 +8,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { setSketchDimension } from '../../renderer/src/sketch/featureOps.js';
+import { setSketchDimension } from '../../renderer/src/modules/sketching/featureOps.js';
 import {
   collectCandidates,
   isAmbiguous,

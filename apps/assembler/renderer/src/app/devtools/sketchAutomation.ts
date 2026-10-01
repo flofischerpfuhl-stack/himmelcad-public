@@ -7,7 +7,7 @@
  */
 import { framePoint, type SketchFrame } from '../../foundation/document/document.js';
 import { useAssemblerStore } from '../../foundation/commands/store.js';
-import { useSketchStore } from '../../sketch/session.js';
+import { useSketchStore } from '../../modules/sketching/session.js';
 import type { Vec2 } from '../../foundation/sketch-solver/types.js';
 import { getViewportProbe, type ScreenPoint } from '../../platform/viewport/automation.js';
 

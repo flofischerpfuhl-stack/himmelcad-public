@@ -53,13 +53,6 @@
       ]
     },
     {
-      "from": "sketching",
-      "to": "display",
-      "rule": "cross-domain",
-      "reason": "Known at the start of the ADR 0032 restructure (phase A): domain modules talk through foundation contracts and registrations, not directly.",
-      "edges": ["renderer/src/sketch/ui/SketchOverlay.tsx -> renderer/src/model/viewportUi.ts"]
-    },
-    {
       "from": "viewport",
       "to": "display",
       "rule": "upward",
@@ -97,9 +90,9 @@
       "rule": "upward",
       "reason": "Known at the start of the ADR 0032 restructure (phase A): move the shared part down or invert the dependency through a registration (assembler/MODULES.md).",
       "edges": [
-        "renderer/src/platform/viewport/Viewport.tsx -> renderer/src/sketch/session.ts",
-        "renderer/src/platform/viewport/Viewport.tsx -> renderer/src/sketch/ui/SketchOverlay.tsx",
-        "renderer/src/platform/viewport/Viewport.tsx -> renderer/src/sketch/ui/useSketchViewport.ts"
+        "renderer/src/platform/viewport/Viewport.tsx -> renderer/src/modules/sketching/session.ts",
+        "renderer/src/platform/viewport/Viewport.tsx -> renderer/src/modules/sketching/ui/SketchOverlay.tsx",
+        "renderer/src/platform/viewport/Viewport.tsx -> renderer/src/modules/sketching/ui/useSketchViewport.ts"
       ]
     }
   ]

@@ -14,12 +14,12 @@ import type { ExtrudeFeature, Feature } from '../../renderer/src/foundation/docu
 import type { SketchFeature } from '../../renderer/src/foundation/sketch-solver/sketchFeature.js';
 import { useAssemblerStore } from '../../renderer/src/foundation/commands/store.js';
 import { addRectangle } from '../../renderer/src/foundation/sketch-solver/builders.js';
-import { setSketchDimension } from '../../renderer/src/sketch/featureOps.js';
-import { hitTest, infer } from '../../renderer/src/sketch/inference.js';
+import { setSketchDimension } from '../../renderer/src/modules/sketching/featureOps.js';
+import { hitTest, infer } from '../../renderer/src/modules/sketching/inference.js';
 import { detectRegions } from '../../renderer/src/foundation/sketch-solver/regions.js';
-import { useSketchStore } from '../../renderer/src/sketch/session.js';
+import { useSketchStore } from '../../renderer/src/modules/sketching/session.js';
 import { setSketchSolverFactory } from '../../renderer/src/foundation/sketch-solver/solverProvider.js';
-import { segmentStart } from '../../renderer/src/sketch/tools.js';
+import { segmentStart } from '../../renderer/src/modules/sketching/tools.js';
 import { EMPTY_SKETCH, type Vec2 } from '../../renderer/src/foundation/sketch-solver/types.js';
 import { createNodeKernelAdapter } from '../kernel/nodeKernel.js';
 import { installNodeFonts } from './nodeFont.js';

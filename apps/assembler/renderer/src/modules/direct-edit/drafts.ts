@@ -1,6 +1,6 @@
 /**
  * The tools of the direct-edit kinds as drafts of the generic feature tool
- * (`foundation/commands/featureDrafts.ts`): Offset Face (with its value
+ * (`foundation/commands/draftTools.ts`, installed by `module.ts`): Offset Face (with its value
  * modes and the Move Face variant started from Move/Rotate on a face) and
  * Delete Face. Pure data + functions; no store access, no DOM.
  */
@@ -9,14 +9,17 @@ import type { Body, EvaluationResult } from '../../foundation/geometry-kernel/ty
 import { PRINT_CLEARANCES } from '../../foundation/document/blendOptions.js';
 import type { FaceRef, Feature, Vec3 } from '../../foundation/document/document.js';
 import {
-  registerFeatureDraft,
-  type DraftBadge,
-  type DraftContext,
-  type DraftHandle,
-  type DraftMeta,
-  type DraftStart,
-  type ToolPick,
-} from '../../foundation/commands/featureDrafts.js';
+  defineDraftTool,
+  type DraftPick as ToolPick,
+  type DraftToolBadge,
+  type DraftToolContext as DraftContext,
+  type DraftToolHandle,
+  type DraftToolMeta as DraftMeta,
+  type DraftToolStart as DraftStart,
+} from '../../foundation/commands/draftTools.js';
+
+type DraftBadge = DraftToolBadge<OffsetFaceDraft>;
+type DraftHandle = DraftToolHandle<OffsetFaceDraft>;
 import type { OffsetFaceMode } from './kinds.js';
 import {
   OFFSET_FACE_MODE_LABEL,
@@ -45,8 +48,8 @@ export interface DeleteFaceDraft {
   faces: FaceRef[];
 }
 
-declare module '../../foundation/commands/featureDrafts.js' {
-  interface FeatureDraftMap {
+declare module '../../foundation/commands/draftTools.js' {
+  interface DraftToolMap {
     offsetFace: OffsetFaceDraft;
     deleteFace: DeleteFaceDraft;
   }
@@ -215,8 +218,7 @@ function offsetFaceBadges(draft: OffsetFaceDraft, evaluation?: EvaluationResult)
       ariaLabel: 'Offset mode',
       value: mode,
       options: modes.map((m) => ({ value: m, label: OFFSET_FACE_MODE_LABEL[m] })),
-      apply: (d, value, evaluation) =>
-        d.kind === 'offsetFace' ? setOffsetFaceMode(d, value as OffsetFaceMode, evaluation) : d,
+      apply: (d, value, evaluation) => setOffsetFaceMode(d, value as OffsetFaceMode, evaluation),
     });
   }
   // Printing clearances: remove 0.1-0.4 mm from mating faces (a hole wall grows, a peg shrinks).
@@ -225,7 +227,7 @@ function offsetFaceBadges(draft: OffsetFaceDraft, evaluation?: EvaluationResult)
       ariaLabel: 'Clearance',
       value: PRINT_CLEARANCES.find((c) => Math.abs(draft.distance + c) < 1e-9)?.toString() ?? '',
       options: PRINT_CLEARANCES.map((c) => ({ value: String(c), label: `−${c}` })),
-      apply: (d, value) => (d.kind === 'offsetFace' ? { ...d, distance: -Number(value) } : d),
+      apply: (d, value) => ({ ...d, distance: -Number(value) }),
     });
   }
   return out;
@@ -290,10 +292,10 @@ function offsetFaceHandles(draft: OffsetFaceDraft, evaluation: EvaluationResult)
   ];
 }
 
-registerFeatureDraft({
-  kind: 'offsetFace',
+export const OFFSET_FACE_DRAFT_TOOL = defineDraftTool<OffsetFaceDraft>({
   module: 'direct-edit',
-  create: (ctx) => {
+  kinds: ['offsetFace'],
+  createDraft: (_kind, ctx) => {
     const faces = startFaces(ctx);
     return faces.ok
       ? {
@@ -312,10 +314,10 @@ registerFeatureDraft({
 
 // ---- Delete Face -----------------------------------------------------------------------
 
-registerFeatureDraft({
-  kind: 'deleteFace',
+export const DELETE_FACE_DRAFT_TOOL = defineDraftTool<DeleteFaceDraft>({
   module: 'direct-edit',
-  create: (ctx) => {
+  kinds: ['deleteFace'],
+  createDraft: (_kind, ctx) => {
     const faces = startFaces(ctx);
     return faces.ok ? { ok: true, draft: { kind: 'deleteFace', faces: faces.draft } } : faces;
   },

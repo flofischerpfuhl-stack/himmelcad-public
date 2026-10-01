@@ -10,6 +10,12 @@ import type { ComponentType } from 'react';
 
 import type { AssemblerState } from '../../foundation/commands/store.js';
 import type { Feature } from '../../foundation/document/document.js';
+import {
+  registerViewportDomOverlay,
+  registerViewportMode,
+  type ViewportDomOverlay,
+  type ViewportMode,
+} from '../viewport/domOverlays.js';
 import { registerViewportOverlay, type ViewportOverlayProvider } from '../viewport/overlays.js';
 import { registerViewportTool, type ViewportToolProvider } from '../viewport/toolViews.js';
 
@@ -71,10 +77,14 @@ export interface ModuleUi {
   viewportOverlays?: readonly ViewportOverlayProvider[];
   /** What the viewport shows and does for the module's tool sessions (handles, drags, clicks). */
   viewportTools?: readonly ViewportToolProvider[];
+  /** React overlays over the canvas with the viewport's host services (`viewport/domOverlays.ts`). */
+  viewportDomOverlays?: readonly ViewportDomOverlay[];
+  /** What the module tells the viewport while its mode runs (`viewport/domOverlays.ts`). */
+  viewportModes?: readonly ViewportMode[];
   /** Icons of the module's feature kinds (History cards, Items). */
-  featureIcons?: Readonly<Record<string, LucideIcon>>;
+  featureIcons?: Readonly<Partial<Record<string, LucideIcon>>>;
   /** Icons of the module's commands (toolbar, menus, search). */
-  commandIcons?: Readonly<Record<string, LucideIcon>>;
+  commandIcons?: Readonly<Partial<Record<string, LucideIcon>>>;
 }
 
 export function defineModuleUi(ui: ModuleUi): ModuleUi {
@@ -104,8 +114,14 @@ export function installModuleUis(uis: readonly ModuleUi[]): void {
     }
     for (const overlay of ui.viewportOverlays ?? []) registerViewportOverlay(overlay);
     for (const tool of ui.viewportTools ?? []) registerViewportTool(tool);
-    for (const [kind, icon] of Object.entries(ui.featureIcons ?? {})) featureIcons.set(kind, icon);
-    for (const [id, icon] of Object.entries(ui.commandIcons ?? {})) commandIcons.set(id, icon);
+    for (const overlay of ui.viewportDomOverlays ?? []) registerViewportDomOverlay(overlay);
+    for (const mode of ui.viewportModes ?? []) registerViewportMode(mode);
+    for (const [kind, icon] of Object.entries(ui.featureIcons ?? {})) {
+      if (icon) featureIcons.set(kind, icon);
+    }
+    for (const [id, icon] of Object.entries(ui.commandIcons ?? {})) {
+      if (icon) commandIcons.set(id, icon);
+    }
   }
   panels.sort((a, b) => a.order - b.order);
   modeButtons.sort((a, b) => a.order - b.order);

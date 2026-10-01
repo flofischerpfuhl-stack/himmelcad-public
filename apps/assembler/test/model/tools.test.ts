@@ -22,7 +22,7 @@ import {
   type ToolSession,
 } from '../../renderer/src/foundation/commands/store.js';
 import { addRectangle } from '../../renderer/src/foundation/sketch-solver/builders.js';
-import { useSketchStore } from '../../renderer/src/sketch/session.js';
+import { useSketchStore } from '../../renderer/src/modules/sketching/session.js';
 import { setSketchSolverFactory } from '../../renderer/src/foundation/sketch-solver/solverProvider.js';
 import { EMPTY_SKETCH, type Vec2 } from '../../renderer/src/foundation/sketch-solver/types.js';
 import { createNodeKernelAdapter } from '../kernel/nodeKernel.js';

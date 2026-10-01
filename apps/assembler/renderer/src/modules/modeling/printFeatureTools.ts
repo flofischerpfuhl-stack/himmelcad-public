@@ -21,7 +21,8 @@ import {
   type ProfileRef,
 } from '../../foundation/document/document.js';
 import type { SketchFeature } from '../../foundation/sketch-solver/sketchFeature.js';
-import { datumRef, planeRefFrame } from '../../foundation/document/datums.js';
+
+import { datumRef, planeRefFrame } from '../../foundation/geometry-kernel/datums.js';
 
 import {
   HOLE_PRESET_LABEL,

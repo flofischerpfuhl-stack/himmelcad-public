@@ -1,7 +1,7 @@
 /**
  * Interactive tools for the modelling features of `features.ts` — Revolve,
  * Sweep, Loft, Mirror, Pattern, Split, Rotate Around Axis, Align — as drafts
- * of the generic feature tool (`foundation/commands/featureDrafts.ts`,
+ * of the generic feature tool (`foundation/commands/draftTools.ts`,
  * registered in `drafts.ts`), so the store keeps a single `feature` tool
  * session and the viewport/chrome render what this file describes:
  *
@@ -42,7 +42,12 @@ import {
   type ProfileRef,
   type WorldAxis,
 } from '../../foundation/document/document.js';
-import { constructionAxisLine, datumRef, planeRefPlane } from '../../foundation/document/datums.js';
+
+import {
+  constructionAxisLine,
+  datumRef,
+  planeRefPlane,
+} from '../../foundation/geometry-kernel/datums.js';
 import type {
   DraftBadge,
   DraftContext,
@@ -137,8 +142,8 @@ export type ModelingDraft =
 
 export type ModelingDraftKind = ModelingDraft['kind'];
 
-declare module '../../foundation/commands/featureDrafts.js' {
-  interface FeatureDraftMap {
+declare module '../../foundation/commands/draftTools.js' {
+  interface DraftToolMap {
     revolve: RevolveDraft;
     sweep: SweepDraft;
     loft: LoftDraft;

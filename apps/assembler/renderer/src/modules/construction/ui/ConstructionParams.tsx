@@ -1,20 +1,14 @@
 /**
- * History card of a construction plane/axis: its definition and numeric
- * values, Flip; each edit is one `editFeatureParams` call (one undo step).
- *
- * Phase B note: moved out of the modelling History card by agent B; agent
- * A's construction move owns this file (take A's version on a conflict).
+ * History card of a construction plane/axis: its definition, the numeric
+ * values (as expression fields) and Flip; each edit is one
+ * `editFeatureParams` call (one undo step).
  */
 import { Select } from '@himmelcad/ui';
 
 import type { AssemblerState, FeaturePatch } from '../../../foundation/commands/store.js';
 import { ExpressionField } from '../../../platform/widgets/ExpressionField.js';
 import styles from '../../../platform/widgets/HistoryCard.module.css';
-import {
-  AXIS_DEF_LABEL,
-  PLANE_DEF_LABEL,
-  type ConstructionFeature,
-} from '../../../model/construction.js';
+import { AXIS_DEF_LABEL, PLANE_DEF_LABEL, type ConstructionFeature } from '../construction.js';
 
 export function ConstructionParams({
   feature,

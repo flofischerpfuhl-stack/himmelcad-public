@@ -14,10 +14,11 @@ import {
   opsAffine,
   transformOps,
 } from '../../renderer/src/foundation/geometry-kernel/features/rigid.js';
-import { continuableSketchId } from '../../renderer/src/model/commands/sketchCommands.js';
+import { continuableSketchId } from '../../renderer/src/modules/sketching/sketchCommands.js';
 import { findCommand } from '../../renderer/src/foundation/commands/registry.js';
-import { datumRef, type ConstructionPlaneFeature } from '../../renderer/src/model/construction.js';
-import { createConstructionDraft } from '../../renderer/src/model/constructionTools.js';
+import { type ConstructionPlaneFeature } from '../../renderer/src/modules/construction/construction.js';
+import { datumRef } from '../../renderer/src/foundation/geometry-kernel/datums.js';
+import { createConstructionDraft } from '../../renderer/src/modules/construction/constructionTools.js';
 import {
   type ExtrudeFeature,
   type Feature,
@@ -45,14 +46,14 @@ import { usePreferences } from '../../renderer/src/platform/input/preferences.js
 import { loadProjectFile, saveProjectFile } from '../../renderer/src/foundation/document/format.js';
 import { makeFaceRef, useAssemblerStore } from '../../renderer/src/foundation/commands/store.js';
 import { moveSketchResult, type MoveTool } from '../../renderer/src/modules/modeling/tools.js';
-import { bodySnapTargets } from '../../renderer/src/sketch/bodySnaps.js';
+import { bodySnapTargets } from '../../renderer/src/modules/sketching/bodySnaps.js';
 import { addRectangle, addPolyline } from '../../renderer/src/foundation/sketch-solver/builders.js';
-import { infer } from '../../renderer/src/sketch/inference.js';
+import { infer } from '../../renderer/src/modules/sketching/inference.js';
 import { translateSketchRegion } from '../../renderer/src/foundation/sketch-solver/moveRegion.js';
 import { detectRegions } from '../../renderer/src/foundation/sketch-solver/regions.js';
-import { useSketchStore } from '../../renderer/src/sketch/session.js';
+import { useSketchStore } from '../../renderer/src/modules/sketching/session.js';
 import { setSketchSolverFactory } from '../../renderer/src/foundation/sketch-solver/solverProvider.js';
-import { initialTool, reduceTool } from '../../renderer/src/sketch/tools.js';
+import { initialTool, reduceTool } from '../../renderer/src/modules/sketching/tools.js';
 import {
   EMPTY_SKETCH,
   entityMap,

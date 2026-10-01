@@ -75,13 +75,7 @@
       "id": "sketching",
       "layer": "domain",
       "summary": "Sketch mode: session, drawing tools, inference/snapping, sketch commands, sketch overlay and chrome, sketch agent API.",
-      "paths": [
-        "renderer/src/modules/sketching/",
-        "renderer/src/sketch/",
-        "renderer/src/model/commands/sketchCommands.ts",
-        "renderer/src/api/sketchApi.ts",
-        "renderer/src/api/sketchAdvancedApi.ts"
-      ]
+      "paths": ["renderer/src/modules/sketching/"]
     },
     {
       "id": "modeling",
@@ -99,14 +93,7 @@
       "id": "construction",
       "layer": "domain",
       "summary": "Construction planes and axes: definitions, tools, commands, evaluation.",
-      "paths": [
-        "renderer/src/modules/construction/",
-        "renderer/src/model/construction.ts",
-        "renderer/src/model/constructionTools.ts",
-        "renderer/src/model/commands/constructCommands.ts",
-        "renderer/src/kernel/features/construction.ts",
-        "renderer/src/kernel/features/constructionKernel.ts"
-      ]
+      "paths": ["renderer/src/modules/construction/"]
     },
     {
       "id": "parameters",
@@ -163,7 +150,7 @@
       "id": "templates",
       "layer": "domain",
       "summary": "Project templates of the Home screen.",
-      "paths": ["renderer/src/modules/templates/", "renderer/src/templates/"]
+      "paths": ["renderer/src/modules/templates/"]
     },
     {
       "id": "print",

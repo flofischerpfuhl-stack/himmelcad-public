@@ -58,7 +58,7 @@ import {
 import { consumedSketchIds, isSketchVisible } from '../../foundation/document/sketchVisibility.js';
 import type { AssemblerState, SelectionItem } from '../../foundation/commands/store.js';
 import { useWorkspaceStore } from './workspace.js';
-import { useSketchStore } from '../../sketch/session.js';
+import { useSketchStore } from '../../modules/sketching/session.js';
 import { anchoredMenuStyle } from '../../platform/widgets/anchoredMenu.js';
 import panelStyles from '../../platform/widgets/Panel.module.css';
 import styles from './ItemsPanel.module.css';

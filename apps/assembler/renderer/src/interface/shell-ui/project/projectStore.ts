@@ -50,7 +50,11 @@ import {
 } from '../../../foundation/document/meshCodec.js';
 import * as io from '../../../foundation/document/persistence.js';
 import { renderProjectThumbnail } from './thumbnail.js';
-import { projectTemplate, type ProjectTemplateId } from '../../../templates/projectTemplates.js';
+
+import {
+  projectTemplate,
+  type ProjectTemplateId,
+} from '../../../foundation/commands/projectTemplates.js';
 
 /** Bumped by hand alongside `package.json` `version`; written into saved files for diagnostics only (never read back for behaviour). */
 const APP_VERSION = '0.1.0-phase1';

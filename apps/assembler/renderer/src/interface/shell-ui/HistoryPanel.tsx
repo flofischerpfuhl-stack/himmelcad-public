@@ -58,7 +58,7 @@ import { resolveParameterValues } from '../../foundation/document/parameters.js'
 import { useWorkspaceStore } from './workspace.js';
 import type { AssemblerState, FeaturePatch } from '../../foundation/commands/store.js';
 import type { ExtrudeOperation, Feature } from '../../foundation/document/document.js';
-import { useSketchStore } from '../../sketch/session.js';
+import { useSketchStore } from '../../modules/sketching/session.js';
 import panelStyles from '../../platform/widgets/Panel.module.css';
 import styles from '../../platform/widgets/HistoryCard.module.css';
 

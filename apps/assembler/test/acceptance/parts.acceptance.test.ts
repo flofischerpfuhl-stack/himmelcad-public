@@ -11,7 +11,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { createDemoDocument } from '../../renderer/src/foundation/commands/demoDocument.js';
-import { projectTemplate } from '../../renderer/src/templates/projectTemplates.js';
+
+import { projectTemplate } from '../../renderer/src/foundation/commands/projectTemplates.js';
 import {
   bboxIs,
   bodies,

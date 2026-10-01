@@ -85,8 +85,9 @@ export function validatePlaneRef(v: unknown, p: string, h: FormatHelpers): void 
 }
 
 /**
- * An axis reference (revolve/pattern/rotate axis, mirror line, construction
- * input): world axis, body edge, sketch line or construction axis.
+ * An axis reference (revolve/pattern/rotate axis, a construction plane's
+ * turn axis): world axis (optionally through `origin`), body edge, sketch
+ * line, or construction axis.
  */
 export function validateAxisRef(v: unknown, p: string, h: FormatHelpers): void {
   if (!isRecord(v)) h.fail(p, 'expected an object');
