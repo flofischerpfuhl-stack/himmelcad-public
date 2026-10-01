@@ -240,14 +240,23 @@
   fill: transparent;
 }
 
+.offsetArrowHalo {
+  stroke: var(--hc-bg-void);
+  stroke-width: 6;
+  stroke-linecap: round;
+}
+
 .offsetArrowShaft {
   stroke: var(--hc-geometry-active-preview);
-  stroke-width: 2;
+  stroke-width: 2.5;
   stroke-linecap: round;
 }
 
 .offsetArrowHead {
   fill: var(--hc-geometry-active-preview);
+  stroke: var(--hc-bg-void);
+  stroke-width: 1.5;
+  paint-order: stroke;
 }
 
 .offsetArrow:hover .offsetArrowShaft {

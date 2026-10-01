@@ -556,7 +556,7 @@ function PatternPanel({ session }: { session: SketchSession }): JSX.Element | nu
     void useSketchStore.getState().editPattern(pattern.id, patch);
   return (
     <div
-      className={styles.textPanel}
+      className={`${styles.textPanel} ${styles.centered}`}
       role="group"
       aria-label="Pattern"
       data-sketch-pattern-panel=""

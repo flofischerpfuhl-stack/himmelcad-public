@@ -467,6 +467,11 @@ const DEFS_TAIL: Record<string, JsonSchema> = {
         'One region of a sketch (`regionKey`), or every region.',
       ),
       obj({ kind: { const: 'feature' }, featureId: str }, ['kind', 'featureId']),
+      obj(
+        { kind: { const: 'sketchCurve' }, featureId: str, entityId: str },
+        ['kind', 'featureId', 'entityId'],
+        'One curve of a sketch (sketches.list entity id), selected outside sketch mode.',
+      ),
     ],
   },
 };

@@ -9,6 +9,8 @@
  * menu and keyboard.
  */
 import { CONSTRAINT_INFO, planConstraint } from './constraintRules.js';
+import { editSketchCurves } from './featureOps.js';
+import { notify } from '../../foundation/commands/notices.js';
 import { useSketchStore, type BeginSketchOptions } from './session.js';
 import type { SketchToolKind } from './tools.js';
 import { isPlanarFace, type SelectionItem } from '../../foundation/commands/store.js';
@@ -33,8 +35,13 @@ function selectedPlanarFace(ctx: CommandContext): { bodyId: string; faceKey: str
   return isPlanarFace(ctx.evaluation, item.bodyId, item.faceKey) ? item : null;
 }
 
-/** The sketch feature id of the current selection (a profile or a sketch history card). */
+/**
+ * The sketch feature id of the current selection: a profile, a sketch
+ * History card, or curves of one sketch (SEL-12).
+ */
 export function selectedSketchId(ctx: CommandContext): string | null {
+  const curves = selectedSketchCurves(ctx);
+  if (curves) return curves.featureId;
   if (ctx.selection.length !== 1) return null;
   const item: SelectionItem = ctx.selection[0]!;
   if (item.kind === 'sketchProfile') return item.featureId;
@@ -43,6 +50,61 @@ export function selectedSketchId(ctx: CommandContext): string | null {
     return feature?.kind === 'sketch' ? feature.id : null;
   }
   return null;
+}
+
+/** The selected sketch curves when the whole selection is curves of one sketch. */
+export function selectedSketchCurves(
+  ctx: Pick<CommandContext, 'selection'>,
+): { featureId: string; entityIds: string[] } | null {
+  if (ctx.selection.length === 0) return null;
+  let featureId: string | null = null;
+  const entityIds: string[] = [];
+  for (const item of ctx.selection) {
+    if (item.kind !== 'sketchCurve') return null;
+    if (featureId !== null && item.featureId !== featureId) return null;
+    featureId = item.featureId;
+    entityIds.push(item.entityId);
+  }
+  return featureId ? { featureId, entityIds } : null;
+}
+
+/** Opens a sketch; with curves selected, they stay selected inside it. */
+export function openSketch(featureId: string, entityIds: readonly string[] = []): void {
+  const store = useSketchStore.getState();
+  if (!store.begin({ featureId })) return;
+  if (entityIds.length > 0) store.select([...entityIds]);
+}
+
+const NOT_CURVES = 'Select curves of one sketch (click a sketch line or curve).';
+
+/** An edit of the selected sketch curves outside sketch mode (one undo step). */
+function curveCommand(
+  id: string,
+  label: string,
+  edit: 'delete' | 'construction',
+  keywords: string[],
+  priority: number,
+): Command {
+  return {
+    id,
+    label,
+    group: 'sketch',
+    keywords: ['sketch', 'curve', 'line', ...keywords],
+    availability: (ctx) => {
+      if (session())
+        return { enabled: false, reason: 'Use the sketch tools while a sketch is open.' };
+      return selectedSketchCurves(ctx)
+        ? { enabled: true, recommended: true, priority }
+        : { enabled: false, reason: NOT_CURVES };
+    },
+    run: (ctx) => {
+      const curves = selectedSketchCurves(ctx);
+      if (!curves) return;
+      void editSketchCurves(curves.featureId, curves.entityIds, edit).then((reason) => {
+        if (reason) notify(reason, 'warning');
+      });
+    },
+  };
 }
 
 /** The single selected construction plane's feature id, if any (a new sketch goes there). */
@@ -209,9 +271,18 @@ export const SKETCH_COMMANDS: readonly Command[] = [
     },
     run: (ctx) => {
       const id = selectedSketchId(ctx);
-      if (id) useSketchStore.getState().begin({ featureId: id });
+      if (id) openSketch(id, selectedSketchCurves(ctx)?.entityIds ?? []);
     },
   },
+  // SEL-12: a sketch curve selected outside sketch mode (Edit Sketch is the first suggestion).
+  curveCommand('sketch.deleteCurves', 'Delete from Sketch', 'delete', ['remove', 'erase'], 50),
+  curveCommand(
+    'sketch.curvesConstruction',
+    'Toggle Construction',
+    'construction',
+    ['reference', 'helper', 'dashed'],
+    45,
+  ),
   {
     id: 'sketch.finish',
     label: 'Finish Sketch',

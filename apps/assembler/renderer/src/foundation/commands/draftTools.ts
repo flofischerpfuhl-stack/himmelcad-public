@@ -62,6 +62,19 @@ export type DraftPick =
   /** A construction plane or axis. */
   | { kind: 'datum'; featureId: string };
 
+/**
+ * A selection item as a tool pick: a selected sketch curve (SEL-12) is a
+ * `sketchLine` pick (tools check that it is a line); steps and reference
+ * meshes are no picks.
+ */
+export function draftPickOf(item: SelectionItem): DraftPick | null {
+  if (item.kind === 'feature' || item.kind === 'mesh') return null;
+  if (item.kind === 'sketchCurve') {
+    return { kind: 'sketchLine', featureId: item.featureId, entityId: item.entityId };
+  }
+  return item;
+}
+
 /** What a draft can be started from. */
 export interface DraftToolContext {
   selection: readonly SelectionItem[];

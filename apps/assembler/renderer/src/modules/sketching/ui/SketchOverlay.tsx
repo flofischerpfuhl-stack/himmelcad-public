@@ -992,8 +992,15 @@ export function SketchOverlay({
                 className={styles.offsetArrowHit}
               />
               <line
-                x1={s[0] + ux * 6}
-                y1={s[1] + uy * 6}
+                x1={s[0] + ux * 4}
+                y1={s[1] + uy * 4}
+                x2={tip[0] - ux * 6}
+                y2={tip[1] - uy * 6}
+                className={styles.offsetArrowHalo}
+              />
+              <line
+                x1={s[0] + ux * 4}
+                y1={s[1] + uy * 4}
                 x2={tip[0] - ux * 6}
                 y2={tip[1] - uy * 6}
                 className={styles.offsetArrowShaft}

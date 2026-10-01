@@ -413,6 +413,8 @@ const PARALLEL_TOLERANCE_DEG = 1e-4;
  */
 export function componentValues(a: Vec3, b: Vec3, approx = false): MeasureValue[] {
   const d = sub(b, a);
+  // Touching items (distance 0) have no components worth a row.
+  if (len(d) < 1e-9) return [];
   return (['X', 'Y', 'Z'] as const).map((axis, i) => ({
     label: `Δ${axis}`,
     kind: 'length' as const,
@@ -851,16 +853,12 @@ export function measure(refs: readonly MeasureRef[], ctx: MeasureContext): Measu
         ([kind, n]) =>
           `${n} ${kind === 'body' ? (n === 1 ? 'body' : 'bodies') : n === 1 ? kind : `${kind}s`}`,
       );
-    const graphics: MeasureGraphic[] = [];
-    for (const r of items) {
-      if (r.face) graphics.push({ kind: 'point', at: r.face.centroid });
-      else if (r.edge) graphics.push({ kind: 'point', at: r.edge.midpoint });
-    }
+    // No viewport label: a sum belongs to no single item (the panel shows it).
     return {
       title: `${items.length} items`,
       subject: parts.join(', '),
       values: totals,
-      graphics: graphics.slice(0, 1),
+      graphics: [],
     };
   }
   return {

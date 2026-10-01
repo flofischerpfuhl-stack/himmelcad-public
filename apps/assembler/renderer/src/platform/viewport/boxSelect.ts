@@ -156,6 +156,8 @@ export function targetKey(t: PickTarget | SelectionItem): string {
       return `feature|${t.featureId}`;
     case 'sketchLine':
       return `sketchLine|${t.featureId}|${t.entityId}`;
+    case 'sketchCurve':
+      return `sketchCurve|${t.featureId}|${t.entityId}`;
     case 'datum':
       return `datum|${t.featureId}`;
     case 'extrudeHandle':

@@ -118,6 +118,10 @@
   min-width: 200px;
 }
 
+.textPanel.centered {
+  align-items: center;
+}
+
 .panelTitle {
   align-self: center;
   font-family: var(--hc-font-ui);

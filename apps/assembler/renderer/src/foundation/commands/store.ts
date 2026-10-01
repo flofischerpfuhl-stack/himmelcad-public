@@ -86,7 +86,9 @@ export type SelectionItem =
   /** A reference mesh (imported STL) — always selected as a whole, never per-triangle/per-face. */
   | { kind: 'mesh'; meshId: string }
   /** A construction plane or axis (`model/construction.ts`), by its feature id. */
-  | { kind: 'datum'; featureId: string };
+  | { kind: 'datum'; featureId: string }
+  /** One curve (line, arc, circle, spline, …) of a sketch, outside sketch mode (SEL-12). */
+  | { kind: 'sketchCurve'; featureId: string; entityId: string };
 
 /** Explicit lifecycle every tool session moves through. `cancel()` is valid from any of these except after commit. */
 export type ToolPhase = 'collectingReferences' | 'preview' | 'numericEditing' | 'committing';
@@ -602,6 +604,8 @@ function selectionKeysEqual(a: SelectionItem, b: SelectionItem): boolean {
       return b.kind === 'mesh' && a.meshId === b.meshId;
     case 'datum':
       return b.kind === 'datum' && a.featureId === b.featureId;
+    case 'sketchCurve':
+      return b.kind === 'sketchCurve' && a.featureId === b.featureId && a.entityId === b.entityId;
   }
 }
 
@@ -643,6 +647,14 @@ function remapSelectionItem(
       return item;
     case 'datum':
       return evaluation.datums?.some((d) => d.featureId === item.featureId) ? item : null;
+    case 'sketchCurve':
+      return evaluation.sketches.some(
+        (s) =>
+          s.featureId === item.featureId &&
+          (s.curves ?? []).some((curve) => curve.entityId === item.entityId),
+      )
+        ? item
+        : null;
   }
 }
 

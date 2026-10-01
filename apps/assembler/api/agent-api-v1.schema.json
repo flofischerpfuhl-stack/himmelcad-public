@@ -1263,6 +1263,25 @@
           },
           "required": ["kind", "featureId"],
           "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "sketchCurve"
+            },
+            "featureId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "entityId": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": ["kind", "featureId", "entityId"],
+          "additionalProperties": false,
+          "description": "One curve of a sketch (sketches.list entity id), selected outside sketch mode."
         }
       ]
     },

@@ -45,6 +45,7 @@ export function itemsRowKeyFor(item: SelectionItem): string | null {
     case 'edge':
       return bodyRowKey(item.bodyId);
     case 'sketchProfile':
+    case 'sketchCurve':
       return sketchRowKey(item.featureId);
     case 'mesh':
       return meshRowKey(item.meshId);

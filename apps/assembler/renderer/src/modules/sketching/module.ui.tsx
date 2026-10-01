@@ -7,6 +7,7 @@
 import type { SketchFeature } from '../../foundation/sketch-solver/sketchFeature.js';
 import { defineModuleUi } from '../../platform/widgets/moduleUi.js';
 import { useSketchStore } from './session.js';
+import { openSketch } from './sketchCommands.js';
 import { SketchChrome } from './ui/SketchChrome.js';
 import { SketchParams } from './ui/SketchParams.js';
 import { SketchViewportOverlay } from './ui/SketchViewportOverlay.js';
@@ -40,6 +41,11 @@ export const sketchingUi = defineModuleUi({
       ownsKeyboard: () => useSketchStore.getState().session !== null,
       // Double-clicking a sketch opens it in sketch mode (Shapr3D).
       openOnDoubleClick: (pick) => {
+        // A double-clicked curve opens its sketch with that curve selected (SEL-12).
+        if (pick.kind === 'sketchCurve') {
+          openSketch(pick.featureId, [pick.entityId]);
+          return true;
+        }
         if (pick.kind !== 'sketchProfile') return false;
         useSketchStore.getState().begin({ featureId: pick.featureId });
         return true;

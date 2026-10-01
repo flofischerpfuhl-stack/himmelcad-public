@@ -153,6 +153,11 @@ export interface SceneInput {
    * emphasised — while a tool takes an axis (Revolve, Pattern).
    */
   pickSketchLines?: boolean;
+  /**
+   * Every sketch curve is a pick target (`sketchCurve`) and selected/hovered
+   * curves are highlighted — while no tool runs (SEL-12).
+   */
+  pickSketchCurves?: boolean;
   /** Device pixel ratio (`viewportHeightPx` is in device pixels); selection lines are ≈3 CSS px wide. */
   dpr?: number;
   /** Bodies of a fillet/chamfer/shell/boolean preview: opaque, edges in the preview accent. */
@@ -782,6 +787,34 @@ export function buildScene(input: SceneInput): BuiltScene {
       (item.regionKey === undefined || item.regionKey === regionKey);
     const outline = { positions: [] as number[], colors: [] as number[] };
     const fill = { positions: [] as number[], colors: [] as number[] };
+    // Sketch line highlights go into the frame after the sketch's own outline (the shared
+    // `overlays` are flushed above; drawn before the outline they would z-fight with it).
+    const curveHighlights: DrawBatch[] = [];
+    const sketchCurveLines = (
+      segments: Float32Array,
+      color: readonly [number, number, number],
+      widthPx: number,
+    ) => {
+      curveHighlights.push({
+        kind: 'lines',
+        segments,
+        color: rgba(color, 1),
+        widthPx,
+        depthTest: true,
+      });
+      curveHighlights.push({
+        kind: 'lines',
+        segments,
+        color: rgba(color, 0.4),
+        widthPx,
+        depthTest: false,
+      });
+    };
+    const curveMatches = (item: SelectionItem | null, entityId: string): boolean =>
+      item?.kind === 'sketchCurve' &&
+      item.featureId === sketch.featureId &&
+      item.entityId === entityId;
+    const curvePicks: { entityId: string; segments: Float32Array }[] = [];
     // Curves (open ones and construction geometry included) in the plain sketch colour.
     for (const curve of sketch.curves ?? []) {
       for (let i = 0; i + 1 < curve.points.length; i += 1) {
@@ -798,7 +831,7 @@ export function buildScene(input: SceneInput): BuiltScene {
         const b = curve.points[curve.points.length - 1]!;
         const segment = new Float32Array([...a, ...b]);
         // Axis candidates: drawn solid and wide enough to hit, on top of the profile fill.
-        thickEdges(segment, input.colors.sketchOutline, 2);
+        sketchCurveLines(segment, input.colors.sketchOutline, 2);
         idBatches.push({
           positions: buildPolylineRibbon(segment, eye, edgeHitWidth(input.pose.distance) * 1.5),
           id: pickTable.add({
@@ -809,7 +842,51 @@ export function buildScene(input: SceneInput): BuiltScene {
           mode: 'triangles',
           onTop: true,
         });
+        continue;
       }
+      if (!input.pickSketchCurves || curve.points.length < 2) continue;
+      // SEL-12: every curve of a shown sketch is pickable while no tool runs (depth-tested
+      // like body edges, so a body in front keeps its clicks).
+      const pairs: number[] = [];
+      for (let i = 0; i + 1 < curve.points.length; i += 1) {
+        pairs.push(...curve.points[i]!, ...curve.points[i + 1]!);
+      }
+      const segments = new Float32Array(pairs);
+      const selected = input.selection.some((item) => curveMatches(item, curve.entityId));
+      const hovered = !selected && curveMatches(input.hover, curve.entityId);
+      if (selected || hovered) {
+        sketchCurveLines(
+          segments,
+          selected ? input.colors.selection : input.colors.hover,
+          HIGHLIGHT_EDGE_PX,
+        );
+      }
+      curvePicks.push({ entityId: curve.entityId, segments });
+    }
+    if (curvePicks.length > 0 && !input.forExport) {
+      const baseId = pickTable.addRange(
+        curvePicks.map((c) => ({
+          kind: 'sketchCurve',
+          featureId: sketch.featureId,
+          entityId: c.entityId,
+        })),
+      );
+      const total = curvePicks.reduce((n, c) => n + c.segments.length, 0);
+      const segments = new Float32Array(total);
+      const localIndex = new Float32Array(total / 6);
+      let offset = 0;
+      curvePicks.forEach((c, index) => {
+        segments.set(c.segments, offset);
+        localIndex.fill(index, offset / 6, (offset + c.segments.length) / 6);
+        offset += c.segments.length;
+      });
+      idBatches.push({
+        kind: 'lines',
+        segments,
+        localIndex,
+        baseId,
+        widthPx: EDGE_HIT_PX * hitScale,
+      });
     }
     for (const profile of sketch.profiles) {
       const selected = input.selection.some((item) => matches(item, profile.key));
@@ -857,6 +934,7 @@ export function buildScene(input: SceneInput): BuiltScene {
       mode: 'triangles',
       depthTest: true,
     });
+    flat.push(...curveHighlights);
   }
 
   // ---- Construction planes and axes ---------------------------------------------
