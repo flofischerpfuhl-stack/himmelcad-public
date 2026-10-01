@@ -68,6 +68,13 @@ export const OP_KINDS = [
   'moveFace',
   'helix',
   'taper',
+  // Block 8 integration: two-direction/uniform patterns, profile split, reference images,
+  // sketch patterns (two directions, edited) and sketch offsets.
+  'patternGrid',
+  'splitProfile',
+  'image',
+  'sketchPattern',
+  'sketchOffset',
 ] as const;
 
 export type OpKind = (typeof OP_KINDS)[number];
@@ -138,6 +145,11 @@ const WEIGHTS: Record<OpKind, number> = {
   moveFace: 2,
   helix: 1,
   taper: 2,
+  patternGrid: 2,
+  splitProfile: 1,
+  image: 1,
+  sketchPattern: 2,
+  sketchOffset: 2,
 };
 
 /** mulberry32: small, fast, seedable. */

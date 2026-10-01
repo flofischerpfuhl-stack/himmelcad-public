@@ -89,6 +89,16 @@ const REFUSALS = new Set<ApiError['code']>([
   'unsupported',
 ]);
 
+/** Swallows a refusal of an op's follow-up call (its first call stays committed); rethrows the rest. */
+function refusedOnly(error: unknown): void {
+  if (error instanceof ApiError && REFUSALS.has(error.code)) return;
+  throw error;
+}
+
+/** A 4 × 2 px grey PNG for the reference-image op. */
+const FUZZ_PNG =
+  'iVBORw0KGgoAAAANSUhEUgAAAAQAAAACCAIAAADwyuo0AAAADklEQVR4nGNoQAIMyBwAnBoMATyCc0QAAAAASUVORK5CYII=';
+
 export interface Failure {
   step: number;
   op: Op;
@@ -909,6 +919,125 @@ export class FuzzHarness {
           },
         });
       }
+      // Block 8 integration: two-direction / uniform patterns, profile split, reference
+      // images, sketch patterns in two directions (edited afterwards) and sketch offsets.
+      case 'patternGrid': {
+        const body = await bodyId(r[0]);
+        if (!body) return null;
+        const axes = ['X', 'Y', 'Z'] as const;
+        const axis = pick(axes, r[2])!;
+        return this.api('feature.create', {
+          kind: 'pattern',
+          params: {
+            bodyIds: [body],
+            pattern:
+              (r[1] ?? 0) < 0.6
+                ? {
+                    kind: 'linear',
+                    direction: { kind: 'world', axis },
+                    count: 2 + Math.floor((r[3] ?? 0) * 3),
+                    spacing: between(r[4], 5, 40, 2.5),
+                    spacingMode: (r[5] ?? 0) < 0.5 ? 'spacing' : 'total',
+                    second: {
+                      direction: { kind: 'world', axis: axes[(axes.indexOf(axis) + 1) % 3]! },
+                      count: 1 + Math.floor((r[6] ?? 0) * 3),
+                      spacing: between(r[7], 5, 30, 2.5),
+                    },
+                  }
+                : {
+                    kind: 'circular',
+                    axis: { kind: 'world', axis },
+                    count: 2 + Math.floor((r[3] ?? 0) * 5),
+                    angle: between(r[4], 15, 90, 15),
+                    angleMode: 'spacing',
+                    uniform: (r[5] ?? 0) < 0.5,
+                  },
+          },
+        });
+      }
+      case 'splitProfile': {
+        const body = await bodyId(r[0]);
+        const sketch = pick(await sketches(), r[1]);
+        if (!body || !sketch) return null;
+        return this.api('feature.create', {
+          kind: 'split',
+          params: {
+            bodyId: body,
+            profile: { kind: 'sketch', featureId: sketch.id },
+            keepOriginal: (r[2] ?? 0) < 0.4,
+          },
+        });
+      }
+      case 'image': {
+        const plane = pick(planes, r[0])!;
+        return {
+          label: `image.insert on ${plane} (+ calibrate)`,
+          run: async () => {
+            const inserted = await this.call<{ featureId: string }>('image.insert', {
+              data: FUZZ_PNG,
+              fileName: 'fuzz.png',
+              plane: { kind: 'plane', plane, offset: between(r[1], -10, 10) },
+              center: [between(r[2], -20, 20), between(r[3], -20, 20)],
+              width: between(r[4], 5, 80),
+              opacity: between(r[5], 0.1, 1, 0.05),
+            });
+            if ((r[6] ?? 0) < 0.5) {
+              // The insert stays committed when the calibration is refused.
+              await this.call('image.calibrate', {
+                featureId: inserted.featureId,
+                a: [0, 0],
+                b: [between(r[7], 1, 20), 0],
+                distance: between(r[6], 1, 40),
+              }).catch(refusedOnly);
+            }
+          },
+          undoable: false,
+        };
+      }
+      case 'sketchPattern': {
+        const sketch = pick(await sketches(), r[0]);
+        if (!sketch) return null;
+        const curves = ((sketch.params.entities as { id: string; kind: string }[]) ?? []).filter(
+          (e) => e.kind === 'circle' || e.kind === 'line',
+        );
+        const curve = pick(curves, r[1]);
+        if (!curve) return null;
+        return {
+          label: `sketch.pattern ${sketch.id} ${curve.id} (+ editPattern)`,
+          run: async () => {
+            const made = await this.call<{ patternId: string }>('sketch.pattern', {
+              featureId: sketch.id,
+              ids: [curve.id],
+              count: 2 + Math.floor((r[2] ?? 0) * 2),
+              spacing: between(r[3], 2, 20),
+              ...((r[4] ?? 0) < 0.5 ? { count2: 2, spacing2: between(r[5], 2, 20) } : {}),
+            });
+            if ((r[6] ?? 0) < 0.5) {
+              await this.call('sketch.editPattern', {
+                featureId: sketch.id,
+                patternId: made.patternId,
+                count: 2 + Math.floor((r[7] ?? 0) * 3),
+              }).catch(refusedOnly);
+            }
+          },
+          undoable: false,
+        };
+      }
+      case 'sketchOffset': {
+        const sketch = pick(await sketches(), r[0]);
+        if (!sketch) return null;
+        const curves = ((sketch.params.entities as { id: string; kind: string }[]) ?? []).filter(
+          (e) => e.kind !== 'point' && e.kind !== 'text',
+        );
+        const curve = pick(curves, r[1]);
+        if (!curve) return null;
+        return this.api('sketch.offset', {
+          featureId: sketch.id,
+          ids: [curve.id],
+          distance: between(r[2], 0.5, 5),
+          side: pick(['outside', 'inside'] as const, r[3])!,
+        });
+      }
       case 'paramCreate': {
         this.paramCounter += 1;
         const existing = this.store.getState().parameters;
@@ -1443,6 +1572,11 @@ export class FuzzHarness {
     if (d2) fail('saveReopen', `reopened parameters differ: ${d2}`);
     const d3 = firstDifference(evaluationSignature(after.evaluation), expected);
     if (d3) fail('saveReopen', `reopened evaluation differs: ${d3}`);
+    // Module fields (reference-image pictures) survive the round trip too.
+    const again = await this.call<{ text: string }>('project.save');
+    const images = (text: string) => (JSON.parse(text) as { images?: unknown }).images ?? null;
+    const d4 = firstDifference(images(again.text), images(saved.text));
+    if (d4) fail('saveReopen', `reopened images differ: ${d4}`);
   }
 
   private checkAsyncErrors(): void {
