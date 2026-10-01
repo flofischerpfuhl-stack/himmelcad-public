@@ -63,6 +63,18 @@ Registrierungen, Parameter-/Print-/Printers-Modul, Prüfung mit Allowlist
 - Linux- (AppImage/deb) und macOS-Builds der Desktop-App (ohne gekaufte
   Signaturzertifikate; unsignierte Builds bzw. freie Alternativen prüfen).
 
+Stand 2026-10-01 (Block 8, Strang „web“, `asm/b8-web-20261001`): Web-Version
+gebaut – `apps/assembler-web`, PWA aus denselben Modulen, offline nach dem
+ersten Laden, Updates mit „Reload“-Hinweis, Projekte per File System Access API
+(Chromium) bzw. Upload/Download, zuletzt geöffnete Projekte und
+Wiederherstellung in IndexedDB, Agent-API im Browser als In-Page-API, strenge
+CSP, LGPL-Quellangebot samt OCCT-Rezept in der Site. E2E in Chromium,
+Smoke-Test in Firefox und WebKit grün; erstes Laden 6,9 MB (brotli), warm 0
+Bytes. Details und offene Punkte: [WEB.md](WEB.md); Hosting-Anforderungen:
+`apps/assembler-web/deploy/README.md`. **Nicht** erledigt: Hosting/DNS (nichts
+deployt), Test auf einem echten iPad, Linux- und macOS-Desktop-Builds (nur
+Schritte dokumentiert, WEB.md §9).
+
 ## 1b. Touch und Stift auf Shapr3D-Niveau (≈ 1 Block, nach der Web-Version)
 
 Shapr3D kommt vom iPad; unsere Touch-Unterstützung ist bisher Grundausstattung.
