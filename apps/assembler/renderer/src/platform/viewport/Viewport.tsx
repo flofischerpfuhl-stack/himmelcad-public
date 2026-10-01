@@ -771,6 +771,7 @@ export function Viewport(props: ViewportProps): JSX.Element {
         hiddenEdgesVisible: current.viewState.hiddenEdgesVisible,
         axesVisible: current.viewState.axesVisible,
         xrayOpacity: current.viewState.xrayOpacity,
+        gridPlane: current.viewState.gridPlane,
         materials: bodyMaterials(current.features, activeFeatureCount(current)),
         highQuality: usePreferences.getState().renderQuality === 'high',
         gridVisible: current.viewState.gridVisible,

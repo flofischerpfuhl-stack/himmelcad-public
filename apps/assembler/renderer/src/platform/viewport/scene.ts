@@ -186,6 +186,8 @@ export interface SceneInput {
   axesVisible?: boolean;
   /** Surface opacity in X-Ray mode. Default 0.32. */
   xrayOpacity?: number;
+  /** World plane of the grid (default XY); the ground shadow needs XY. */
+  gridPlane?: 'XY' | 'XZ' | 'YZ';
   /** Material per body id ("Visualized"). */
   materials?: ReadonlyMap<string, MaterialId>;
   /** Screen-space ambient occlusion and the ground contact shadow. Default `true`. */
@@ -425,8 +427,18 @@ export function buildScene(input: SceneInput): BuiltScene {
   const highQuality = input.highQuality ?? true;
   const lineInk = isWireframe || isXray ? input.colors.wire : input.colors.bodyEdge;
 
-  // ---- Grid (XY plane, z = 0) ----------------------------------------------
+  // ---- Grid (XY plane by default; XZ / YZ when chosen) ------------------------
   const gridExtent = Math.min(20000, Math.max(200, input.pose.distance * 6));
+  const gridPlane = input.gridPlane ?? 'XY';
+  // Grid (a, b) → world: the plane's two axes, the third coordinate 0.
+  const onGrid = (a: number, b: number): Vec3 =>
+    gridPlane === 'XY' ? [a, b, 0] : gridPlane === 'XZ' ? [a, 0, b] : [0, a, b];
+  const targetOnGrid: [number, number] =
+    gridPlane === 'XY'
+      ? [input.pose.target[0], input.pose.target[1]]
+      : gridPlane === 'XZ'
+        ? [input.pose.target[0], input.pose.target[2]]
+        : [input.pose.target[1], input.pose.target[2]];
   if (input.gridVisible && !sectionOnly) {
     const step = Math.max(0.001, input.gridStep);
     const extent = gridExtent;
@@ -442,20 +454,20 @@ export function buildScene(input: SceneInput): BuiltScene {
       const target = isMajor ? major : minor;
       const color = isMajor ? input.colors.gridMajor : input.colors.gridMinor;
       const fadeAt = (x: number, y: number): number => {
-        const d = Math.hypot(x - input.pose.target[0], y - input.pose.target[1]);
+        const d = Math.hypot(x - targetOnGrid[0], y - targetOnGrid[1]);
         return Math.max(0, 1 - d / fadeRadius) * (isMajor ? 0.55 : 0.28);
       };
       pushFlatLine(
         target,
-        [coord, -extent, 0],
-        [coord, extent, 0],
+        onGrid(coord, -extent),
+        onGrid(coord, extent),
         color,
         Math.min(fadeAt(coord, -extent), fadeAt(coord, extent)) || 0.05,
       );
       pushFlatLine(
         target,
-        [-extent, coord, 0],
-        [extent, coord, 0],
+        onGrid(-extent, coord),
+        onGrid(extent, coord),
         color,
         Math.min(fadeAt(-extent, coord), fadeAt(extent, coord)) || 0.05,
       );
@@ -1403,6 +1415,7 @@ export function buildScene(input: SceneInput): BuiltScene {
   if (
     highQuality &&
     input.gridVisible &&
+    gridPlane === 'XY' &&
     // The removed half of a section would still cast a shadow: none while cutting.
     !sectionOn &&
     shadowCasters.length > 0 &&

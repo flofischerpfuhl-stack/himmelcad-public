@@ -16,6 +16,7 @@ import {
   MenuSeparator,
   MenuSubmenu,
   Radio,
+  Select,
   Slider,
   Tooltip,
   registerEscapeRung,
@@ -23,7 +24,7 @@ import {
 
 import { COMMANDS, findCommand } from '../../../foundation/commands/registry.js';
 import { usePreferences } from '../../../platform/input/preferences.js';
-import type { AssemblerState } from '../../../foundation/commands/store.js';
+import { isGridPlane, type AssemblerState } from '../../../foundation/commands/store.js';
 import {
   DISPLAY_MODE_ENTRIES,
   activeDisplayEntry,
@@ -183,6 +184,24 @@ export function DisplayMenu({ state }: { state: AssemblerState }): JSX.Element {
             )}
             {toggle('display.hiddenEdges', view.hiddenEdgesVisible, 'Hidden edges (dashed)')}
             {toggle('display.grid', view.gridVisible, 'Grid')}
+            {view.gridVisible ? (
+              <label className={styles.sliderRow}>
+                <span className={styles.sliderLabel}>Grid plane</span>
+                <Select
+                  aria-label="Grid plane"
+                  value={view.gridPlane}
+                  options={[
+                    { value: 'XY', label: 'XY (floor)' },
+                    { value: 'XZ', label: 'XZ (front)' },
+                    { value: 'YZ', label: 'YZ (side)' },
+                  ]}
+                  onChange={(event) => {
+                    const plane = event.currentTarget.value;
+                    if (isGridPlane(plane)) state.setGridPlane(plane);
+                  }}
+                />
+              </label>
+            ) : null}
             {toggle('display.axes', view.axesVisible, 'Axes')}
           </div>
           <div className={styles.separator} role="separator" />

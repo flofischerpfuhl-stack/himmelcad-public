@@ -275,6 +275,15 @@ export interface ViewState {
   sectionOnly: boolean;
   /** Surface opacity of the X-Ray display mode, 0.05..0.95 (Shapr3D 26.90 "adjustable opacity"). */
   xrayOpacity: number;
+  /** World plane the grid lies in (Shapr3D grid planes XY/YZ/ZX). */
+  gridPlane: GridPlane;
+}
+
+/** World plane of the viewport grid. */
+export type GridPlane = 'XY' | 'XZ' | 'YZ';
+
+export function isGridPlane(value: unknown): value is GridPlane {
+  return value === 'XY' || value === 'XZ' || value === 'YZ';
 }
 
 /** Default X-Ray surface opacity (the value the mode always had). */
@@ -466,6 +475,7 @@ export interface AssemblerState extends AssemblerStateExtensions {
   ) => void;
   /** X-Ray surface opacity (clamped to 0.05..0.95); view state, not undo-tracked. */
   setXrayOpacity: (value: number) => void;
+  setGridPlane: (plane: GridPlane) => void;
   /** Sets (or clears) the face-aligned section plane; the offset restarts at the face. */
   setSectionPlane: (plane: SectionPlane | null) => void;
   /**
@@ -1568,9 +1578,11 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
       sectionPlane: null,
       sectionOnly: false,
       xrayOpacity: DEFAULT_XRAY_OPACITY,
+      gridPlane: 'XY',
     },
     setDisplayMode: (mode) => set((s) => ({ viewState: { ...s.viewState, displayMode: mode } })),
     setViewToggle: (key, value) => set((s) => ({ viewState: { ...s.viewState, [key]: value } })),
+    setGridPlane: (gridPlane) => set((s) => ({ viewState: { ...s.viewState, gridPlane } })),
     setXrayOpacity: (value) => {
       const xrayOpacity = clampXrayOpacity(value);
       if (xrayOpacity === null) return;

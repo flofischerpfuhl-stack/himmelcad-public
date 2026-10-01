@@ -27,6 +27,12 @@ import {
   sniffImage,
   type ReferenceImageFeature,
 } from '../../renderer/src/modules/canvas/referenceImage.js';
+import { findCommand } from '../../renderer/src/foundation/commands/registry.js';
+import { nextGridPlane } from '../../renderer/src/modules/display/displayCommands.js';
+import {
+  viewDisplayFromProject,
+  viewDisplayToProject,
+} from '../../renderer/src/modules/display/viewDisplay.js';
 import { createNodeKernelAdapter } from '../kernel/nodeKernel.js';
 
 type Json = Record<string, unknown>;
@@ -274,4 +280,30 @@ void test('canvas: UI insertion, calibration and the Items row', async () => {
   assert.equal(images()[0]!.width, 200);
   store.getState().undo();
   assert.equal(images()[0]!.width, 100);
+});
+
+void test('grid plane (VIEW-06): XY → XZ → YZ, saved in the view state only when not XY', () => {
+  assert.deepEqual(
+    ['XY', 'XZ', 'YZ'].map((p) => nextGridPlane(p as 'XY')),
+    ['XZ', 'YZ', 'XY'],
+  );
+  const state = store.getState();
+  assert.equal(state.viewState.gridPlane, 'XY');
+  assert.equal('gridPlane' in viewDisplayToProject(state.viewState).display, false);
+  const command = findCommand('display.gridPlane')!;
+  assert.match(command.label, /Grid Plane: XY \(next: XZ\)/);
+  command.run(store.getState());
+  assert.equal(store.getState().viewState.gridPlane, 'XZ');
+  const saved = viewDisplayToProject(store.getState().viewState);
+  assert.equal(saved.display.gridPlane, 'XZ');
+  assert.equal(viewDisplayFromProject({ display: { gridPlane: 'YZ' } }).gridPlane, 'YZ');
+  assert.equal(
+    'gridPlane' in viewDisplayFromProject({ display: { gridPlane: 'AB' as never } }),
+    false,
+    'unknown planes are ignored',
+  );
+  store.getState().setGridVisible(false);
+  assert.equal(findCommand('display.gridPlane')!.availability(store.getState()).enabled, false);
+  store.getState().setGridVisible(true);
+  store.getState().setGridPlane('XY');
 });
