@@ -207,9 +207,16 @@ checksum entry).
 
 ## 10. Open items
 
-- Not tried on a real iPad/Safari; WebKit on Windows passes the smoke test, but
-  its view cube renders as a skewed single face (`w6-webkit-extrude.png`,
-  viewport module).
+- Not tried on a real iPad/Safari; WebKit on Windows (Playwright's build) passes
+  the smoke test incl. the view cube. The cube used to render as one flattened,
+  mirrored face there: that WebKit flattens a `transform-style: preserve-3d`
+  subtree and culls the wrong sides with `backface-visibility: hidden`
+  (reproduced with a plain six-div CSS cube, Chromium and Firefox fine). Fixed
+  in the viewport module: each face carries its full transform
+  (`perspective() · cube · face`, `cubeFaceTransforms` in `camera.ts`) and the
+  back-face test is computed (perspective-correct), so neither feature is used;
+  the smoke test checks drawing, hit-testing and face/corner/edge clicks in all
+  three engines (`w6-*-viewcube*.png`).
 - No phone layout in the shell (top bar runs under the view cube at 390 px);
   tablet layout, pen and touch parity are the touch stream's (§12 TP-\*, ROADMAP
   §1b).

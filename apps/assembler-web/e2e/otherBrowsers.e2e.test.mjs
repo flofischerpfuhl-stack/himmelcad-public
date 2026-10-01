@@ -15,7 +15,15 @@ import test from 'node:test';
 import { firefox, webkit } from 'playwright-core';
 
 import { startServer } from '../scripts/serve.mjs';
-import { agentAccess, canvasCentre, shot, waitFor, waitForModel, watchErrors } from './helpers.mjs';
+import {
+  agentAccess,
+  checkViewCube,
+  canvasCentre,
+  shot,
+  waitFor,
+  waitForModel,
+  watchErrors,
+} from './helpers.mjs';
 
 function installed(prefix, relative) {
   const root = join(process.env.LOCALAPPDATA ?? '', 'ms-playwright');
@@ -57,6 +65,8 @@ for (const [name, engine, executablePath] of ENGINES) {
       await page.getByText(/cannot reopen files on its own/).waitFor();
       await waitForModel(page, { timeout: 180_000 });
       await shot(page, `w6-${name}-ready`);
+      // The orientation cube: drawn as a cube, hit-tested where drawn, face/corner/edge clicks orient.
+      await checkViewCube(page, name);
 
       // The agent first, on a clean document (a dirty one would make project.new refuse).
       const rpc = await agentAccess(page);

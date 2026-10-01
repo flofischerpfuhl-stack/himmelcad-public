@@ -7,6 +7,7 @@ import {
   cameraBasis,
   cubeCellDirection,
   cubeFaceMatrix3d,
+  cubeFaceTransforms,
   cubeMatrix3d,
   eyeOf,
   facingCubeFace,
@@ -85,6 +86,42 @@ void test('view cube in the iso preset shows Front, Right and Top towards the vi
   }).map((f) => f.name);
   assert.deepEqual(towards.sort(), ['front', 'right', 'top']);
   assert.ok(!isFaceOnView(pose));
+});
+
+void test('view cube faces carry their own transform and back-face test (no preserve-3d)', () => {
+  const visibleOf = (pose: CameraPose) =>
+    cubeFaceTransforms(pose, 48, 500)
+      .filter((f) => f.visible)
+      .map((f) => f.face.name)
+      .sort();
+  assert.deepEqual(visibleOf(presetPose('iso', DEFAULT_POSE)), ['front', 'right', 'top']);
+  for (const preset of PRESETS) {
+    // Face-on: the side faces are edge-on to the view axis, so the eye is behind them.
+    assert.deepEqual(visibleOf(presetPose(preset, DEFAULT_POSE)), [preset], preset);
+  }
+  const pose = presetPose('iso', DEFAULT_POSE);
+  const cube = cubeMatrix3d(pose);
+  for (const { face, matrix, depth } of cubeFaceTransforms(pose, 48, 500)) {
+    // The composed matrix is cube · face: the normal and the centre follow the cube rotation.
+    const local = cubeFaceMatrix3d(face, 48);
+    const normal = applyCss(cube, [local[8]!, local[9]!, local[10]!]);
+    const centre = applyCss(cube, [local[12]!, local[13]!, local[14]!]);
+    for (let i = 0; i < 3; i += 1) {
+      assert.ok(Math.abs(matrix[8 + i]! - normal[i]!) < 1e-12, `${face.name} normal`);
+      assert.ok(Math.abs(matrix[12 + i]! - centre[i]!) < 1e-9, `${face.name} centre`);
+    }
+    assert.ok(Math.abs(depth - centre[2]) < 1e-9);
+  }
+  // Perspective-correct: a side face turned 2° towards the viewer (normal z > 0) is still seen
+  // edge-on from behind by an eye 500 px in front of the cube (needs about 5.5°).
+  const slight = cubeFaceTransforms(orbit(presetPose('front', DEFAULT_POSE), 6, 0), 48, 500);
+  const side = slight.find((f) => f.face.name !== 'front' && f.matrix[10]! > 0.01)!;
+  assert.ok(side, 'a side face turns towards the viewer');
+  assert.equal(side.visible, false);
+  assert.deepEqual(
+    slight.filter((f) => f.visible).map((f) => f.face.name),
+    ['front'],
+  );
 });
 
 void test('scene and cube agree: world +X projects to the right in the Front view', () => {

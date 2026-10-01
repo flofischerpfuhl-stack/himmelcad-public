@@ -31,6 +31,7 @@ import {
   SHOTS_DIR,
   agentAccess,
   canvasCentre,
+  checkViewCube,
   chromiumPath,
   runCommand,
   shot,
@@ -121,6 +122,7 @@ void test('first load: strict CSP, kernel ready, service worker precache; first 
   await offlineReady(page);
   const precacheTraffic = wire.take();
   await shot(page, 'w1-offline-ready');
+  await checkViewCube(page, 'chromium');
   const controlled = await page.evaluate(async () => {
     await navigator.serviceWorker.ready;
     const keys = await caches.keys();

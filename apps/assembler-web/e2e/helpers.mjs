@@ -115,6 +115,80 @@ export async function waitFor(read, ok, what, { tries = 120, delay = 250 } = {})
   return value;
 }
 
+/** Names of the view cube faces currently shown (front-facing), sorted. */
+const visibleCubeFaces = (page) =>
+  page.evaluate(() =>
+    Array.from(document.querySelectorAll('[data-face][data-visible="true"]'))
+      .map((el) => el.getAttribute('data-face'))
+      .sort(),
+  );
+
+async function waitForCubeFaces(page, count, what) {
+  await page.waitForFunction(
+    (n) => document.querySelectorAll('[data-face][data-visible="true"]').length === n,
+    count,
+    { timeout: 15_000 },
+  );
+  // The camera animation ends on the final pose; give it a moment to settle.
+  await page.waitForTimeout(600);
+  const faces = await visibleCubeFaces(page);
+  assert.equal(faces.length, count, `${what}: ${faces.join(', ')}`);
+  return faces;
+}
+
+/**
+ * The view cube renders as a cube and orients the view in this engine: the
+ * shown faces are drawn where they are hit-tested, form one solid outline
+ * (not a single flattened face), and clicking a face, a corner and an edge
+ * gives a face-on view (1 face), an isometric view (3) and an edge view (2).
+ * Leaves the camera in an edge view.
+ */
+export async function checkViewCube(page, name) {
+  const faces = await visibleCubeFaces(page);
+  assert.ok(faces.length >= 1 && faces.length <= 3, `${name}: visible faces ${faces.join(', ')}`);
+  const boxes = await page.evaluate(() =>
+    Array.from(document.querySelectorAll('[data-face][data-visible="true"]')).map((face) => {
+      const cell = face.querySelector('[data-cell$=":0:0"]');
+      const r = cell.getBoundingClientRect();
+      const x = r.left + r.width / 2;
+      const y = r.top + r.height / 2;
+      return {
+        face: face.getAttribute('data-face'),
+        x,
+        y,
+        width: r.width,
+        height: r.height,
+        hit: document.elementFromPoint(x, y)?.getAttribute('data-cell') ?? null,
+      };
+    }),
+  );
+  for (const box of boxes) {
+    assert.ok(
+      box.width > 8 && box.height > 8,
+      `${name}: ${box.face} is drawn (${box.width}x${box.height})`,
+    );
+    assert.equal(box.hit, `${box.face}:0:0`, `${name}: the ${box.face} label is where it is hit`);
+  }
+  const scene = await page.locator('[aria-label^="View cube"]').boundingBox();
+  await page.screenshot({
+    path: join(SHOTS_DIR, `w6-${name}-viewcube.png`),
+    clip: { x: scene.x - 40, y: scene.y - 40, width: scene.width + 80, height: scene.height + 80 },
+  });
+
+  const first = faces[0];
+  await page.locator(`[data-cell="${first}:0:0"]`).click();
+  assert.deepEqual(await waitForCubeFaces(page, 1, `${name}: face click`), [first]);
+  await page.getByRole('button', { name: 'Rotate view 90° clockwise' }).waitFor();
+  await page.locator(`[data-cell="${first}:1:1"]`).click();
+  await waitForCubeFaces(page, 3, `${name}: corner click`);
+  await page.screenshot({
+    path: join(SHOTS_DIR, `w6-${name}-viewcube-corner.png`),
+    clip: { x: scene.x - 40, y: scene.y - 40, width: scene.width + 80, height: scene.height + 80 },
+  });
+  await page.locator(`[data-cell="${first}:0:1"]`).click();
+  await waitForCubeFaces(page, 2, `${name}: edge click`);
+}
+
 /** Centre of the viewport canvas in page pixels. */
 export const canvasCentre = (page) =>
   page.evaluate(() => {

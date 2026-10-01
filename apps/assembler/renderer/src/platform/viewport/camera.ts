@@ -506,6 +506,54 @@ export function cubeFaceMatrix3d(face: CubeFace, half: number): number[] {
   ]);
 }
 
+/** Column-major 4x4 product `a · b` (apply `b` first), as CSS composes `transform: a b`. */
+function multiplyCss(a: readonly number[], b: readonly number[]): number[] {
+  const out = new Array<number>(16).fill(0);
+  for (let col = 0; col < 4; col += 1) {
+    for (let row = 0; row < 4; row += 1) {
+      let sum = 0;
+      for (let k = 0; k < 4; k += 1) sum += a[k * 4 + row]! * b[col * 4 + k]!;
+      out[col * 4 + row] = sum;
+    }
+  }
+  return out;
+}
+
+export interface CubeFaceTransform {
+  face: CubeFace;
+  /** The face's complete `matrix3d` (cube orientation · face placement) about the cube centre. */
+  matrix: number[];
+  /** The face turns its outside towards the eye (perspective-correct back-face test). */
+  visible: boolean;
+  /** Distance of the face centre towards the viewer (CSS z, px): larger is nearer. */
+  depth: number;
+}
+
+/**
+ * The view cube's six faces, each as one flat transform plus its own
+ * back-face test, so rendering needs neither `transform-style: preserve-3d`
+ * nor `backface-visibility` (engines differ there — the WebKit tested here
+ * flattens the preserve-3d cube and culls the wrong sides). `perspective` is
+ * the CSS perspective distance (px) the faces are drawn with, the eye sitting
+ * that far in front of the cube centre: a face is visible when the eye is on
+ * its outer side, `(eye − centre) · normal > 0`.
+ */
+export function cubeFaceTransforms(
+  pose: CameraPose,
+  half: number,
+  perspective: number,
+): CubeFaceTransform[] {
+  const cube = cubeMatrix3d(pose);
+  return CUBE_FACES.map((face) => {
+    const matrix = multiplyCss(cube, cubeFaceMatrix3d(face, half));
+    const normal: Vec3 = [matrix[8]!, matrix[9]!, matrix[10]!];
+    const centre: Vec3 = [matrix[12]!, matrix[13]!, matrix[14]!];
+    const towardsEye =
+      -centre[0] * normal[0] - centre[1] * normal[1] + (perspective - centre[2]) * normal[2];
+    return { face, matrix, visible: towardsEye > 1e-6, depth: centre[2] };
+  });
+}
+
 /** The face whose outward normal points most directly at the viewer. */
 export function facingCubeFace(pose: CameraPose): CubeFace {
   const back = viewDirection(pose);
