@@ -143,6 +143,79 @@ void test('measure: several bodies; a vanished reference; nothing selected', () 
   ]);
 });
 
+void test('measure (MEA-02): sums over several edges/faces/bodies; X/Y/Z components of distances', () => {
+  // Three edges of box a (10 mm each) and a fourth from box b: total length.
+  const edges = measure(
+    ['a:e0', 'a:e1', 'a:e8', 'b:e0'].map((key) => ({
+      kind: 'edge' as const,
+      bodyId: key.startsWith('a') ? 'body:a' : 'body:b',
+      edgeKey: key,
+    })),
+    ctx,
+  )!;
+  assert.equal(edges.title, '4 items');
+  assert.equal(edges.subject, '4 edges');
+  assert.equal(value(edges, 'Total length (4 edges)'), 40);
+  // Faces and a body mixed: one sum per kind that occurs twice.
+  const mixed = measure(
+    [
+      { kind: 'face', bodyId: 'body:a', faceKey: 'a:top' },
+      { kind: 'face', bodyId: 'body:a', faceKey: 'a:front' },
+      { kind: 'face', bodyId: 'body:b', faceKey: 'b:top' },
+      { kind: 'body', bodyId: 'body:c' },
+    ],
+    ctx,
+  )!;
+  assert.equal(mixed.subject, '3 faces, 1 body');
+  assert.equal(value(mixed, 'Total area (3 faces)'), 300);
+  assert.equal(value(mixed, 'Total volume'), undefined, 'one body is no sum');
+  // Two faces measure their relation and show the sum as a secondary value.
+  const two = measure(
+    [
+      { kind: 'face', bodyId: 'body:a', faceKey: 'a:right' },
+      { kind: 'face', bodyId: 'body:b', faceKey: 'b:left' },
+    ],
+    ctx,
+  )!;
+  assert.equal(two.title, 'Parallel faces');
+  const sum = two.values.find((v) => v.label === 'Total area (2 faces)')!;
+  assert.equal(sum.value, 200);
+  assert.equal(sum.secondary, true);
+  // Components: the parallel distance is along X only.
+  assert.equal(value(two, 'ΔX'), 10);
+  assert.equal(value(two, 'ΔY'), 0);
+  assert.equal(value(two, 'ΔZ'), 0);
+  // Minimum distance from the kernel: the components of its closest points.
+  const exact = measure(
+    [
+      { kind: 'body', bodyId: 'body:a' },
+      { kind: 'body', bodyId: 'body:b' },
+    ],
+    {
+      ...ctx,
+      distance: () => ({ distance: 13, pointA: [10, 0, 0], pointB: [22, -5, 0], approx: false }),
+    },
+  )!;
+  assert.deepEqual(
+    exact.values.filter((v) => v.label.startsWith('Δ')).map((v) => [v.label, v.value, v.secondary]),
+    [
+      ['ΔX', 12, true],
+      ['ΔY', 5, true],
+      ['ΔZ', 0, true],
+    ],
+  );
+  // Nothing summable: the note says what works.
+  const nothing = measure(
+    [
+      { kind: 'point', point: [0, 0, 0], label: 'P' },
+      { kind: 'point', point: [1, 0, 0], label: 'P' },
+      { kind: 'point', point: [2, 0, 0], label: 'P' },
+    ],
+    ctx,
+  )!;
+  assert.match(nothing.note!, /several edges, faces or bodies/);
+});
+
 void test('geometry helpers: circle through three points, closest point on a triangle, mesh volume', () => {
   const c = circleThrough([5, 0, 0], [0, 5, 0], [-5, 0, 0])!;
   assert.ok(Math.hypot(...c.center) < 1e-9 && Math.abs(c.radius - 5) < 1e-9);
@@ -214,6 +287,16 @@ void test('view display state round-trips; invalid values keep the defaults', ()
   assert.equal(loaded.hiddenEdgesVisible, true);
   assert.deepEqual(loaded.sectionPlane, view.sectionPlane);
   assert.equal(loaded.sectionOnly, true);
+  // X-Ray opacity (VIEW-10): written only when changed, clamped on load.
+  assert.equal('xrayOpacity' in saved.display, false);
+  const xray = viewDisplayToProject({ ...view, xrayOpacity: 0.6 } as never);
+  assert.equal(xray.display.xrayOpacity, 0.6);
+  assert.equal(viewDisplayFromProject({ display: xray.display }).xrayOpacity, 0.6);
+  assert.equal(viewDisplayFromProject({ display: { xrayOpacity: 3 } }).xrayOpacity, 0.95);
+  assert.equal(
+    viewDisplayFromProject({ display: { xrayOpacity: 'x' as never } }).xrayOpacity,
+    undefined,
+  );
   assert.deepEqual(viewDisplayFromProject({ displayMode: 'toon' as never }), {});
   assert.equal(parseSectionPlane({ normal: [0, 0, 0], origin: [0, 0, 0] }), null);
   assert.deepEqual(parseSectionPlane({ normal: [0, 0, 2], origin: [0, 0, 0] })?.normal, [0, 0, 1]);

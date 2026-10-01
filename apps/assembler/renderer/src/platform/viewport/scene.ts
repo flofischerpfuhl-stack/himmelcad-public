@@ -179,6 +179,8 @@ export interface SceneInput {
   hiddenEdgesVisible?: boolean;
   /** World axes. Default `true`. */
   axesVisible?: boolean;
+  /** Surface opacity in X-Ray mode. Default 0.32. */
+  xrayOpacity?: number;
   /** Material per body id ("Visualized"). */
   materials?: ReadonlyMap<string, MaterialId>;
   /** Screen-space ambient occlusion and the ground contact shadow. Default `true`. */
@@ -557,7 +559,7 @@ export function buildScene(input: SceneInput): BuiltScene {
 
     const opaque = !isXray && !isExtrudePreview;
     if (!isWireframe && !sectionOnly) {
-      const alpha = isXray ? 0.32 : isExtrudePreview ? 0.55 : 1;
+      const alpha = isXray ? (input.xrayOpacity ?? 0.32) : isExtrudePreview ? 0.55 : 1;
       const materialId = input.materials?.get(body.id);
       lit.push({
         positions,

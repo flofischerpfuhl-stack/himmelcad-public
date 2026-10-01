@@ -7,7 +7,12 @@
 import type { Body, FaceInfo } from '../../foundation/geometry-kernel/types.js';
 import { isDisplayMode } from '../../platform/viewport/displayModes.js';
 import type { ProjectViewState } from '../../foundation/document/format.js';
-import type { SectionPlane, ViewState } from '../../foundation/commands/store.js';
+import {
+  clampXrayOpacity,
+  DEFAULT_XRAY_OPACITY,
+  type SectionPlane,
+  type ViewState,
+} from '../../foundation/commands/store.js';
 
 type Vec3 = [number, number, number];
 
@@ -20,6 +25,8 @@ declare module '../../foundation/document/format.js' {
       edges?: boolean;
       hiddenEdges?: boolean;
       axes?: boolean;
+      /** X-Ray surface opacity 0.05..0.95; absent = the default (0.32). Block 8. */
+      xrayOpacity?: number;
     };
   }
   interface ProjectSectionView {
@@ -89,6 +96,8 @@ export function viewDisplayFromProject(view: ProjectViewState): Partial<ViewStat
     if (typeof display.edges === 'boolean') out.edgesVisible = display.edges;
     if (typeof display.hiddenEdges === 'boolean') out.hiddenEdgesVisible = display.hiddenEdges;
     if (typeof display.axes === 'boolean') out.axesVisible = display.axes;
+    const xray = clampXrayOpacity(display.xrayOpacity);
+    if (xray !== null) out.xrayOpacity = xray;
   }
   const section = view.section;
   if (section && typeof section === 'object') {
@@ -110,6 +119,10 @@ export function viewDisplayToProject(view: ViewState): {
       edges: view.edgesVisible,
       hiddenEdges: view.hiddenEdgesVisible,
       axes: view.axesVisible,
+      // Only a changed opacity is written: files with the default keep their bytes.
+      ...(Math.abs(view.xrayOpacity - DEFAULT_XRAY_OPACITY) > 1e-9
+        ? { xrayOpacity: Math.round(view.xrayOpacity * 100) / 100 }
+        : {}),
     },
     sectionExtras: {
       ...(view.sectionPlane

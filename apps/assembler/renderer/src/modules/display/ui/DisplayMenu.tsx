@@ -16,6 +16,7 @@ import {
   MenuSeparator,
   MenuSubmenu,
   Radio,
+  Slider,
   Tooltip,
   registerEscapeRung,
 } from '@himmelcad/ui';
@@ -156,6 +157,21 @@ export function DisplayMenu({ state }: { state: AssemblerState }): JSX.Element {
               </div>
             ))}
           </div>
+          {view.displayMode === 'xray' ? (
+            <label className={styles.sliderRow}>
+              <span className={styles.sliderLabel}>X-Ray opacity</span>
+              <Slider
+                min={5}
+                max={95}
+                step={5}
+                value={Math.round(view.xrayOpacity * 100)}
+                valueText={`${Math.round(view.xrayOpacity * 100)} %`}
+                aria-label="X-Ray opacity"
+                onValueChange={(percent) => state.setXrayOpacity(percent / 100)}
+              />
+              <span className={styles.sliderValue}>{Math.round(view.xrayOpacity * 100)} %</span>
+            </label>
+          ) : null}
           <div className={styles.separator} role="separator" />
           <div className={styles.sectionTitle}>Show</div>
           <div className={styles.toggles}>

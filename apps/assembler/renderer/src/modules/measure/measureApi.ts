@@ -188,6 +188,8 @@ export async function runMeasureQuery(method: string, p: Json, env: MeasureEnv):
         distance: result.distance,
         pointA: result.pointA,
         pointB: result.pointB,
+        // X/Y/Z components of the distance (absolute, world axes), as the panel shows them.
+        delta: result.pointB.map((v, i) => Math.abs(v - result.pointA[i]!)),
         unit: 'mm',
         exact: true,
       };
@@ -284,7 +286,7 @@ const MEASURE_METHODS: Record<string, MethodSpec> = {
     kind: 'query',
     capability: 'document.read',
     summary:
-      "The Measure panel's measurement of 1..n items (one body: size/volume/mass/area; one edge: length or radius/diameter; one face: area (+ cylinder diameter); two items: exact minimum distance from the kernel, parallel distance or angle; several bodies: combined box/volume/mass). Values carry `unit` (mm, mm², mm³, deg, g); `approx` marks mesh estimates.",
+      "The Measure panel's measurement of 1..n items (one body: size/volume/mass/area; one edge: length or radius/diameter; one face: area (+ cylinder diameter); two items: exact minimum distance from the kernel, parallel distance or angle, each distance with its ΔX/ΔY/ΔZ components; several bodies: combined box/volume/mass; several edges/faces/bodies: total length/area/volume/mass). Values carry `unit` (mm, mm², mm³, deg, g); `approx` marks mesh estimates.",
     params: schemaObject(
       {
         items: { type: 'array', items: schemaRef('MeasureTarget'), minItems: 1, maxItems: 16 },
@@ -298,12 +300,12 @@ const MEASURE_METHODS: Record<string, MethodSpec> = {
     kind: 'query',
     capability: 'document.read',
     summary:
-      'Exact minimum distance between two bodies/faces/edges/points (kernel BRepExtrema_DistShapeShape) and the closest points.',
+      'Exact minimum distance between two bodies/faces/edges/points (kernel BRepExtrema_DistShapeShape), the closest points and the X/Y/Z components of the distance (`delta`, absolute).',
     params: schemaObject(
       { a: schemaRef('MeasureTarget'), b: schemaRef('MeasureTarget'), scope: schemaScope },
       ['a', 'b'],
     ),
-    result: '{distance, pointA, pointB, unit: "mm", exact: true}',
+    result: '{distance, pointA, pointB, delta: [dx, dy, dz], unit: "mm", exact: true}',
   },
   'measure.angle': {
     kind: 'query',

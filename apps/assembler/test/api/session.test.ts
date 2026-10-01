@@ -634,6 +634,12 @@ void test('measure.*: kernel-exact distance, angle, area and volume, same number
   });
   assert.equal(distance.exact, true);
   assert.ok(Math.abs((distance.distance as number) - Math.hypot(20, 4)) < 1e-6);
+  // X/Y/Z components (MEA-02).
+  const delta = distance.delta as number[];
+  assert.deepEqual(
+    delta.map((v) => Math.round(v * 1e6) / 1e6),
+    [20, 0, 4],
+  );
   const toPoint = await call<Json>('measure.distance', {
     a: { kind: 'face', face: { bodyId, select: '>Z' } },
     b: { kind: 'point', point: [10, 10, 16] },

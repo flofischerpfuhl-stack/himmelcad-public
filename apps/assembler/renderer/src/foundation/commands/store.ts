@@ -271,6 +271,17 @@ export interface ViewState {
   sectionPlane: SectionPlane | null;
   /** 2D "section only": just the cut regions and their outlines. */
   sectionOnly: boolean;
+  /** Surface opacity of the X-Ray display mode, 0.05..0.95 (Shapr3D 26.90 "adjustable opacity"). */
+  xrayOpacity: number;
+}
+
+/** Default X-Ray surface opacity (the value the mode always had). */
+export const DEFAULT_XRAY_OPACITY = 0.32;
+
+/** An X-Ray opacity within the allowed range (`null` for a non-number). */
+export function clampXrayOpacity(value: unknown): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+  return Math.min(0.95, Math.max(0.05, value));
 }
 
 export interface PanelsState {
@@ -451,6 +462,8 @@ export interface AssemblerState extends AssemblerStateExtensions {
     key: 'edgesVisible' | 'hiddenEdgesVisible' | 'axesVisible' | 'sectionOnly',
     value: boolean,
   ) => void;
+  /** X-Ray surface opacity (clamped to 0.05..0.95); view state, not undo-tracked. */
+  setXrayOpacity: (value: number) => void;
   /** Sets (or clears) the face-aligned section plane; the offset restarts at the face. */
   setSectionPlane: (plane: SectionPlane | null) => void;
   /**
@@ -1542,9 +1555,15 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
       axesVisible: true,
       sectionPlane: null,
       sectionOnly: false,
+      xrayOpacity: DEFAULT_XRAY_OPACITY,
     },
     setDisplayMode: (mode) => set((s) => ({ viewState: { ...s.viewState, displayMode: mode } })),
     setViewToggle: (key, value) => set((s) => ({ viewState: { ...s.viewState, [key]: value } })),
+    setXrayOpacity: (value) => {
+      const xrayOpacity = clampXrayOpacity(value);
+      if (xrayOpacity === null) return;
+      set((s) => ({ viewState: { ...s.viewState, xrayOpacity } }));
+    },
     setSectionPlane: (plane) =>
       set((s) => ({
         viewState: {
