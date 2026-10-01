@@ -25,8 +25,8 @@ import { promises as fs } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 
+// The kernel's own composition (`app/kernelModules.ts`) loads in the kernel thread.
 import '../renderer/src/app/composition.js';
-import '../renderer/src/app/kernelModules.js';
 import { handleJsonRpcText } from '../renderer/src/interface/agent-api/jsonRpc.js';
 import {
   AGENT_API_SCHEMA,

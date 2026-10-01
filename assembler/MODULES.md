@@ -1,15 +1,17 @@
 # HimmelCAD Assembler — modules (ADR 0032)
 
-Status: phase A of the modular restructure done (Florian, 2026-09-30; plan
-in [ROADMAP-LATER.md](ROADMAP-LATER.md) §0). This file is the design and the
-working contract for phase B, in which several agents move the remaining
-domain modules in parallel. The machine-readable module map is
-[`apps/assembler/modules.json`](../apps/assembler/modules.json); the known
-violations still to remove are
+Status: phases A and B of the modular restructure done and integrated
+(Block 7, 2026-10-01; plan in [ROADMAP-LATER.md](ROADMAP-LATER.md) §0).
+Every domain module is migrated and the allowlist of known violations is
+**empty** (157 at the start of phase A, 53 at its end, 0 after phase B).
+This file is the design and the working contract for adding or changing a
+module. The machine-readable module map is
+[`apps/assembler/modules.json`](../apps/assembler/modules.json); the
+allowlist
 [`apps/assembler/module-allowlist.json`](../apps/assembler/module-allowlist.json)
-(53 at the end of phase A, 157 at its start, 38 after agent C of phase B). `pnpm check:assembler-modules`
-enforces both; it also runs in `pnpm lint` and at the start of the
-Assembler `test` script.
+may only shrink, so it stays empty. `pnpm check:assembler-modules` enforces
+both; it also runs in `pnpm lint` and at the start of the Assembler `test`
+script.
 
 Decisions not repeated here: ADR 0032 (module architecture, dependencies
 point downward, domain modules register themselves, products are
@@ -67,20 +69,20 @@ foundation  jobs  <  document  <  sketch-solver  <  geometry-kernel  <  commands
 | viewport        | platform   | WebGL2 renderer, scene, camera, picking, selection, grid, display-mode rendering, the **overlay host** (`overlays.ts`) and the camera channel (`cameraChannel.ts`).                                                                                                                                                       | `renderer/src/platform/viewport`            |
 | widgets         | platform   | The building blocks module UIs share (panel and History-card styles, expression fields with name completion, anchored menus) and the **UI half of the module contract** (`moduleUi.ts`).                                                                                                                                  | `renderer/src/platform/widgets`             |
 | sketching       | domain     | **Migrated.** Sketch mode: session, drawing tools, inference, sketch commands, overlay, chrome, History card, sketch agent API.                                                                                                                                                                                           | `renderer/src/modules/sketching`            |
-| modeling        | domain     | Solid features and their tools, History cards, handles, API schemas (revolve … thicken), later the core extrude/fillet/chamfer/shell/boolean/move tools.                                                                                                                                                                  | `renderer/src/modules/modeling`             |
-| direct-edit     | domain     | Offset Face (value modes), Delete Face, move face.                                                                                                                                                                                                                                                                        | `renderer/src/modules/direct-edit`          |
+| modeling        | domain     | **Migrated.** Solid features (extrude … thicken, print parts) with kinds, evaluators, tools and tool sessions, History cards, handles, API kind schemas.                                                                                                                                                                  | `renderer/src/modules/modeling`             |
+| direct-edit     | domain     | **Migrated.** Offset Face (value modes), Delete Face.                                                                                                                                                                                                                                                                     | `renderer/src/modules/direct-edit`          |
 | construction    | domain     | **Migrated.** Construction planes and axes.                                                                                                                                                                                                                                                                               | `renderer/src/modules/construction`         |
 | parameters      | domain     | **Migrated.** Parameter edits (plan/commit), the store slice, Parameters panel, parameter API methods.                                                                                                                                                                                                                    | `renderer/src/modules/parameters`           |
-| measure         | domain     | Measure mode, pinned measurements, panel, overlay, measure API.                                                                                                                                                                                                                                                           | `renderer/src/modules/measure`              |
-| display         | domain     | Appearance/colour, display-mode and section commands and menus, visibility commands, analysis legend, image export, persisted view display.                                                                                                                                                                               | `renderer/src/modules/display`              |
-| interop         | domain     | Import/export UI and parsers (STEP structure UI, IGES, DXF, STL, 3MF, OBJ), mesh→solid flow, import worker, interop API. OCCT only through the kernel adapter.                                                                                                                                                            | `renderer/src/modules/interop`              |
+| measure         | domain     | **Migrated.** Measure mode, pinned measurements, panel, overlay, measure API.                                                                                                                                                                                                                                             | `renderer/src/modules/measure`              |
+| display         | domain     | **Migrated.** Appearance/colour, display-mode and section commands and menus, visibility commands, analysis legend, image export, persisted view display.                                                                                                                                                                 | `renderer/src/modules/display`              |
+| interop         | domain     | **Migrated.** Import/export UI and parsers (STEP structure UI, IGES, DXF, STL, 3MF, OBJ), mesh→solid flow, import worker, interop API. OCCT only through the kernel adapter.                                                                                                                                              | `renderer/src/modules/interop`              |
 | templates       | domain     | **Migrated.** Home-screen project templates.                                                                                                                                                                                                                                                                              | `renderer/src/modules/templates`            |
 | print           | domain     | **Migrated.** Printability analysis, orientation, placement, STL export options, Print mode panel/toggle/overlays, print API, its worker.                                                                                                                                                                                 | `renderer/src/modules/print`                |
 | printers        | domain     | **Migrated.** Slicers: store, 3MF hand-off, Slicers… dialog, commands (desktop side `electron/slicer*.ts`); later printer profiles, build volumes, direct send with own safety rules.                                                                                                                                     | `renderer/src/modules/printers`             |
 | agent-api       | interface  | `hcasm.agent-api@1` session and dispatch, the composed schema document (`schema.ts`), JSON-RPC framing, feature builders, in-app endpoint bridge.                                                                                                                                                                         | `renderer/src/interface/agent-api`          |
 | shell-ui        | interface  | Layout, docks, the panel/mode-button/History-card hosts, History and Items panels, command search, menus, dialogs, project lifecycle UI, workspace state.                                                                                                                                                                 | `renderer/src/interface/shell-ui`           |
 | app             | product    | Desktop renderer composition: `composition.ts`, `uiComposition.ts`, `kernelModules.ts`, `kernel.worker.ts`, `main.tsx`, dev tooling.                                                                                                                                                                                      | `renderer/src/app`, `renderer/src/main.tsx` |
-| headless        | product    | `assembler-headless` composition.                                                                                                                                                                                                                                                                                         | `headless/cli.ts`                           |
+| headless        | product    | `assembler-headless`: CLI composition and the kernel thread (`kernelThread.ts`, `threadKernel.ts`, time budget).                                                                                                                                                                                                          | `headless/`                                 |
 | desktop-host    | product    | Electron main/preload.                                                                                                                                                                                                                                                                                                    | `electron/`                                 |
 
 Deliberate narrowing of ADR 0032 for Assembler (ADR 0033 allows its own
@@ -192,9 +194,8 @@ guides?, modifiedBodyIds? })`; the draft types come in through a
 - **Project templates** — `defineAssemblerModule({ projectTemplates })`,
   `foundation/commands/projectTemplates.ts` (`projectTemplates()`,
   `projectTemplate(id)`); the Home screen lists the registry.
-- **Handler-only API contributions** — `ApiContribution.handlers`: a module
-  owns the handler of a method whose spec a core block of `schema.ts`
-  publishes; one owner per handler. `ApiContext` gained `findFeature` and
+- **Handler-only API contributions** (`ApiContribution.handlers`, removed in
+  the integration — see below). `ApiContext` gained `findFeature` and
   `validateStored`.
 - **Viewport DOM overlays and modes** (`platform/viewport/domOverlays.ts`) —
   `defineModuleUi({ viewportDomOverlays, viewportModes })`: React overlays
@@ -225,12 +226,8 @@ module, order, validate, include? })` for a top-level field (typed by
   grid 500 / panels 600 (the store; section 100 in the project store),
   measurements 400 (measure), savedViews 700 (shell-ui). The project store
   (`shell-ui/project/projectStore.ts`) only collects and applies sections.
-- **`api.handlers`** (`commands/api/registry.ts`) — handlers of methods
-  whose schema another block still publishes (interop's `import.*`,
-  `interop.formats`, `export.dxf`, `mesh.toSolid`; measure's `measure.*`).
-  One handler per method; registered handlers run before the session's
-  `switch`. Moving the specs into the modules' `api.methods` blocks is the
-  schema owner's step (published order must not change).
+- **`api.handlers`** for interop's and measure's methods (since the
+  integration their specs and handlers are `api.methods` blocks).
 - **Project persistence** (`document/projectPersistence.ts`) — the open
   project's lifecycle (unsaved flag, open/new/text, `requestOpen` with the
   unsaved-changes dialog) for code below the shell; the shell installs the
@@ -281,15 +278,45 @@ provisional, commit, emptyClickFinishes })`: the core runs the shared
   `registry.ts` `registeredCommand`, `COMMAND_ORDER.directEdit` /
   `modelingFeaturesTail` and `API_ORDER.featureKinds.{modeling,
 construction, modelingTail, directEdit}` (published orders unchanged).
-  Compositions (`renderer/src/app`):
+
+Settled in the integration (Block 7):
+
+- **API methods are spec + handler, in the owning module.** The
+  `ApiContribution.handlers` stop-gap is gone. The core blocks of
+  `agent-api/schema.ts` are split where module methods sit between them
+  (`API_ORDER.methods`: coreHead 100 · sketchesList 110 (sketching) ·
+  datumsList 120 (construction) · coreSelection 130 · parameters 200 ·
+  measure 250 · coreFeatures 300 · sketchEdits 310 (sketching) · coreTail
+  320 · importStep 330 (interop) · coreProject 340 · print 400 · interop
+  500; `$defs`: … coreMid 120 · measure 122 (`MeasureTarget`) · coreSketch
+  124 …), so the published schema is byte-identical. What stays core: the
+  methods the session implements (document reads, `feature.*`,
+  transactions, undo/redo, the STL/3MF/STEP/IGES exports, `project.*`) and
+  the shared `$defs` (references, selectors, the sketch data the core
+  `sketch` kind uses). `registerApiContribution` checks every name before it
+  changes anything; a duplicate throws and leaves the registry as it was.
+- **Kernel time budget** (F13, `geometry-kernel/timeout.ts`): a
+  `KernelTimeoutError` from any handler — the session's own or a module's —
+  is answered as `kernelTimeout` (−32016); module handlers rethrow it rather
+  than wrapping it.
+
+Compositions (`renderer/src/app`):
 
 - `composition.ts` — the module list; `installModules` at import. Imported
   first by `main.tsx`, `headless/cli.ts` and `test/setup.ts`.
 - `uiComposition.ts` — the modules' UI parts (`installModuleUis`); desktop only.
-- `kernelModules.ts` — the kind registrations and evaluators; imported by
-  `kernel.worker.ts` (the worker entry; the name is load-bearing for the CSP
-  rules in `electron/main.ts` and `vite.config.ts`), by the CLI and by the
-  tests (`test/kernel/nodeKernel.ts` too).
+- `kernelModules.ts` — the kernel side: every kind-owning module's
+  `kernel.ts` (which imports its `kinds.ts`, so the kernel has the same kind
+  definitions as the main thread) and the `sketch` kind. Loaded by
+  `kernel.worker.ts` (the app's kernel Web Worker; the name is load-bearing
+  for the CSP rules in `electron/main.ts` and `vite.config.ts`), by
+  `headless/kernelThread.ts` (the CLI's and the fuzzer's kernel thread,
+  started with `execArgv: []` so a parent's `--import` preload does not leak
+  in), by `test/setup.ts` (the in-process test kernel) and by
+  `test/setupKernel.ts` (`bench:kernel`). `test/kernel/kernelTimeout.test.ts`
+  checks that the thread registers the same kinds and evaluators as the app.
+- `startModules` (`install(host)`) runs in the desktop renderer only;
+  headless and tests reach the kernel through the API context.
 - Tests: every test, fuzz and bench script preloads `test/setup.ts` with
   `node --import`, so each test process has the product's registrations.
 
@@ -297,12 +324,9 @@ construction, modelingTail, directEdit}` (published orders unchanged).
 
 `modules.json` is authoritative: every file under `renderer/src`,
 `headless` and `electron` belongs to exactly one module by longest path
-prefix, so a file can belong to its target module before it moves. Phase A
-moved foundation, platform and interface into their folders and migrated
-`parameters`, `print` and `printers` completely; phase B agent C migrated
-`interop`, `measure` and `display`. What remains under
-`renderer/src/{model,chrome,sketch,templates,viewport,kernel,api}` is domain
-code waiting for the other phase-B agents (§6).
+prefix. All domain modules are migrated; `renderer/src` holds only `app`,
+`foundation`, `platform`, `modules` (the domain layer) and `interface`, and
+the allowlist is empty (`check:assembler-modules`: 0 violations).
 
 ## 5. How to move a module (phase B checklist)
 
@@ -498,3 +522,21 @@ Order: the three agents move their files and registrations in parallel
 (only their own files, plus one line each in the app compositions and their
 own entries in `modules.json`); then B does the `Viewport.tsx`/`store.ts`
 wave and A the `session.ts` wave for everyone.
+
+**Integration (Block 7, branch `feat/assembler-phase0-20260929`).**
+`asm/modB-20260930` (phase A + agents A, B, C) and agent A's F13 commit
+(`2d0ae7c0`, headless kernel in a worker thread with a time budget) are
+merged. Done from the second-wave notes: the dead `measure.*`, `import.*`,
+`interop.formats`, `export.dxf` and `mesh.toSolid` cases of `session.ts`
+are gone; the `measure.*` specs and `MeasureTarget`, `sketches.list`,
+`sketch.*`, `datums.list` and `import.step` moved into their modules'
+`api.methods` (§3 "Settled in the integration"); the published schema is
+byte-identical apart from F13's `kernelTimeout` error code, and the
+command list (ids, labels, groups, shortcuts, keywords, adaptive rules,
+order) is identical to the pre-restructure build. Allowlist: 0.
+
+Left open (not violations): headless `project.save`/`project.open`/
+`project.new` work on features and parameters only — module sections
+(Items, reference meshes, pins, view state) are not saved or restored
+headless (as before the restructure; the app goes through the project
+store); `startModules` is desktop-only by design.
