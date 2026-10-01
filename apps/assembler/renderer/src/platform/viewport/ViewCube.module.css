@@ -136,3 +136,11 @@
   right: auto;
   left: 36px;
 }
+
+/* Phone width (web build): the top bar spans the screen, so the cube (and its roll buttons)
+   sits below it; the view controls follow below the cube (RightDock.module.css). */
+@media (max-width: 599px) {
+  .scene {
+    top: 100px;
+  }
+}

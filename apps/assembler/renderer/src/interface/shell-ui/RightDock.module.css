@@ -158,3 +158,10 @@
 :global(html[data-hc-touch]) .root {
   width: 176px;
 }
+
+/* Phone width (web build): below the view cube, which sits below the full-width top bar. */
+@media (max-width: 599px) {
+  .root {
+    top: 250px;
+  }
+}

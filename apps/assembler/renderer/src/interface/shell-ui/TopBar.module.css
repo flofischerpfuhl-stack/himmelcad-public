@@ -164,3 +164,19 @@
 :global(html[data-hc-touch]) .menuTrigger {
   padding: 10px 12px;
 }
+
+/* Phone width (web build): the bar spans the screen above the view cube (moved down, see
+   ViewCube.module.css), the wordmark gives way to the mark, the menus scroll sideways. */
+@media (max-width: 599px) {
+  .root,
+  :global(html[data-hc-hand='left']) .root {
+    left: 12px;
+    right: 12px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+  }
+  .wordmark {
+    display: none;
+  }
+}

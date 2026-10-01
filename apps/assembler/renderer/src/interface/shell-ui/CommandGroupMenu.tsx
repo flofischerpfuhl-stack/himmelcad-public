@@ -51,6 +51,9 @@ export function CommandGroupMenu({
       top: rect.bottom + 6,
       [align === 'left' ? 'left' : 'right']:
         align === 'left' ? rect.left : window.innerWidth - rect.right,
+      // A long menu (File, with finger-sized rows in the tablet layout) scrolls inside the window.
+      maxHeight: Math.max(160, window.innerHeight - rect.bottom - 18),
+      overflowY: 'auto',
     });
   };
 
