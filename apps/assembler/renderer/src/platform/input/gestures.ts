@@ -25,7 +25,7 @@ export interface GestureOptions {
   /** Movement that turns a press into a drag, CSS px. */
   slopPx: number;
   longPressMs: number;
-  /** Two taps closer in time and space are a double tap. */
+  /** A tap going down this soon after the previous tap lifted (and close to it) is a double tap, ms. */
   doubleTapMs: number;
   doubleTapSlopPx: number;
   /** A multi-finger tap: all fingers up within this time of the first going down, ms. */
@@ -41,7 +41,7 @@ export interface GestureOptions {
 export const DEFAULT_GESTURE_OPTIONS: GestureOptions = {
   slopPx: 10,
   longPressMs: 500,
-  doubleTapMs: 350,
+  doubleTapMs: 400,
   doubleTapSlopPx: 30,
   multiTapMs: 300,
   swipePx: 60,
@@ -92,6 +92,8 @@ type Phase =
       id: number;
       startT: number;
       mode: 'pending' | 'held' | 'orbit' | 'box' | 'still';
+      /** Went down soon after a tap, near it: a tap now is the second of a double tap. */
+      secondTap: boolean;
     }
   | {
       kind: 'multi';
@@ -153,7 +155,12 @@ export class TouchGestureRecognizer {
     this.contacts.set(p.id, { x: p.x, y: p.y, startX: p.x, startY: p.y });
     const phase = this.phase;
     if (phase.kind === 'idle') {
-      this.phase = { kind: 'one', id: p.id, startT: p.t, mode: 'pending' };
+      const last = this.lastTap;
+      const secondTap =
+        last !== null &&
+        p.t - last.t <= this.options.doubleTapMs &&
+        Math.hypot(p.x - last.x, p.y - last.y) <= this.options.doubleTapSlopPx;
+      this.phase = { kind: 'one', id: p.id, startT: p.t, mode: 'pending', secondTap };
       this.velocity = [{ x: p.x, y: p.y, t: p.t }];
       return out;
     }
@@ -282,11 +289,7 @@ export class TouchGestureRecognizer {
       this.phase = this.contacts.size > 0 ? { kind: 'done' } : { kind: 'idle' };
       switch (phase.mode) {
         case 'pending': {
-          const last = this.lastTap;
-          const double =
-            last !== null &&
-            t - last.t <= this.options.doubleTapMs &&
-            Math.hypot(contact.x - last.x, contact.y - last.y) <= this.options.doubleTapSlopPx;
+          const double = phase.secondTap;
           this.lastTap = double ? null : { x: contact.x, y: contact.y, t };
           out.push({ type: 'tap', x: contact.x, y: contact.y, count: double ? 2 : 1 });
           break;

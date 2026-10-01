@@ -72,6 +72,17 @@ void test('a tap; two quick taps at the same spot are a double tap; a far tap st
     ).count,
     1,
   );
+  // The second tap counts from its touch-down: a slow second press is still a double tap.
+  const slowPress = new TouchGestureRecognizer();
+  run(slowPress, [
+    ['down', 1, 50, 50, 0],
+    ['up', 1, 80],
+  ]);
+  const slowSecond = run(slowPress, [
+    ['down', 2, 52, 50, 380],
+    ['up', 2, 470],
+  ]);
+  assert.equal((slowSecond[0] as { count: number }).count, 2);
   // Too slow for a double tap.
   const late = run(r, [
     ['down', 5, 400, 400, 1200],
