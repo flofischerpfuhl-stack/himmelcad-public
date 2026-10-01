@@ -470,12 +470,12 @@ function pickItemLabel(
 }
 
 /** History "Fix…": what to pick, the problem with the last pick, Cancel. */
-function FixPill(): JSX.Element | null {
+function FixPill({ itemsOpen }: { itemsOpen: boolean }): JSX.Element | null {
   const session = useFixStore((s) => s.session);
   if (!session) return null;
   return (
     <>
-      <div className={styles.pill} role="status" aria-label={`Fix ${session.featureName}`}>
+      <div className={pillClass(itemsOpen)} role="status" aria-label={`Fix ${session.featureName}`}>
         <span className={styles.name}>Fix {session.featureName}</span>
         <span className={styles.divider} aria-hidden />
         <span className={styles.prompt}>
@@ -673,9 +673,18 @@ function ToolBadge({
   }
 }
 
+/**
+ * With the Items panel open the pill is centred in the band between that
+ * panel and the right dock, so a wide tool bar never covers the panel's
+ * header (tablet layout at 1180 px, narrow windows).
+ */
+function pillClass(itemsOpen: boolean): string {
+  return itemsOpen ? `${styles.pill} ${styles.pillBesideItems}` : (styles.pill ?? '');
+}
+
 export function ToolSession({ state }: { state: AssemblerState }): JSX.Element | null {
   const tool = state.activeTool;
-  if (!tool) return <FixPill />;
+  if (!tool) return <FixPill itemsOpen={state.panels.items} />;
   const meta = toolMeta(tool);
   const preview = isPreviewTool(tool) ? tool : null;
   const error = preview?.previewError ?? null;
@@ -688,7 +697,11 @@ export function ToolSession({ state }: { state: AssemblerState }): JSX.Element |
 
   return (
     <>
-      <div className={styles.pill} role="status" aria-label={`${meta.label} tool active`}>
+      <div
+        className={pillClass(state.panels.items)}
+        role="status"
+        aria-label={`${meta.label} tool active`}
+      >
         <span className={styles.name}>{meta.label}</span>
         {meta.shortcut ? <span className={styles.shortcut}>{meta.shortcut}</span> : null}
         <span className={styles.divider} aria-hidden />

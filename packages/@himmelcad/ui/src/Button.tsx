@@ -32,6 +32,7 @@ export function Button({
       disabled={disabled || loading}
       aria-busy={loading || undefined}
       aria-pressed={pressed ?? ariaPressed}
+      data-size={size}
       className={`${styles.button} ${styles[`button_${variant}`]} ${styles[`button_${size}`]} ${className ?? ''}`.trim()}
     >
       {loading ? <Spinner label={loadingLabel} size="small" /> : icon}

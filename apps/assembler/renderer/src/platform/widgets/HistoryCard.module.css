@@ -300,3 +300,9 @@
   outline: 2px solid var(--hc-accent-base);
   outline-offset: 1px;
 }
+
+/* Tablet layout: the card's settings button (…) is a finger target. */
+:global(html[data-hc-touch]) .menuButton {
+  width: 34px;
+  height: 34px;
+}

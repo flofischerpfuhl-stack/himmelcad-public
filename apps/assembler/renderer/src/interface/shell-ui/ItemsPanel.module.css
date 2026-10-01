@@ -185,8 +185,15 @@
   height: 34px;
 }
 :global(html[data-hc-touch]) .swatch {
+  position: relative;
   width: 18px;
   height: 18px;
+}
+/* The colour swatch stays small to look at but takes a finger-sized tap. */
+:global(html[data-hc-touch]) .swatch::after {
+  content: '';
+  position: absolute;
+  inset: -9px;
 }
 :global(html[data-hc-touch]) .filter {
   height: 34px;

@@ -164,6 +164,9 @@
 :global(html[data-hc-touch]) .menuTrigger {
   padding: 10px 12px;
 }
+:global(html[data-hc-touch]) .projectName {
+  min-height: 36px;
+}
 
 /* Phone width (web build): the bar spans the screen above the view cube (moved down, see
    ViewCube.module.css), the wordmark gives way to the mark, the menus scroll sideways. */

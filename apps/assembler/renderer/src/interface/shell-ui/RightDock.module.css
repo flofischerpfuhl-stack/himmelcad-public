@@ -159,9 +159,53 @@
   width: 176px;
 }
 
-/* Phone width (web build): below the view cube, which sits below the full-width top bar. */
-@media (max-width: 599px) {
-  .root {
-    top: 250px;
-  }
+/* Phone width (web build): one "View options" button below the view cube (which sits below the
+   full-width top bar) opens the controls as a sheet (RightDock.tsx). */
+.phoneRoot {
+  position: absolute;
+  top: 252px;
+  right: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--hc-space-2);
+  pointer-events: auto;
+}
+
+.phoneToggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-md);
+  background: var(--hc-bg-island);
+  box-shadow: var(--hc-shadow-island);
+  color: var(--hc-fg-default);
+  cursor: pointer;
+}
+
+.phoneToggle:focus-visible {
+  outline: 2px solid var(--hc-focus-ring);
+  outline-offset: 1px;
+}
+
+.sheet {
+  display: flex;
+  flex-direction: column;
+  gap: var(--hc-space-2);
+  width: min(240px, calc(100vw - 24px));
+}
+
+.sheetToggles {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--hc-space-2);
+}
+
+:global(html[data-hc-hand='left']) .phoneRoot {
+  right: auto;
+  left: 12px;
+  align-items: flex-start;
 }

@@ -12,6 +12,8 @@ export const CANVAS_COMMANDS: readonly Command[] = [
     id: 'add.image',
     label: 'Image…',
     group: 'add',
+    // A block of its own in the Add menu, after the primitives.
+    separatorBefore: true,
     keywords: [
       'insert image',
       'canvas',

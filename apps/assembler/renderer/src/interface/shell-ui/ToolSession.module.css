@@ -22,6 +22,21 @@
   max-width: min(1080px, calc(100vw - 360px));
 }
 
+/* The Items panel is open: centred between it (left 68 + 272 px) and the view cube / right
+   dock (150 px + margins), so the pill never covers the panel's header. */
+.pillBesideItems {
+  left: 352px;
+  right: 174px;
+  width: fit-content;
+  max-width: none;
+  margin-inline: auto;
+  transform: none;
+}
+:global(html[data-hc-hand='left']) .pillBesideItems {
+  left: 174px;
+  right: 352px;
+}
+
 .badgeSelect {
   display: inline-flex;
   font-size: 11px;
@@ -256,4 +271,25 @@
 :global(html[data-hc-touch]) .actions button {
   min-height: 36px;
   padding-inline: 12px;
+}
+
+/* Tablet layout: Items starts at 82 px (wider tool column), the right dock is 176 px wide. */
+:global(html[data-hc-touch]) .pillBesideItems {
+  left: 366px;
+  right: 200px;
+}
+:global(html[data-hc-touch][data-hc-hand='left']) .pillBesideItems {
+  left: 200px;
+  right: 366px;
+}
+
+/* Phone width: no room beside the panel; the pill spans the screen as before. */
+@media (max-width: 599px) {
+  .pillBesideItems,
+  :global(html[data-hc-touch]) .pillBesideItems,
+  :global(html[data-hc-hand='left']) .pillBesideItems,
+  :global(html[data-hc-touch][data-hc-hand='left']) .pillBesideItems {
+    left: 12px;
+    right: 12px;
+  }
 }

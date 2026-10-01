@@ -29,3 +29,11 @@ html[data-hc-touch] [role='menuitemradio'],
 html[data-hc-touch] [role='option'] {
   min-height: 40px;
 }
+
+/* Small shared buttons (Cancel/Done in panels, Load, Locate, dialog actions …) are
+ * finger-sized in the tablet layout; their size on a mouse device is unchanged. */
+html[data-hc-touch] button[data-size='small'] {
+  min-height: 36px;
+  padding-inline: 12px;
+  font-size: 12px;
+}

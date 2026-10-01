@@ -188,3 +188,31 @@
   font-size: 11px;
   color: var(--hc-fg-subtle);
 }
+
+/* Tablet layout: the trigger and the projection choices are finger targets. */
+:global(html[data-hc-touch]) .trigger {
+  height: 40px;
+}
+:global(html[data-hc-touch]) .segment {
+  height: 36px;
+  font-size: 12px;
+}
+:global(html[data-hc-touch]) .popover {
+  width: 300px;
+}
+
+/* Phone width (web build): the popovers open as a sheet at the bottom of the screen
+   (there is no room beside the view controls). */
+@media (max-width: 599px) {
+  .popover,
+  :global(html[data-hc-touch]) .popover {
+    position: fixed;
+    top: auto;
+    right: 12px;
+    bottom: 12px;
+    left: 12px;
+    width: auto;
+    max-height: calc(100vh - 160px);
+    overflow-y: auto;
+  }
+}

@@ -274,6 +274,7 @@ export const WORKSPACE_COMMANDS: readonly Command[] = [
   },
   {
     id: 'view.saveView',
+    separatorBefore: true,
     // Shows how many of the 8 slots are used; a saved view also keeps the section state.
     get label() {
       return `Save view (${useWorkspaceStore.getState().savedViews.length}/${MAX_SAVED_VIEWS})`;
