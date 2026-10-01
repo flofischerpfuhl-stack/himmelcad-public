@@ -23,6 +23,11 @@ import {
   resolveTabletLayout,
 } from '../../renderer/src/platform/input/tabletLayout.js';
 import { applyKeypadKey, keypadTargetOf } from '../../renderer/src/platform/widgets/keypad.js';
+import {
+  NAVIGATION_PRESETS,
+  penNavigation,
+  resolveDrag,
+} from '../../renderer/src/platform/input/navigation.js';
 
 const event = (over: Partial<Parameters<typeof samplePointer>[0]>) => ({
   pointerId: 1,
@@ -229,4 +234,20 @@ void test('keypad: typing, backspace, sign, units, clear; which fields get it', 
   assert.equal(keypadTargetOf(attrs(null, null)), null, 'a name field');
   assert.equal(keypadTargetOf(attrs('off', 'decimal')), null);
   assert.equal(keypadTargetOf(attrs('number', null, null, 'checkbox')), null);
+});
+
+void test('Windows pen modifiers navigate; the mouse bindings of every preset are unchanged', () => {
+  const none = { shift: false, ctrl: false, alt: false };
+  assert.equal(penNavigation(none), null);
+  assert.equal(penNavigation({ ...none, shift: true }), 'orbit');
+  assert.equal(penNavigation({ ...none, ctrl: true }), 'pan');
+  assert.equal(penNavigation({ ...none, alt: true }), 'zoom');
+  assert.equal(penNavigation({ shift: true, ctrl: true, alt: false }), null, 'two modifiers: none');
+  // Mouse regression: left = select (Shift/Ctrl add), the camera buttons per preset.
+  const shapr3d = NAVIGATION_PRESETS.find((p) => p.id === 'shapr3d')!;
+  assert.equal(resolveDrag(shapr3d, 0, none), 'select');
+  assert.equal(resolveDrag(shapr3d, 0, { ...none, shift: true }), 'select');
+  assert.equal(resolveDrag(shapr3d, 2, none), 'orbit');
+  assert.equal(resolveDrag(shapr3d, 2, { ...none, shift: true }), 'pan');
+  assert.equal(resolveDrag(shapr3d, 1, none), 'pan');
 });

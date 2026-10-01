@@ -172,6 +172,21 @@ void test('built app: tablet layout, pen sketching, keypad, finger gestures, lef
     { timeout: 15_000 },
   );
 
+  // The mouse is unchanged next to pen and touch: Line tool clicks, not strokes.
+  const freedomNow = async () =>
+    Number(/(\d+) degrees of freedom/.exec((await page.textContent('body')) ?? '')?.[1] ?? 0);
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('l');
+  const beforeMouse = await freedomNow();
+  await page.mouse.click(cx - 160, cy + 140);
+  await page.mouse.move(cx - 60, cy + 141, { steps: 4 });
+  await page.mouse.click(cx - 60, cy + 141);
+  await page.waitForFunction(
+    (n) => Number(/(\d+) degrees of freedom/.exec(document.body.textContent ?? '')?.[1] ?? 0) > n,
+    beforeMouse,
+    { timeout: 15_000 },
+  );
+
   // Finish the sketch with a finger: one History step.
   await page.keyboard.press('Escape');
   await tapElement(cdp, page.getByRole('button', { name: 'Finish' }));
