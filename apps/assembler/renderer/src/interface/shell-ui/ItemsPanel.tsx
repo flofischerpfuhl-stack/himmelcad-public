@@ -62,6 +62,8 @@ import type { AssemblerState, SelectionItem } from '../../foundation/commands/st
 import { useWorkspaceStore } from './workspace.js';
 import { useDisplayDialogs } from '../../modules/display/dialogs.js';
 import { useSketchStore } from '../../modules/sketching/session.js';
+import { imageFeature } from '../../modules/canvas/canvasStore.js';
+import { ImageOpacitySlider } from '../../modules/canvas/ui/ImageOpacitySlider.js';
 import { anchoredMenuStyle } from '../../platform/widgets/anchoredMenu.js';
 import panelStyles from '../../platform/widgets/Panel.module.css';
 import styles from './ItemsPanel.module.css';
@@ -412,7 +414,12 @@ export function ItemsPanel({ state, onContextMenu }: ItemsPanelProps): JSX.Eleme
     }
     const row = rows.get(node.key);
     if (!row) return null;
-    return (
+    // A selected image row shows its opacity slider (Shapr3D image items).
+    const image =
+      row.item.kind === 'feature' && state.selection.length === 1 && isSelected(row.item)
+        ? imageFeature(state, row.item.featureId)
+        : null;
+    const leaf = (
       <LeafRowView
         key={node.key}
         row={row}
@@ -448,6 +455,19 @@ export function ItemsPanel({ state, onContextMenu }: ItemsPanelProps): JSX.Eleme
           onContextMenu(x, y);
         }}
       />
+    );
+    if (!image) return leaf;
+    return (
+      <div key={node.key} role="none">
+        {leaf}
+        <div
+          className={styles.rowExtra}
+          style={{ paddingLeft: 8 + depth * 14 + 36 }}
+          data-image-opacity-row=""
+        >
+          <ImageOpacitySlider feature={image} state={state} />
+        </div>
+      </div>
     );
   };
 
