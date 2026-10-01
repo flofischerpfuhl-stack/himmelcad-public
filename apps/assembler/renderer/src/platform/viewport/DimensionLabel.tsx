@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 
 import { registerEscapeRung } from '@himmelcad/ui';
 
+import { evaluateConstantExpression } from '../../foundation/document/expressions.js';
 import { usePreferences } from '../input/preferences.js';
 import { parseExpression } from './expr.js';
 import styles from './DimensionLabel.module.css';
@@ -107,7 +108,14 @@ export function DimensionLabel(props: DimensionLabelProps): JSX.Element {
     // An explicit "mm" or "in"/'"' suffix wins; bare numbers are in the display unit.
     const explicitMm = /mm\s*$/i.test(text);
     const explicitIn = /(in|")\s*$/i.test(text);
-    const parsed = parseExpression(text.replace(/\s*(mm|in|"|°|deg)\s*$/i, ''));
+    const stripped = text.replace(/\s*(mm|in|"|°|deg)\s*$/i, '');
+    // Units inside the expression (`10 mm + 1 in`): every term converts on its own, bare numbers are mm.
+    if (/\d\s*(mm|cm|m|in|inch|ft|"|'|um|°|deg|rad)(?![A-Za-z0-9_])/i.test(stripped)) {
+      const mixed = evaluateConstantExpression(text);
+      if (mixed !== null) props.onCommit(mixed);
+      return;
+    }
+    const parsed = parseExpression(stripped);
     if (parsed !== null && Number.isFinite(parsed)) {
       const toMm = (inches && !explicitMm) || (explicitIn && unit !== '°');
       props.onCommit(toMm ? parsed * MM_PER_INCH : parsed);

@@ -7,6 +7,14 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { useAssemblerStore } from '../../renderer/src/foundation/commands/store.js';
+import {
+  evaluateConstantExpression,
+  isPlainNumber,
+  parseDimensionExpression,
+} from '../../renderer/src/foundation/document/expressions.js';
+import { resolveDimensionValues } from '../../renderer/src/foundation/sketch-solver/dimensionValues.js';
+import { parseExpression } from '../../renderer/src/platform/viewport/expr.js';
+import { evaluateExpression } from '../../renderer/src/platform/widgets/expression.js';
 import { addRectangle } from '../../renderer/src/foundation/sketch-solver/builders.js';
 import {
   addProjection,
@@ -225,4 +233,35 @@ void test('circle size (SK-05): the circle chip and the Dimension tool follow th
   useSketchPreferences.getState().setCircleDimension('radius');
   assert.equal(useSketchPreferences.getState().circleDimension, 'radius');
   useSketchPreferences.getState().setCircleDimension('diameter');
+});
+
+void test('units inside expressions (CON-08): each term converts to mm / degrees', () => {
+  const close = (a: number | null, b: number) =>
+    assert.ok(a !== null && Math.abs(a - b) < 1e-9, `${a} vs ${b}`);
+  close(evaluateConstantExpression('10 mm + 1 in'), 35.4);
+  close(evaluateConstantExpression('2.5cm'), 25);
+  close(evaluateConstantExpression('2 m - 1 ft'), 2000 - 304.8);
+  close(evaluateConstantExpression('1" + 1\''), 25.4 + 304.8);
+  close(evaluateConstantExpression('(1 in + 1 in) / 2'), 25.4);
+  close(evaluateConstantExpression('90° - 1 rad'), 90 - 180 / Math.PI);
+  close(evaluateConstantExpression('1,5 cm'), 15);
+  assert.equal(evaluateConstantExpression('2 meters'), null, 'unknown unit words stay errors');
+  assert.equal(evaluateConstantExpression('wall + 1 in'), null, 'names need a lookup');
+  const parsed = parseDimensionExpression('wall + 1 in')!;
+  assert.deepEqual(parsed.refs, ['wall']);
+  close(
+    parsed.evaluate((n) => (n === 'wall' ? 2 : null)),
+    27.4,
+  );
+  assert.equal(isPlainNumber('1 in'), false);
+  // The UI fields accept them too.
+  close(evaluateExpression('1 in + 2'), 27.4);
+  close(parseExpression('10 mm + 1 in'), 35.4);
+  assert.equal(parseExpression('abc'), null);
+  // A sketch dimension written with units.
+  const values = resolveDimensionValues([
+    { id: 'm1', name: 'd1', kind: 'distance', refs: ['l1'], value: 1, expression: '1 in + 5 mm' },
+  ]);
+  assert.ok(values.ok);
+  close(values.values.get('m1')!, 30.4);
 });
