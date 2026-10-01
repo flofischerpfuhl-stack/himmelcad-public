@@ -531,6 +531,22 @@ export function ItemsPanel({ state, onContextMenu }: ItemsPanelProps): JSX.Eleme
         role="tree"
         aria-label="Items"
         aria-multiselectable
+        onKeyDown={(event) => {
+          // Ctrl+A inside Items selects the listed rows (Shapr3D: Ctrl+A acts in the focused panel).
+          if (
+            (event.ctrlKey || event.metaKey) &&
+            !event.altKey &&
+            !event.shiftKey &&
+            event.key.toLowerCase() === 'a' &&
+            !(event.target instanceof HTMLInputElement)
+          ) {
+            event.preventDefault();
+            const items = order
+              .map((key) => rows.get(key)?.item)
+              .filter((i): i is SelectionItem => i !== undefined);
+            state.setSelection(items);
+          }
+        }}
         onDragOver={(event) => {
           if (!event.dataTransfer.types.includes(DRAG_MIME)) return;
           event.preventDefault();
