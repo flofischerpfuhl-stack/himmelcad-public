@@ -31,12 +31,13 @@ import {
   SquareDashed,
   TriangleAlert,
   Type,
+  Unlink,
   X,
   type LucideIcon,
 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { Button, NumberInput, Select, Tooltip } from '@himmelcad/ui';
+import { Button, Checkbox, NumberInput, Select, Tooltip } from '@himmelcad/ui';
 
 import {
   fontLabel,
@@ -52,7 +53,9 @@ import { useAssemblerStore } from '../../../foundation/commands/store.js';
 import { CONSTRAINT_INFO } from '../constraintRules.js';
 import { patternOf, type PatternPatch } from '../operations.js';
 import { useSketchStore, type SketchSession } from '../session.js';
-import type { SketchPattern } from '../../../foundation/sketch-solver/types.js';
+import { useSketchPreferences } from '../sketchPreferences.js';
+import { projectionOf } from '../../../foundation/sketch-solver/projection.js';
+import type { SketchPattern, SketchProjection } from '../../../foundation/sketch-solver/types.js';
 import type { SketchTool, SketchToolKind } from '../tools.js';
 import styles from './SketchChrome.module.css';
 
@@ -105,7 +108,9 @@ export function toolPrompt(tool: SketchTool): string {
       if (tool.tangent || !tool.end) return 'Click the end point.';
       return 'Move to bend the arc, click or type its height.';
     case 'circle':
-      return tool.center ? 'Click to set the size or type a diameter.' : 'Click the centre.';
+      return tool.center
+        ? `Click to set the size or type a ${useSketchPreferences.getState().circleDimension}.`
+        : 'Click the centre.';
     case 'rectangle':
       if (tool.mode === 'threePoint') {
         if (!tool.first) return 'Click the start of the base line.';
@@ -231,6 +236,18 @@ function Modes<T extends string>(props: {
   );
 }
 
+/** Circle tool: size circles by diameter or radius (value chip and Dimension tool; a user preference). */
+function CircleSizeOption(): JSX.Element {
+  const current = useSketchPreferences((p) => p.circleDimension);
+  const set = useSketchPreferences((p) => p.setCircleDimension);
+  return (
+    <div className={styles.row} role="radiogroup" aria-label="Circle size">
+      <Option value="diameter" current={current} label="Diameter" onSelect={set} />
+      <Option value="radius" current={current} label="Radius" onSelect={set} />
+    </div>
+  );
+}
+
 function ToolOptions({ tool }: { tool: SketchTool }): JSX.Element | null {
   const setOption = useSketchStore((s) => s.setToolOption);
   const dispatch = useSketchStore((s) => s.dispatch);
@@ -247,6 +264,8 @@ function ToolOptions({ tool }: { tool: SketchTool }): JSX.Element | null {
           ]}
         />
       );
+    case 'circle':
+      return <CircleSizeOption />;
     case 'arc':
       return (
         <Modes
@@ -721,6 +740,54 @@ export function selectedPattern(session: SketchSession): SketchPattern | null {
   return null;
 }
 
+/** The projection a selected curve/point belongs to (Select tool), if any. */
+export function selectedProjection(session: SketchSession): SketchProjection | null {
+  if (session.tool.kind !== 'select') return null;
+  for (const id of session.selection) {
+    const projection = projectionOf(session.sketch, id);
+    if (projection) return projection;
+  }
+  return null;
+}
+
+/**
+ * Projected geometry selected (Shapr3D "Linked" toggle): linked geometry is
+ * fixed and follows its source; switching Linked off keeps it as ordinary,
+ * editable sketch geometry (one undo step; re-project to link again).
+ */
+function ProjectionPanel({ session }: { session: SketchSession }): JSX.Element | null {
+  const projection = selectedProjection(session);
+  const status = useAssemblerStore(
+    (s) =>
+      s.evaluation.sketches
+        .find((sk) => sk.featureId === session.featureId)
+        ?.projections?.find((p) => p.id === projection?.id)?.status ?? 'ok',
+  );
+  if (!projection || selectedPattern(session)) return null;
+  const source = projection.source.kind === 'edge' ? 'an edge' : 'a face outline';
+  return (
+    <div
+      className={`${styles.textPanel} ${styles.centered}`}
+      role="group"
+      aria-label="Projected geometry"
+      data-sketch-projection-panel=""
+      onPointerDown={(event) => event.stopPropagation()}
+    >
+      <span className={styles.panelTitle}>Projected from {source}</span>
+      <Checkbox
+        label="Linked"
+        checked
+        aria-label="Linked to its source"
+        onChange={() => void useSketchStore.getState().unlinkProjection([projection.id])}
+      />
+      <span className={styles.count}>
+        {status === 'ok'
+          ? 'Follows the source; turn off to edit it freely'
+          : 'Source missing: kept where it was'}
+      </span>
+    </div>
+  );
+}
 function ProjectionWarning({ featureId }: { featureId: string }): JSX.Element | null {
   const evaluated = useAssemblerStore((s) =>
     s.evaluation.sketches.find((sk) => sk.featureId === featureId),
@@ -738,13 +805,45 @@ function ProjectionWarning({ featureId }: { featureId: string }): JSX.Element | 
         {text}
         {broken.length > 1 ? ` (+${broken.length - 1} more)` : ''}
       </span>
+      <Button
+        variant="quiet"
+        size="small"
+        onClick={() => void useSketchStore.getState().unlinkProjection(broken.map((p) => p.id))}
+      >
+        Unlink
+      </Button>
     </div>
+  );
+}
+
+/** Disconnect (Shapr3D): splits the selected shared point so the curves can move apart. */
+function DisconnectButton(): JSX.Element {
+  const main = useAssemblerStore((s) => s);
+  useSketchStore((s) => s.session?.selection);
+  const command = findCommand('sketch.disconnect');
+  const availability = command?.availability(main) ?? { enabled: false };
+  return (
+    <Tooltip
+      content={availability.enabled ? 'Disconnect' : `Disconnect — ${availability.reason ?? ''}`}
+    >
+      <button
+        type="button"
+        aria-label="Disconnect"
+        className={styles.tool}
+        disabled={!availability.enabled}
+        onClick={() => command?.run(main)}
+      >
+        <Unlink size={15} />
+      </button>
+    </Tooltip>
   );
 }
 
 export function SketchChrome(): JSX.Element | null {
   const session = useSketchStore((s) => s.session);
   const main = useAssemblerStore((s) => s);
+  // The circle prompt names the size kind.
+  useSketchPreferences((p) => p.circleDimension);
   if (!session) return null;
   const status = statusText(session);
   const name =
@@ -828,6 +927,7 @@ export function SketchChrome(): JSX.Element | null {
       )}
       {session.tool.kind === 'text' ? <TextPanel tool={session.tool} /> : null}
       <PatternPanel session={session} />
+      <ProjectionPanel session={session} />
       <div
         className={styles.palette}
         onPointerDown={(event) => event.stopPropagation()}
@@ -872,6 +972,7 @@ export function SketchChrome(): JSX.Element | null {
               </Tooltip>
             );
           })}
+          <DisconnectButton />
         </div>
       </div>
     </>

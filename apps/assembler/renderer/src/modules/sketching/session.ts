@@ -34,7 +34,8 @@ import {
   useAssemblerStore,
 } from '../../foundation/commands/store.js';
 import { initialAdvancedTool } from './advancedTools.js';
-import { editPattern, type PatternPatch } from './operations.js';
+import { disconnectPoints, editPattern, type PatternPatch } from './operations.js';
+import { useSketchPreferences } from './sketchPreferences.js';
 import { constraintInfo, planConstraint } from './constraintRules.js';
 import {
   deleteItems,
@@ -49,6 +50,7 @@ import {
   adoptProjectedEntities,
   edgeSampleFromSegments,
   projectSource,
+  unlinkProjections,
   type EdgeSample,
 } from '../../foundation/sketch-solver/projection.js';
 import { pointIdsOf } from '../../foundation/sketch-solver/moveRegion.js';
@@ -211,6 +213,8 @@ export interface SketchState {
    * the change does not apply, else `null`.
    */
   editPattern: (patternId: string, patch: PatternPatch) => Promise<string | null>;
+  /** Unlinks the projections of `ids` (Linked off): their geometry stays, free and editable (one undo step). */
+  unlinkProjection: (ids: readonly string[]) => Promise<boolean>;
   /** Applies the offer of the current problem (add the rejected dimension as a reference). */
   acceptOffer: () => Promise<boolean>;
   /** Toggles a dimension between driving and reference (driven). */
@@ -229,6 +233,8 @@ export interface SketchState {
   clearSelection: () => void;
   deleteSelection: () => Promise<void>;
   toggleConstructionOfSelection: () => Promise<void>;
+  /** Disconnect: curves meeting at the selected point(s) get their own points (one undo step); the reason when nothing is connected. */
+  disconnectSelection: () => Promise<string | null>;
   /** Adds constraint(s) of `kind` to the selection; returns the reason when not applicable. */
   applyConstraint: (kind: SketchConstraintKind) => Promise<string | null>;
   /** Sets a dimension from typed text (number or expression). Resolves `true` when accepted. */
@@ -967,6 +973,8 @@ export const useSketchStore = create<SketchState>((set, get) => {
       return ok ? null : 'The pattern could not be changed (see the sketch message).';
     },
 
+    unlinkProjection: (ids) => applyEdit((sketch) => unlinkProjections(sketch, ids)),
+
     acceptOffer: async () => {
       const offer = pendingOffer;
       if (!offer || offer.token !== token) return false;
@@ -1027,6 +1035,7 @@ export const useSketchStore = create<SketchState>((set, get) => {
         if (!session) return;
         const step = reduceTool(session.sketch, session.tool, event, {
           construction: session.construction,
+          circleDimension: useSketchPreferences.getState().circleDimension,
         });
         if (!step.edit) {
           patch({ tool: step.tool, notice: step.notice ?? null });
@@ -1076,6 +1085,25 @@ export const useSketchStore = create<SketchState>((set, get) => {
         optional: [],
         select: [],
       }));
+    },
+
+    disconnectSelection: async () => {
+      const session = get().session;
+      if (!session) return 'Not sketching.';
+      let reason: string | null = null;
+      const ok = await applyEdit((sketch) => {
+        const edit = disconnectPoints(sketch, session.selection);
+        if ('reason' in edit) {
+          reason = edit.reason;
+          return null;
+        }
+        return edit;
+      });
+      if (reason) {
+        patch({ notice: reason });
+        return reason;
+      }
+      return ok ? null : 'The points could not be disconnected.';
     },
 
     toggleConstructionOfSelection: async () => {

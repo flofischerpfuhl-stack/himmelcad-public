@@ -10,6 +10,7 @@
  */
 import { CONSTRAINT_INFO, planConstraint } from './constraintRules.js';
 import { editSketchCurves } from './featureOps.js';
+import { disconnectPoints } from './operations.js';
 import { notify } from '../../foundation/commands/notices.js';
 import { useSketchStore, type BeginSketchOptions } from './session.js';
 import type { SketchToolKind } from './tools.js';
@@ -357,6 +358,21 @@ export const SKETCH_COMMANDS: readonly Command[] = [
     run: () => void useSketchStore.getState().toggleConstructionOfSelection(),
   },
   ...CONSTRAINT_INFO.map(constraintCommand),
+  {
+    id: 'sketch.disconnect',
+    label: 'Disconnect',
+    group: 'sketch',
+    keywords: ['sketch', 'split point', 'detach', 'unjoin', 'coincident', 'separate'],
+    availability: () => {
+      const s = session();
+      if (!s) return { enabled: false, reason: NOT_SKETCHING };
+      const plan = disconnectPoints(s.sketch, s.selection);
+      return 'reason' in plan
+        ? { enabled: false, reason: plan.reason }
+        : { enabled: true, recommended: true, priority: 35 };
+    },
+    run: () => void useSketchStore.getState().disconnectSelection(),
+  },
   {
     id: 'sketch.toggleReference',
     label: 'Reference Dimension',

@@ -149,6 +149,8 @@ export type ValueField =
 export interface ToolContext {
   /** New curves are construction geometry. */
   construction: boolean;
+  /** Circles are sized (value chip, Dimension tool) by diameter (default) or radius. */
+  circleDimension?: 'diameter' | 'radius';
 }
 
 export interface ToolStep {
@@ -295,7 +297,7 @@ export function reduceTool(
     case 'offset':
       return reduceOffset(sketch, tool, event);
     case 'dimension':
-      return reduceDimension(sketch, tool, event);
+      return reduceDimension(sketch, tool, event, ctx);
     default:
       return { tool };
   }
@@ -858,6 +860,7 @@ export function planDimension(
   sketch: SketchData,
   picks: readonly string[],
   mode: 'aligned' | 'horizontal' | 'vertical',
+  circle: 'diameter' | 'radius' = 'diameter',
 ): { kind: SketchDimensionKind; refs: string[] } | null {
   const map = entityMap(sketch);
   const [a, b] = picks.map((id) => map.get(id));
@@ -869,7 +872,7 @@ export function planDimension(
         : 'distance';
   if (picks.length === 1) {
     if (a?.kind === 'line') return { kind: linear, refs: [a.id] };
-    if (a?.kind === 'circle') return { kind: 'diameter', refs: [a.id] };
+    if (a?.kind === 'circle') return { kind: circle, refs: [a.id] };
     if (a?.kind === 'arc') return { kind: 'radius', refs: [a.id] };
     return null;
   }
@@ -892,6 +895,7 @@ function reduceDimension(
   sketch: SketchData,
   tool: Extract<SketchTool, { kind: 'dimension' }>,
   event: Exclude<ToolEvent, { type: 'finish' }>,
+  ctx: ToolContext,
 ): ToolStep {
   if (event.type !== 'click') return { tool };
   const hitId = event.hit?.id ?? null;
@@ -900,11 +904,11 @@ function reduceDimension(
     const kind = entityMap(sketch).get(hitId)?.kind;
     // Circles and arcs are dimensioned right away; lines/points wait for a second pick or a placement click.
     if (kind === 'circle' || kind === 'arc')
-      return createDimension(sketch, tool, [hitId], event.raw);
+      return createDimension(sketch, tool, [hitId], event.raw, ctx.circleDimension);
     return { tool: { ...tool, first: hitId } };
   }
   const picks = hitId && hitId !== tool.first ? [tool.first, hitId] : [tool.first];
-  return createDimension(sketch, tool, picks, event.raw);
+  return createDimension(sketch, tool, picks, event.raw, ctx.circleDimension);
 }
 
 function createDimension(
@@ -912,8 +916,9 @@ function createDimension(
   tool: Extract<SketchTool, { kind: 'dimension' }>,
   picks: string[],
   placement: Vec2,
+  circle: 'diameter' | 'radius' = 'diameter',
 ): ToolStep {
-  const plan = planDimension(sketch, picks, tool.mode);
+  const plan = planDimension(sketch, picks, tool.mode, circle);
   const reset: SketchTool = { ...tool, first: null };
   if (!plan) return { tool: reset };
   const value = measure(sketch, plan.kind, plan.refs);
@@ -1067,7 +1072,11 @@ export function toolPreview(
         ...EMPTY_PREVIEW,
         curves: [sampleCurve(curve)],
         points: [tool.center.pos],
-        chips: [{ field: 'diameter', value: r * 2, at }],
+        chips: [
+          ctx.circleDimension === 'radius'
+            ? { field: 'radius', value: r, at }
+            : { field: 'diameter', value: r * 2, at },
+        ],
       };
     }
     case 'rectangle': {

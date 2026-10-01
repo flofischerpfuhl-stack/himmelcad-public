@@ -3949,6 +3949,37 @@
       },
       "result": "{featureId, createdIds, dof, regions, revision, committed}"
     },
+    "sketch.disconnect": {
+      "kind": "command",
+      "capability": "document.write",
+      "transactional": true,
+      "summary": "Disconnect (Shapr3D): curves meeting at each given shared point get a point of their own (same position; the first curve keeps the original with its constraints/dimensions); given coincident constraints, or those on a given point, are removed. The curves can then move apart.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "featureId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Optimistic concurrency: the command fails with `conflict` unless the document revision still equals this value."
+          }
+        },
+        "required": ["featureId", "ids"],
+        "additionalProperties": false
+      },
+      "result": "{featureId, createdIds, dof, regions, revision, committed}"
+    },
     "sketch.project": {
       "kind": "command",
       "capability": "document.write",
@@ -3981,6 +4012,37 @@
         "additionalProperties": false
       },
       "result": "{featureId, projectionId, entityIds, dof, regions, revision, committed}"
+    },
+    "sketch.unlinkProjection": {
+      "kind": "command",
+      "capability": "document.write",
+      "transactional": true,
+      "summary": "Unlinks projected geometry (Shapr3D `Linked` off): `ids` are projection ids or ids of projected curves/points. The geometry stays as ordinary sketch geometry (free, editable, construction flag kept) and no longer follows its source; project again to link.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "featureId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Optimistic concurrency: the command fails with `conflict` unless the document revision still equals this value."
+          }
+        },
+        "required": ["featureId", "ids"],
+        "additionalProperties": false
+      },
+      "result": "{featureId, unlinked, entityIds, dof, regions, revision, committed}"
     },
     "sketch.setReference": {
       "kind": "command",

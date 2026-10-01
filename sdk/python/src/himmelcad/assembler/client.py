@@ -27,8 +27,8 @@ METHODS = (
     "sketch.addProfile", "sketch.addPolyline", "sketch.addArc", "sketch.addConstraint",
     "sketch.addDimension", "sketch.setDimension", "sketch.deleteItems",
     "sketch.addSpline", "sketch.addEllipse", "sketch.addSlot", "sketch.addPolygon", "sketch.addText",
-    "sketch.mirror", "sketch.pattern", "sketch.editPattern", "sketch.offset", "sketch.roundCorner",
-    "sketch.project", "sketch.setReference",
+    "sketch.mirror", "sketch.pattern", "sketch.editPattern", "sketch.offset", "sketch.roundCorner", "sketch.disconnect",
+    "sketch.project", "sketch.unlinkProjection", "sketch.setReference",
     "transaction.begin", "transaction.preview", "transaction.commit", "transaction.cancel",
     "history.undo", "history.redo",
     "export.stl", "export.3mf", "export.step", "import.step",
@@ -246,6 +246,14 @@ class AssemblerClient:
     def project(self, feature_id: str, *, edge: Mapping[str, Any] | None = None, face: Mapping[str, Any] | None = None, construction: bool = True) -> Mapping[str, Any]:
         """Projects a body edge or face outline into the sketch (associative)."""
         return self.call("sketch.project", {"featureId": feature_id, "edge": dict(edge) if edge else None, "face": dict(face) if face else None, "construction": construction})
+
+    def disconnect(self, feature_id: str, ids: list[str]) -> Mapping[str, Any]:
+        """Disconnect: curves meeting at the given shared points get their own points (coincidences removed)."""
+        return self.call("sketch.disconnect", {"featureId": feature_id, "ids": list(ids)})
+
+    def unlink_projection(self, feature_id: str, ids: list[str]) -> Mapping[str, Any]:
+        """Unlinks projected geometry (projection ids or projected curve/point ids): it stays, free and editable."""
+        return self.call("sketch.unlinkProjection", {"featureId": feature_id, "ids": list(ids)})
 
     def set_reference(self, feature_id: str, dimension: str, reference: bool = True) -> Mapping[str, Any]:
         """Turns a dimension into a reference (driven) dimension, or back with ``reference=False``."""

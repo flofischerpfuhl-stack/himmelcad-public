@@ -17,6 +17,7 @@ import {
 } from '../../foundation/sketch-solver/edits.js';
 import {
   circularPattern,
+  disconnectPoints,
   editPattern,
   linearPattern,
   mirrorGeometry,
@@ -26,6 +27,7 @@ import {
 } from './operations.js';
 import {
   addProjection,
+  unlinkProjections,
   edgeSampleFromSegments,
   projectSource,
 } from '../../foundation/sketch-solver/projection.js';
@@ -52,7 +54,9 @@ export const ADVANCED_SKETCH_METHODS = [
   'sketch.editPattern',
   'sketch.offset',
   'sketch.roundCorner',
+  'sketch.disconnect',
   'sketch.project',
+  'sketch.unlinkProjection',
   'sketch.setReference',
 ] as const;
 
@@ -378,6 +382,11 @@ export async function advancedSketchEdit(
       if ('reason' in edit) throw new ApiError('invalidParams', edit.reason);
       return { sketch: edit.sketch, result: { createdIds: createdIds(data, edit.sketch) } };
     }
+    case 'sketch.disconnect': {
+      const edit = disconnectPoints(data, ids(p.ids, 'ids'));
+      if ('reason' in edit) throw new ApiError('invalidParams', edit.reason);
+      return { sketch: edit.sketch, result: { createdIds: createdIds(data, edit.sketch) } };
+    }
     case 'sketch.project': {
       const frame = ctx.evaluation.sketches.find((s) => s.featureId === ctx.featureId)?.frame;
       if (!frame) throw new ApiError('invalidParams', 'The sketch has no evaluated frame yet');
@@ -419,6 +428,19 @@ export async function advancedSketchEdit(
         sketch: edit.sketch,
         result: { projectionId: projection.id, entityIds: projection.entities },
       };
+    }
+    case 'sketch.unlinkProjection': {
+      const wanted = ids(p.ids, 'ids');
+      const edit = unlinkProjections(data, wanted);
+      if (!edit) {
+        throw new ApiError('notFound', 'None of these ids is projected geometry of this sketch', {
+          hint: 'Give projection ids (sketches.list `projections`) or ids of projected curves/points.',
+        });
+      }
+      const unlinked = (data.projections ?? [])
+        .filter((x) => !(edit.sketch.projections ?? []).some((k) => k.id === x.id))
+        .map((x) => x.id);
+      return { sketch: edit.sketch, result: { unlinked, entityIds: edit.select ?? [] } };
     }
     case 'sketch.setReference': {
       const wanted = String(p.dimension);

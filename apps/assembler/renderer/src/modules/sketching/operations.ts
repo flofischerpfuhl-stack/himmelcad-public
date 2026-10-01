@@ -1009,3 +1009,101 @@ function roundCurveCorner(
   });
   return b.result([bevel]);
 }
+
+// ---- Disconnect (Shapr3D "Disconnect") ---------------------------------------------------
+
+/** `curve` with every reference to point `from` replaced by `to`. */
+function repointed(curve: SketchCurve, from: string, to: string): SketchCurve {
+  const r = (id: string): string => (id === from ? to : id);
+  switch (curve.kind) {
+    case 'line':
+      return { ...curve, a: r(curve.a), b: r(curve.b) };
+    case 'circle':
+      return { ...curve, center: r(curve.center) };
+    case 'arc':
+      return { ...curve, center: r(curve.center), start: r(curve.start), end: r(curve.end) };
+    case 'ellipse':
+      return { ...curve, center: r(curve.center), major: r(curve.major), minor: r(curve.minor) };
+    case 'ellipticArc':
+      return {
+        ...curve,
+        center: r(curve.center),
+        major: r(curve.major),
+        minor: r(curve.minor),
+        start: r(curve.start),
+        end: r(curve.end),
+      };
+    case 'spline':
+      return {
+        ...curve,
+        points: curve.points.map(r),
+        ...(curve.handles
+          ? {
+              handles: curve.handles.map((h) => (h === null ? null : r(h))) as [
+                string | null,
+                string | null,
+              ],
+            }
+          : {}),
+      };
+    case 'text':
+      return { ...curve, anchor: r(curve.anchor) };
+  }
+}
+
+/**
+ * Disconnect (Shapr3D sketch "Disconnect"): curves meeting at a selected
+ * shared point get a point of their own each (same position; the first
+ * curve keeps the original with its constraints and dimensions), and
+ * selected coincident constraints — or those tying a selected point to
+ * another — are removed. Tangency between curves that met at the point is
+ * dropped with it. The curves can then be dragged apart. A reason when the
+ * selection holds nothing connected.
+ */
+export function disconnectPoints(
+  sketch: SketchData,
+  ids: readonly string[],
+): EditResult | { reason: string } {
+  const map = entityMap(sketch);
+  const selected = new Set(ids);
+  const b = new SketchBuilder(sketch);
+  const created: string[] = [];
+  const split = new Map<string, string[]>(); // point -> curves that left it
+  for (const id of ids) {
+    const point = map.get(id);
+    if (point?.kind !== 'point') continue;
+    const users = b.entities.filter(
+      (e): e is SketchCurve => isCurve(e) && curvePointIds(e).includes(id),
+    );
+    if (users.length < 2) continue;
+    const pos: Vec2 = [point.x, point.y];
+    const moved: string[] = [];
+    for (const curve of users.slice(1)) {
+      const own = b.addPoint(pos);
+      created.push(own);
+      const index = b.entities.findIndex((e) => e.id === curve.id);
+      b.entities[index] = repointed(curve, id, own);
+      moved.push(curve.id);
+    }
+    split.set(id, [users[0]!.id, ...moved]);
+  }
+  // Coincident constraints selected, or tying a selected point to another point.
+  const before = b.constraints.length;
+  b.constraints = b.constraints.filter((c) => {
+    if (c.kind === 'coincident' && (selected.has(c.id) || c.refs.some((r) => selected.has(r)))) {
+      return false;
+    }
+    if (c.kind === 'tangent') {
+      for (const curves of split.values()) {
+        if (c.refs.every((r) => curves.includes(r))) return false;
+      }
+    }
+    return true;
+  });
+  if (split.size === 0 && b.constraints.length === before) {
+    return {
+      reason: 'Select a point where curves meet (or a coincident constraint) to disconnect.',
+    };
+  }
+  return b.result([...ids.filter((id) => map.get(id)?.kind === 'point'), ...created]);
+}

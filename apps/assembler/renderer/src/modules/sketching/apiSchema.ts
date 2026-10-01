@@ -379,6 +379,22 @@ export const SKETCH_EDIT_METHODS: Record<string, MethodSpec> = {
     ),
     result: '{featureId, createdIds, dof, regions, revision, committed}',
   },
+  'sketch.disconnect': {
+    kind: 'command',
+    capability: 'document.write',
+    transactional: true,
+    summary:
+      'Disconnect (Shapr3D): curves meeting at each given shared point get a point of their own (same position; the first curve keeps the original with its constraints/dimensions); given coincident constraints, or those on a given point, are removed. The curves can then move apart.',
+    params: obj(
+      {
+        featureId: str,
+        ids: { type: 'array', items: str, minItems: 1 },
+        expectedRevision: revision,
+      },
+      ['featureId', 'ids'],
+    ),
+    result: '{featureId, createdIds, dof, regions, revision, committed}',
+  },
   'sketch.project': {
     kind: 'command',
     capability: 'document.write',
@@ -396,6 +412,22 @@ export const SKETCH_EDIT_METHODS: Record<string, MethodSpec> = {
       ['featureId'],
     ),
     result: '{featureId, projectionId, entityIds, dof, regions, revision, committed}',
+  },
+  'sketch.unlinkProjection': {
+    kind: 'command',
+    capability: 'document.write',
+    transactional: true,
+    summary:
+      'Unlinks projected geometry (Shapr3D `Linked` off): `ids` are projection ids or ids of projected curves/points. The geometry stays as ordinary sketch geometry (free, editable, construction flag kept) and no longer follows its source; project again to link.',
+    params: obj(
+      {
+        featureId: str,
+        ids: { type: 'array', items: str, minItems: 1 },
+        expectedRevision: revision,
+      },
+      ['featureId', 'ids'],
+    ),
+    result: '{featureId, unlinked, entityIds, dof, regions, revision, committed}',
   },
   'sketch.setReference': {
     kind: 'command',

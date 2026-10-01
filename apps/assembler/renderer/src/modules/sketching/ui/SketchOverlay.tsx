@@ -51,6 +51,7 @@ import {
 import { projectedIds } from '../../../foundation/sketch-solver/projection.js';
 import { detectRegions, loopPolygon } from '../../../foundation/sketch-solver/regions.js';
 import { useSketchStore, type ProjectionPick } from '../session.js';
+import { useSketchPreferences } from '../sketchPreferences.js';
 import { loadedSketchFont, textOutlineOf } from '../../../foundation/sketch-solver/text/fonts.js';
 import { parseOutline, placeContours } from '../../../foundation/sketch-solver/text/outline.js';
 import {
@@ -336,6 +337,7 @@ export function SketchOverlay({
   // 3D snaps: the body geometry seen along the sketch normal (far edges in orthographic view only).
   const bodies = useAssemblerStore((s) => s.evaluation.bodies);
   const orthographic = usePreferences((p) => p.projection === 'orthographic');
+  const circleDimension = useSketchPreferences((p) => p.circleDimension);
   const frame = session?.frame ?? null;
   const bodyTargets = useMemo(
     () => (frame && drawing ? bodySnapTargets(bodies, frame, { orthographic }) : null),
@@ -359,7 +361,10 @@ export function SketchOverlay({
   const hit = display && cursor ? hitTest(display, cursor, scale) : null;
   const preview =
     session && display && tool
-      ? toolPreview(display, tool, inference, hit, { construction: session.construction })
+      ? toolPreview(display, tool, inference, hit, {
+          construction: session.construction,
+          circleDimension,
+        })
       : null;
 
   // ---- keyboard ------------------------------------------------------------------------
@@ -1190,11 +1195,13 @@ export function SketchOverlay({
                 display={
                   chip.field === 'diameter'
                     ? `Ø ${Math.round(chip.value * 100) / 100}`
-                    : count
-                      ? `× ${Math.round(chip.value)}`
-                      : angle
-                        ? `${Math.round(chip.value * 100) / 100}°`
-                        : `${Math.round(chip.value * 100) / 100}`
+                    : chip.field === 'radius'
+                      ? `R ${Math.round(chip.value * 100) / 100}`
+                      : count
+                        ? `× ${Math.round(chip.value)}`
+                        : angle
+                          ? `${Math.round(chip.value * 100) / 100}°`
+                          : `${Math.round(chip.value * 100) / 100}`
                 }
                 x={at[0] + 16}
                 y={at[1] - 16 + index * 26}
