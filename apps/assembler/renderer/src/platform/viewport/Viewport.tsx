@@ -552,6 +552,8 @@ export function Viewport(props: ViewportProps): JSX.Element {
   // ---- Camera transitions ---------------------------------------------------
   /** Moves the camera to `next`: animated (ease-out, 300 ms) unless reduced motion or turned off. */
   const animateTo = useCallback((next: CameraPose, duration = 300) => {
+    // A camera command ends a touch glide (declared below; set by then).
+    glideRef.current = null;
     if (reduceMotion() || !usePreferences.getState().animateCamera) {
       animRef.current = null;
       poseRef.current = next;
