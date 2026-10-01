@@ -4239,6 +4239,37 @@
       },
       "result": "{mediaType, byteLength, triangles, data?: base64, path?}"
     },
+    "export.obj": {
+      "kind": "command",
+      "capability": "document.read",
+      "summary": "Wavefront OBJ of all (or the given) bodies: one object per body named after it, shared vertices with normals, millimetres; no materials (use 3MF or STEP for colours).",
+      "params": {
+        "type": "object",
+        "properties": {
+          "bodyIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Headless only (capability filesystem.write). Omit to receive base64 bytes."
+          },
+          "resolution": {
+            "enum": ["current", "coarse", "standard", "fine"],
+            "default": "current",
+            "description": "`current`: the evaluated display mesh. Presets re-tessellate the exact B-rep: coarse 0.1 mm / 0.5 rad, standard 0.025 mm / 0.25 rad, fine 0.005 mm / 0.1 rad (chordal / angular deflection)."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "result": "{mediaType, byteLength, triangles, data?: base64, path?}"
+    },
     "export.step": {
       "kind": "command",
       "capability": "document.read",

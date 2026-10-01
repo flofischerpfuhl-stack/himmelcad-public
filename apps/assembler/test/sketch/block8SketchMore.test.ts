@@ -15,6 +15,8 @@ import {
 import { resolveDimensionValues } from '../../renderer/src/foundation/sketch-solver/dimensionValues.js';
 import { parseExpression } from '../../renderer/src/platform/viewport/expr.js';
 import { evaluateExpression } from '../../renderer/src/platform/widgets/expression.js';
+import { objText } from '../../renderer/src/foundation/geometry-kernel/objExport.js';
+import { parseObj } from '../../renderer/src/modules/interop/objImport.js';
 import { addRectangle } from '../../renderer/src/foundation/sketch-solver/builders.js';
 import {
   addProjection,
@@ -264,4 +266,52 @@ void test('units inside expressions (CON-08): each term converts to mm / degrees
   ]);
   assert.ok(values.ok);
   close(values.values.get('m1')!, 30.4);
+});
+
+void test('OBJ export (IMP-07): one object per body, shared vertices with normals; the importer reads it back', async () => {
+  store.getState().loadDocument([], { projectName: 'Obj' });
+  await store.getState().whenSettled();
+  const sketch = await call<{ featureId: string }>('feature.create', {
+    kind: 'sketch',
+    params: { plane: 'XY' },
+  });
+  await call('sketch.addProfile', {
+    featureId: sketch.featureId,
+    profile: { kind: 'rectangle', x: 0, y: 0, width: 10, height: 20 },
+  });
+  await call('feature.create', {
+    kind: 'extrude',
+    params: { profile: { kind: 'sketch', featureId: sketch.featureId }, distance: 5 },
+  });
+  const exported = await call<{ data: string; mediaType: string; triangles: number }>('export.obj');
+  assert.equal(exported.mediaType, 'model/obj');
+  const text = Buffer.from(exported.data, 'base64').toString('utf8');
+  assert.match(text, /^# HimmelCAD Assembler\n# Units: millimetres\no Body 1\n/);
+  assert.equal((text.match(/^f /gm) ?? []).length, exported.triangles);
+  const back = parseObj(text, 'export.obj');
+  assert.equal(back.objects.length, 1);
+  assert.equal(back.objects[0]!.mesh.triangleCount, exported.triangles);
+  assert.deepEqual(
+    back.objects[0]!.mesh.min.map((v) => Math.round(v)),
+    [0, 0, 0],
+  );
+  assert.deepEqual(
+    back.objects[0]!.mesh.max.map((v) => Math.round(v)),
+    [10, 20, 5],
+  );
+  // Two bodies: global 1-based indices continue across objects.
+  const mesh = {
+    positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
+    normals: new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1]),
+    indices: new Uint32Array([0, 1, 2]),
+    triangleFaces: new Uint32Array([0]),
+  };
+  const two = objText([
+    { name: 'A', mesh },
+    { name: 'B\nline', mesh },
+  ]);
+  assert.match(
+    two,
+    /o A\n[\s\S]*f 1\/\/1 2\/\/2 3\/\/3\no B line\n[\s\S]*f 4\/\/4 5\/\/5 6\/\/6\n$/,
+  );
 });

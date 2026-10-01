@@ -895,6 +895,14 @@ const METHODS_TAIL: Record<string, MethodSpec> = {
     params: meshExportParams({}),
     result: '{mediaType, byteLength, triangles, data?: base64, path?}',
   },
+  'export.obj': {
+    kind: 'command',
+    capability: 'document.read',
+    summary:
+      'Wavefront OBJ of all (or the given) bodies: one object per body named after it, shared vertices with normals, millimetres; no materials (use 3MF or STEP for colours).',
+    params: meshExportParams({}),
+    result: '{mediaType, byteLength, triangles, data?: base64, path?}',
+  },
   'export.step': {
     kind: 'command',
     capability: 'document.read',

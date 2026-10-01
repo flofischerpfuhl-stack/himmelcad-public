@@ -31,7 +31,7 @@ METHODS = (
     "sketch.project", "sketch.unlinkProjection", "sketch.setReference",
     "transaction.begin", "transaction.preview", "transaction.commit", "transaction.cancel",
     "history.undo", "history.redo",
-    "export.stl", "export.3mf", "export.step", "import.step",
+    "export.stl", "export.3mf", "export.obj", "export.step", "import.step",
     "project.new", "project.open", "project.save",
     "export.meshStats", "print.analyze", "print.orientations", "print.placeOnPlate", "print.orient",
     "interop.formats", "import.mesh", "import.dxf", "export.dxf", "mesh.toSolid",
@@ -278,16 +278,16 @@ class AssemblerClient:
         return self.call("history.redo")
 
     def export(self, fmt: str, *, body_ids: list[str] | None = None, resolution: str | None = None, stl_format: str | None = None, **step: Any) -> bytes:
-        """Returns the exported file bytes (``fmt``: ``stl``, ``3mf``, ``step`` or ``iges``).
+        """Returns the exported file bytes (``fmt``: ``stl``, ``3mf``, ``obj``, ``step`` or ``iges``).
 
-        ``resolution`` (STL/3MF): ``current`` (display mesh), ``coarse``, ``standard`` or ``fine``;
+        ``resolution`` (STL/3MF/OBJ): ``current`` (display mesh), ``coarse``, ``standard`` or ``fine``;
         ``stl_format``: ``binary`` (default) or ``ascii``. STEP options (keyword arguments):
         ``schema`` (``AP242``/``AP214``), ``unit`` (``mm``/``cm``/``m``/``in``), ``structure``
         (``flat``/``folders``) and ``visible_only``. IGES options (HimmelCAD OCCT build only):
         ``unit``, ``mode`` (``faces``/``brep``) and ``visible_only``.
         """
         params: dict[str, Any] = {"bodyIds": body_ids}
-        if fmt in ("stl", "3mf"):
+        if fmt in ("stl", "3mf", "obj"):
             params["resolution"] = resolution
         if fmt == "stl":
             params["format"] = stl_format

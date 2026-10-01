@@ -11,6 +11,7 @@ import {
   type CommandContext,
 } from '../../foundation/commands/registry.js';
 import { dxfExportTarget, kernelFormatCapabilities, useInteropStore } from './interopStore.js';
+import { exportObj } from './meshExports.js';
 
 const IGES_REASON =
   'IGES is not in this build: the CAD kernel (replicad-opencascadejs 1.1.0) has no IGES reader or writer.';
@@ -109,6 +110,18 @@ export const INTEROP_COMMANDS: readonly Command[] = [
         : { enabled: false, reason: 'There are no bodies to export.' };
     },
     run: () => useInteropStore.getState().setIgesExportOpen(true),
+  },
+  {
+    id: 'file.exportObj',
+    label: 'Export OBJ',
+    group: 'file',
+    keywords: ['export', 'obj', 'wavefront', 'mesh', 'render', 'visualization', 'blender'],
+    adaptive: false,
+    availability: (ctx) =>
+      ctx.evaluation.bodies.length > 0 || ctx.referenceMeshes.some((m) => !m.hidden)
+        ? { enabled: true }
+        : { enabled: false, reason: 'There are no bodies to export.' },
+    run: () => void exportObj(),
   },
   {
     id: 'tools.meshToSolid',
