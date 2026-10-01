@@ -27,6 +27,8 @@ export interface PwaState {
 }
 
 let waiting: ServiceWorker | null = null;
+/** The user asked for the waiting version (Reload): its takeover reloads the page. */
+let updateRequested = false;
 
 export const usePwaStore = create<PwaState>((set) => ({
   offline: typeof navigator !== 'undefined' && navigator.onLine === false,
@@ -38,6 +40,7 @@ export const usePwaStore = create<PwaState>((set) => ({
       location.reload();
       return;
     }
+    updateRequested = true;
     waiting.postMessage({ type: 'SKIP_WAITING' });
   },
   dismissOfflineReady: () => set({ offlineReady: false }),
@@ -68,10 +71,16 @@ export function registerServiceWorker(): void {
   }
   const hadController = navigator.serviceWorker.controller !== null;
   let reloading = false;
+  let controlled = hadController;
   navigator.serviceWorker.addEventListener('controllerchange', () => {
-    // Only the user's "Reload to update" activates a waiting worker (SKIP_WAITING);
-    // the very first install claims the page without a reload.
-    if (!hadController || reloading) return;
+    if (!updateRequested) {
+      // The first install claims the page: no reload. A new version activated from another
+      // tab: this page still runs the old code, so it offers the reload too.
+      if (controlled) usePwaStore.setState({ updateReady: true });
+      controlled = true;
+      return;
+    }
+    if (reloading) return;
     reloading = true;
     location.reload();
   });

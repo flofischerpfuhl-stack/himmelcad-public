@@ -18,10 +18,11 @@
  * 5. Layout at tablet and phone sizes, with touch input enabled.
  */
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import { chromium } from 'playwright-core';
 
@@ -426,6 +427,64 @@ void test('File System Access (Chromium): save in place and reopen from Recent p
   assert.deepEqual(
     reopened.map((f) => f.kind),
     ['sketch', 'extrude', 'sketch'],
+  );
+  assert.deepEqual(errors, []);
+});
+
+void test('update: a new deployment installs in the background and waits for Reload', async (t) => {
+  // A copy of the site, so the "deployment" can change under the running app.
+  const site = mkdtempSync(join(tmpdir(), 'assembler-web-update-'));
+  cpSync(fileURLToPath(new URL('../dist', import.meta.url)), site, { recursive: true });
+  const server = await startServer({ dir: site });
+  const browser = await launch();
+  t.after(async () => {
+    await browser.close();
+    await server.close();
+    rmSync(site, { recursive: true, force: true });
+  });
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const page = await context.newPage();
+  const errors = watchErrors(page);
+  const version = () =>
+    page.evaluate(
+      () =>
+        new Promise((resolve) => {
+          const channel = new MessageChannel();
+          channel.port1.onmessage = (event) => resolve(event.data.version);
+          navigator.serviceWorker.controller.postMessage({ type: 'VERSION' }, [channel.port2]);
+        }),
+    );
+  await page.goto(server.url);
+  await waitForModel(page);
+  await offlineReady(page);
+  const before = await version();
+
+  // Deploy: a changed index.html and a service worker with a new version.
+  const swPath = join(site, 'sw.js');
+  writeFileSync(swPath, readFileSync(swPath, 'utf8').replace(before, `${before.slice(0, 12)}next`));
+  const indexPath = join(site, 'index.html');
+  writeFileSync(indexPath, `${readFileSync(indexPath, 'utf8')}<!-- next deployment -->\n`);
+  // Their precompressed copies would still be the old deployment.
+  for (const stale of [swPath, indexPath]) {
+    rmSync(`${stale}.br`, { force: true });
+    rmSync(`${stale}.gz`, { force: true });
+  }
+  await page.evaluate(async () => (await navigator.serviceWorker.getRegistration()).update());
+
+  const reload = page.getByRole('button', { name: 'Reload' });
+  await reload.waitFor({ timeout: 120_000 });
+  await page.getByText('A new version of Assembler is ready.').waitFor();
+  assert.equal(await version(), before, 'the running app keeps its version until Reload');
+  await shot(page, 'w7-update-ready');
+  await Promise.all([page.waitForEvent('load'), reload.click()]);
+  await waitForModel(page);
+  assert.equal(await version(), `${before.slice(0, 12)}next`);
+  assert.equal(
+    await page.evaluate(async () =>
+      (await (await fetch('index.html')).text()).includes('next deployment'),
+    ),
+    true,
+    'the new deployment is what the service worker serves',
   );
   assert.deepEqual(errors, []);
 });
