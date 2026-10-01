@@ -29,6 +29,10 @@ export interface SketchViewportRefs {
   dirtyRef: MutableRefObject<boolean>;
   rayAtClient: (clientX: number, clientY: number) => { origin: Vec3; direction: Vec3 } | null;
   pickAt: (clientX: number, clientY: number) => PickTarget | null;
+  /** Hands drawing fingers to the viewport's touch navigation (a second finger landed). */
+  adoptTouches?: (
+    touches: readonly { pointerId: number; clientX: number; clientY: number }[],
+  ) => void;
 }
 
 /** Camera pose looking straight at `frame` (fitting the sketch, or keeping the current focus). */
@@ -75,7 +79,7 @@ export function useSketchViewport(refs: SketchViewportRefs): {
   const camera = useSketchStore((s) => s.camera);
   const returnPoseRef = useRef<CameraPose | null>(null);
   const lastNonce = useRef<number | null>(null);
-  const { hostRef, poseRef, animRef, dirtyRef, rayAtClient, pickAt } = refs;
+  const { hostRef, poseRef, animRef, dirtyRef, rayAtClient, pickAt, adoptTouches } = refs;
 
   useEffect(() => {
     dirtyRef.current = true;
@@ -137,6 +141,7 @@ export function useSketchViewport(refs: SketchViewportRefs): {
         ? { bodyId: pick.bodyId, faceKey: pick.faceKey }
         : null;
     },
+    ...(adoptTouches ? { adoptTouches } : {}),
     pickBodyItem: (clientX, clientY) => {
       const pick = pickAt(clientX, clientY);
       if (pick?.kind === 'edge') return { kind: 'edge', bodyId: pick.bodyId, key: pick.edgeKey };

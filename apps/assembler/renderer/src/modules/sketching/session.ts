@@ -145,6 +145,13 @@ export interface SketchToolOptions {
   height: number;
 }
 
+/**
+ * One input of {@link SketchState.runTool}: a tool event, or a function of
+ * the sketch and tool state at that point (to snap onto points earlier
+ * inputs created); `null` skips it.
+ */
+export type ToolInput = ToolEvent | ((sketch: SketchData, tool: SketchTool) => ToolEvent | null);
+
 export interface SketchCameraRequest {
   mode: 'enter' | 'exit';
   frame: SketchFrame;
@@ -198,6 +205,19 @@ export interface SketchState {
   setConstruction: (on: boolean) => void;
   /** Feeds a click / typed value / finish into the active tool (serialized). */
   dispatch: (event: ToolEvent) => Promise<void>;
+  /**
+   * Runs a fresh tool of `kind` (with `options`) over `inputs` without
+   * touching the active tool — the contract pen strokes create geometry
+   * through (`penStrokes.ts`, assembler/TOUCH.md). Every edit the inputs
+   * produce is combined into one solved edit: one session undo step, with
+   * the tools' own entities and inferred constraints. Serialized with the
+   * other edits; resolves `true` when the edit was adopted.
+   */
+  runTool: (
+    kind: SketchToolKind,
+    inputs: readonly ToolInput[],
+    options?: Partial<SketchToolOptions>,
+  ) => Promise<boolean>;
   /** Moves a new, still empty sketch onto a planar body face. */
   rebaseOnFace: (bodyId: string, faceKey: string) => boolean;
   select: (ids: string[], options?: { additive?: boolean }) => void;
@@ -939,6 +959,47 @@ export const useSketchStore = create<SketchState>((set, get) => {
         }
         const ok = await commitEdit(step.edit);
         if (ok) patch({ tool: step.tool, editDimensionId: step.editDimensionId ?? null });
+      }),
+
+    runTool: (kind, inputs, options = {}) =>
+      new Promise<boolean>((resolve) => {
+        void enqueue(async () => {
+          const session = get().session;
+          if (!session) {
+            resolve(false);
+            return;
+          }
+          let tool = applyToolOption(initialTool(kind), options);
+          let working = session.sketch;
+          const optional: string[] = [];
+          const transient: string[] = [];
+          let select: string[] | undefined;
+          let changed = false;
+          for (const input of inputs) {
+            const event = typeof input === 'function' ? input(working, tool) : input;
+            if (!event) continue;
+            const step = reduceTool(working, tool, event, { construction: session.construction });
+            tool = step.tool;
+            if (!step.edit) continue;
+            working = step.edit.sketch;
+            optional.push(...step.edit.optional);
+            transient.push(...(step.edit.transient ?? []));
+            if (step.edit.select) select = step.edit.select;
+            changed = true;
+          }
+          if (!changed) {
+            resolve(false);
+            return;
+          }
+          resolve(
+            await commitEdit({
+              sketch: working,
+              optional,
+              ...(transient.length > 0 ? { transient } : {}),
+              ...(select ? { select } : {}),
+            }),
+          );
+        });
       }),
 
     rebaseOnFace: (bodyId, faceKey) => {

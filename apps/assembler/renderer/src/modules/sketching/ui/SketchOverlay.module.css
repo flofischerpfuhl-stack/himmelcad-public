@@ -237,3 +237,12 @@
   overflow: hidden;
   clip-path: inset(50%);
 }
+
+/* The live pen/finger stroke (assembler/TOUCH.md); it becomes a shape when the pen lifts. */
+.ink {
+  fill: none;
+  stroke: var(--hc-accent-base);
+  stroke-opacity: 0.85;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}

@@ -6,6 +6,7 @@
  */
 import type { SketchFeature } from '../../foundation/sketch-solver/sketchFeature.js';
 import { defineModuleUi } from '../../platform/widgets/moduleUi.js';
+import { sketchTouchBox, sketchTouchTap } from './penStrokes.js';
 import { useSketchStore } from './session.js';
 import { SketchChrome } from './ui/SketchChrome.js';
 import { SketchParams } from './ui/SketchParams.js';
@@ -44,6 +45,9 @@ export const sketchingUi = defineModuleUi({
         useSketchStore.getState().begin({ featureId: pick.featureId });
         return true;
       },
+      // Navigating fingers (pen-only drawing) still select sketch geometry with a tap or a box.
+      tap: sketchTouchTap,
+      boxSelect: sketchTouchBox,
     },
   ],
 });
