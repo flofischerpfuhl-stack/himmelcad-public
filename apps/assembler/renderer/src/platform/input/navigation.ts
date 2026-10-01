@@ -99,6 +99,24 @@ export function resolveDrag(
   return null;
 }
 
+/** What a pen drag or hover with a modifier does (Shapr3D on Windows pens: Shift orbits, Ctrl pans, Alt zooms). */
+export type PenNavigation = 'orbit' | 'pan' | 'zoom';
+
+export const PEN_MODIFIER_BINDINGS: readonly {
+  modifier: keyof Modifiers;
+  action: PenNavigation;
+}[] = [
+  { modifier: 'shift', action: 'orbit' },
+  { modifier: 'ctrl', action: 'pan' },
+  { modifier: 'alt', action: 'zoom' },
+];
+
+/** The pen navigation for the held modifiers (exactly one), `null` otherwise. */
+export function penNavigation(modifiers: Modifiers): PenNavigation | null {
+  const held = PEN_MODIFIER_BINDINGS.filter((b) => modifiers[b.modifier]);
+  return held.length === 1 ? held[0]!.action : null;
+}
+
 /** Human-readable gesture list of a preset (shortcut overlay, Settings). */
 export function describeBindings(preset: NavigationPreset): { gesture: string; action: string }[] {
   const buttonName = ['Left', 'Middle', 'Right'] as const;

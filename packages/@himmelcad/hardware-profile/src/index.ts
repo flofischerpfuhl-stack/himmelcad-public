@@ -364,3 +364,47 @@ function compareVersions(left: string, right: string): number {
 function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
+
+// ---- input devices (additive; used by HimmelCAD Assembler's tablet layout) ----------------------
+
+/** What the host knows about the pointing devices (CSS media features, Pointer Events). */
+export interface InputDeviceFacts {
+  /** `navigator.maxTouchPoints`. */
+  readonly maxTouchPoints: number;
+  /** `(pointer: …)`: the primary pointer. */
+  readonly primaryPointer: 'fine' | 'coarse' | 'none';
+  /** `(any-pointer: coarse)`: some pointer is coarse. */
+  readonly anyCoarse: boolean;
+  /** `(hover: hover)`: the primary pointer can hover. */
+  readonly hover: boolean;
+  /** A pen has been used on this device (Pointer Events `pointerType: 'pen'`). */
+  readonly penSeen: boolean;
+}
+
+export interface InputProfile {
+  /** `primary`: a touch screen is the main input (tablet); `secondary`: touch besides mouse/trackpad. */
+  readonly touch: 'none' | 'secondary' | 'primary';
+  readonly pen: boolean;
+  /** Smallest hit target for controls, CSS px (44 px for a primary touch screen, the platform guideline). */
+  readonly minTargetPx: number;
+  /** Pick tolerance around a tap or click in a 3D/2D canvas, CSS px. */
+  readonly pickRadiusPx: number;
+}
+
+/** Pure policy, unit-tested in the package: device facts -> input profile. */
+export function deriveInputProfile(facts: InputDeviceFacts): InputProfile {
+  const touchScreen = facts.maxTouchPoints > 0 || facts.anyCoarse;
+  const touch: InputProfile['touch'] =
+    facts.primaryPointer === 'coarse' ||
+    (touchScreen && !facts.hover && facts.primaryPointer !== 'fine')
+      ? 'primary'
+      : touchScreen
+        ? 'secondary'
+        : 'none';
+  return {
+    touch,
+    pen: facts.penSeen,
+    minTargetPx: touch === 'primary' ? 44 : touch === 'secondary' ? 36 : 28,
+    pickRadiusPx: touch === 'primary' ? 12 : touch === 'secondary' ? 8 : 4,
+  };
+}

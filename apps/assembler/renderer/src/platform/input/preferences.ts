@@ -9,6 +9,7 @@ import { create } from 'zustand';
 
 import { DEFAULT_SKETCH_SNAPS, type SketchSnapToggles } from './snapToggles.js';
 import { NAVIGATION_PRESETS, type NavigationPresetId } from './navigation.js';
+import type { FingerDrawing } from './pointer.js';
 
 export type LengthUnit = 'mm' | 'in';
 export type ToolbarLabels = 'icons' | 'hover' | 'always';
@@ -63,7 +64,34 @@ export interface Preferences {
   shortcuts: Record<string, string>;
   /** Every click in the viewport adds to the selection (Shapr3D "Selection Extension"). */
   selectionExtension: boolean;
+
+  // ---- Touch and pen (assembler/TOUCH.md) ----
+  /** Larger targets, labels instead of hover tips, the number keypad: with a coarse pointer (`auto`), always or never. */
+  tabletLayout: TabletLayoutSetting;
+  /** Right-handed: tools on the left (the free hand taps them); left-handed: tools on the right. */
+  handedness: Handedness;
+  /** What a finger does in a sketch (see `pointer.ts` `FingerDrawing`). */
+  fingerDrawing: FingerDrawing;
+  /** Pen strokes in a sketch become lines, arcs, circles and rectangles. */
+  penShapes: boolean;
+  /** A scribble with the pen (or a drawing finger) erases the sketch curves it crosses. */
+  scribbleErase: boolean;
+  /** Ignore touches while (and shortly after) the pen is used, and palm-sized contacts. */
+  palmRejection: boolean;
+  /** On-screen number keypad for value fields: with the tablet layout (`auto`), always or never. */
+  numericKeypad: TabletLayoutSetting;
+  /** The camera keeps gliding after a quick one- or two-finger flick. */
+  touchInertia: boolean;
+  /** Twisting two fingers rolls the view. */
+  twistRoll: boolean;
+  /** Two-finger tap undoes, three-finger tap redoes, three-finger swipe left/right undoes/redoes. */
+  touchUndoGestures: boolean;
+  /** A pen has been used on this device (switches `fingerDrawing: 'auto'` to pen-only drawing). */
+  penSeen: boolean;
 }
+
+export type TabletLayoutSetting = 'auto' | 'on' | 'off';
+export type Handedness = 'right' | 'left';
 
 export type RenderQuality = 'high' | 'standard';
 
@@ -126,6 +154,17 @@ export const DEFAULT_PREFERENCES: Preferences = {
   constraintKeep: 'first',
   shortcuts: {},
   selectionExtension: false,
+  tabletLayout: 'auto',
+  handedness: 'right',
+  fingerDrawing: 'auto',
+  penShapes: true,
+  scribbleErase: true,
+  palmRejection: true,
+  numericKeypad: 'auto',
+  touchInertia: true,
+  twistRoll: true,
+  touchUndoGestures: true,
+  penSeen: false,
 };
 
 function parseSnaps(raw: unknown): SketchSnapToggles {
@@ -212,6 +251,17 @@ export function parsePreferences(text: string | null): Preferences {
     constraintKeep: r.constraintKeep === 'last' ? 'last' : 'first',
     shortcuts: parseShortcuts(r.shortcuts),
     selectionExtension: pick('selectionExtension', bool),
+    tabletLayout: pick('tabletLayout', oneOf(['auto', 'on', 'off'])),
+    handedness: pick('handedness', oneOf(['right', 'left'])),
+    fingerDrawing: pick('fingerDrawing', oneOf(['auto', 'pen', 'touch'])),
+    penShapes: pick('penShapes', bool),
+    scribbleErase: pick('scribbleErase', bool),
+    palmRejection: pick('palmRejection', bool),
+    numericKeypad: pick('numericKeypad', oneOf(['auto', 'on', 'off'])),
+    touchInertia: pick('touchInertia', bool),
+    twistRoll: pick('twistRoll', bool),
+    touchUndoGestures: pick('touchUndoGestures', bool),
+    penSeen: pick('penSeen', bool),
   };
 }
 
@@ -243,7 +293,9 @@ export const usePreferences = create<PreferencesState>((set, get) => ({
     persist(snapshot(get()));
   },
   resetPreferences: () => {
-    set({ ...DEFAULT_PREFERENCES, snaps: { ...DEFAULT_SKETCH_SNAPS }, shortcuts: {} });
+    // "A pen was used here" is a fact about the device, not a setting: it survives a reset.
+    const penSeen = get().penSeen;
+    set({ ...DEFAULT_PREFERENCES, snaps: { ...DEFAULT_SKETCH_SNAPS }, shortcuts: {}, penSeen });
     persist(snapshot(get()));
   },
 }));

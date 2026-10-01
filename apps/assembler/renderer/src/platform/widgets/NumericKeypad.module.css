@@ -1,0 +1,135 @@
+/* On-screen number keypad (tablet layout): an island at the bottom of the tool side. */
+.keypad {
+  position: fixed;
+  bottom: 16px;
+  z-index: 900;
+  display: flex;
+  flex-direction: column;
+  gap: var(--hc-space-2);
+  width: 248px;
+  padding: var(--hc-space-2);
+  background: var(--hc-bg-island);
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-lg);
+  box-shadow: var(--hc-shadow-island);
+  font-family: var(--hc-font-ui);
+  color: var(--hc-fg-default);
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Right-handed: tools and keypad on the left (the free hand), left-handed: on the right. */
+.left {
+  left: 76px;
+}
+
+.right {
+  right: 76px;
+}
+
+.display {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 10px;
+  border-radius: var(--hc-radius-md);
+  background: var(--hc-bg-input);
+  border: 1px solid var(--hc-border-default);
+  min-width: 0;
+}
+
+.fieldLabel {
+  font-size: 11px;
+  color: var(--hc-fg-subtle);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.value {
+  font-size: 20px;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.grid,
+.units,
+.actions {
+  display: grid;
+  gap: 6px;
+}
+
+.three {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.four {
+  grid-template-columns: repeat(4, 1fr);
+}
+
+.units {
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+}
+
+.actions {
+  grid-template-columns: repeat(4, 1fr);
+}
+
+.key {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 0;
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-md);
+  background: var(--hc-bg-panel, var(--hc-bg-island));
+  color: var(--hc-fg-default);
+  font-family: var(--hc-font-ui);
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.key:active {
+  background: var(--hc-active-bg);
+}
+
+.digit {
+  font-weight: 500;
+}
+
+.op {
+  color: var(--hc-accent-base);
+  font-size: 17px;
+}
+
+.action {
+  color: var(--hc-fg-muted);
+}
+
+.accent {
+  background: var(--hc-accent-base);
+  border-color: var(--hc-accent-base);
+  color: var(--hc-fg-on-accent);
+}
+
+.accent:active {
+  background: var(--hc-accent-hover);
+}
+
+@media (hover: hover) {
+  .key:hover {
+    background: var(--hc-hover-bg);
+  }
+  .accent:hover {
+    background: var(--hc-accent-hover);
+  }
+}
