@@ -882,6 +882,7 @@ export function Viewport(props: ViewportProps): JSX.Element {
           forExport: true,
           hover: null,
           gridVisible: input.gridVisible && request.grid,
+          ...(request.edges !== undefined ? { edgesVisible: request.edges } : {}),
           axesVisible: (input.axesVisible ?? true) && request.grid,
           extrudeHandle: null,
           moveHandle: null,

@@ -53,11 +53,15 @@ export function ExportImageDialog(): JSX.Element | null {
   const stored = usePreferences((p) => p.imageExport);
   const [draft, setDraft] = useState<ImageExportPreference>(stored ?? DEFAULT_IMAGE_EXPORT);
   const [busy, setBusy] = useState(false);
+  // Edges follow the view's toggle each time the dialog opens (not remembered).
+  const viewEdges = useAssemblerStore((s) => s.viewState.edgesVisible);
+  const [edges, setEdges] = useState(viewEdges);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (open) {
       setDraft(stored ?? DEFAULT_IMAGE_EXPORT);
+      setEdges(useAssemblerStore.getState().viewState.edgesVisible);
       setError(null);
     }
   }, [open, stored]);
@@ -79,6 +83,7 @@ export function ExportImageDialog(): JSX.Element | null {
         height: size.height,
         transparent: draft.transparent,
         grid: draft.grid,
+        edges,
       });
       const bytes = new Uint8Array(await image.png.arrayBuffer());
       const saved = await io.exportBinary(
@@ -165,6 +170,11 @@ export function ExportImageDialog(): JSX.Element | null {
             const transparent = event.currentTarget.checked;
             setDraft((d) => ({ ...d, transparent }));
           }}
+        />
+        <Checkbox
+          label="Body edges"
+          checked={edges}
+          onChange={(event) => setEdges(event.currentTarget.checked)}
         />
         <Checkbox
           label="Include grid and axes"
