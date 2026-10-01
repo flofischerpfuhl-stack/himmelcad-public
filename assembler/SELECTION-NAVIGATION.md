@@ -140,17 +140,21 @@ of view, camera animation, single-key hotkeys.
   panel keys — is refused with the reason). Overrides are preferences and
   are written onto the registry, so menus, search and the cheat sheet show
   them. Settings › Selection extension: every click adds to the selection.
-- Touch: one finger orbits, two fingers pan and pinch-zoom, tap selects (taps
-  add up, like Shapr3D), double tap selects the body, long press opens the
-  context menu, long press + drag draws a selection box. Coarse pointers get
-  wider edge pick ribbons and larger rows/buttons. Pen = mouse (hover
-  highlights; barrel button = right button).
+- Touch and pen (Block 8, [TOUCH.md](TOUCH.md)): one finger orbits, two
+  fingers pan, pinch-zoom and twist-roll, flicks glide; tap selects (taps add
+  up, like Shapr3D), a double tap looks at a face / fits an empty view /
+  selects the body; long press opens the context menu, long press + drag
+  draws a selection box whose filters a second finger taps; two-finger tap
+  undoes, three-finger tap redoes, three-finger swipes undo/redo. The pen
+  acts like the mouse in 3D (hover highlights; barrel button = right button;
+  Shift/Ctrl/Alt + drag or hover orbits/pans/zooms) and draws shapes in
+  sketches; palms are ignored while it is used. The tablet layout (touch
+  primary or Settings) enlarges targets and tool handles and adds the number
+  keypad; Settings › Touch and pen holds the switches and the tool side.
 
 ## Limits
 
 - Units: sketch dimension chips and History parameter fields still show mm.
 - The id buffer is from the last drawn frame; boxes are evaluated on release
   (no live candidate highlight while dragging).
-- Touch box filters by a second finger (Shapr3D) are not implemented; the
-  keyboard filters work.
 - Rollback marker and Select Through are not saved with the project.
