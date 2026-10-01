@@ -357,7 +357,7 @@ export const SKETCH_EDIT_METHODS: Record<string, MethodSpec> = {
     capability: 'document.write',
     transactional: true,
     summary:
-      'Fillets (radius `size`) or chamfers (set-back `size`) the corner at point `point` between two lines; the corner point stays as a virtual sharp so dimensions to it survive.',
+      'Fillets (radius `size`, tangent to both curves) or chamfers (set-back `size`, a chord on arcs) the corner at point `point` between two lines, a line and an arc, or two arcs; the corner point stays as a virtual sharp so dimensions to it survive. Splines and ellipses are refused with the reason.',
     params: obj(
       {
         featureId: str,

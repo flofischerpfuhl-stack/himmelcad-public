@@ -24,7 +24,9 @@ import { validateSketchData } from '../../renderer/src/foundation/sketch-solver/
 import type { Inference, SketchHit } from '../../renderer/src/modules/sketching/inference.js';
 import {
   circularPattern,
+  cornerLimit,
   editPattern,
+  roundCorner,
   linearPattern,
   patternOf,
 } from '../../renderer/src/modules/sketching/operations.js';
@@ -339,6 +341,73 @@ void test('offset (SK-09): several loops at once, all outward; an arrow flips on
   );
   const lines = (s: SketchData) => s.entities.filter((e) => e.kind === 'line').length;
   assert.equal(lines(one.edit!.sketch), lines(sketch) + 1);
+});
+
+/** A "D": the diameter line (-10,0)–(10,0) and the upper half circle of radius 10, dimensioned. */
+function dShape(): { sketch: SketchData; right: string; left: string; line: string; arc: string } {
+  const sketch: SketchData = {
+    entities: [
+      { id: 'pc', kind: 'point', x: 0, y: 0 },
+      { id: 'pl', kind: 'point', x: -10, y: 0 },
+      { id: 'pr', kind: 'point', x: 10, y: 0 },
+      { id: 'l1', kind: 'line', a: 'pl', b: 'pr' },
+      { id: 'a1', kind: 'arc', center: 'pc', start: 'pr', end: 'pl' },
+    ],
+    constraints: [
+      { id: 'k1', kind: 'coincident', refs: ['pc', 'origin'] },
+      { id: 'k2', kind: 'horizontal', refs: ['l1'] },
+      { id: 'k3', kind: 'pointOnObject', refs: ['pc', 'l1'] },
+    ],
+    dimensions: [{ id: 'm1', name: 'd1', kind: 'radius', refs: ['a1'], value: 10 }],
+  };
+  return { sketch, right: 'pr', left: 'pl', line: 'l1', arc: 'a1' };
+}
+
+void test('sketch fillet/chamfer (SK-14): line–arc corners, tangent and dimensioned; limits and refusals', async () => {
+  const d = dShape();
+  const base = await solved(d.sketch);
+  assert.equal(base.dof, 0);
+  const fillet = roundCorner(base.sketch, d.right, 2, 'fillet');
+  assert.ok(!('reason' in fillet), 'reason' in fillet ? fillet.reason : '');
+  const f = await solved(fillet.sketch);
+  assert.equal(f.dof, 0, 'the radius dimension determines the fillet');
+  const map = entityMap(f.sketch);
+  const arc = f.sketch.entities.find((e) => e.kind === 'arc' && e.id !== d.arc);
+  assert.ok(arc?.kind === 'arc');
+  const c = pointPos(map, arc.center)!;
+  // Tangent to the line (distance 2) and inside the half circle (distance 10 − 2 from its centre).
+  assert.ok(Math.abs(c[1] - 2) < 1e-6 && Math.abs(Math.hypot(c[0], c[1]) - 8) < 1e-6);
+  assert.ok(Math.abs(c[0] - Math.sqrt(60)) < 1e-6);
+  // One region, smaller than the half disc by the rounded corner.
+  const regions = detectRegions(f.sketch);
+  assert.equal(regions.length, 1);
+  assert.ok(regions[0]!.area < Math.PI * 50 && regions[0]!.area > Math.PI * 50 - 4);
+  // The other corner as a chamfer: chord set-back 3 on the arc, 3 along the line.
+  const chamfer = roundCorner(f.sketch, d.left, 3, 'chamfer');
+  assert.ok(!('reason' in chamfer));
+  const ch = await solved(chamfer.sketch);
+  assert.equal(ch.dof, 0);
+  // Arc–arc: the fillet arc and the half circle meet at a corner? No — tangent: refused.
+  const tangentCorner = (
+    ch.sketch.entities.find((e) => e.kind === 'arc' && e.id !== d.arc) as {
+      start: string;
+    }
+  ).start;
+  const refused = roundCorner(ch.sketch, tangentCorner, 1, 'fillet');
+  assert.ok('reason' in refused && /tangent/.test(refused.reason));
+  // Too large: the message names the largest radius that fits.
+  const tooLarge = roundCorner(base.sketch, d.right, 50, 'fillet');
+  assert.ok('reason' in tooLarge && /at most \d/.test(tooLarge.reason));
+  const limit = cornerLimit(base.sketch, d.right, 'fillet');
+  assert.ok(limit > 2 && limit < 10, `limit ${limit}`);
+  // Splines are refused with the reason.
+  const b = new SketchBuilder(EMPTY_SKETCH);
+  const p0 = b.addPoint([0, 0]);
+  const p1 = b.addPoint([10, 0]);
+  b.addLine(p0, p1);
+  buildSpline(b, [{ pos: [10, 0], pointId: p1 }, { pos: [15, 5] }, { pos: [20, 0] }], 'fit', false);
+  const spline = roundCorner(b.result().sketch, p1, 1, 'fillet');
+  assert.ok('reason' in spline && /spline/.test(spline.reason));
 });
 
 void test('pattern records follow deletions: copies may go, sources or the direction line end the record', () => {

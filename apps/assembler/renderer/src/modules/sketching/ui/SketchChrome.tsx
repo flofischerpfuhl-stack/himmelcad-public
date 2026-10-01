@@ -155,7 +155,7 @@ export function toolPrompt(tool: SketchTool): string {
     case 'corner':
       return tool.pointId
         ? `Move to size the ${tool.mode === 'fillet' ? 'fillet' : 'chamfer'}, click or type it.`
-        : 'Click a corner between two lines.';
+        : 'Click a corner between two lines or arcs.';
     case 'project':
       return 'Click body edges or faces to project them into the sketch. Esc ends.';
     case 'text':

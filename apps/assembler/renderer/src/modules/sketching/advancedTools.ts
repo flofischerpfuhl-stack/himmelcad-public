@@ -23,6 +23,7 @@ import {
 import type { Inference, SketchHit } from './inference.js';
 import {
   circularPattern,
+  cornerCurves,
   cornerLines,
   linearPattern,
   mirrorGeometry,
@@ -680,9 +681,11 @@ function reduceCorner(
   if (!tool.pointId) {
     if (event.type !== 'click') return { tool };
     const pointId = event.hit?.kind === 'point' ? event.hit.id : (event.snap.pointId ?? null);
-    if (!pointId) return { tool, notice: 'Click a corner point between two lines.' };
+    if (!pointId) return { tool, notice: 'Click a corner point between two lines or arcs.' };
     const lines = cornerLines(sketch, pointId);
-    if ('reason' in lines) return { tool, notice: lines.reason };
+    // Line–line corners, or corners with arcs (SK-14).
+    const curves = 'reason' in lines ? cornerCurves(sketch, pointId) : lines;
+    if ('reason' in curves) return { tool, notice: curves.reason };
     return { tool: { ...tool, pointId } };
   }
   const size =
