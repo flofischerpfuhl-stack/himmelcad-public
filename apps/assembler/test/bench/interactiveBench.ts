@@ -9,7 +9,11 @@
  * (b) Hole tool on the enclosure floor: click a position, M4, counterbore
  *     (previews) → Done;
  * (c) fillet drag on the demo bracket (successive preview radii);
- * (d) a 60-entity sketch, dragging one point (solver only).
+ * (d) a 60-entity sketch, dragging one point (solver only);
+ * (e) the orbit/zoom pivot's CPU part (`orbitPivot.ts` rules on a 64 × 64
+ *     depth window around a bore, plus the ray math), once per gesture — the
+ *     GPU read of that window is measured in the app (DEV probe `pivotAt`,
+ *     assembler/SELECTION-NAVIGATION.md).
  *
  * Stages per step: wall time until the stores settle; `ui` = the synchronous
  * main-thread work a React render of the adaptive toolbar and the command
@@ -57,6 +61,17 @@ import type { SketchData, Vec2 } from '../../renderer/src/foundation/sketch-solv
 import { installNodeFonts } from '../sketch/nodeFont.js';
 import { loadNodeSolver } from '../sketch/nodeSolver.js';
 import { sixtyEntitySketch } from './parts.js';
+import {
+  DEFAULT_POSE,
+  pointAtViewDepth,
+  viewProjectionMatrix,
+  type CameraPose,
+} from '../../renderer/src/platform/viewport/camera.js';
+import { unprojectRay } from '../../renderer/src/platform/viewport/math.js';
+import {
+  pivotDepth,
+  type DepthProjection,
+} from '../../renderer/src/platform/viewport/orbitPivot.js';
 
 type OpenCascade = OpenCascadeModule;
 
@@ -469,6 +484,76 @@ async function scenarioSketchDrag(steps: number): Promise<StepRow[]> {
   return rows;
 }
 
+/**
+ * (e) The pivot rules as the viewport runs them at an orbit/wheel start: a
+ * 64 × 64 window (device pixels, dpr 1) around a Ø40 px bore in a plate, the
+ * cursor in the bore (rule 2 scans the whole window — the worst case), then
+ * the cursor ray and the point on it. Perspective and orthographic.
+ */
+function scenarioPivot(runs: number): StepRow[] {
+  const s = 'e orbit pivot';
+  const rows: StepRow[] = [];
+  const size = 64;
+  const make = (projection: DepthProjection) => {
+    const z = new Float32Array(size * size);
+    const { near: n, far: f } = projection;
+    const windowZ = (d: number) =>
+      ((projection.orthographic ? (2 * d - f - n) / (f - n) : (f + n - (2 * f * n) / d) / (f - n)) +
+        1) /
+      2;
+    for (let y = 0; y < size; y += 1) {
+      for (let x = 0; x < size; x += 1) {
+        const r = Math.hypot(x + 0.5 - size / 2, y + 0.5 - size / 2);
+        z[y * size + x] = r < 20 ? Number.NaN : windowZ(100 + (r < 24 ? 8 : 0));
+      }
+    }
+    return z;
+  };
+  const cases: { label: string; pose: CameraPose; projection: DepthProjection }[] = [
+    {
+      label: 'pivot rules + ray (64×64 window, perspective)',
+      pose: { ...DEFAULT_POSE, fov: 45 },
+      projection: { near: 10, far: 1000, orthographic: false },
+    },
+    {
+      label: 'pivot rules + ray (64×64 window, orthographic)',
+      pose: { ...DEFAULT_POSE, fov: 0 },
+      projection: { near: -500, far: 500, orthographic: true },
+    },
+  ];
+  for (const c of cases) {
+    const z = make(c.projection);
+    for (let i = 0; i < runs; i += 1) {
+      const t0 = performance.now();
+      const found = pivotDepth(
+        { width: size, height: size, z, cx: size / 2, cy: size / 2, cssPerSample: 1 },
+        c.projection,
+      );
+      const ray = unprojectRay(viewProjectionMatrix(c.pose, 1.6), 640, 400, 1280, 800);
+      const point = found && ray ? pointAtViewDepth(c.pose, ray, found.depth) : null;
+      const ms = performance.now() - t0;
+      if (!point || found?.rule !== 'near') throw new Error('pivot: no point in the bore');
+      rows.push({
+        scenario: s,
+        step: c.label,
+        wallMs: ms,
+        uiMs: 0,
+        solverMs: 0,
+        regionsMs: 0,
+        kernelMs: 0,
+        featureMs: 0,
+        validityMs: 0,
+        namingMs: 0,
+        tessellateMs: 0,
+        reused: 0,
+        evaluated: 0,
+        printMs: null,
+      });
+    }
+  }
+  return rows;
+}
+
 // ---- report ---------------------------------------------------------------------------------
 
 function median(values: number[]): number {
@@ -556,6 +641,7 @@ async function main(): Promise<void> {
       ...medianRows(holeRuns),
       ...medianRows([await scenarioFillet(10)]),
       ...medianRows([await scenarioSketchDrag(30)]),
+      ...medianRows([scenarioPivot(200)]),
     ];
   }
 
