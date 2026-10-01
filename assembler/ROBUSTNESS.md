@@ -63,7 +63,10 @@ broke.
   (model stream) added 7 kinds (58 in all): primitives (on the grid or a
   planar face, Join/Cut into it), Scale (uniform/per axis, copies),
   Translate, Move Edge, Move Face, helical revolves (≤ 2 turns) and tapered
-  extrudes (one side, symmetric, two sides).
+  extrudes (one side, symmetric, two sides); the integration added 5 more (63):
+  two-direction/uniform patterns, split by a sketch profile, reference images
+  (insert + calibrate; save/reopen compares the stored pictures), sketch
+  patterns in two directions (edited afterwards) and sketch offsets.
 - **State-independent ops.** An op is `{op, r: [8 numbers in 0..1]}`; the
   numbers are resolved against the document _when the op runs_ ("the n-th
   body", "a planar face of it", "a size between a and b"). An op with
@@ -329,8 +332,9 @@ full `pnpm test` run; it passed alone.
   reverse) for marginal booleans.
 - **Interleaved OCCT users** are detected, not supported (see Native crash).
 - **Fuzzer coverage gaps** (after Block 6; Block 8 added Move Face/Edge,
-  Scale, Translate, primitives, helix and taper): no split/align/offsetFace/
-  deleteFace ops, no sketch spline/ellipse ops, no STL/3MF/OBJ import or
+  Scale, Translate, primitives, helix and taper, the integration profile
+  split, grid patterns, images, sketch patterns/offsets): no plane split/align/
+  offsetFace/deleteFace ops, no sketch fillet/disconnect/unlink ops, no sketch spline/ellipse ops, no STL/3MF/OBJ import or
   mesh-to-solid, no concurrent UI tool sessions; the monkey test is random,
   not model-based, and does not check document invariants.
 - **Large DXF imports**: F9's cause is fixed on the writer side, but a DXF
