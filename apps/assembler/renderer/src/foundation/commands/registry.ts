@@ -166,6 +166,7 @@ export const COMMAND_ORDER = {
   history: 1300,
   visibility: 1400,
   file: 1500,
+  canvas: 1550,
   fileInterop: 1600,
   interop: 1700,
   agent: 1800,

@@ -50,6 +50,10 @@ export function folderRowKey(folderId: string): string {
 export function datumRowKey(featureId: string): string {
   return `datum:${featureId}`;
 }
+/** A reference image (canvas module; its name is the History step's). */
+export function imageRowKey(featureId: string): string {
+  return `image:${featureId}`;
+}
 
 export function displayBodyName(body: Pick<Body, 'id' | 'name'>, meta: ItemsMeta): string {
   return meta.names[body.id] ?? body.name;
@@ -67,7 +71,7 @@ export function withDisplayNames<T extends Pick<Body, 'id' | 'name'>>(
 
 export interface LeafRow {
   key: string;
-  kind: 'body' | 'sketch' | 'mesh' | 'plane' | 'axis';
+  kind: 'body' | 'sketch' | 'mesh' | 'plane' | 'axis' | 'image';
 }
 
 export type ItemNode =

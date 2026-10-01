@@ -99,7 +99,22 @@ export interface MeshRangeBatch {
   noClip?: boolean;
 }
 
-export type DrawBatch = FlatBatch | LineBatch | MeshRangeBatch;
+/**
+ * A picture on a quad (reference images): `corners` are the world corners
+ * bottom-left, bottom-right, top-right, top-left (12 floats); the picture's
+ * top-left pixel lands on the top-left corner. Textures are cached per
+ * `source` object and dropped when unused for a while.
+ */
+export interface ImageBatch {
+  kind: 'image';
+  source: TexImageSource;
+  corners: Float32Array;
+  opacity: number;
+  depthTest: boolean;
+  noClip?: boolean;
+}
+
+export type DrawBatch = FlatBatch | LineBatch | MeshRangeBatch | ImageBatch;
 
 export interface LegacyIdBatch {
   positions: Float32Array;
@@ -426,6 +441,39 @@ void main() {
   outColor = vColor;
 }`;
 
+/** A textured quad (reference images). */
+const IMAGE_VS = `#version 300 es
+in vec3 aPosition;
+in vec2 aUv;
+uniform mat4 uViewProj;
+${CLIP_VS}
+out vec2 vUv;
+out float vClip;
+void main() {
+  vClip = clipDistance(aPosition);
+  vUv = aUv;
+  gl_Position = uViewProj * vec4(aPosition, 1.0);
+}`;
+
+const IMAGE_FS = `#version 300 es
+precision mediump float;
+in vec2 vUv;
+in float vClip;
+uniform sampler2D uImage;
+uniform float uOpacity;
+out vec4 outColor;
+void main() {
+  if (vClip > 0.0) discard;
+  vec4 c = texture(uImage, vUv);
+  outColor = vec4(c.rgb, c.a * uOpacity);
+}`;
+
+/** Two triangles of a quad: corner order bottom-left, bottom-right, top-right, top-left. */
+const IMAGE_QUAD = [0, 1, 2, 0, 2, 3] as const;
+const IMAGE_QUAD_UV = [0, 1, 1, 1, 1, 0, 0, 0] as const;
+/** Frames an unused picture texture is kept. */
+const TEXTURE_KEEP_FRAMES = 240;
+
 /** Uniform colour (face highlights, caps, depth-only passes). */
 const SOLID_VS = `#version 300 es
 in vec3 aPosition;
@@ -699,6 +747,11 @@ export class ViewportRenderer {
   private readonly idProgram: Program;
   private readonly meshId: Program;
   private readonly shadowProgram: Program;
+  private readonly imageProgram: Program;
+  private readonly textures = new Map<
+    TexImageSource,
+    { texture: WebGLTexture; lastFrame: number }
+  >();
   private readonly dynamicBuffer: WebGLBuffer;
   private readonly dynamicBuffer2: WebGLBuffer;
   private readonly dynamicIndexBuffer: WebGLBuffer;
@@ -773,6 +826,7 @@ export class ViewportRenderer {
     this.idProgram = linkProgram(gl, ID_VS, ID_FS, ['aPosition']);
     this.meshId = linkProgram(gl, MESH_ID_VS, MESH_ID_FS, ['aPosition', 'aLocal']);
     this.shadowProgram = linkProgram(gl, SHADOW_VS, SHADOW_FS, ['aPosition']);
+    this.imageProgram = linkProgram(gl, IMAGE_VS, IMAGE_FS, ['aPosition', 'aUv']);
     this.dynamicBuffer = gl.createBuffer()!;
     this.dynamicBuffer2 = gl.createBuffer()!;
     this.dynamicIndexBuffer = gl.createBuffer()!;
@@ -847,6 +901,12 @@ export class ViewportRenderer {
         gl.deleteBuffer(entry.buffer);
         this.cacheBytes -= entry.bytes;
         this.cache.delete(key);
+      }
+    }
+    for (const [source, entry] of this.textures) {
+      if (this.frameNo - entry.lastFrame > TEXTURE_KEEP_FRAMES) {
+        gl.deleteTexture(entry.texture);
+        this.textures.delete(source);
       }
     }
     this.frameNo += 1;
@@ -1002,6 +1062,9 @@ export class ViewportRenderer {
       } else if ('kind' in batch && batch.kind === 'meshRange') {
         this.drawMeshRange(frame, batch, target);
         lastProgram = null;
+      } else if ('kind' in batch && batch.kind === 'image') {
+        this.drawImage(frame, batch, target);
+        lastProgram = null;
       } else {
         const flatBatch = batch as FlatBatch;
         if (lastProgram !== this.flat) {
@@ -1017,6 +1080,64 @@ export class ViewportRenderer {
       }
     }
     gl.depthMask(true);
+  }
+
+  /** The texture of a picture (uploaded once per source object). */
+  private textureFor(source: TexImageSource): WebGLTexture {
+    const gl = this.gl;
+    const hit = this.textures.get(source);
+    if (hit) {
+      hit.lastFrame = this.frameNo;
+      return hit.texture;
+    }
+    const texture = gl.createTexture()!;
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source);
+    gl.generateMipmap(gl.TEXTURE_2D);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    this.uploads += 1;
+    this.textures.set(source, { texture, lastFrame: this.frameNo });
+    return texture;
+  }
+
+  /** A reference picture: textured quad, blended, pulled slightly towards the eye (no z-fight). */
+  private drawImage(frame: SceneFrame, batch: ImageBatch, target: RenderTarget): void {
+    const gl = this.gl;
+    const p = this.imageProgram;
+    gl.useProgram(p.program);
+    gl.uniformMatrix4fv(this.u(p, 'uViewProj'), false, frame.viewProj);
+    this.setClipUniforms(p, frame.clip, frame.clip.enabled && !batch.noClip);
+    gl.uniform1f(this.u(p, 'uOpacity'), batch.opacity);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, this.textureFor(batch.source));
+    gl.uniform1i(this.u(p, 'uImage'), 0);
+    const positions = new Float32Array(18);
+    const uvs = new Float32Array(12);
+    IMAGE_QUAD.forEach((corner, i) => {
+      positions.set(batch.corners.subarray(corner * 3, corner * 3 + 3), i * 3);
+      uvs[i * 2] = IMAGE_QUAD_UV[corner * 2]!;
+      uvs[i * 2 + 1] = IMAGE_QUAD_UV[corner * 2 + 1]!;
+    });
+    this.resetAttribs();
+    this.bufferFor(positions, gl.ARRAY_BUFFER, this.dynamicBuffer);
+    this.attrib(p.attribs.aPosition, 3);
+    this.bufferFor(uvs, gl.ARRAY_BUFFER, this.dynamicBuffer2);
+    this.attrib(p.attribs.aUv, 2);
+    if (batch.depthTest) gl.enable(gl.DEPTH_TEST);
+    else gl.disable(gl.DEPTH_TEST);
+    gl.depthMask(false);
+    gl.enable(gl.POLYGON_OFFSET_FILL);
+    gl.polygonOffset(-1, -4);
+    this.blend(target, true);
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+    this.drawCalls += 1;
+    gl.disable(gl.POLYGON_OFFSET_FILL);
+    gl.depthMask(true);
+    this.resetAttribs();
   }
 
   private blend(target: RenderTarget, on: boolean): void {
@@ -1763,6 +1884,8 @@ export class ViewportRenderer {
     ]) {
       gl.deleteProgram(p.program);
     }
+    for (const entry of this.textures.values()) gl.deleteTexture(entry.texture);
+    this.textures.clear();
     gl.deleteBuffer(this.dynamicBuffer);
     gl.deleteBuffer(this.dynamicBuffer2);
     gl.deleteBuffer(this.dynamicIndexBuffer);

@@ -42,6 +42,10 @@ import { IGES_UNAVAILABLE, stepExportOptions } from '../../modules/interop/inter
 import { stepAssemblyFromItems } from '../../modules/interop/stepTree.js';
 import { useItemsStore } from '../../foundation/commands/items.js';
 import {
+  collectProjectSections,
+  loadProjectSections,
+} from '../../foundation/document/projectSections.js';
+import {
   ProjectFormatError,
   loadProjectFile,
   saveProjectFile,
@@ -1015,7 +1019,10 @@ export class AgentSession {
     this.guardDiscard('Starting a new project');
     const name = typeof p.name === 'string' ? p.name : 'Untitled';
     if (this.host.project) this.host.project.newProject(name);
-    else this.store.getState().loadDocument([], { projectName: name });
+    else {
+      this.store.getState().loadDocument([], { projectName: name });
+      loadProjectSections(null);
+    }
     await this.store.getState().whenSettled();
     return { projectName: name, revision: this.revision };
   }
@@ -1046,6 +1053,8 @@ export class AgentSession {
         projectName: project.projectName,
         parameters: project.parameters,
       });
+      // Headless: the modules' top-level fields (e.g. reference-image pictures) too.
+      loadProjectSections(project);
     }
     await this.store.getState().whenSettled();
     const evaluation = this.store.getState().evaluation;
@@ -1063,6 +1072,8 @@ export class AgentSession {
     const text = this.host.project
       ? await this.host.project.text(typeof p.name === 'string' ? p.name : undefined)
       : saveProjectFile({
+          // Headless: the modules' top-level fields (e.g. reference-image pictures), no view state.
+          ...(await collectProjectSections()).fields,
           projectName: typeof p.name === 'string' ? p.name : state.projectName,
           features: state.features,
           parameters: state.parameters,

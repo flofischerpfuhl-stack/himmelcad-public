@@ -2356,6 +2356,51 @@
         "additionalProperties": false
       }
     },
+    "referenceImage": {
+      "label": "Image",
+      "summary": "Reference image (no body): a picture on a plane, created with image.insert. feature.edit changes `center` [u, v], `width` (mm; the height follows), `rotation` (degrees) and `opacity` (0.05–1).",
+      "params": {
+        "type": "object",
+        "properties": {
+          "imageId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "fileName": {
+            "type": "string",
+            "minLength": 1
+          },
+          "pixelWidth": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "pixelHeight": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "plane": {
+            "$ref": "#/$defs/SketchPlane"
+          },
+          "center": {
+            "$ref": "#/$defs/Vec2"
+          },
+          "width": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "rotation": {
+            "type": "number"
+          },
+          "opacity": {
+            "type": "number",
+            "minimum": 0.05,
+            "maximum": 1
+          }
+        },
+        "required": ["imageId", "pixelWidth", "pixelHeight", "plane", "center", "width"],
+        "additionalProperties": false
+      }
+    },
     "hole": {
       "label": "Hole",
       "summary": "Simple, counterbored or countersunk holes on a planar face, blind or through all, several per feature. Standard sizes are presets of the tool (ISO 273 clearance M2-M10, tap drill, DIN 974-1 counterbores, ISO 15065 countersinks) and are stored as plain diameters; `thread` is a cosmetic label only (no thread geometry).",
@@ -4728,6 +4773,103 @@
         "additionalProperties": false
       },
       "result": "{featureId, bodyId, check: {triangles, faces, flipped, inverted, volume}, summary, revision, committed}"
+    },
+    "image.insert": {
+      "kind": "command",
+      "capability": "document.write",
+      "transactional": true,
+      "summary": "Inserts a PNG/JPEG picture (`path` headless, or base64 `data` + `fileName`) as a reference image (History step `referenceImage`, Shapr3D canvas) on a plane: centre `center` [u, v] in the plane frame, `width` mm (default: longer side 100 mm; the height follows the aspect ratio), `rotation` degrees, `opacity` 0.05–1 (default 0.6). The picture is stored in the project file.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "data": {
+            "type": "string",
+            "minLength": 1
+          },
+          "fileName": {
+            "type": "string",
+            "minLength": 1
+          },
+          "plane": {
+            "description": "A world plane {kind: \"plane\", plane: \"XY\"|\"XZ\"|\"YZ\", offset}, a planar face {kind: \"face\", face: FaceInput} or a construction plane {kind: \"construction\", featureId}; default XY.",
+            "type": "object"
+          },
+          "center": {
+            "$ref": "#/$defs/Vec2"
+          },
+          "width": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "rotation": {
+            "type": "number"
+          },
+          "opacity": {
+            "type": "number",
+            "minimum": 0.05,
+            "maximum": 1
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Optimistic concurrency: the command fails with `conflict` unless the document revision still equals this value."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "result": "{featureId, imageId, pixelWidth, pixelHeight, width, height, revision, committed}"
+    },
+    "image.calibrate": {
+      "kind": "command",
+      "capability": "document.write",
+      "transactional": true,
+      "summary": "Scales a reference image so that points `a` and `b` (plane [u, v], or world [x, y, z] projected onto its plane) are `distance` mm apart; it scales about `a`.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "featureId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "a": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 2,
+            "maxItems": 3
+          },
+          "b": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 2,
+            "maxItems": 3
+          },
+          "distance": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Optimistic concurrency: the command fails with `conflict` unless the document revision still equals this value."
+          }
+        },
+        "required": ["featureId", "a", "b", "distance"],
+        "additionalProperties": false
+      },
+      "result": "{featureId, center, width, revision, committed}"
     }
   },
   "limits": {

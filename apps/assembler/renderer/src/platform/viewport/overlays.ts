@@ -7,7 +7,7 @@
  * change. The viewport itself never imports a module.
  */
 import type { Body } from '../../foundation/geometry-kernel/types.js';
-import type { FlatBatch } from './gl.js';
+import type { FlatBatch, ImageBatch } from './gl.js';
 
 export interface OverlayFrameInput {
   bodies: readonly Body[];
@@ -15,11 +15,14 @@ export interface OverlayFrameInput {
   isolatedBodyIds: readonly string[] | null;
 }
 
+/** What an overlay draws: flat batches, or pictures on quads (reference images). */
+export type OverlayBatch = FlatBatch | ImageBatch;
+
 export interface OverlayBatches {
   /** On body surfaces: drawn below edges and highlights. */
-  surface: FlatBatch[];
+  surface: OverlayBatch[];
   /** Translucent volumes: drawn last. */
-  last: FlatBatch[];
+  last: OverlayBatch[];
 }
 
 export interface ViewportOverlayProvider {
@@ -47,8 +50,8 @@ export function registerViewportOverlay(provider: ViewportOverlayProvider): void
 export function viewportOverlayBatches(input: OverlayFrameInput): OverlayBatches {
   if (providers.length === 0) return EMPTY;
   if (providers.length === 1) return providers[0]!.batches(input);
-  const surface: FlatBatch[] = [];
-  const last: FlatBatch[] = [];
+  const surface: OverlayBatch[] = [];
+  const last: OverlayBatch[] = [];
   for (const provider of providers) {
     const batches = provider.batches(input);
     surface.push(...batches.surface);

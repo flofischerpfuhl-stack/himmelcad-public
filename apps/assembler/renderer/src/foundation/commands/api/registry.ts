@@ -48,6 +48,7 @@ export const API_ORDER = {
     construction: 300,
     modelingTail: 400,
     directEdit: 500,
+    canvas: 600,
     printFeatures: 900,
   },
   methods: {
@@ -64,6 +65,7 @@ export const API_ORDER = {
     coreProject: 340,
     print: 400,
     interop: 500,
+    canvas: 600,
   },
 } as const;
 

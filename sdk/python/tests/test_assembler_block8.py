@@ -2,10 +2,14 @@
 loops (splines/ellipses included), measured distance components."""
 from __future__ import annotations
 
+import json
 import math
 import shutil
+import struct
 import sys
+import tempfile
 import unittest
+import zlib
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -17,6 +21,21 @@ HEADLESS = REPOSITORY_ROOT / "apps/assembler/dist/headless/headless/cli.js"
 sys.path.insert(0, str(SDK_ROOT / "src"))
 
 from himmelcad.assembler import AssemblerClient, Document, StdioTransport  # noqa: E402
+
+
+def _png(width: int, height: int) -> bytes:
+    """A valid one-colour PNG."""
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+
+    rows = b"".join(b"\x00" + b"\x80\x80\x80" * width for _ in range(height))
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(rows))
+        + chunk(b"IEND", b"")
+    )
 
 
 class RecordingTransport:
@@ -69,6 +88,21 @@ class HelperTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             s.pattern(["c1"], 3, spacing=10, count2=2)
 
+    def test_reference_image_helpers(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            picture = Path(folder) / "plan.png"
+            picture.write_bytes(_png(4, 2))
+            self.doc.client.insert_image(picture, plane={"kind": "plane", "plane": "XZ"}, width=40, opacity=0.5)
+        method, params = self.last()
+        self.assertEqual(method, "image.insert")
+        self.assertEqual((params["fileName"], params["width"], params["opacity"]), ("plan.png", 40, 0.5))
+        self.assertNotIn("rotation", params)
+        self.doc.client.calibrate_image("feature-referenceImage-1", (0, 0), (10, 0), 25)
+        self.assertEqual(
+            self.last(),
+            ("image.calibrate", {"featureId": "feature-referenceImage-1", "a": [0, 0], "b": [10, 0], "distance": 25}),
+        )
+
     def test_offset_is_one_command(self) -> None:
         s = self.doc.sketch("XY")
         s.circle(2)
@@ -116,6 +150,18 @@ class HeadlessBlock8Tests(unittest.TestCase):
             second = doc.extrude(b, 5)
             result = doc.client.measure_distance({"kind": "body", "bodyId": first.id}, {"kind": "body", "bodyId": second.id})
             self.assertEqual([round(v, 6) for v in result["delta"]], [20.0, 0.0, 5.0])
+
+    def test_reference_image_is_saved_with_the_project(self) -> None:
+        with tempfile.TemporaryDirectory() as folder, Document(AssemblerClient(StdioTransport())) as doc:
+            picture = Path(folder) / "plan.png"
+            picture.write_bytes(_png(40, 20))
+            inserted = doc.client.insert_image(picture, center=(5, 5))
+            self.assertEqual((inserted["width"], inserted["height"]), (100, 50))
+            calibrated = doc.client.calibrate_image(inserted["featureId"], (0, 0), (50, 0), 25)
+            self.assertAlmostEqual(calibrated["width"], 50)
+            saved = json.loads(doc.client.save_project(Path(folder) / "canvas.hcasm").read_text(encoding="utf-8"))
+            self.assertEqual(len(saved["images"]), 1)
+            self.assertEqual(saved["features"][0]["kind"], "referenceImage")
 
 
 if __name__ == "__main__":

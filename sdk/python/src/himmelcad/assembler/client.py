@@ -36,6 +36,7 @@ METHODS = (
     "export.meshStats", "print.analyze", "print.orientations", "print.placeOnPlate", "print.orient",
     "interop.formats", "import.mesh", "import.dxf", "export.dxf", "mesh.toSolid",
     "import.iges", "export.iges",
+    "image.insert", "image.calibrate",
 )
 
 
@@ -396,6 +397,43 @@ class AssemblerClient:
     def mesh_to_solid(self, mesh_id: str, *, name: str | None = None, hide_mesh: bool | None = None) -> Mapping[str, Any]:
         """Converts a closed reference mesh into a solid body (one step); fails with the reason otherwise."""
         return self.call("mesh.toSolid", {"meshId": mesh_id, "name": name, "hideMesh": hide_mesh})
+
+    # ---- reference images (canvas) -------------------------------------------------------------
+    def insert_image(
+        self,
+        path: str | Path,
+        *,
+        plane: Mapping[str, Any] | None = None,
+        center: tuple[float, float] | None = None,
+        width: float | None = None,
+        rotation: float | None = None,
+        opacity: float | None = None,
+        name: str | None = None,
+    ) -> Mapping[str, Any]:
+        """A PNG/JPEG picture as a reference image (History step, stored in the project) on `plane`:
+        `{"kind": "plane", "plane": "XY", "offset": 0}`, `{"kind": "face", "face": ...}` or
+        `{"kind": "construction", "featureId": ...}`; `width` mm (the height follows), `opacity` 0.05-1."""
+        return self.call(
+            "image.insert",
+            {
+                **_file_params(Path(path)),
+                "plane": dict(plane) if plane else None,
+                "center": list(center) if center is not None else None,
+                "width": width,
+                "rotation": rotation,
+                "opacity": opacity,
+                "name": name,
+            },
+        )
+
+    def calibrate_image(
+        self, feature_id: str, a: tuple[float, ...], b: tuple[float, ...], distance: float
+    ) -> Mapping[str, Any]:
+        """Scales a reference image so points `a` and `b` (plane `(u, v)` or world `(x, y, z)`) are
+        `distance` mm apart; it scales about `a`."""
+        return self.call(
+            "image.calibrate", {"featureId": feature_id, "a": list(a), "b": list(b), "distance": distance}
+        )
 
     def new_project(self, name: str | None = None) -> Mapping[str, Any]:
         return self.call("project.new", {"name": name})
