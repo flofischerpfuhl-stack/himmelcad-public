@@ -18,7 +18,9 @@
 import { parentPort, workerData } from 'node:worker_threads';
 
 import '../renderer/src/app/kernelModules.js';
+import { registeredFeatureKinds } from '../renderer/src/foundation/document/featureKinds.js';
 import { createEvaluator } from '../renderer/src/foundation/geometry-kernel/evaluator.js';
+import { featureEvaluator } from '../renderer/src/foundation/geometry-kernel/features/registry.js';
 import { arenaInterleavings } from '../renderer/src/foundation/geometry-kernel/occtArena.js';
 import { occtFormatCapabilities } from '../renderer/src/foundation/geometry-kernel/stepImport.js';
 import type { Feature } from '../renderer/src/foundation/document/document.js';
@@ -28,6 +30,16 @@ import {
 } from '../renderer/src/foundation/geometry-kernel/workerHost.js';
 import type { WorkerRequest } from '../renderer/src/foundation/geometry-kernel/workerProtocol.js';
 import { loadOcct, type OpenCascadeModule } from './occtModule.js';
+
+/**
+ * Answer of the `diagnostics` host query: the arena-order counter and the
+ * kinds registered on this thread (the module kernel parts it loaded).
+ */
+export interface KernelThreadDiagnostics {
+  arenaInterleavings: number;
+  featureKinds: string[];
+  evaluatorKinds: string[];
+}
 
 /** Params of the `evaluateFresh` host query. */
 export interface EvaluateFreshParams {
@@ -108,7 +120,11 @@ const handle = createKernelRequestHandler(ready, post, {
       fresh.clearCache();
     }
   },
-  diagnostics: async () => ({ arenaInterleavings: arenaInterleavings() }),
+  diagnostics: async (): Promise<KernelThreadDiagnostics> => ({
+    arenaInterleavings: arenaInterleavings(),
+    featureKinds: registeredFeatureKinds(),
+    evaluatorKinds: registeredFeatureKinds().filter((kind) => featureEvaluator(kind) !== undefined),
+  }),
 });
 
 port.on('message', (message: WorkerRequest) => handle(message));

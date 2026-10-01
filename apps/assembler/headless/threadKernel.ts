@@ -13,7 +13,7 @@ import { Worker as NodeWorker } from 'node:worker_threads';
 import { WorkerKernelAdapter } from '../renderer/src/foundation/geometry-kernel/workerAdapter.js';
 import type { EvaluationResult } from '../renderer/src/foundation/geometry-kernel/types.js';
 import type { Feature } from '../renderer/src/foundation/document/document.js';
-import type { EvaluateFreshParams } from './kernelThread.js';
+import type { EvaluateFreshParams, KernelThreadDiagnostics } from './kernelThread.js';
 
 /** Responses that end a request (`workerProtocol.ts`); `progress`/`status` do not. */
 const FINAL_RESPONSES: ReadonlySet<string> = new Set([
@@ -49,7 +49,10 @@ class ThreadWorker {
   private loading = true;
 
   constructor(url: URL, quiet: boolean) {
-    this.thread = new NodeWorker(url, { workerData: { quiet } });
+    // `execArgv: []`: the thread loads exactly what `kernelThread.ts` imports (the kernel
+    // composition, like the app's kernel Web Worker), not a preload of the parent process
+    // (`node --import test/setup.js` would otherwise put the whole app composition there).
+    this.thread = new NodeWorker(url, { workerData: { quiet }, execArgv: [] });
     this.thread.on('message', (data: unknown) => {
       this.track(data);
       this.onmessage?.({ data });
@@ -141,10 +144,13 @@ export class ThreadKernelAdapter extends WorkerKernelAdapter {
 
   /** The kernel thread's OCCT arena-order counter (`occtArena.ts`). */
   async arenaInterleavings(): Promise<number> {
+    return (await this.diagnostics()).arenaInterleavings;
+  }
+
+  /** What the kernel thread registered: its feature kinds and evaluators (`kernelThread.ts`). */
+  async diagnostics(): Promise<KernelThreadDiagnostics> {
     await this.whenReady();
-    return (
-      await this.query<{ arenaInterleavings: number }>('diagnostics', null, 'kernel diagnostics')
-    ).arenaInterleavings;
+    return this.query<KernelThreadDiagnostics>('diagnostics', null, 'kernel diagnostics');
   }
 }
 

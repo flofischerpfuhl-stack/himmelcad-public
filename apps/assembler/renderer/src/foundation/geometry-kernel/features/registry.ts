@@ -3,8 +3,9 @@
  * implements its core kinds itself and asks this registry for every other
  * kind. A module that owns kinds declares them in its `kernel.ts` with
  * {@link defineKernelModule}; the kernel-worker composition
- * (`renderer/src/app/kernel.worker.ts`) and the in-process kernel
- * (headless CLI, tests) load those files, so the worker bundle carries only
+ * (`renderer/src/app/kernel.worker.ts`), the headless kernel thread
+ * (`headless/kernelThread.ts`) and the tests load them through
+ * `app/kernelModules.ts`, so the worker bundle carries only
  * kernel code.
  */
 import type { Feature, FeatureKind, FeatureOf } from '../../document/featureKinds.js';

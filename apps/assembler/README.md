@@ -369,8 +369,8 @@ manifold objects, names, colours, item transforms) and Open in Slicer
 
 `renderer/src/interface/agent-api/` implements the canonical command/query contract
 `hcasm.agent-api@1` (schema: `api/agent-api-v1.schema.json`). Two
-transports run it: `assembler-headless` (JSON-RPC over stdio with the
-in-process kernel — `pnpm build:headless`, then
+transports run it: `assembler-headless` (JSON-RPC over stdio, OCCT in a
+worker thread with a time budget — `pnpm build:headless`, then
 `node bin/assembler-headless.mjs`) and, in the desktop app, the opt-in
 "Agent Access (Local)" loopback endpoint (off by default, bearer token,
 indicator while on). Python: `sdk/python/src/himmelcad/assembler`.

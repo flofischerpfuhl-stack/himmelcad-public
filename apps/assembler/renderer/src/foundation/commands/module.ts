@@ -32,7 +32,7 @@ export interface CommandBlock {
 
 /** Services the product hands to a module's {@link AssemblerModule.install}. */
 export interface ModuleHost {
-  /** The main-thread kernel adapter (a worker in the app, in-process headless). */
+  /** The main-thread kernel adapter (OCCT in the app's kernel Web Worker). */
   kernel: KernelAdapter;
   /** Whether modules may start Web Workers (desktop and web renderer; not Node). */
   workers: boolean;
@@ -94,7 +94,10 @@ export function installModules(modules: readonly AssemblerModule[]): void {
   }
 }
 
-/** Runs the modules' runtime wiring once (desktop renderer, headless CLI). */
+/**
+ * Runs the modules' runtime wiring once (desktop renderer only: the headless
+ * CLI and the tests reach the kernel through the API context, not `install`).
+ */
 export function startModules(modules: readonly AssemblerModule[], host: ModuleHost): void {
   for (const module of modules) {
     if (started.has(module.id) || !module.install) continue;

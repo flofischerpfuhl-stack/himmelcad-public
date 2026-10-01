@@ -12,6 +12,8 @@ import test from 'node:test';
 
 import { ThreadKernelAdapter } from '../../headless/threadKernel.js';
 import { ApiError } from '../../renderer/src/foundation/commands/api/errors.js';
+import { registeredFeatureKinds } from '../../renderer/src/foundation/document/featureKinds.js';
+import { featureEvaluator } from '../../renderer/src/foundation/geometry-kernel/features/registry.js';
 import { setSketchSolverFactory } from '../../renderer/src/foundation/sketch-solver/solverProvider.js';
 import { loadNodeSolver } from '../sketch/nodeSolver.js';
 import { createDemoDocument } from '../../renderer/src/foundation/commands/demoDocument.js';
@@ -318,6 +320,26 @@ void test('F13 (real OCCT, kernel thread): the hanging loft fillet answers kerne
     assert.equal(bodies.length, 1);
   } finally {
     session.dispose();
+    kernel.dispose();
+  }
+});
+
+void test('kernel thread: the module kernel parts are registered as in the app (kinds + evaluators)', async () => {
+  // The thread loads `app/kernelModules.ts` like the app's kernel Web Worker; the
+  // main thread here has the whole composition (`test/setup.ts`).
+  const kernel = new ThreadKernelAdapter({ quiet: true });
+  try {
+    const thread = await kernel.diagnostics();
+    const kinds = registeredFeatureKinds();
+    assert.deepEqual([...thread.featureKinds].sort(), [...kinds].sort());
+    assert.deepEqual(
+      [...thread.evaluatorKinds].sort(),
+      kinds.filter((kind) => featureEvaluator(kind) !== undefined).sort(),
+    );
+    for (const kind of ['loft', 'offsetFace', 'deleteFace', 'constructionPlane']) {
+      assert.ok(thread.evaluatorKinds.includes(kind), `${kind} evaluates on the thread`);
+    }
+  } finally {
     kernel.dispose();
   }
 });

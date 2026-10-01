@@ -621,7 +621,7 @@ class Document(PrintToolsMixin, InteropMixin):
     # ---- construction ------------------------------------------------------------------
     @classmethod
     def headless(cls, command: list[str] | None = None, *, name: str | None = None) -> Document:
-        """Starts ``assembler-headless`` (in-process OCCT, no GUI) with an empty document."""
+        """Starts ``assembler-headless`` (OCCT in a worker thread, no GUI) with an empty document."""
         doc = cls(AssemblerClient.headless(command))
         if name:
             doc.client.new_project(name)
