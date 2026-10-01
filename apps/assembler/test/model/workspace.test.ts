@@ -1,24 +1,28 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { withBodyColour, normalizeHexColour } from '../../renderer/src/model/appearance.js';
+import {
+  withBodyColour,
+  normalizeHexColour,
+} from '../../renderer/src/modules/display/appearance.js';
 import {
   COMMANDS,
   type Command,
   type CommandContext,
-} from '../../renderer/src/model/commands/registry.js';
+} from '../../renderer/src/foundation/commands/registry.js';
 import {
   shortcutConflicts,
   shortcutSections,
-} from '../../renderer/src/model/commands/shortcutSheet.js';
-import { resolveShortcut } from '../../renderer/src/model/commands/shortcuts.js';
-import { createDemoDocument, type Feature } from '../../renderer/src/model/document.js';
+} from '../../renderer/src/foundation/commands/shortcutSheet.js';
+import { resolveShortcut } from '../../renderer/src/foundation/commands/shortcuts.js';
+import { type Feature } from '../../renderer/src/foundation/document/document.js';
+import { createDemoDocument } from '../../renderer/src/foundation/commands/demoDocument.js';
 import {
   checkMove,
   directDependencies,
   moveFeature,
   relevantFeatureIds,
-} from '../../renderer/src/model/historyTools.js';
+} from '../../renderer/src/interface/shell-ui/historyTools.js';
 import {
   EMPTY_ITEMS_META,
   buildItemTree,
@@ -26,21 +30,21 @@ import {
   useItemsStore,
   visibleLeafOrder,
   withDisplayNames,
-} from '../../renderer/src/model/items.js';
+} from '../../renderer/src/foundation/commands/items.js';
 import {
   DEFAULT_PREFERENCES,
   formatLength,
   fromDisplayUnit,
   parsePreferences,
-} from '../../renderer/src/model/preferences.js';
-import { loadProjectFile, saveProjectFile } from '../../renderer/src/model/project/format.js';
+} from '../../renderer/src/platform/input/preferences.js';
+import { loadProjectFile, saveProjectFile } from '../../renderer/src/foundation/document/format.js';
 import {
   MAX_SAVED_VIEWS,
   parseSavedViews,
   setCameraPoseProbe,
   useWorkspaceStore,
-} from '../../renderer/src/model/workspace.js';
-import { EMPTY_EVALUATION } from '../../renderer/src/kernel/types.js';
+} from '../../renderer/src/interface/shell-ui/workspace.js';
+import { EMPTY_EVALUATION } from '../../renderer/src/foundation/geometry-kernel/types.js';
 
 const demo = createDemoDocument();
 const index = (name: string, features: readonly Feature[] = demo) =>

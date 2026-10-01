@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { QueuedKernelAdapter } from '../../renderer/src/kernel/adapter.js';
+import { QueuedKernelAdapter } from '../../renderer/src/foundation/geometry-kernel/adapter.js';
 import {
   EMPTY_EVALUATION,
   type EvaluationRequest,
   type EvaluationResult,
-} from '../../renderer/src/kernel/types.js';
+} from '../../renderer/src/foundation/geometry-kernel/types.js';
 
 /** Adapter whose runs complete only when the test says so. */
 class ManualAdapter extends QueuedKernelAdapter {

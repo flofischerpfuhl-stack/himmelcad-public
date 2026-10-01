@@ -10,44 +10,57 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { opsAffine, transformOps } from '../../renderer/src/kernel/features/rigid.js';
-import { continuableSketchId } from '../../renderer/src/model/commands/sketchCommands.js';
-import { findCommand } from '../../renderer/src/model/commands/registry.js';
-import { datumRef, type ConstructionPlaneFeature } from '../../renderer/src/model/construction.js';
-import { createConstructionDraft } from '../../renderer/src/model/constructionTools.js';
 import {
-  createDemoDocument,
+  opsAffine,
+  transformOps,
+} from '../../renderer/src/foundation/geometry-kernel/features/rigid.js';
+import { continuableSketchId } from '../../renderer/src/modules/sketching/sketchCommands.js';
+import { findCommand } from '../../renderer/src/foundation/commands/registry.js';
+import { type ConstructionPlaneFeature } from '../../renderer/src/modules/construction/construction.js';
+import { datumRef } from '../../renderer/src/foundation/geometry-kernel/datums.js';
+import { createConstructionDraft } from '../../renderer/src/modules/construction/constructionTools.js';
+import {
   type ExtrudeFeature,
   type Feature,
-  type SketchFeature,
-} from '../../renderer/src/model/document.js';
-import { createDraft, draftMeta, draftToFeature } from '../../renderer/src/model/featureTools.js';
+} from '../../renderer/src/foundation/document/document.js';
+import { createDemoDocument } from '../../renderer/src/foundation/commands/demoDocument.js';
+import type { SketchFeature } from '../../renderer/src/foundation/sketch-solver/sketchFeature.js';
+
+import {
+  createDraft,
+  draftMeta,
+  draftToFeature,
+} from '../../renderer/src/foundation/commands/featureDrafts.js';
 import {
   applyFixPick,
   missingReferences,
   startFix,
   useFixStore,
-} from '../../renderer/src/model/fixReference.js';
-import { historyFilterItems, relevantFeatureIds } from '../../renderer/src/model/historyTools.js';
-import { gizmoOps, gizmoTransformFields } from '../../renderer/src/model/moveGizmo.js';
-import { usePreferences } from '../../renderer/src/model/preferences.js';
-import { loadProjectFile, saveProjectFile } from '../../renderer/src/model/project/format.js';
+} from '../../renderer/src/interface/shell-ui/fixReference.js';
 import {
-  makeFaceRef,
-  moveSketchResult,
-  useAssemblerStore,
-  type MoveTool,
-} from '../../renderer/src/model/store.js';
-import { bodySnapTargets } from '../../renderer/src/sketch/bodySnaps.js';
-import { addRectangle, addPolyline } from '../../renderer/src/sketch/builders.js';
-import { infer } from '../../renderer/src/sketch/inference.js';
-import { translateSketchRegion } from '../../renderer/src/sketch/moveRegion.js';
-import { detectRegions } from '../../renderer/src/sketch/regions.js';
-import { useSketchStore } from '../../renderer/src/sketch/session.js';
-import { setSketchSolverFactory } from '../../renderer/src/sketch/solverProvider.js';
-import { initialTool, reduceTool } from '../../renderer/src/sketch/tools.js';
-import { EMPTY_SKETCH, entityMap, pointPos, type Vec2 } from '../../renderer/src/sketch/types.js';
-import { frameForPlane } from '../../renderer/src/model/document.js';
+  historyFilterItems,
+  relevantFeatureIds,
+} from '../../renderer/src/interface/shell-ui/historyTools.js';
+import { gizmoOps, gizmoTransformFields } from '../../renderer/src/modules/modeling/moveGizmo.js';
+import { usePreferences } from '../../renderer/src/platform/input/preferences.js';
+import { loadProjectFile, saveProjectFile } from '../../renderer/src/foundation/document/format.js';
+import { makeFaceRef, useAssemblerStore } from '../../renderer/src/foundation/commands/store.js';
+import { moveSketchResult, type MoveTool } from '../../renderer/src/modules/modeling/tools.js';
+import { bodySnapTargets } from '../../renderer/src/modules/sketching/bodySnaps.js';
+import { addRectangle, addPolyline } from '../../renderer/src/foundation/sketch-solver/builders.js';
+import { infer } from '../../renderer/src/modules/sketching/inference.js';
+import { translateSketchRegion } from '../../renderer/src/foundation/sketch-solver/moveRegion.js';
+import { detectRegions } from '../../renderer/src/foundation/sketch-solver/regions.js';
+import { useSketchStore } from '../../renderer/src/modules/sketching/session.js';
+import { setSketchSolverFactory } from '../../renderer/src/foundation/sketch-solver/solverProvider.js';
+import { initialTool, reduceTool } from '../../renderer/src/modules/sketching/tools.js';
+import {
+  EMPTY_SKETCH,
+  entityMap,
+  pointPos,
+  type Vec2,
+} from '../../renderer/src/foundation/sketch-solver/types.js';
+import { frameForPlane } from '../../renderer/src/foundation/document/document.js';
 import { createNodeKernelAdapter } from '../kernel/nodeKernel.js';
 import { loadNodeSolver } from '../sketch/nodeSolver.js';
 
@@ -121,7 +134,7 @@ void test('Extrude without a selection asks for the profile, then starts on it',
   store.getState().updatePickSession((s) => ({ ...s }));
   tool = store.getState().activeTool;
   assert.equal(tool?.kind, 'pick');
-  const { addPick } = await import('../../renderer/src/model/pickSession.js');
+  const { addPick } = await import('../../renderer/src/foundation/commands/pickSession.js');
   store
     .getState()
     .updatePickSession((s) => addPick(s, body, { evaluation: store.getState().evaluation }));
@@ -145,7 +158,7 @@ void test('Extrude without a selection asks for the profile, then starts on it',
 
 void test('Union before selection: target, tools, Swap, then the boolean starts with those roles', async () => {
   await load(twoBoxes());
-  const { addPick } = await import('../../renderer/src/model/pickSession.js');
+  const { addPick } = await import('../../renderer/src/foundation/commands/pickSession.js');
   store.getState().clearSelection();
   run('tools.union');
   const bodies = store.getState().evaluation.bodies.map((b) => b.id);
@@ -166,7 +179,7 @@ void test('Union before selection: target, tools, Swap, then the boolean starts 
   let tool = store.getState().activeTool;
   assert.ok(tool?.kind === 'pick');
   assert.deepEqual(tool.picks, [[{ kind: 'body', bodyId: a }], [{ kind: 'body', bodyId: b }]]);
-  const { swapPicks } = await import('../../renderer/src/model/pickSession.js');
+  const { swapPicks } = await import('../../renderer/src/foundation/commands/pickSession.js');
   store.getState().updatePickSession(swapPicks);
   tool = store.getState().activeTool;
   assert.ok(tool?.kind === 'pick');
@@ -637,7 +650,8 @@ void test('Constraints keep the first (or last) selected item in place', async (
 // ---- Agent API --------------------------------------------------------------------------------
 
 void test('Agent API: construction plane + sketch on it, extrude extents, mirrored sketch, datums.list', async () => {
-  const { AgentSession, HEADLESS_CAPABILITIES } = await import('../../renderer/src/api/session.js');
+  const { AgentSession, HEADLESS_CAPABILITIES } =
+    await import('../../renderer/src/interface/agent-api/session.js');
   const kernel = createNodeKernelAdapter();
   store.getState().attachKernel(kernel);
   await load([]);

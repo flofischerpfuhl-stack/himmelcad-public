@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { Feature } from '../../renderer/src/model/document.js';
-import { withBodyColour, withBodyMaterial } from '../../renderer/src/model/appearance.js';
+import type { Feature } from '../../renderer/src/foundation/document/document.js';
+import { withBodyColour, withBodyMaterial } from '../../renderer/src/modules/display/appearance.js';
 import {
   circleThrough,
   closestPointOnTriangle,
@@ -13,16 +13,16 @@ import {
   snapMeasurePoint,
   snapPoints,
   type MeasureContext,
-} from '../../renderer/src/model/measure.js';
-import { formatMeasureValue } from '../../renderer/src/model/measureLive.js';
-import { parsePins, serializePins } from '../../renderer/src/model/measureStore.js';
+} from '../../renderer/src/modules/measure/measure.js';
+import { formatMeasureValue } from '../../renderer/src/modules/measure/measureLive.js';
+import { parsePins, serializePins } from '../../renderer/src/modules/measure/measureStore.js';
 import {
   parseSectionPlane,
   sectionPlaneFromFace,
   viewDisplayFromProject,
   viewDisplayToProject,
-} from '../../renderer/src/model/viewDisplay.js';
-import { bodyMaterials } from '../../renderer/src/viewport/displayModes.js';
+} from '../../renderer/src/modules/display/viewDisplay.js';
+import { bodyMaterials } from '../../renderer/src/platform/viewport/displayModes.js';
 import { boxBody, cylinderBody } from '../viewport/meshFixtures.js';
 
 const a = boxBody('a', [0, 0, 0], [10, 10, 10]);

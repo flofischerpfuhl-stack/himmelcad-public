@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { parseStl, suggestStlUnitHint } from '../../renderer/src/kernel/stlImport.js';
+import { parseStl, suggestStlUnitHint } from '../../renderer/src/modules/interop/stlImport.js';
 
 /** Writes one binary STL with `triangles` (each `[ax,ay,az,bx,by,bz,cx,cy,cz]`), little-endian, no stored normals (all zero) so a parser reading the stored normal instead of recomputing it would fail these tests. */
 function buildBinaryStl(triangles: readonly (readonly number[])[]): ArrayBuffer {

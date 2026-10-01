@@ -5,7 +5,8 @@
  * Each part is a family of documents so edits and previews can use fresh
  * values (`v`) that no cache has seen before.
  */
-import { createDemoDocument } from '../../renderer/src/model/document.js';
+
+import { createDemoDocument } from '../../renderer/src/foundation/commands/demoDocument.js';
 import type {
   EdgeRef,
   ExtrudeFeature,
@@ -13,16 +14,19 @@ import type {
   Feature,
   FilletFeature,
   Plane,
-  SketchFeature,
-} from '../../renderer/src/model/document.js';
-import type { PatternFeature, RevolveFeature } from '../../renderer/src/model/features.js';
+} from '../../renderer/src/foundation/document/document.js';
+import type { SketchFeature } from '../../renderer/src/foundation/sketch-solver/sketchFeature.js';
+import type { PatternFeature, RevolveFeature } from '../../renderer/src/modules/modeling/features.js';
 import {
   addCircle,
   addRectangle,
   sketchFromLegacyProfiles,
   type LegacySketchProfile,
-} from '../../renderer/src/sketch/builders.js';
-import { EMPTY_SKETCH, type SketchData } from '../../renderer/src/sketch/types.js';
+} from '../../renderer/src/foundation/sketch-solver/builders.js';
+import {
+  EMPTY_SKETCH,
+  type SketchData,
+} from '../../renderer/src/foundation/sketch-solver/types.js';
 
 const base = (id: string, name = id) => ({ id, name, suppressed: false });
 

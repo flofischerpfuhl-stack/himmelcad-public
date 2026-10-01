@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { createDemoDocument, type SketchFeature } from '../../renderer/src/model/document.js';
-import { useAssemblerStore } from '../../renderer/src/model/store.js';
-import { addRectangle } from '../../renderer/src/sketch/builders.js';
-import { EMPTY_SKETCH } from '../../renderer/src/sketch/types.js';
+import { createDemoDocument } from '../../renderer/src/foundation/commands/demoDocument.js';
+import type { SketchFeature } from '../../renderer/src/foundation/sketch-solver/sketchFeature.js';
+import { useAssemblerStore } from '../../renderer/src/foundation/commands/store.js';
+import { addRectangle } from '../../renderer/src/foundation/sketch-solver/builders.js';
+import { EMPTY_SKETCH } from '../../renderer/src/foundation/sketch-solver/types.js';
 import { createNodeKernelAdapter } from '../kernel/nodeKernel.js';
 
 const store = useAssemblerStore;

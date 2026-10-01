@@ -16,12 +16,16 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { ApiError } from '../../renderer/src/api/errors.js';
-import { AgentSession, HEADLESS_CAPABILITIES } from '../../renderer/src/api/session.js';
-import { useAssemblerStore } from '../../renderer/src/model/store.js';
-import { manifoldStats, weldMesh } from '../../renderer/src/print/meshTools.js';
-import { parseStl } from '../../renderer/src/kernel/stlImport.js';
-import { setSketchSolverFactory } from '../../renderer/src/sketch/solverProvider.js';
+import { ApiError } from '../../renderer/src/foundation/commands/api/errors.js';
+import {
+  AgentSession,
+  HEADLESS_CAPABILITIES,
+} from '../../renderer/src/interface/agent-api/session.js';
+import { useAssemblerStore } from '../../renderer/src/foundation/commands/store.js';
+import { manifoldStats } from '../../renderer/src/modules/print/meshTools.js';
+import { weldMesh } from '../../renderer/src/foundation/geometry-kernel/meshWeld.js';
+import { parseStl } from '../../renderer/src/modules/interop/stlImport.js';
+import { setSketchSolverFactory } from '../../renderer/src/foundation/sketch-solver/solverProvider.js';
 import { createNodeKernelAdapter } from '../kernel/nodeKernel.js';
 import { validateThreeMf, type ParsedModel } from '../kernel/threeMfValidator.js';
 import { loadNodeSolver } from '../sketch/nodeSolver.js';

@@ -1,15 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { Feature } from '../../renderer/src/model/document.js';
+import type { Feature } from '../../renderer/src/foundation/document/document.js';
 import {
   bodyGeometry,
   isStable,
   sectionContour,
   silhouetteCandidates,
   vertexCurvature,
-} from '../../renderer/src/viewport/bodyGeometry.js';
-import { DEFAULT_POSE, depthRange, withFov } from '../../renderer/src/viewport/camera.js';
+} from '../../renderer/src/platform/viewport/bodyGeometry.js';
+import { DEFAULT_POSE, depthRange, withFov } from '../../renderer/src/platform/viewport/camera.js';
 import {
   activeDisplayEntry,
   bodyMaterials,
@@ -18,18 +18,18 @@ import {
   curvatureStrength,
   DISPLAY_MODE_ENTRIES,
   isDisplayMode,
-} from '../../renderer/src/viewport/displayModes.js';
+} from '../../renderer/src/platform/viewport/displayModes.js';
 import {
   imageExportSize,
   imageFileName,
   unpremultiply,
-} from '../../renderer/src/viewport/imageExport.js';
+} from '../../renderer/src/platform/viewport/imageExport.js';
 import {
   sectionClip,
   sectionHandle,
   sectionOffsetRange,
   sectionOutline,
-} from '../../renderer/src/viewport/toolAnchors.js';
+} from '../../renderer/src/platform/viewport/section.js';
 import { boxBody, cylinderBody } from './meshFixtures.js';
 
 void test('bodyGeometry: per-vertex face index and concatenated edges with ranges', () => {

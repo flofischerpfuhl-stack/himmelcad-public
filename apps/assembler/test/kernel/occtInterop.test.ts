@@ -20,9 +20,12 @@ import { fileURLToPath } from 'node:url';
 import * as R from 'replicad';
 
 import { selectedOcctModule } from '../../headless/occtModule.js';
-import { readStepAssembly } from '../../renderer/src/kernel/stepImport.js';
-import type { Body } from '../../renderer/src/kernel/types.js';
-import type { Feature, ImportStepFeature } from '../../renderer/src/model/document.js';
+import { readStepAssembly } from '../../renderer/src/foundation/geometry-kernel/stepImport.js';
+import type { Body } from '../../renderer/src/foundation/geometry-kernel/types.js';
+import type {
+  Feature,
+  ImportStepFeature,
+} from '../../renderer/src/foundation/document/document.js';
 import { circle, rect, sketchFeature } from '../sketch/fixtures.js';
 import { loadNodeKernel } from './nodeKernel.js';
 

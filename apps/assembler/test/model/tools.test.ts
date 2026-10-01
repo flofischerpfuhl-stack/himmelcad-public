@@ -7,24 +7,24 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { KernelAdapter } from '../../renderer/src/kernel/adapter.js';
-import type { EvaluationRequest } from '../../renderer/src/kernel/types.js';
-import { findCommand, resolveAdaptive } from '../../renderer/src/model/commands/registry.js';
+import type { KernelAdapter } from '../../renderer/src/foundation/geometry-kernel/adapter.js';
+import type { EvaluationRequest } from '../../renderer/src/foundation/geometry-kernel/types.js';
+import { findCommand, resolveAdaptive } from '../../renderer/src/foundation/commands/registry.js';
 import {
-  createDemoDocument,
   type ExtrudeFeature,
   type Feature,
-  type SketchFeature,
-} from '../../renderer/src/model/document.js';
+} from '../../renderer/src/foundation/document/document.js';
+import { createDemoDocument } from '../../renderer/src/foundation/commands/demoDocument.js';
+import type { SketchFeature } from '../../renderer/src/foundation/sketch-solver/sketchFeature.js';
 import {
   PREVIEW_FEATURE_ID,
   useAssemblerStore,
   type ToolSession,
-} from '../../renderer/src/model/store.js';
-import { addRectangle } from '../../renderer/src/sketch/builders.js';
-import { useSketchStore } from '../../renderer/src/sketch/session.js';
-import { setSketchSolverFactory } from '../../renderer/src/sketch/solverProvider.js';
-import { EMPTY_SKETCH, type Vec2 } from '../../renderer/src/sketch/types.js';
+} from '../../renderer/src/foundation/commands/store.js';
+import { addRectangle } from '../../renderer/src/foundation/sketch-solver/builders.js';
+import { useSketchStore } from '../../renderer/src/modules/sketching/session.js';
+import { setSketchSolverFactory } from '../../renderer/src/foundation/sketch-solver/solverProvider.js';
+import { EMPTY_SKETCH, type Vec2 } from '../../renderer/src/foundation/sketch-solver/types.js';
 import { createNodeKernelAdapter } from '../kernel/nodeKernel.js';
 import { loadNodeSolver } from '../sketch/nodeSolver.js';
 

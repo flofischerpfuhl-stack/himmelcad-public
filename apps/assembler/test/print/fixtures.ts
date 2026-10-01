@@ -3,17 +3,17 @@
  * kernel: extruded polygons (sketch polylines), boxes, a shelled box, a
  * plate with holes and a "mushroom" (overhanging cap).
  */
-import type { EvaluationResult } from '../../renderer/src/kernel/types.js';
+import type { EvaluationResult } from '../../renderer/src/foundation/geometry-kernel/types.js';
 import type {
   ExtrudeFeature,
   Feature,
   Plane,
-  SketchFeature,
-} from '../../renderer/src/model/document.js';
-import { makeFaceRef } from '../../renderer/src/model/store.js';
-import { addPolyline } from '../../renderer/src/sketch/builders.js';
-import { detectRegions } from '../../renderer/src/sketch/regions.js';
-import { EMPTY_SKETCH, type Vec2 } from '../../renderer/src/sketch/types.js';
+} from '../../renderer/src/foundation/document/document.js';
+import type { SketchFeature } from '../../renderer/src/foundation/sketch-solver/sketchFeature.js';
+import { makeFaceRef } from '../../renderer/src/foundation/commands/store.js';
+import { addPolyline } from '../../renderer/src/foundation/sketch-solver/builders.js';
+import { detectRegions } from '../../renderer/src/foundation/sketch-solver/regions.js';
+import { EMPTY_SKETCH, type Vec2 } from '../../renderer/src/foundation/sketch-solver/types.js';
 import { circle, rect, sketchFeature } from '../sketch/fixtures.js';
 import { loadNodeKernel } from '../kernel/nodeKernel.js';
 

@@ -6,7 +6,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { Vec3 } from '../../renderer/src/model/document.js';
+import type { Vec3 } from '../../renderer/src/foundation/document/document.js';
 import {
   applyMat3,
   axisAngle,
@@ -16,8 +16,11 @@ import {
   rankOrientations,
   rotationToDown,
   type Mat3,
-} from '../../renderer/src/print/orientation.js';
-import { orientationInput, placeOnPlateFeature } from '../../renderer/src/print/placement.js';
+} from '../../renderer/src/modules/print/orientation.js';
+import {
+  orientationInput,
+  placeOnPlateFeature,
+} from '../../renderer/src/modules/print/placement.js';
 import { boxFeatures, chamferedBlock, evaluate, mushroom } from './fixtures.js';
 
 function close(a: readonly number[], b: readonly number[], tol = 1e-9): boolean {
@@ -133,7 +136,7 @@ void test('Auto orient: ranking is deterministic and flips the mushroom upside d
   assert.ok(first.every((c, i) => c.rank === i + 1));
 
   // Applying the winner through the kernel leaves a body without overhang on Z = 0.
-  const { placementFeature } = await import('../../renderer/src/print/placement.js');
+  const { placementFeature } = await import('../../renderer/src/modules/print/placement.js');
   const applied = await evaluate([
     ...features,
     placementFeature(body.id, first[0]!.transform, 'orient', 'Orient'),

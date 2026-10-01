@@ -7,17 +7,23 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { InProcessKernelAdapter, type KernelActivity } from '../../renderer/src/kernel/adapter.js';
-import type { KernelEvaluator } from '../../renderer/src/kernel/evaluator.js';
-import { KernelFatalError } from '../../renderer/src/kernel/fatal.js';
-import type { WorkerRequest, WorkerResponse } from '../../renderer/src/kernel/workerProtocol.js';
+import {
+  InProcessKernelAdapter,
+  type KernelActivity,
+} from '../../renderer/src/foundation/geometry-kernel/adapter.js';
+import type { KernelEvaluator } from '../../renderer/src/foundation/geometry-kernel/evaluator.js';
+import { KernelFatalError } from '../../renderer/src/foundation/geometry-kernel/fatal.js';
+import type {
+  WorkerRequest,
+  WorkerResponse,
+} from '../../renderer/src/foundation/geometry-kernel/workerProtocol.js';
 import {
   EMPTY_EVALUATION,
   type Body,
   type EvaluationResult,
   type KernelStatusInfo,
-} from '../../renderer/src/kernel/types.js';
-import { WorkerKernelAdapter } from '../../renderer/src/kernel/workerAdapter.js';
+} from '../../renderer/src/foundation/geometry-kernel/types.js';
+import { WorkerKernelAdapter } from '../../renderer/src/foundation/geometry-kernel/workerAdapter.js';
 
 type Behaviour = (message: WorkerRequest, worker: FakeWorker) => void;
 

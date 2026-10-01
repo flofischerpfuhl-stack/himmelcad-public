@@ -9,19 +9,20 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { ApiError } from '../../renderer/src/api/errors.js';
+import { ApiError } from '../../renderer/src/foundation/commands/api/errors.js';
 import {
   APP_CAPABILITIES,
   AgentSession,
   HEADLESS_CAPABILITIES,
-} from '../../renderer/src/api/session.js';
-import type { Feature, SketchFeature } from '../../renderer/src/model/document.js';
-import { useAssemblerStore } from '../../renderer/src/model/store.js';
-import { addRectangle } from '../../renderer/src/sketch/builders.js';
-import { setSketchDimension } from '../../renderer/src/sketch/featureOps.js';
-import { rememberRegions } from '../../renderer/src/sketch/regionMemory.js';
-import { setSketchSolverFactory } from '../../renderer/src/sketch/solverProvider.js';
-import { EMPTY_SKETCH } from '../../renderer/src/sketch/types.js';
+} from '../../renderer/src/interface/agent-api/session.js';
+import type { Feature } from '../../renderer/src/foundation/document/document.js';
+import type { SketchFeature } from '../../renderer/src/foundation/sketch-solver/sketchFeature.js';
+import { useAssemblerStore } from '../../renderer/src/foundation/commands/store.js';
+import { addRectangle } from '../../renderer/src/foundation/sketch-solver/builders.js';
+import { setSketchDimension } from '../../renderer/src/modules/sketching/featureOps.js';
+import { rememberRegions } from '../../renderer/src/foundation/sketch-solver/regionMemory.js';
+import { setSketchSolverFactory } from '../../renderer/src/foundation/sketch-solver/solverProvider.js';
+import { EMPTY_SKETCH } from '../../renderer/src/foundation/sketch-solver/types.js';
 import { createNodeKernelAdapter } from '../kernel/nodeKernel.js';
 import { loadNodeSolver } from '../sketch/nodeSolver.js';
 

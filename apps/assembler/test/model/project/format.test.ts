@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { createDemoDocument } from '../../../renderer/src/model/document.js';
+import { createDemoDocument } from '../../../renderer/src/foundation/commands/demoDocument.js';
 import {
   CURRENT_SCHEMA_VERSION,
   PROJECT_FORMAT_ID,
@@ -9,7 +9,7 @@ import {
   loadProjectFile,
   migrateAndValidate,
   saveProjectFile,
-} from '../../../renderer/src/model/project/format.js';
+} from '../../../renderer/src/foundation/document/format.js';
 
 void test('round trip: save then load reproduces the same features and project name', () => {
   const features = createDemoDocument();

@@ -8,38 +8,49 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { Body, EvaluationResult } from '../../renderer/src/kernel/types.js';
-import { edgeSignatureOf, faceSignatureOf } from '../../renderer/src/kernel/naming.js';
+import type {
+  Body,
+  EvaluationResult,
+} from '../../renderer/src/foundation/geometry-kernel/types.js';
+import {
+  edgeSignatureOf,
+  faceSignatureOf,
+} from '../../renderer/src/foundation/geometry-kernel/naming.js';
 import type {
   ExtrudeFeature,
   FaceRef,
   Feature,
   FilletFeature,
   Plane,
-  SketchFeature,
-} from '../../renderer/src/model/document.js';
+  AxisRef,
+} from '../../renderer/src/foundation/document/document.js';
+import type { SketchFeature } from '../../renderer/src/foundation/sketch-solver/sketchFeature.js';
 import type {
   AlignFeature,
-  AxisRef,
-  DeleteFaceFeature,
   LoftFeature,
   MirrorFeature,
-  OffsetFaceFeature,
   PatternFeature,
   RevolveFeature,
   SplitFeature,
   SweepFeature,
   TransformFeature,
-} from '../../renderer/src/model/features.js';
-import { addPolyline, sketchFromLegacyProfiles } from '../../renderer/src/sketch/builders.js';
-import { EMPTY_SKETCH } from '../../renderer/src/sketch/types.js';
-import { detectRegions } from '../../renderer/src/sketch/regions.js';
+} from '../../renderer/src/modules/modeling/features.js';
+import type {
+  DeleteFaceFeature,
+  OffsetFaceFeature,
+} from '../../renderer/src/modules/direct-edit/kinds.js';
+import {
+  addPolyline,
+  sketchFromLegacyProfiles,
+} from '../../renderer/src/foundation/sketch-solver/builders.js';
+import { EMPTY_SKETCH } from '../../renderer/src/foundation/sketch-solver/types.js';
+import { detectRegions } from '../../renderer/src/foundation/sketch-solver/regions.js';
 import type { LegacySketchProfile } from '../sketch/fixtures.js';
 import {
   CURRENT_SCHEMA_VERSION,
   PROJECT_FORMAT_ID,
   loadProjectFile,
-} from '../../renderer/src/model/project/format.js';
+} from '../../renderer/src/foundation/document/format.js';
 import { selectedOcctModule } from '../../headless/occtModule.js';
 import { loadNodeKernel } from './nodeKernel.js';
 

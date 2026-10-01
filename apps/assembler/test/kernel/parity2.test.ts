@@ -9,30 +9,36 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { faceSignatureOf } from '../../renderer/src/kernel/naming.js';
-import type { Body, EvaluationResult } from '../../renderer/src/kernel/types.js';
+import { faceSignatureOf } from '../../renderer/src/foundation/geometry-kernel/naming.js';
+import type {
+  Body,
+  EvaluationResult,
+} from '../../renderer/src/foundation/geometry-kernel/types.js';
 import type {
   ConstructionAxisFeature,
   ConstructionPlaneFeature,
-} from '../../renderer/src/model/construction.js';
+} from '../../renderer/src/modules/construction/construction.js';
 import type {
   BooleanFeature,
   ExtrudeFeature,
   FaceRef,
   Feature,
   Plane,
-  SketchFeature,
   SketchPlaneRef,
-} from '../../renderer/src/model/document.js';
+} from '../../renderer/src/foundation/document/document.js';
+import type { SketchFeature } from '../../renderer/src/foundation/sketch-solver/sketchFeature.js';
 import {
   mirroredSketchId,
   type MirrorFeature,
-  type OffsetFaceFeature,
   type PatternFeature,
-} from '../../renderer/src/model/features.js';
-import { loadProjectFile, saveProjectFile } from '../../renderer/src/model/project/format.js';
-import { addPolyline, sketchFromLegacyProfiles } from '../../renderer/src/sketch/builders.js';
-import { EMPTY_SKETCH } from '../../renderer/src/sketch/types.js';
+} from '../../renderer/src/modules/modeling/features.js';
+import type { OffsetFaceFeature } from '../../renderer/src/modules/direct-edit/kinds.js';
+import { loadProjectFile, saveProjectFile } from '../../renderer/src/foundation/document/format.js';
+import {
+  addPolyline,
+  sketchFromLegacyProfiles,
+} from '../../renderer/src/foundation/sketch-solver/builders.js';
+import { EMPTY_SKETCH } from '../../renderer/src/foundation/sketch-solver/types.js';
 import type { LegacySketchProfile } from '../sketch/fixtures.js';
 import { loadNodeKernel } from './nodeKernel.js';
 

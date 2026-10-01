@@ -376,7 +376,8 @@ function sourceFiles(directory) {
   return result;
 }
 
-function importSpecifiers(path) {
+/** Static and dynamic import/require specifiers of a source file (also used by `check-assembler-modules.mjs`). */
+export function importSpecifiers(path) {
   const source = readFileSync(path, 'utf8');
   const sourceFile = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, false);
   const imports = [];

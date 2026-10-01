@@ -16,6 +16,8 @@ geplante Shapr3D-nahe UI-Hülle.
 - [ADR 0033](../docs/adr/0033-assembler-product-boundary.md): verbindliche
   Produktgrenze (eigener Renderer-Fork, eigene CAD-Historie, gemeinsamer
   Command-Vertrag).
+- [MODULES.md](MODULES.md): Modulkarte (ADR 0032), Registrierungsverträge und
+  Arbeitsliste für den modularen Umbau (Phase A erledigt, Phase B offen).
 - [FORK-BASE.md](FORK-BASE.md): gepinnte Commit-Basis und Crate-Liste für den
   künftigen Renderer-Fork.
 - [Recherchepaket](research/2026-09-28/README.md): Lesereihenfolge,

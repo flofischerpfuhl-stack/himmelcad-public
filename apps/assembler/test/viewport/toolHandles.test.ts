@@ -1,16 +1,19 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { Body } from '../../renderer/src/kernel/types.js';
-import { opsAffine, transformOps } from '../../renderer/src/kernel/features/rigid.js';
-import { useAssemblerStore } from '../../renderer/src/model/store.js';
-import { transformBody } from '../../renderer/src/viewport/bodyTransform.js';
+import type { Body } from '../../renderer/src/foundation/geometry-kernel/types.js';
+import {
+  opsAffine,
+  transformOps,
+} from '../../renderer/src/foundation/geometry-kernel/features/rigid.js';
+import { useAssemblerStore } from '../../renderer/src/foundation/commands/store.js';
+import { transformBody } from '../../renderer/src/platform/viewport/bodyTransform.js';
 import {
   applyToolHandleValue,
   movePreviewBodies,
   pivotSnapPoint,
   toolHandleSet,
-} from '../../renderer/src/viewport/toolHandles.js';
+} from '../../renderer/src/modules/modeling/toolHandles.js';
 
 /** A unit-ish box body (two triangles per face are enough for bbox/centroid checks). */
 function boxBody(): Body {

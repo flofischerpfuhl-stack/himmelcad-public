@@ -8,19 +8,30 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
-import { ApiError, API_ERROR_CODES, JSON_RPC_ERROR } from '../../renderer/src/api/errors.js';
-import { validateStored } from '../../renderer/src/api/featureKinds.js';
+import {
+  ApiError,
+  API_ERROR_CODES,
+  JSON_RPC_ERROR,
+} from '../../renderer/src/foundation/commands/api/errors.js';
+import { validateStored } from '../../renderer/src/interface/agent-api/featureKinds.js';
 import {
   AGENT_API_SCHEMA,
   DEFS,
   FEATURE_KIND_SCHEMAS,
   METHODS,
-} from '../../renderer/src/api/schema.js';
-import { AgentSession, HEADLESS_CAPABILITIES } from '../../renderer/src/api/session.js';
-import { unsupportedKeywords, validateSchema } from '../../renderer/src/api/validate.js';
-import { createDemoDocument, type Feature } from '../../renderer/src/model/document.js';
-import { useAssemblerStore } from '../../renderer/src/model/store.js';
-import { InProcessKernelAdapter } from '../../renderer/src/kernel/adapter.js';
+} from '../../renderer/src/interface/agent-api/schema.js';
+import {
+  AgentSession,
+  HEADLESS_CAPABILITIES,
+} from '../../renderer/src/interface/agent-api/session.js';
+import {
+  unsupportedKeywords,
+  validateSchema,
+} from '../../renderer/src/foundation/commands/api/validate.js';
+import { type Feature } from '../../renderer/src/foundation/document/document.js';
+import { createDemoDocument } from '../../renderer/src/foundation/commands/demoDocument.js';
+import { useAssemblerStore } from '../../renderer/src/foundation/commands/store.js';
+import { InProcessKernelAdapter } from '../../renderer/src/foundation/geometry-kernel/adapter.js';
 
 // Compiled to `.build/tests/apps/assembler/test/api/`; the schema lives in `apps/assembler/api/`.
 const SCHEMA_FILE = new URL('../../../../../../api/agent-api-v1.schema.json', import.meta.url);

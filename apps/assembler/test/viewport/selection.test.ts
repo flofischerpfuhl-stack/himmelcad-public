@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { Body, EvaluatedSketch } from '../../renderer/src/kernel/types.js';
+import type { Body, EvaluatedSketch } from '../../renderer/src/foundation/geometry-kernel/types.js';
 import {
   boxFilterForKey,
   boxModeFor,
@@ -13,20 +13,20 @@ import {
   targetKey,
   triangleTouchesRect,
   type Projector,
-} from '../../renderer/src/viewport/boxSelect.js';
-import { cameraTargetBounds } from '../../renderer/src/viewport/cameraTargets.js';
+} from '../../renderer/src/platform/viewport/boxSelect.js';
+import { cameraTargetBounds } from '../../renderer/src/platform/viewport/cameraTargets.js';
 import {
   NAVIGATION_PRESETS,
   navigationPreset,
   resolveDrag,
-} from '../../renderer/src/viewport/navigation.js';
+} from '../../renderer/src/platform/input/navigation.js';
 import {
   collectCandidates,
   edgesNearPoint,
   isAmbiguous,
   rayCastFaces,
   rayTriangle,
-} from '../../renderer/src/viewport/pickCandidates.js';
+} from '../../renderer/src/platform/viewport/pickCandidates.js';
 
 /**
  * An axis-aligned box body [x0,x1]×[y0,y1]×[z0,z1] with six faces ("-x", "+x", …),

@@ -22,7 +22,7 @@ import { fileURLToPath } from 'node:url';
 
 import { chromium, type CDPSession, type Page } from 'playwright-core';
 
-import { createDemoDocument } from '../../renderer/src/model/document.js';
+import { createDemoDocument } from '../../renderer/src/foundation/commands/demoDocument.js';
 import type { StepRow } from './interactiveBench.js';
 import { sixtyEntitySketch } from './parts.js';
 

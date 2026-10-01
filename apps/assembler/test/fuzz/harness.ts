@@ -38,17 +38,23 @@ import * as R from 'replicad';
 
 import { loadOcct as loadSelectedOcct, type OpenCascadeModule } from '../../headless/occtModule.js';
 
-import { ApiError } from '../../renderer/src/api/errors.js';
-import { AgentSession, HEADLESS_CAPABILITIES } from '../../renderer/src/api/session.js';
-import { InProcessKernelAdapter } from '../../renderer/src/kernel/adapter.js';
-import { createEvaluator, type KernelEvaluator } from '../../renderer/src/kernel/evaluator.js';
-import { arenaInterleavings } from '../../renderer/src/kernel/occtArena.js';
-import type { EvaluationResult } from '../../renderer/src/kernel/types.js';
-import type { Feature } from '../../renderer/src/model/document.js';
-import { checkMove, moveFeature } from '../../renderer/src/model/historyTools.js';
-import { loadProjectFile } from '../../renderer/src/model/project/format.js';
-import { useAssemblerStore } from '../../renderer/src/model/store.js';
-import { setSketchSolverFactory } from '../../renderer/src/sketch/solverProvider.js';
+import { ApiError } from '../../renderer/src/foundation/commands/api/errors.js';
+import {
+  AgentSession,
+  HEADLESS_CAPABILITIES,
+} from '../../renderer/src/interface/agent-api/session.js';
+import { InProcessKernelAdapter } from '../../renderer/src/foundation/geometry-kernel/adapter.js';
+import {
+  createEvaluator,
+  type KernelEvaluator,
+} from '../../renderer/src/foundation/geometry-kernel/evaluator.js';
+import { arenaInterleavings } from '../../renderer/src/foundation/geometry-kernel/occtArena.js';
+import type { EvaluationResult } from '../../renderer/src/foundation/geometry-kernel/types.js';
+import type { Feature } from '../../renderer/src/foundation/document/document.js';
+import { checkMove, moveFeature } from '../../renderer/src/interface/shell-ui/historyTools.js';
+import { loadProjectFile } from '../../renderer/src/foundation/document/format.js';
+import { useAssemblerStore } from '../../renderer/src/foundation/commands/store.js';
+import { setSketchSolverFactory } from '../../renderer/src/foundation/sketch-solver/solverProvider.js';
 import { installNodeFonts } from '../sketch/nodeFont.js';
 import { loadNodeSolver } from '../sketch/nodeSolver.js';
 import { between, pick, type Op } from './ops.js';

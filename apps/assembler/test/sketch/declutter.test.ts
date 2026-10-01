@@ -7,7 +7,7 @@ import {
   layoutBadges,
   layoutChips,
   nextChipText,
-} from '../../renderer/src/sketch/ui/declutter.js';
+} from '../../renderer/src/modules/sketching/ui/declutter.js';
 
 function overlap(
   a: { x: number; y: number; w: number; h: number },

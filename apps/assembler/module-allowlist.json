@@ -1,0 +1,5 @@
+{
+  "$comment": "Known module-direction violations of HimmelCAD Assembler (scripts/check-assembler-modules.mjs). Phase B of the ADR 0032 restructure drives this list to zero; it may only shrink. Regenerate with --write-allowlist after removing violations, never to admit new ones.",
+  "version": 1,
+  "violations": []
+}

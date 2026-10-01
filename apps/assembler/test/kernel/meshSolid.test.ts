@@ -10,8 +10,8 @@ import {
   meshSolidFeature,
   referenceMeshWorldPositions,
   referenceMeshesFromImport,
-} from '../../renderer/src/interop/importActions.js';
-import { parseMeshFile } from '../../renderer/src/interop/importParsers.js';
+} from '../../renderer/src/modules/interop/importActions.js';
+import { parseMeshFile } from '../../renderer/src/modules/interop/importParsers.js';
 import {
   MeshSolidError,
   decodeMeshSolidPayload,
@@ -19,8 +19,8 @@ import {
   planarRegions,
   prepareSolidMesh,
   weldMesh,
-} from '../../renderer/src/interop/meshSolid.js';
-import type { Feature, FilletFeature } from '../../renderer/src/model/document.js';
+} from '../../renderer/src/foundation/geometry-kernel/meshSolidPayload.js';
+import type { Feature, FilletFeature } from '../../renderer/src/foundation/document/document.js';
 import { interopFixture } from '../interop/fixtures.js';
 import { loadNodeKernel } from './nodeKernel.js';
 

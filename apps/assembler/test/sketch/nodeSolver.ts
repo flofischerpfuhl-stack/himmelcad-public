@@ -6,7 +6,7 @@ import { createRequire } from 'node:module';
 
 import { GcsWrapper, init_planegcs_module } from '@salusoft89/planegcs';
 
-import { createPlanegcsSolver } from '../../renderer/src/sketch/planegcsSolver.js';
+import { createPlanegcsSolver } from '../../renderer/src/foundation/sketch-solver/planegcsSolver.js';
 
 let loading: Promise<ReturnType<typeof createPlanegcsSolver>> | null = null;
 

@@ -14,9 +14,13 @@ import {
   checkBuildVolume,
   classifyOverhangs,
   overhangAngleDeg,
-} from '../../renderer/src/print/analysis.js';
-import { manifoldStats, weldMesh } from '../../renderer/src/print/meshTools.js';
-import { DEFAULT_PRINT_SETTINGS, type PrintSettings } from '../../renderer/src/print/settings.js';
+} from '../../renderer/src/modules/print/analysis.js';
+import { manifoldStats } from '../../renderer/src/modules/print/meshTools.js';
+import { weldMesh } from '../../renderer/src/foundation/geometry-kernel/meshWeld.js';
+import {
+  DEFAULT_PRINT_SETTINGS,
+  type PrintSettings,
+} from '../../renderer/src/modules/print/settings.js';
 import {
   boxFeatures,
   chamferedBlock,

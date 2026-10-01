@@ -9,18 +9,21 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
-import { ApiError } from '../../renderer/src/api/errors.js';
-import { AgentSession, HEADLESS_CAPABILITIES } from '../../renderer/src/api/session.js';
+import { ApiError } from '../../renderer/src/foundation/commands/api/errors.js';
+import {
+  AgentSession,
+  HEADLESS_CAPABILITIES,
+} from '../../renderer/src/interface/agent-api/session.js';
 import {
   assemblyFilingPending,
   fileImportedAssemblies,
-} from '../../renderer/src/interop/importFolders.js';
-import { EMPTY_ITEMS_META, useItemsStore } from '../../renderer/src/model/items.js';
-import { useAssemblerStore } from '../../renderer/src/model/store.js';
-import { parseStepStructure } from '../../renderer/src/interop/step/stepStructure.js';
-import { parseDxf } from '../../renderer/src/interop/dxf.js';
+} from '../../renderer/src/modules/interop/importFolders.js';
+import { EMPTY_ITEMS_META, useItemsStore } from '../../renderer/src/foundation/commands/items.js';
+import { useAssemblerStore } from '../../renderer/src/foundation/commands/store.js';
+import { parseStepStructure } from '../../renderer/src/foundation/geometry-kernel/step/stepStructure.js';
+import { parseDxf } from '../../renderer/src/modules/interop/dxf.js';
 import { selectedOcctModule } from '../../headless/occtModule.js';
-import { setSketchSolverFactory } from '../../renderer/src/sketch/solverProvider.js';
+import { setSketchSolverFactory } from '../../renderer/src/foundation/sketch-solver/solverProvider.js';
 import { createNodeKernelAdapter } from '../kernel/nodeKernel.js';
 import { loadNodeSolver } from '../sketch/nodeSolver.js';
 import { INTEROP_FIXTURES, interopFixture } from '../interop/fixtures.js';

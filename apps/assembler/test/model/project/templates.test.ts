@@ -7,11 +7,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { useProjectStore } from '../../../renderer/src/model/project/projectStore.js';
-import { useAssemblerStore } from '../../../renderer/src/model/store.js';
-import { useWorkspaceStore } from '../../../renderer/src/model/workspace.js';
-import { PROJECT_TEMPLATES } from '../../../renderer/src/templates/projectTemplates.js';
-import { setSketchSolverFactory } from '../../../renderer/src/sketch/solverProvider.js';
+import { useProjectStore } from '../../../renderer/src/interface/shell-ui/project/projectStore.js';
+import { useAssemblerStore } from '../../../renderer/src/foundation/commands/store.js';
+import { useWorkspaceStore } from '../../../renderer/src/interface/shell-ui/workspace.js';
+import { projectTemplates } from '../../../renderer/src/foundation/commands/projectTemplates.js';
+import { setSketchSolverFactory } from '../../../renderer/src/foundation/sketch-solver/solverProvider.js';
 import { createNodeKernelAdapter } from '../../kernel/nodeKernel.js';
 import { loadNodeSolver } from '../../sketch/nodeSolver.js';
 
@@ -23,8 +23,10 @@ setSketchSolverFactory(() => ({
 }));
 
 void test('every template id is unique and Blank comes first', () => {
-  assert.equal(PROJECT_TEMPLATES[0]!.id, 'blank');
-  assert.equal(new Set(PROJECT_TEMPLATES.map((t) => t.id)).size, PROJECT_TEMPLATES.length);
+  const templates = projectTemplates();
+  assert.equal(templates[0]!.id, 'blank');
+  assert.equal(templates.length, 4, 'the product registers the four Home templates');
+  assert.equal(new Set(templates.map((t) => t.id)).size, templates.length);
 });
 
 void test('a template becomes a clean baseline: editable history, no undo, not dirty, Home closed', async () => {

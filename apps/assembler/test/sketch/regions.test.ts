@@ -1,9 +1,16 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { addCircle, addPolyline, addRectangle } from '../../renderer/src/sketch/builders.js';
-import { detectRegions } from '../../renderer/src/sketch/regions.js';
-import { EMPTY_SKETCH, type SketchData } from '../../renderer/src/sketch/types.js';
+import {
+  addCircle,
+  addPolyline,
+  addRectangle,
+} from '../../renderer/src/foundation/sketch-solver/builders.js';
+import { detectRegions } from '../../renderer/src/foundation/sketch-solver/regions.js';
+import {
+  EMPTY_SKETCH,
+  type SketchData,
+} from '../../renderer/src/foundation/sketch-solver/types.js';
 
 function near(actual: number, expected: number, tol = 1e-6): void {
   assert.ok(Math.abs(actual - expected) < tol, `${actual} != ${expected}`);

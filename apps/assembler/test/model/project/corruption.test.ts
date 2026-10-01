@@ -12,8 +12,11 @@ import { dirname, join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { ApiError } from '../../../renderer/src/api/errors.js';
-import { ProjectFormatError, loadProjectFile } from '../../../renderer/src/model/project/format.js';
+import { ApiError } from '../../../renderer/src/foundation/commands/api/errors.js';
+import {
+  ProjectFormatError,
+  loadProjectFile,
+} from '../../../renderer/src/foundation/document/format.js';
 import { FuzzHarness } from '../../fuzz/harness.js';
 
 type Json = Record<string, unknown>;

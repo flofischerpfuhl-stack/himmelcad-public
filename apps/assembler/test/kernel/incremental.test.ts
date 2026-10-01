@@ -10,9 +10,12 @@ import test from 'node:test';
 
 import { loadOcct, type OpenCascadeModule } from '../../headless/occtModule.js';
 
-import { createEvaluator, type KernelEvaluator } from '../../renderer/src/kernel/evaluator.js';
-import type { EvaluationResult } from '../../renderer/src/kernel/types.js';
-import type { Feature } from '../../renderer/src/model/document.js';
+import {
+  createEvaluator,
+  type KernelEvaluator,
+} from '../../renderer/src/foundation/geometry-kernel/evaluator.js';
+import type { EvaluationResult } from '../../renderer/src/foundation/geometry-kernel/types.js';
+import type { Feature } from '../../renderer/src/foundation/document/document.js';
 import {
   demoBracket,
   edge,

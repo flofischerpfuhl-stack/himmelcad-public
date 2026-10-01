@@ -7,10 +7,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { installAssemblyFolderSync } from '../../renderer/src/interop/importFolders.js';
-import { setInteropKernel, useInteropStore } from '../../renderer/src/interop/interopStore.js';
-import { EMPTY_ITEMS_META, useItemsStore } from '../../renderer/src/model/items.js';
-import { useAssemblerStore } from '../../renderer/src/model/store.js';
+import { installAssemblyFolderSync } from '../../renderer/src/modules/interop/importFolders.js';
+import {
+  setInteropKernel,
+  useInteropStore,
+} from '../../renderer/src/modules/interop/interopStore.js';
+import { EMPTY_ITEMS_META, useItemsStore } from '../../renderer/src/foundation/commands/items.js';
+import { useAssemblerStore } from '../../renderer/src/foundation/commands/store.js';
 import { selectedOcctModule } from '../../headless/occtModule.js';
 import { createNodeKernelAdapter } from '../kernel/nodeKernel.js';
 import { interopFixture } from './fixtures.js';

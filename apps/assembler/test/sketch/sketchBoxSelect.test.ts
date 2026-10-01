@@ -1,14 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { normalizeRect } from '../../renderer/src/viewport/boxSelect.js';
-import { addRectangle } from '../../renderer/src/sketch/builders.js';
-import { EMPTY_SKETCH } from '../../renderer/src/sketch/types.js';
+import { normalizeRect } from '../../renderer/src/platform/viewport/boxSelect.js';
+import { addRectangle } from '../../renderer/src/foundation/sketch-solver/builders.js';
+import { EMPTY_SKETCH } from '../../renderer/src/foundation/sketch-solver/types.js';
 import {
   nextSketchBoxFilter,
   sketchBoxFilterForKey,
   sketchBoxSelect,
-} from '../../renderer/src/sketch/ui/sketchBoxSelect.js';
+} from '../../renderer/src/modules/sketching/ui/sketchBoxSelect.js';
 
 // A 10 x 10 rectangle at the origin; screen = (u, -v).
 const sketch = addRectangle(EMPTY_SKETCH, [0, 0], [10, 10]).sketch;

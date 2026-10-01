@@ -2,15 +2,21 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
-  createDemoDocument,
   type ExtrudeFeature,
   type Feature,
-  type SketchFeature,
-} from '../../renderer/src/model/document.js';
-import type { Body, EvaluationResult } from '../../renderer/src/kernel/types.js';
-import { edgeSignatureOf, faceSignatureOf } from '../../renderer/src/kernel/naming.js';
-import { addRectangle } from '../../renderer/src/sketch/builders.js';
-import { EMPTY_SKETCH } from '../../renderer/src/sketch/types.js';
+} from '../../renderer/src/foundation/document/document.js';
+import { createDemoDocument } from '../../renderer/src/foundation/commands/demoDocument.js';
+import type { SketchFeature } from '../../renderer/src/foundation/sketch-solver/sketchFeature.js';
+import type {
+  Body,
+  EvaluationResult,
+} from '../../renderer/src/foundation/geometry-kernel/types.js';
+import {
+  edgeSignatureOf,
+  faceSignatureOf,
+} from '../../renderer/src/foundation/geometry-kernel/naming.js';
+import { addRectangle } from '../../renderer/src/foundation/sketch-solver/builders.js';
+import { EMPTY_SKETCH } from '../../renderer/src/foundation/sketch-solver/types.js';
 import { circle, rect, sketchFeature } from '../sketch/fixtures.js';
 import { loadNodeKernel } from './nodeKernel.js';
 

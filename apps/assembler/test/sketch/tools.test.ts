@@ -6,24 +6,33 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { planConstraint } from '../../renderer/src/sketch/constraintRules.js';
-import { deleteItems, offsetChain, tangentArc, trimAt } from '../../renderer/src/sketch/edits.js';
-import { infer } from '../../renderer/src/sketch/inference.js';
-import { addCircle, addPolyline, addRectangle } from '../../renderer/src/sketch/builders.js';
-import { detectRegions } from '../../renderer/src/sketch/regions.js';
+import { planConstraint } from '../../renderer/src/modules/sketching/constraintRules.js';
+import {
+  deleteItems,
+  offsetChain,
+  tangentArc,
+  trimAt,
+} from '../../renderer/src/foundation/sketch-solver/edits.js';
+import { infer } from '../../renderer/src/modules/sketching/inference.js';
+import {
+  addCircle,
+  addPolyline,
+  addRectangle,
+} from '../../renderer/src/foundation/sketch-solver/builders.js';
+import { detectRegions } from '../../renderer/src/foundation/sketch-solver/regions.js';
 import {
   initialTool,
   reduceTool,
   type SketchTool,
   type ToolEvent,
-} from '../../renderer/src/sketch/tools.js';
+} from '../../renderer/src/modules/sketching/tools.js';
 import {
   EMPTY_SKETCH,
   entityMap,
   radiusOf,
   type SketchData,
   type Vec2,
-} from '../../renderer/src/sketch/types.js';
+} from '../../renderer/src/foundation/sketch-solver/types.js';
 
 const ctx = { construction: false };
 

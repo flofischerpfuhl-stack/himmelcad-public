@@ -8,7 +8,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { ApiError } from '../../renderer/src/api/errors.js';
+import { ApiError } from '../../renderer/src/foundation/commands/api/errors.js';
 import { FuzzHarness } from './harness.js';
 import { generateSequence, sequenceSeed } from './ops.js';
 import { MARGINAL_REPRODUCERS, REPRODUCERS } from './reproducers.js';

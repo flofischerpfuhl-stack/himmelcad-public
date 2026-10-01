@@ -8,7 +8,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { ExtrudeFeature, Feature, SketchFeature } from '../../renderer/src/model/document.js';
+import type { ExtrudeFeature, Feature } from '../../renderer/src/foundation/document/document.js';
+import type { SketchFeature } from '../../renderer/src/foundation/sketch-solver/sketchFeature.js';
 import {
   addEllipse,
   addPolyline,
@@ -17,7 +18,7 @@ import {
   addText,
   withConstraints,
   withDimension,
-} from '../../renderer/src/sketch/builders.js';
+} from '../../renderer/src/foundation/sketch-solver/builders.js';
 import {
   areaTerm,
   bezierPoint,
@@ -25,22 +26,25 @@ import {
   intersectCurves,
   pointAt,
   type Curve2,
-} from '../../renderer/src/sketch/geometry.js';
-import { detectRegions, loopPolygon } from '../../renderer/src/sketch/regions.js';
+} from '../../renderer/src/foundation/sketch-solver/geometry.js';
+import { detectRegions, loopPolygon } from '../../renderer/src/foundation/sketch-solver/regions.js';
 import {
   bsplineToBeziers,
   fitSplineBeziers,
   uniformKnots,
-} from '../../renderer/src/sketch/spline.js';
-import { parseOutline } from '../../renderer/src/sketch/text/outline.js';
-import { DEFAULT_SKETCH_FONT, textOutline } from '../../renderer/src/sketch/text/fonts.js';
+} from '../../renderer/src/foundation/sketch-solver/spline.js';
+import { parseOutline } from '../../renderer/src/foundation/sketch-solver/text/outline.js';
+import {
+  DEFAULT_SKETCH_FONT,
+  textOutline,
+} from '../../renderer/src/foundation/sketch-solver/text/fonts.js';
 import {
   EMPTY_SKETCH,
   entityMap,
   pointPos,
   type SketchData,
   type Vec2,
-} from '../../renderer/src/sketch/types.js';
+} from '../../renderer/src/foundation/sketch-solver/types.js';
 import { loadNodeKernel } from '../kernel/nodeKernel.js';
 import { installNodeFonts } from './nodeFont.js';
 import { loadNodeSolver } from './nodeSolver.js';

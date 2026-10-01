@@ -8,8 +8,8 @@ import { createRequire } from 'node:module';
 
 import { GcsWrapper, init_planegcs_module } from '@salusoft89/planegcs';
 
-import { createPlanegcsSolver } from '../renderer/src/sketch/planegcsSolver.js';
-import type { SketchSolver } from '../renderer/src/sketch/solverTypes.js';
+import { createPlanegcsSolver } from '../renderer/src/foundation/sketch-solver/planegcsSolver.js';
+import type { SketchSolver } from '../renderer/src/foundation/sketch-solver/solverTypes.js';
 
 export function createHeadlessSketchSolver(): SketchSolver {
   let loading: Promise<ReturnType<typeof createPlanegcsSolver>> | null = null;

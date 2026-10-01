@@ -1,18 +1,22 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { createDemoDocument } from '../../renderer/src/model/document.js';
+import { createDemoDocument } from '../../renderer/src/foundation/commands/demoDocument.js';
 import {
   autoExtrudeOperation,
-  consumedSketchIds,
-  defaultSectionOffset,
   findSketchContact,
-  isSketchVisible,
   measureSelection,
   pointInsideBody,
+} from '../../renderer/src/modules/modeling/modeling.js';
+import {
+  consumedSketchIds,
+  isSketchVisible,
+} from '../../renderer/src/foundation/document/sketchVisibility.js';
+import {
+  defaultSectionOffset,
   sectionRange,
   visibleBounds,
-} from '../../renderer/src/model/modeling.js';
+} from '../../renderer/src/foundation/commands/viewBounds.js';
 import { loadNodeKernel } from '../kernel/nodeKernel.js';
 
 const PLATE = 'body:feature-extrude-1';

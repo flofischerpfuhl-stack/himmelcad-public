@@ -3,9 +3,13 @@
  * file — every `node --test` file runs in its own process). The module is
  * chosen by `HIMMELCAD_OCCT` (`headless/occtModule.ts`).
  */
+import '../../renderer/src/app/kernelModules.js';
 import { loadOcct, type OpenCascadeModule } from '../../headless/occtModule.js';
-import { createEvaluator, type KernelEvaluator } from '../../renderer/src/kernel/evaluator.js';
-import { InProcessKernelAdapter } from '../../renderer/src/kernel/adapter.js';
+import {
+  createEvaluator,
+  type KernelEvaluator,
+} from '../../renderer/src/foundation/geometry-kernel/evaluator.js';
+import { InProcessKernelAdapter } from '../../renderer/src/foundation/geometry-kernel/adapter.js';
 
 type OpenCascade = OpenCascadeModule;
 

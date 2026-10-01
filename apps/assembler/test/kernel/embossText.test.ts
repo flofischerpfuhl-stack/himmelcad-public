@@ -10,21 +10,31 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { type OcctModuleId, selectedOcctModule } from '../../headless/occtModule.js';
-import { faceSignatureOf } from '../../renderer/src/kernel/naming.js';
-import type { Body } from '../../renderer/src/kernel/types.js';
+import { faceSignatureOf } from '../../renderer/src/foundation/geometry-kernel/naming.js';
+import type { Body } from '../../renderer/src/foundation/geometry-kernel/types.js';
 import type {
   ExtrudeFeature,
   FaceRef,
   Feature,
   Plane,
-  SketchFeature,
   SketchPlaneRef,
-} from '../../renderer/src/model/document.js';
-import type { EmbossFeature } from '../../renderer/src/model/printFeatures.js';
-import { addCircle, addRectangle, addText } from '../../renderer/src/sketch/builders.js';
-import { detectRegions } from '../../renderer/src/sketch/regions.js';
-import { DEFAULT_SKETCH_FONT, textOutline } from '../../renderer/src/sketch/text/fonts.js';
-import { EMPTY_SKETCH, type SketchData } from '../../renderer/src/sketch/types.js';
+} from '../../renderer/src/foundation/document/document.js';
+import type { SketchFeature } from '../../renderer/src/foundation/sketch-solver/sketchFeature.js';
+import type { EmbossFeature } from '../../renderer/src/modules/modeling/printFeatures.js';
+import {
+  addCircle,
+  addRectangle,
+  addText,
+} from '../../renderer/src/foundation/sketch-solver/builders.js';
+import { detectRegions } from '../../renderer/src/foundation/sketch-solver/regions.js';
+import {
+  DEFAULT_SKETCH_FONT,
+  textOutline,
+} from '../../renderer/src/foundation/sketch-solver/text/fonts.js';
+import {
+  EMPTY_SKETCH,
+  type SketchData,
+} from '../../renderer/src/foundation/sketch-solver/types.js';
 import { installNodeFonts } from '../sketch/nodeFont.js';
 import { loadNodeKernel } from './nodeKernel.js';
 

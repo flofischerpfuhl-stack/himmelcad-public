@@ -8,15 +8,20 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { appSessionHost } from '../../../renderer/src/api/app/automationStore.js';
-import { ApiError } from '../../../renderer/src/api/errors.js';
-import { AgentSession } from '../../../renderer/src/api/session.js';
-import { createDemoDocument } from '../../../renderer/src/model/document.js';
-import { bodyRowKey, meshRowKey, useItemsStore } from '../../../renderer/src/model/items.js';
-import { loadProjectFile } from '../../../renderer/src/model/project/format.js';
-import { useProjectStore } from '../../../renderer/src/model/project/projectStore.js';
-import { useAssemblerStore } from '../../../renderer/src/model/store.js';
-import { useWorkspaceStore } from '../../../renderer/src/model/workspace.js';
+import { appSessionHost } from '../../../renderer/src/interface/agent-api/automationStore.js';
+import { ApiError } from '../../../renderer/src/foundation/commands/api/errors.js';
+import { AgentSession } from '../../../renderer/src/interface/agent-api/session.js';
+
+import { createDemoDocument } from '../../../renderer/src/foundation/commands/demoDocument.js';
+import {
+  bodyRowKey,
+  meshRowKey,
+  useItemsStore,
+} from '../../../renderer/src/foundation/commands/items.js';
+import { loadProjectFile } from '../../../renderer/src/foundation/document/format.js';
+import { useProjectStore } from '../../../renderer/src/interface/shell-ui/project/projectStore.js';
+import { useAssemblerStore } from '../../../renderer/src/foundation/commands/store.js';
+import { useWorkspaceStore } from '../../../renderer/src/interface/shell-ui/workspace.js';
 import { createNodeKernelAdapter } from '../../kernel/nodeKernel.js';
 
 let savedText: string | null = null;

@@ -9,8 +9,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { Body, EvaluationResult } from '../../renderer/src/kernel/types.js';
-import { edgeSignatureOf, faceSignatureOf } from '../../renderer/src/kernel/naming.js';
+import type {
+  Body,
+  EvaluationResult,
+} from '../../renderer/src/foundation/geometry-kernel/types.js';
+import {
+  edgeSignatureOf,
+  faceSignatureOf,
+} from '../../renderer/src/foundation/geometry-kernel/naming.js';
 import type {
   BooleanFeature,
   ChamferFeature,
@@ -20,18 +26,21 @@ import type {
   FilletFeature,
   Plane,
   ShellFeature,
-  SketchFeature,
   SketchPlaneRef,
-} from '../../renderer/src/model/document.js';
+} from '../../renderer/src/foundation/document/document.js';
+import type { SketchFeature } from '../../renderer/src/foundation/sketch-solver/sketchFeature.js';
 import type {
   DraftFeature,
   EmbossFeature,
   HoleFeature,
   RibFeature,
   ThickenFeature,
-} from '../../renderer/src/model/printFeatures.js';
-import { addPolyline, sketchFromLegacyProfiles } from '../../renderer/src/sketch/builders.js';
-import { EMPTY_SKETCH } from '../../renderer/src/sketch/types.js';
+} from '../../renderer/src/modules/modeling/printFeatures.js';
+import {
+  addPolyline,
+  sketchFromLegacyProfiles,
+} from '../../renderer/src/foundation/sketch-solver/builders.js';
+import { EMPTY_SKETCH } from '../../renderer/src/foundation/sketch-solver/types.js';
 import type { LegacySketchProfile } from '../sketch/fixtures.js';
 import { loadNodeKernel } from './nodeKernel.js';
 

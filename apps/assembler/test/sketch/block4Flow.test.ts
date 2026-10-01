@@ -11,15 +11,18 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { withBodyColour } from '../../renderer/src/model/appearance.js';
-import { resolveShortcut, type KeyEvent } from '../../renderer/src/model/commands/shortcuts.js';
-import type { ExtrudeFeature } from '../../renderer/src/model/document.js';
-import { useAssemblerStore } from '../../renderer/src/model/store.js';
-import { hitTest, infer } from '../../renderer/src/sketch/inference.js';
-import { useSketchStore } from '../../renderer/src/sketch/session.js';
-import { setSketchSolverFactory } from '../../renderer/src/sketch/solverProvider.js';
-import { segmentStart } from '../../renderer/src/sketch/tools.js';
-import type { Vec2 } from '../../renderer/src/sketch/types.js';
+import { withBodyColour } from '../../renderer/src/modules/display/appearance.js';
+import {
+  resolveShortcut,
+  type KeyEvent,
+} from '../../renderer/src/foundation/commands/shortcuts.js';
+import type { ExtrudeFeature } from '../../renderer/src/foundation/document/document.js';
+import { useAssemblerStore } from '../../renderer/src/foundation/commands/store.js';
+import { hitTest, infer } from '../../renderer/src/modules/sketching/inference.js';
+import { useSketchStore } from '../../renderer/src/modules/sketching/session.js';
+import { setSketchSolverFactory } from '../../renderer/src/foundation/sketch-solver/solverProvider.js';
+import { segmentStart } from '../../renderer/src/modules/sketching/tools.js';
+import type { Vec2 } from '../../renderer/src/foundation/sketch-solver/types.js';
 import { createNodeKernelAdapter } from '../kernel/nodeKernel.js';
 import { loadNodeSolver } from './nodeSolver.js';
 

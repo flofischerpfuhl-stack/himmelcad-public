@@ -8,12 +8,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { setSketchDimension } from '../../renderer/src/sketch/featureOps.js';
+import { setSketchDimension } from '../../renderer/src/modules/sketching/featureOps.js';
 import {
   collectCandidates,
   isAmbiguous,
   rayCastFaces,
-} from '../../renderer/src/viewport/pickCandidates.js';
+} from '../../renderer/src/platform/viewport/pickCandidates.js';
 import { bodies, call, evidence, fails, near, reset, store, type Json } from './harness.js';
 
 async function plate(

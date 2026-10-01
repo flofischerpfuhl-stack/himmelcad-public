@@ -36,6 +36,11 @@ ihre Befehle, Werkzeuge, Panels und API-Schemas selbst.
 - **Produkte = Zusammenstellungen:** `apps/assembler` (Electron) und
   `apps/assembler-web` (PWA) aus denselben Modulen.
 
+Stand 2026-09-30: Phase A erledigt (Fundament, Plattform, Schnittstellen,
+Registrierungen, Parameter-/Print-/Printers-Modul, Prüfung mit Allowlist
+157 → 53); Phase B (übrige Domänenmodule, drei parallele Pakete) siehe
+[MODULES.md](MODULES.md) §6.
+
 ## 0b. Kernel-Robustheit über und in OCCT (≈ ½–1 Block, laufend)
 
 1. Robustheitsschicht über OCCT: unscharfe Booleans, ShapeFix-Reparatur,
