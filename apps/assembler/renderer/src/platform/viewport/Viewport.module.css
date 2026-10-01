@@ -15,3 +15,32 @@
   height: 100%;
   outline: none;
 }
+
+/* Long-press feedback: a ring where the finger rests (release = menu, drag = box). */
+.pressRing {
+  position: absolute;
+  width: 56px;
+  height: 56px;
+  margin: -28px 0 0 -28px;
+  border: 2px solid var(--hc-accent-base);
+  border-radius: 50%;
+  pointer-events: none;
+  animation: press-ring 180ms ease-out;
+}
+
+@keyframes press-ring {
+  from {
+    transform: scale(0.6);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pressRing {
+    animation: none;
+  }
+}

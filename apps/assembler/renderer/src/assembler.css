@@ -14,3 +14,18 @@ body {
   color: var(--hc-fg-default);
   font-family: var(--hc-font-ui);
 }
+
+/* Tablet layout (assembler/TOUCH.md): larger shared controls and menu rows. The
+ * attribute is set by `platform/input/deviceProbe.ts` (touch primary, or Settings
+ * › Touch and pen › Tablet layout: On). */
+html[data-hc-touch] {
+  --hc-size-control-h: 40px;
+  --hc-size-chip-h: 36px;
+}
+
+html[data-hc-touch] [role='menuitem'],
+html[data-hc-touch] [role='menuitemcheckbox'],
+html[data-hc-touch] [role='menuitemradio'],
+html[data-hc-touch] [role='option'] {
+  min-height: 40px;
+}

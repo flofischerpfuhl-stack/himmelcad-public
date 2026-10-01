@@ -66,7 +66,7 @@ foundation  host  <  jobs  <  document  <  sketch-solver  <  geometry-kernel  < 
 | sketch-solver   | foundation | Sketch data model and the `sketch` kind (`sketchFeature.ts`: type, validator, v1→v2 migration), planeGCS (worker + in-process), regions, projections, dimension values, text outlines.                                                                                                                                    | `renderer/src/foundation/sketch-solver`     |
 | geometry-kernel | foundation | The only place that imports OCCT: adapter, worker runtime, evaluator with the **per-kind evaluator registry** (`features/registry.ts`), prefix cache, naming, tessellation, STEP/IGES/mesh-solid exchange, mesh writers (STL, 3MF), OCCT module loader (`headless/occtModule.ts`), datum resolution, kernel time budgets. | `renderer/src/foundation/geometry-kernel`   |
 | commands        | foundation | The command gate: application store core with **installable slices** (`store.ts`), command registry (`registry.ts`), shortcuts, pick sessions, the module contract (`module.ts`), the agent-API contract kit and **method registry** (`api/`), notices, items (body names/folders), reference meshes, the demo document.  | `renderer/src/foundation/commands`          |
-| input           | platform   | Mouse navigation presets, the user preferences store, snap switches; later touch/pen, SpaceMouse.                                                                                                                                                                                                                         | `renderer/src/platform/input`               |
+| input           | platform   | Pointer model (mouse/touch/pen samples, drawing roles, pen presence and palm rejection), touch gesture and pen stroke recognizers, tablet layout state and device probe, mouse navigation presets and pen modifiers, the user preferences store, snap switches ([TOUCH.md](TOUCH.md)); later SpaceMouse.                  | `renderer/src/platform/input`               |
 | viewport        | platform   | WebGL2 renderer, scene, camera, picking, selection, grid, display-mode rendering, the **overlay host** (`overlays.ts`) and the camera channel (`cameraChannel.ts`).                                                                                                                                                       | `renderer/src/platform/viewport`            |
 | widgets         | platform   | The building blocks module UIs share (panel and History-card styles, expression fields with name completion, anchored menus) and the **UI half of the module contract** (`moduleUi.ts`).                                                                                                                                  | `renderer/src/platform/widgets`             |
 | sketching       | domain     | **Migrated.** Sketch mode: session, drawing tools, inference, sketch commands, overlay, chrome, History card, sketch agent API.                                                                                                                                                                                           | `renderer/src/modules/sketching`            |
@@ -327,6 +327,24 @@ Settled in the integration (Block 7):
   `KernelTimeoutError` from any handler — the session's own or a module's —
   is answered as `kernelTimeout` (−32016); module handlers rethrow it rather
   than wrapping it.
+
+Added in Block 8 (touch and pen, [TOUCH.md](TOUCH.md)):
+
+- **Viewport modes take finger input** (`platform/viewport/domOverlays.ts`):
+  `ViewportMode.tap(tap)` and `boxSelect(box, additive)` — a navigating
+  finger's tap or long-press box while a mode runs (sketch selection);
+  `ViewportDomHost.adoptTouches(touches)` hands fingers a DOM overlay had to
+  the viewport's gesture navigation.
+- **`SketchState.runTool(kind, inputs, options)`** (`modules/sketching/session.ts`):
+  runs a fresh drawing tool over tool events (or functions of the sketch at
+  that point) without touching the active tool, adopted as one solved edit;
+  pen strokes create geometry through it (`penStrokes.ts`).
+- **`@himmelcad/hardware-profile` `deriveInputProfile`** (additive): device
+  facts → touch primary/secondary/none, minimum target and pick radius; read
+  by `platform/input/deviceProbe.ts` (UI products only, like the GPU probe).
+- **Value fields declare the touch keypad**: `data-hc-keypad="number|expression"`
+  and `data-hc-keypad-units` on inputs (`platform/widgets/NumericKeypad.tsx`);
+  plain `inputmode="decimal"` inputs get the number layout.
 
 Compositions (`renderer/src/app`):
 

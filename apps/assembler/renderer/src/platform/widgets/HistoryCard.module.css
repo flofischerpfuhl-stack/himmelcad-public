@@ -235,13 +235,12 @@
   background: var(--hc-hover-bg);
 }
 
-@media (pointer: coarse) {
-  .cardHeader {
-    min-height: 40px;
-  }
-  .marker {
-    min-height: 34px;
-  }
+/* Tablet layout (touch primary, or Settings > Touch and pen > Tablet layout: On). */
+:global(html[data-hc-touch]) .cardHeader {
+  min-height: 40px;
+}
+:global(html[data-hc-touch]) .marker {
+  min-height: 34px;
 }
 
 @media (prefers-reduced-motion: reduce) {

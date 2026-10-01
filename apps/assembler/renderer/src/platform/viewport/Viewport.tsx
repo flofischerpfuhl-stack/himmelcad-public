@@ -8,6 +8,8 @@ import type {
 import {
   modeHiddenFeatureIds,
   modeOwnsKeyboard,
+  offerModeBox,
+  offerModeTap,
   openPickInMode,
   viewportDomOverlays,
   type ViewportDomHost,
@@ -65,7 +67,17 @@ import {
   type CameraPresetName,
 } from './camera.js';
 import { cameraTargetBounds, faceFrameBounds } from './cameraTargets.js';
-import { navigationPreset, resolveDrag } from '../input/navigation.js';
+import { navigationPreset, penNavigation, resolveDrag } from '../input/navigation.js';
+import {
+  INERTIA_MIN_START,
+  inertiaStep,
+  TouchGestureRecognizer,
+  type GestureEvent,
+} from '../input/gestures.js';
+import { penPresence, samplePointer } from '../input/pointer.js';
+import { useTabletLayout } from '../input/tabletLayout.js';
+import { findCommand } from '../../foundation/commands/registry.js';
+import { notify } from '../../foundation/commands/notices.js';
 import { PickCandidatesPopup } from './PickCandidatesPopup.js';
 import type { PickCandidate } from './pickCandidates.js';
 import { SelectionBox } from './SelectionBox.js';
@@ -288,6 +300,8 @@ type DragMode =
   | { kind: 'none' }
   | { kind: 'orbit' }
   | { kind: 'pan' }
+  /** Pen + Alt drag: vertical movement zooms towards where the drag started. */
+  | { kind: 'zoom'; anchor: Vec3 | null }
   /** A drag the running tool started on its own handle (arrow, gizmo, centre). */
   | { kind: 'tool'; drag: ToolDrag }
   | {
@@ -325,6 +339,9 @@ interface PointerGesture {
   moved: boolean;
   mode: DragMode;
   pointerType: string;
+  /** A pen drag with a navigation modifier (Shift/Ctrl/Alt): without movement it is a click. */
+  penNav: boolean;
+  shiftKey: boolean;
 }
 
 /** Live box-selection rectangle (host-relative CSS px). */
@@ -336,19 +353,18 @@ interface BoxState {
   filter: BoxFilter;
 }
 
-/** Touch gesture: one finger orbits (long-press: menu, long-press + drag: box), two fingers pan and pinch-zoom. */
-interface TouchGesture {
-  mode: 'pending' | 'orbit' | 'pinch' | 'longPress' | 'box' | 'done';
-  startX: number;
-  startY: number;
-  lastX: number;
-  lastY: number;
-  timer: ReturnType<typeof setTimeout> | null;
-  pinch: { cx: number; cy: number; dist: number } | null;
+/** A glide after a flick (Settings › Touch and pen › Inertia). */
+interface Glide {
+  kind: 'orbit' | 'pan';
+  vx: number;
+  vy: number;
+  last: number;
 }
 
-const LONG_PRESS_MS = 500;
-const TOUCH_SLOP_PX = 10;
+/** Twist before two fingers roll the view (Settings › Touch and pen › Twist to roll). */
+const TWIST_DEAD_ZONE_DEG = 12;
+/** Pen + Alt drag: zoom factor per pixel of vertical movement. */
+const PEN_ZOOM_PER_PX = 0.005;
 /** Pointer radius for overlapping-pick candidates, CSS px (mouse / touch). */
 const PICK_RADIUS_PX = 4;
 const TOUCH_PICK_RADIUS_PX = 12;
@@ -358,17 +374,6 @@ function reduceMotion(): boolean {
     typeof window !== 'undefined' &&
     (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false)
   );
-}
-
-/** Centroid and spread of the first two touch points. */
-function pinchOf(touches: Map<number, { x: number; y: number }>): {
-  cx: number;
-  cy: number;
-  dist: number;
-} {
-  const [a, b] = [...touches.values()];
-  if (!a || !b) return { cx: 0, cy: 0, dist: 0 };
-  return { cx: (a.x + b.x) / 2, cy: (a.y + b.y) / 2, dist: Math.hypot(a.x - b.x, a.y - b.y) };
 }
 
 /** The pose projection settings ask for (`0` = orthographic). */
@@ -549,6 +554,8 @@ export function Viewport(props: ViewportProps): JSX.Element {
   // ---- Camera transitions ---------------------------------------------------
   /** Moves the camera to `next`: animated (ease-out, 300 ms) unless reduced motion or turned off. */
   const animateTo = useCallback((next: CameraPose, duration = 300) => {
+    // A camera command ends a touch glide (declared below; set by then).
+    glideRef.current = null;
     if (reduceMotion() || !usePreferences.getState().animateCamera) {
       animRef.current = null;
       poseRef.current = next;
@@ -700,8 +707,26 @@ export function Viewport(props: ViewportProps): JSX.Element {
   const coarseRef = useRef(
     typeof window !== 'undefined' && (window.matchMedia?.('(pointer: coarse)').matches ?? false),
   );
-  const touchesRef = useRef(new Map<number, { x: number; y: number }>());
-  const touchRef = useRef<TouchGesture | null>(null);
+  /** Touch gestures (`input/gestures.ts`): the fingers fed to it, its long-press timer, a box it started. */
+  const gesturesRef = useRef<TouchGestureRecognizer | null>(null);
+  gesturesRef.current ??= new TouchGestureRecognizer({ twistDeg: TWIST_DEAD_ZONE_DEG });
+  const touchIdsRef = useRef(new Set<number>());
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const touchBoxRef = useRef(false);
+  /** Camera glide after a flick. */
+  const glideRef = useRef<Glide | null>(null);
+  /** Where the pen hovered last (pen + modifier hover navigates). */
+  const penHoverRef = useRef<{ x: number; y: number } | null>(null);
+  /** Long-press feedback ring (host px) until the finger moves or lifts. */
+  const [pressRing, setPressRing] = useState<{ x: number; y: number } | null>(null);
+  // The tablet layout enlarges handles: redraw when it changes.
+  useEffect(
+    () =>
+      useTabletLayout.subscribe(() => {
+        dirtyRef.current = true;
+      }),
+    [],
+  );
 
   const model = useMemo(() => sceneModel(state), [state]);
 
@@ -812,7 +837,9 @@ export function Viewport(props: ViewportProps): JSX.Element {
               pickable: !pivotDragging,
             }
           : null,
-        hitScale: coarseRef.current ? 2 : 1,
+        // Finger-sized pick areas and handles: touch input or the tablet layout.
+        hitScale: coarseRef.current || useTabletLayout.getState().tablet ? 2 : 1,
+        handleScale: useTabletLayout.getState().tablet ? 1.5 : 1,
         datums: scene.datums,
       };
     },
@@ -832,6 +859,22 @@ export function Viewport(props: ViewportProps): JSX.Element {
         poseRef.current = lerpPose(anim.from, anim.to, eased);
         dirtyRef.current = true;
         if (t >= 1) animRef.current = null;
+      }
+      const glide = glideRef.current;
+      if (glide) {
+        // Inertia: the camera keeps the flick's velocity and slows down.
+        const dt = Math.min(50, Math.max(0, now - glide.last));
+        glide.last = now;
+        const step = inertiaStep(glide, dt);
+        poseRef.current =
+          glide.kind === 'orbit'
+            ? orbitPose(poseRef.current, step.dx, step.dy)
+            : panPose(poseRef.current, step.dx, step.dy, hostRef.current?.clientHeight ?? 800);
+        if (step.next) {
+          glide.vx = step.next.vx;
+          glide.vy = step.next.vy;
+        } else glideRef.current = null;
+        dirtyRef.current = true;
       }
       if (!dirtyRef.current) return;
       dirtyRef.current = false;
@@ -995,8 +1038,19 @@ export function Viewport(props: ViewportProps): JSX.Element {
   );
 
   /** What the modules' DOM overlays get from the viewport (`domOverlays.ts`). */
+  /** Set below, once the touch handlers exist (`adoptTouches`). */
+  const adoptTouchesRef = useRef<ViewportDomHost['adoptTouches']>(() => undefined);
   const domHost = useMemo<ViewportDomHost>(
-    () => ({ hostRef, poseRef, animRef, dirtyRef, rayAtClient, pickAt, project: projectHost }),
+    () => ({
+      hostRef,
+      poseRef,
+      animRef,
+      dirtyRef,
+      rayAtClient,
+      pickAt,
+      project: projectHost,
+      adoptTouches: (touches) => adoptTouchesRef.current(touches),
+    }),
     [rayAtClient, pickAt, projectHost],
   );
 
@@ -1360,7 +1414,11 @@ export function Viewport(props: ViewportProps): JSX.Element {
         event.preventDefault();
         event.stopImmediatePropagation();
         gestureRef.current = null;
-        if (touchRef.current) touchRef.current.mode = 'done';
+        // A finger box ends here; the finger does nothing more until it lifts.
+        if (touchBoxRef.current) {
+          touchBoxRef.current = false;
+          gesturesRef.current?.cancelAll();
+        }
         setBox(null);
         return;
       }
@@ -1379,111 +1437,260 @@ export function Viewport(props: ViewportProps): JSX.Element {
     return () => window.removeEventListener('keydown', onKey, true);
   }, [boxActive]);
 
-  // ---- Touch: one finger orbits, two fingers pan + pinch-zoom, tap selects (taps add up),
-  // double tap selects the body, long press opens the context menu, long press + drag boxes.
-  const onTouchDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-    coarseRef.current = true;
-    hostRef.current?.setPointerCapture(event.pointerId);
-    animRef.current = null;
-    const touches = touchesRef.current;
-    touches.set(event.pointerId, { x: event.clientX, y: event.clientY });
-    const current = touchRef.current;
-    if (touches.size === 1) {
-      const gesture: TouchGesture = {
-        mode: 'pending',
-        startX: event.clientX,
-        startY: event.clientY,
-        lastX: event.clientX,
-        lastY: event.clientY,
-        timer: null,
-        pinch: null,
-      };
-      gesture.timer = setTimeout(() => {
-        if (touchRef.current === gesture && gesture.mode === 'pending') gesture.mode = 'longPress';
-      }, LONG_PRESS_MS);
-      touchRef.current = gesture;
-    } else if (touches.size === 2 && current) {
-      if (current.timer) clearTimeout(current.timer);
-      if (current.mode === 'box') setBox(null);
-      current.mode = 'pinch';
-      current.pinch = pinchOf(touches);
+  // ---- Touch (assembler/TOUCH.md): the gesture recognizer turns fingers into navigation and
+  // commands — one finger orbits, two fingers pan, pinch-zoom and twist-roll, taps select (taps
+  // add up), a double tap looks at a face / fits the view / selects the body, a long press opens
+  // the context menu and long press + drag draws a box; a two-finger tap undoes, a three-finger
+  // tap redoes, a three-finger swipe left/right undoes/redoes. Palms are rejected while a pen is
+  // used. Modes (sketch) take taps and boxes first.
+  /** Runs Undo or Redo the way the menu does (same availability), with a short notice. */
+  const historyGesture = useCallback((kind: 'undo' | 'redo') => {
+    if (!usePreferences.getState().touchUndoGestures) return;
+    const command = findCommand(kind === 'undo' ? 'edit.undo' : 'edit.redo');
+    if (!command) return;
+    const state = useAssemblerStore.getState();
+    const availability = command.availability(state);
+    if (!availability.enabled) {
+      notify(availability.reason ?? (kind === 'undo' ? 'Nothing to undo.' : 'Nothing to redo.'));
+      return;
     }
+    void command.run(state);
+    notify(kind === 'undo' ? 'Undo' : 'Redo');
   }, []);
+
+  /** A finger double tap: look at a face, fit an empty view, else what a double click does. */
+  const doubleTap = useCallback(
+    (clientX: number, clientY: number) => {
+      const pick = pickAt(clientX, clientY);
+      if (!useAssemblerStore.getState().activeTool) {
+        if (pick?.kind === 'face') {
+          lastClickRef.current = null;
+          applyCameraCommand({ kind: 'lookAtFace', bodyId: pick.bodyId, faceKey: pick.faceKey });
+          return;
+        }
+        if (!pick) {
+          lastClickRef.current = null;
+          applyCameraCommand({ kind: 'fitAll' });
+          return;
+        }
+      }
+      // Edges, sketch profiles, tools: like a double click (the body; a sketch opens).
+      handleClick(clientX, clientY, true, true);
+    },
+    [pickAt, applyCameraCommand, handleClick],
+  );
+
+  const startGlide = useCallback((kind: Glide['kind'], vx: number, vy: number) => {
+    if (!usePreferences.getState().touchInertia || reduceMotion()) return;
+    if (Math.hypot(vx, vy) < INERTIA_MIN_START) return;
+    glideRef.current = { kind, vx, vy, last: performance.now() };
+  }, []);
+
+  const applyGestures = useCallback(
+    (events: readonly GestureEvent[]) => {
+      const host = hostRef.current;
+      if (!host || events.length === 0) return;
+      const rect = host.getBoundingClientRect();
+      for (const e of events) {
+        switch (e.type) {
+          case 'tap': {
+            setPressRing(null);
+            const tap = {
+              clientX: e.x,
+              clientY: e.y,
+              count: e.count,
+              pointerType: 'touch' as const,
+            };
+            if (offerModeTap(tap)) break;
+            if (e.count === 2) doubleTap(e.x, e.y);
+            else handleClick(e.x, e.y, true, true);
+            break;
+          }
+          case 'longPress':
+            setPressRing({ x: e.x - rect.left, y: e.y - rect.top });
+            break;
+          case 'contextMenu':
+            setPressRing(null);
+            contextMenuAt(e.x, e.y);
+            break;
+          case 'boxStart':
+            setPressRing(null);
+            touchBoxRef.current = true;
+            updateBox(e.x0, e.y0, e.x, e.y);
+            break;
+          case 'boxMove':
+            updateBox(e.x0, e.y0, e.x, e.y);
+            break;
+          case 'boxEnd': {
+            touchBoxRef.current = false;
+            const current = boxRef.current;
+            const handled =
+              current !== null &&
+              offerModeBox(
+                { x0: current.x0, y0: current.y0, x1: current.x1, y1: current.y1 },
+                true,
+              );
+            if (handled) setBox(null);
+            else finishBox(true);
+            break;
+          }
+          case 'boxCancel':
+            touchBoxRef.current = false;
+            setBox(null);
+            break;
+          case 'orbitStart':
+          case 'transformStart':
+            setPressRing(null);
+            glideRef.current = null;
+            break;
+          case 'orbit':
+            poseRef.current = orbitPose(poseRef.current, e.dx, e.dy);
+            dirtyRef.current = true;
+            break;
+          case 'orbitEnd':
+            startGlide('orbit', e.vx, e.vy);
+            break;
+          case 'transform': {
+            let pose = panPose(poseRef.current, e.dx, e.dy, host.clientHeight);
+            if (e.scale !== 1 && e.scale > 0) {
+              const ray = rayAtClient(e.cx, e.cy);
+              const anchor = ray
+                ? rayPlaneIntersect(ray.origin, ray.direction, pose.target, [0, 0, 1])
+                : null;
+              pose = zoomTowards(pose, 1 / e.scale, anchor);
+            }
+            if (e.rotation !== 0 && usePreferences.getState().twistRoll) {
+              pose = rollBy(pose, e.rotation);
+            }
+            poseRef.current = pose;
+            dirtyRef.current = true;
+            break;
+          }
+          case 'transformEnd':
+            startGlide('pan', e.vx, e.vy);
+            break;
+          case 'twoFingerTap':
+            historyGesture('undo');
+            break;
+          case 'threeFingerTap':
+            historyGesture('redo');
+            break;
+          case 'threeFingerSwipe':
+            historyGesture(e.direction === 'left' ? 'undo' : 'redo');
+            break;
+        }
+      }
+    },
+    [
+      contextMenuAt,
+      doubleTap,
+      finishBox,
+      handleClick,
+      historyGesture,
+      rayAtClient,
+      startGlide,
+      updateBox,
+    ],
+  );
+
+  /** Polls the recognizer when its long press is due. */
+  const scheduleLongPress = useCallback(() => {
+    if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
+    longPressTimerRef.current = null;
+    const gestures = gesturesRef.current!;
+    const wait = gestures.nextPollIn(performance.now());
+    if (wait === null) return;
+    longPressTimerRef.current = setTimeout(() => {
+      longPressTimerRef.current = null;
+      applyGestures(gestures.poll(performance.now()));
+    }, wait + 5);
+  }, [applyGestures]);
+  useEffect(
+    () => () => {
+      if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
+    },
+    [],
+  );
+
+  /** Feeds a finger to the recognizer (captured by the host from now on). */
+  const beginTouch = useCallback(
+    (pointerId: number, clientX: number, clientY: number, t: number) => {
+      const gestures = gesturesRef.current!;
+      coarseRef.current = true;
+      try {
+        hostRef.current?.setPointerCapture(pointerId);
+      } catch {
+        // The pointer is gone already.
+      }
+      animRef.current = null;
+      glideRef.current = null;
+      touchIdsRef.current.add(pointerId);
+      gestures.setOptions({
+        twistDeg: usePreferences.getState().twistRoll ? TWIST_DEAD_ZONE_DEG : Infinity,
+      });
+      applyGestures(gestures.down({ id: pointerId, x: clientX, y: clientY, t }));
+      scheduleLongPress();
+    },
+    [applyGestures, scheduleLongPress],
+  );
+
+  const onTouchDown = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      const sample = samplePointer(event);
+      // A palm resting while the pen is used never navigates.
+      if (penPresence.touchDown(sample, usePreferences.getState().palmRejection)) return;
+      beginTouch(event.pointerId, event.clientX, event.clientY, event.timeStamp);
+    },
+    [beginTouch],
+  );
 
   const onTouchMove = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
-      const touches = touchesRef.current;
-      const gesture = touchRef.current;
-      const host = hostRef.current;
-      if (!touches.has(event.pointerId) || !gesture || !host) return;
-      touches.set(event.pointerId, { x: event.clientX, y: event.clientY });
-      if (gesture.mode === 'pinch' && touches.size >= 2 && gesture.pinch) {
-        const next = pinchOf(touches);
-        const previous = gesture.pinch;
-        poseRef.current = panPose(
-          poseRef.current,
-          next.cx - previous.cx,
-          next.cy - previous.cy,
-          host.clientHeight,
-        );
-        if (previous.dist > 0 && next.dist > 0) {
-          const ray = rayAtClient(next.cx, next.cy);
-          const anchor = ray
-            ? rayPlaneIntersect(ray.origin, ray.direction, poseRef.current.target, [0, 0, 1])
-            : null;
-          poseRef.current = zoomTowards(poseRef.current, previous.dist / next.dist, anchor);
-        }
-        gesture.pinch = next;
-        dirtyRef.current = true;
-        return;
-      }
-      if (touches.size !== 1) return;
-      const dx = event.clientX - gesture.lastX;
-      const dy = event.clientY - gesture.lastY;
-      gesture.lastX = event.clientX;
-      gesture.lastY = event.clientY;
-      const moved =
-        Math.hypot(event.clientX - gesture.startX, event.clientY - gesture.startY) > TOUCH_SLOP_PX;
-      if (gesture.mode === 'pending' && moved) {
-        if (gesture.timer) clearTimeout(gesture.timer);
-        gesture.mode = 'orbit';
-      } else if (gesture.mode === 'longPress' && moved) {
-        gesture.mode = 'box';
-      }
-      if (gesture.mode === 'orbit') {
-        poseRef.current = orbitPose(poseRef.current, dx, dy);
-        dirtyRef.current = true;
-      } else if (gesture.mode === 'box') {
-        updateBox(gesture.startX, gesture.startY, event.clientX, event.clientY);
-      }
+      if (!touchIdsRef.current.has(event.pointerId)) return;
+      const gestures = gesturesRef.current!;
+      applyGestures(
+        gestures.move({
+          id: event.pointerId,
+          x: event.clientX,
+          y: event.clientY,
+          t: event.timeStamp,
+        }),
+      );
+      scheduleLongPress();
     },
-    [rayAtClient, updateBox],
+    [applyGestures, scheduleLongPress],
   );
 
   const onTouchUp = useCallback(
     (event: React.PointerEvent<HTMLDivElement>, cancelled: boolean) => {
-      const touches = touchesRef.current;
-      touches.delete(event.pointerId);
-      const gesture = touchRef.current;
-      if (!gesture) return;
-      if (touches.size > 0) {
-        // Lifting one of two fingers ends the pinch; the remaining finger does nothing.
-        if (gesture.mode === 'pinch') gesture.mode = 'done';
-        return;
+      penPresence.touchUp(event.pointerId);
+      if (!touchIdsRef.current.delete(event.pointerId)) return;
+      const gestures = gesturesRef.current!;
+      applyGestures(
+        cancelled
+          ? gestures.cancel(event.pointerId)
+          : gestures.up(event.pointerId, event.timeStamp),
+      );
+      if (!gestures.active) {
+        setPressRing(null);
+        touchBoxRef.current = false;
       }
-      if (gesture.timer) clearTimeout(gesture.timer);
-      touchRef.current = null;
-      if (cancelled) {
-        setBox(null);
-        return;
-      }
-      if (gesture.mode === 'pending') handleClick(event.clientX, event.clientY, true, true);
-      else if (gesture.mode === 'longPress') contextMenuAt(event.clientX, event.clientY);
-      else if (gesture.mode === 'box') finishBox(true);
+      scheduleLongPress();
     },
-    [contextMenuAt, finishBox, handleClick],
+    [applyGestures, scheduleLongPress],
   );
 
+  /** Fingers a DOM overlay hands over (a drawing finger, then a second finger: navigation). */
+  const adoptTouches = useCallback(
+    (touches: readonly { pointerId: number; clientX: number; clientY: number }[]) => {
+      for (const touch of touches) {
+        if (touchIdsRef.current.has(touch.pointerId)) continue;
+        beginTouch(touch.pointerId, touch.clientX, touch.clientY, performance.now());
+      }
+    },
+    [beginTouch],
+  );
+  adoptTouchesRef.current = adoptTouches;
   // ---- Pointer handlers -----------------------------------------------------
   const onPointerDown = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
@@ -1494,18 +1701,38 @@ export function Viewport(props: ViewportProps): JSX.Element {
         onTouchDown(event);
         return;
       }
+      glideRef.current = null;
+      if (event.pointerType === 'pen') {
+        // The pen is down: whatever a resting palm started is not a gesture.
+        const gestures = gesturesRef.current!;
+        if (gestures.active && usePreferences.getState().palmRejection) {
+          applyGestures(gestures.cancelAll());
+        }
+      }
       coarseRef.current = false;
       host.setPointerCapture(event.pointerId);
       animRef.current = null;
 
-      const preset = navigationPreset(usePreferences.getState().navigationPreset);
-      const action = resolveDrag(preset, event.button, {
+      const modifiers = {
         shift: event.shiftKey,
         ctrl: event.ctrlKey || event.metaKey,
         alt: event.altKey,
-      });
+      };
+      const preset = navigationPreset(usePreferences.getState().navigationPreset);
+      const action = resolveDrag(preset, event.button, modifiers);
+      // Windows pens (Shapr3D): Shift + drag orbits, Ctrl + drag pans, Alt + drag zooms.
+      const penNav =
+        event.pointerType === 'pen' && event.button === 0 ? penNavigation(modifiers) : null;
       let mode: DragMode = { kind: 'none' };
-      if (action === 'orbit') mode = { kind: 'orbit' };
+      if (penNav === 'orbit') mode = { kind: 'orbit' };
+      else if (penNav === 'pan') mode = { kind: 'pan' };
+      else if (penNav === 'zoom') {
+        const ray = rayAtClient(event.clientX, event.clientY);
+        const anchor = ray
+          ? rayPlaneIntersect(ray.origin, ray.direction, poseRef.current.target, [0, 0, 1])
+          : null;
+        mode = { kind: 'zoom', anchor };
+      } else if (action === 'orbit') mode = { kind: 'orbit' };
       else if (action === 'pan') mode = { kind: 'pan' };
       else if (event.button === 0) {
         const handleHit = findHandleHit(event.clientX, event.clientY);
@@ -1527,11 +1754,13 @@ export function Viewport(props: ViewportProps): JSX.Element {
         moved: false,
         mode,
         pointerType: event.pointerType,
+        penNav: penNav !== null,
+        shiftKey: event.shiftKey,
       };
       // A drag that hides the gizmo (its centre being placed) redraws it at once.
       if (mode.kind === 'tool' && mode.drag.hidesGizmo) dirtyRef.current = true;
     },
-    [findHandleHit, pickAt, onTouchDown, popup],
+    [findHandleHit, pickAt, onTouchDown, popup, applyGestures, rayAtClient],
   );
 
   const onPointerMove = useCallback(
@@ -1541,6 +1770,27 @@ export function Viewport(props: ViewportProps): JSX.Element {
         return;
       }
       const gesture = gestureRef.current;
+      if (!gesture && event.pointerType === 'pen') {
+        // A hovering pen with Shift/Ctrl/Alt navigates (Windows pens, Shapr3D).
+        const nav = penNavigation({
+          shift: event.shiftKey,
+          ctrl: event.ctrlKey || event.metaKey,
+          alt: event.altKey,
+        });
+        const last = penHoverRef.current;
+        penHoverRef.current = { x: event.clientX, y: event.clientY };
+        if (nav && last) {
+          const dx = event.clientX - last.x;
+          const dy = event.clientY - last.y;
+          const height = hostRef.current?.clientHeight ?? 800;
+          if (nav === 'orbit') poseRef.current = orbitPose(poseRef.current, dx, dy);
+          else if (nav === 'pan') poseRef.current = panPose(poseRef.current, dx, dy, height);
+          else poseRef.current = zoomTowards(poseRef.current, Math.exp(dy * PEN_ZOOM_PER_PX), null);
+          animRef.current = null;
+          dirtyRef.current = true;
+          return;
+        }
+      }
       if (!gesture) {
         pendingHoverRef.current = { x: event.clientX, y: event.clientY };
         if (hoverRafRef.current === null) {
@@ -1605,6 +1855,9 @@ export function Viewport(props: ViewportProps): JSX.Element {
       } else if (mode.kind === 'pan') {
         poseRef.current = panPose(poseRef.current, dx, dy, height);
         dirtyRef.current = true;
+      } else if (mode.kind === 'zoom') {
+        poseRef.current = zoomTowards(poseRef.current, Math.exp(dy * PEN_ZOOM_PER_PX), mode.anchor);
+        dirtyRef.current = true;
       } else if (mode.kind === 'tool') {
         mode.drag.move(toolPointer(event.clientX, event.clientY, event.shiftKey));
         dirtyRef.current = true;
@@ -1661,6 +1914,11 @@ export function Viewport(props: ViewportProps): JSX.Element {
         return;
       }
       if (gesture.button !== 0) return;
+      if (gesture.penNav) {
+        // A pen tap with a navigation modifier: Shift still adds to the selection.
+        handleClick(event.clientX, event.clientY, gesture.shiftKey, false);
+        return;
+      }
       if (gesture.mode.kind !== 'none' && gesture.mode.kind !== 'box') return; // a handle click
 
       // Settings › Selection extension: every click adds, like touch taps (Shapr3D, macOS).
@@ -1677,6 +1935,7 @@ export function Viewport(props: ViewportProps): JSX.Element {
   const onWheel = useCallback(
     (event: React.WheelEvent<HTMLDivElement>) => {
       animRef.current = null;
+      glideRef.current = null;
       const factor = Math.exp(event.deltaY * 0.0012);
       const ray = rayAtClient(event.clientX, event.clientY);
       const anchor = ray
@@ -1927,7 +2186,23 @@ export function Viewport(props: ViewportProps): JSX.Element {
             key: f === 'all' ? 'A' : f[0]!.toUpperCase(),
             active: f === box.filter,
           }))}
-          hint="Tab cycles"
+          // A finger box: the filters are tapped with another finger (Shapr3D).
+          {...(touchBoxRef.current
+            ? {
+                hint: 'Tap a filter with another finger',
+                onFilter: (index: number) => {
+                  const filter = BOX_FILTERS[index];
+                  if (filter) setBox((b) => (b ? { ...b, filter } : b));
+                },
+              }
+            : { hint: 'Tab cycles' })}
+        />
+      ) : null}
+      {pressRing ? (
+        <div
+          className={styles.pressRing}
+          style={{ left: pressRing.x, top: pressRing.y }}
+          aria-hidden
         />
       ) : null}
       {popup ? (

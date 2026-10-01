@@ -15,6 +15,7 @@ import { Menu, MenuItem, Tooltip } from '@himmelcad/ui';
 import { resolveAdaptive, type Command } from '../../foundation/commands/registry.js';
 import { adaptiveCapacity, splitAdaptive } from './adaptiveLayout.js';
 import { usePreferences } from '../../platform/input/preferences.js';
+import { effectiveToolbarLabels, useTabletLayout } from '../../platform/input/tabletLayout.js';
 import { commandIcon } from './icons.js';
 import type { AssemblerState } from '../../foundation/commands/store.js';
 import styles from './AdaptiveToolbar.module.css';
@@ -25,7 +26,12 @@ const INITIAL_CAPACITY = 5;
 const LABELLED_SLOT_PX = 56;
 
 export function AdaptiveToolbar({ state }: { state: AssemblerState }): JSX.Element {
-  const labels = usePreferences((p) => p.labels);
+  // Tablet layout: no hover, so the captions show instead of hover tips.
+  const tablet = useTabletLayout((s) => s.tablet);
+  const labels = effectiveToolbarLabels(
+    usePreferences((p) => p.labels),
+    tablet,
+  );
   const commands = resolveAdaptive(state);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const clearRef = useRef<HTMLButtonElement | null>(null);

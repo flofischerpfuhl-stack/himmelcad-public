@@ -191,6 +191,9 @@ export function DimensionLabel(props: DimensionLabelProps): JSX.Element {
         style={{ left: props.x, top: props.y }}
         type="text"
         inputMode="decimal"
+        // Touch number keypad: `+ - * /` expressions and the units this field reads.
+        data-hc-keypad="expression"
+        data-hc-keypad-units={unit === '°' ? '°' : unit === '' ? '' : 'mm in'}
         value={text}
         onChange={(event) => setText(event.target.value)}
         onBlur={() => {

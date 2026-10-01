@@ -59,6 +59,20 @@ export function ShortcutOverlay(): JSX.Element | null {
     { label: 'History panel', keys: 'Ctrl+Alt+H' },
     { label: 'Parameters panel', keys: 'Ctrl+Alt+P' },
   ];
+  // Touch and pen (assembler/TOUCH.md): listed on every device so the gestures can be found.
+  const touch: ShortcutRow[] = [
+    { label: 'Orbit', keys: 'One finger' },
+    { label: 'Pan, zoom, roll', keys: 'Two fingers' },
+    { label: 'Select (taps add up)', keys: 'Tap' },
+    { label: 'Look at face / fit view', keys: 'Double tap' },
+    { label: 'Context menu / box', keys: 'Long press' },
+    { label: 'Undo', keys: 'Two-finger tap' },
+    { label: 'Redo', keys: 'Three-finger tap' },
+    { label: 'Undo / redo', keys: 'Three-finger swipe' },
+    { label: 'Line, arc, circle, rectangle', keys: 'Pen stroke' },
+    { label: 'Erase sketch curves', keys: 'Scribble' },
+    { label: 'Orbit / pan / zoom (Windows pen)', keys: 'Shift / Ctrl / Alt' },
+  ];
 
   return (
     <div className={styles.layer} onPointerDown={close}>
@@ -84,6 +98,17 @@ export function ShortcutOverlay(): JSX.Element | null {
               <div key={`${row.label}${row.keys}`} className={styles.row}>
                 <span className={styles.label}>{row.label}</span>
                 <Keys keys={row.keys} />
+              </div>
+            ))}
+          </section>
+          <section className={styles.section}>
+            <h3 className={styles.sectionTitle}>Touch and pen</h3>
+            {touch.map((row) => (
+              <div key={row.label} className={styles.row}>
+                <span className={styles.label}>{row.label}</span>
+                <span className={styles.keys}>
+                  <kbd className={styles.kbd}>{row.keys}</kbd>
+                </span>
               </div>
             ))}
           </section>

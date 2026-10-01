@@ -136,3 +136,25 @@
 .gridValue {
   font-variant-numeric: tabular-nums;
 }
+
+/* Left-handed: the view controls move to the left edge (the tools take the right). */
+:global(html[data-hc-hand='left']) .root {
+  right: auto;
+  left: 12px;
+}
+
+/* Tablet layout: finger-sized toggles. */
+:global(html[data-hc-touch]) .snapButton {
+  width: 40px;
+  height: 40px;
+}
+:global(html[data-hc-touch]) .gridReadout,
+:global(html[data-hc-touch]) .select {
+  height: 40px;
+}
+:global(html[data-hc-touch]) .historyToggle {
+  min-height: 40px;
+}
+:global(html[data-hc-touch]) .root {
+  width: 176px;
+}

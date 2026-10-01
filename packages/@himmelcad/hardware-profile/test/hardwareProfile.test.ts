@@ -5,6 +5,7 @@ import test from 'node:test';
 import {
   RendererFallbackController,
   deriveChromiumLaunchSwitches,
+  deriveInputProfile,
   deriveRenderingStatus,
   resolveMatchedQuirks,
   validateQuirkRegistry,
@@ -208,5 +209,48 @@ void test('quirk schema validates bounds and deterministic priority/conflicts', 
   );
   assert.throws(() =>
     validateQuirkRegistry({ schemaVersion: 1, rules: [{ ...high, match: { gpuName: 'Vega' } }] }),
+  );
+});
+
+test('input profile: tablet, touch laptop, desktop, pen', () => {
+  const tablet = deriveInputProfile({
+    maxTouchPoints: 5,
+    primaryPointer: 'coarse',
+    anyCoarse: true,
+    hover: false,
+    penSeen: false,
+  });
+  assert.deepEqual(tablet, { touch: 'primary', pen: false, minTargetPx: 44, pickRadiusPx: 12 });
+  const touchLaptop = deriveInputProfile({
+    maxTouchPoints: 10,
+    primaryPointer: 'fine',
+    anyCoarse: true,
+    hover: true,
+    penSeen: true,
+  });
+  assert.deepEqual(touchLaptop, {
+    touch: 'secondary',
+    pen: true,
+    minTargetPx: 36,
+    pickRadiusPx: 8,
+  });
+  const desktop = deriveInputProfile({
+    maxTouchPoints: 0,
+    primaryPointer: 'fine',
+    anyCoarse: false,
+    hover: true,
+    penSeen: false,
+  });
+  assert.deepEqual(desktop, { touch: 'none', pen: false, minTargetPx: 28, pickRadiusPx: 4 });
+  // A touch screen without a hovering primary pointer and no pointer report counts as a tablet.
+  assert.equal(
+    deriveInputProfile({
+      maxTouchPoints: 5,
+      primaryPointer: 'none',
+      anyCoarse: false,
+      hover: false,
+      penSeen: false,
+    }).touch,
+    'primary',
   );
 });

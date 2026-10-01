@@ -249,6 +249,13 @@
   fill: var(--hc-geometry-active-preview);
 }
 
+/* Tablet layout: finger-sized text gizmo handles. */
+:global(html[data-hc-touch]) .gizmoHandle {
+  transform-box: fill-box;
+  transform-origin: center;
+  transform: scale(1.8);
+}
+
 /* Offset with several loops: one clickable direction arrow per loop. */
 .offsetArrow {
   pointer-events: all;
@@ -288,4 +295,13 @@
   height: 1px;
   overflow: hidden;
   clip-path: inset(50%);
+}
+
+/* The live pen/finger stroke (assembler/TOUCH.md); it becomes a shape when the pen lifts. */
+.ink {
+  fill: none;
+  stroke: var(--hc-accent-base);
+  stroke-opacity: 0.85;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }

@@ -114,20 +114,25 @@
   right: -22px;
 }
 
-@media (pointer: coarse) {
-  .face {
-    grid-template-columns: 24px 1fr 24px;
-    grid-template-rows: 24px 1fr 24px;
-  }
-  .roll {
-    width: 32px;
-    height: 32px;
-    top: -30px;
-  }
-  .rollLeft {
-    left: -30px;
-  }
-  .rollRight {
-    right: -30px;
-  }
+/* Tablet layout (touch primary, or Settings > Touch and pen > Tablet layout: On). */
+:global(html[data-hc-touch]) .face {
+  grid-template-columns: 24px 1fr 24px;
+  grid-template-rows: 24px 1fr 24px;
+}
+:global(html[data-hc-touch]) .roll {
+  width: 32px;
+  height: 32px;
+  top: -30px;
+}
+:global(html[data-hc-touch]) .rollLeft {
+  left: -30px;
+}
+:global(html[data-hc-touch]) .rollRight {
+  right: -30px;
+}
+
+/* Left-handed: the view cube moves to the top left (the tool column takes the right). */
+:global(html[data-hc-hand='left']) .scene {
+  right: auto;
+  left: 36px;
 }

@@ -60,7 +60,7 @@
     {
       "id": "input",
       "layer": "platform",
-      "summary": "Input devices and user preferences: mouse navigation presets, snap switches, the preferences store (device/user-wide settings); later touch/pen and SpaceMouse.",
+      "summary": "Input devices and user preferences: pointer model (mouse/touch/pen, palm rejection), touch gesture and pen stroke recognizers, tablet layout state and device probe, mouse navigation presets and pen modifiers, snap switches, the preferences store (device/user-wide settings); later SpaceMouse.",
       "paths": ["renderer/src/platform/input/"]
     },
     {

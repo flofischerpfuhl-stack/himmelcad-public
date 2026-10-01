@@ -21,6 +21,14 @@ import { registerEscapeRung } from '@himmelcad/ui';
 
 import { effectiveGridStep } from '../../../platform/viewport/gridResolution.js';
 import { usePreferences } from '../../../platform/input/preferences.js';
+import {
+  drawingRole,
+  penPresence,
+  pointerKind,
+  samplePointer,
+  type PointerKind,
+} from '../../../platform/input/pointer.js';
+import { applyInk, INK_TOOLS, planInk, setSketchTouchHandlers } from '../penStrokes.js';
 import { useAssemblerStore } from '../../../foundation/commands/store.js';
 import { useLiveGrid } from '../../../platform/viewport/liveGrid.js';
 import { boxModeFor, normalizeRect } from '../../../platform/viewport/boxSelect.js';
@@ -86,6 +94,10 @@ export interface SketchViewApi {
   pickPlanarFace: (clientX: number, clientY: number) => { bodyId: string; faceKey: string } | null;
   /** The body edge (preferred) or face under a client pixel (Project). */
   pickBodyItem?: (clientX: number, clientY: number) => ProjectionPick | null;
+  /** Hands drawing fingers to the viewport's touch navigation (a second finger landed). */
+  adoptTouches?: (
+    touches: readonly { pointerId: number; clientX: number; clientY: number }[],
+  ) => void;
   width: number;
   height: number;
 }
@@ -154,6 +166,25 @@ interface SketchBox {
   y1: number;
   filter: SketchBoxFilter;
 }
+
+/** A pen (or drawing finger) stroke being drawn, client px (assembler/TOUCH.md). */
+interface InkStroke {
+  pointerId: number;
+  kind: Exclude<PointerKind, 'mouse'>;
+  /** The pen's eraser end. */
+  eraser: boolean;
+  downT: number;
+  shiftKey: boolean;
+  points: { x: number; y: number; pressure: number }[];
+  moved: boolean;
+}
+
+/** Movement that turns a pen/finger press into a stroke, px. */
+const INK_SLOP_PX = 4;
+/** Select tool: held this long before moving, a pen/finger press draws a box instead of a stroke, ms. */
+const INK_HOLD_MS = 450;
+/** Fingers hit and snap with this many times the mouse tolerances. */
+const FINGER_HIT = 2;
 
 const SKETCH_FILTER_CHIPS: Record<SketchBoxFilter, { label: string; key: string }> = {
   all: { label: 'All', key: 'A' },
@@ -297,6 +328,60 @@ export function SketchOverlay({
   const boxRef = useRef<SketchBox | null>(null);
   boxRef.current = box;
   void tick;
+  const inkRef = useRef<InkStroke | null>(null);
+  const [inkPath, setInkPath] = useState<{ d: string; width: number } | null>(null);
+  /** Drawing fingers on the overlay (a second finger hands them to the viewport). */
+  const fingersRef = useRef(new Map<number, { clientX: number; clientY: number }>());
+  const apiRef = useRef(api);
+  apiRef.current = api;
+
+  // Navigating fingers (pen-only drawing): the viewport offers their taps and boxes here.
+  useEffect(() => {
+    setSketchTouchHandlers({
+      tap: ({ clientX, clientY, count }) => {
+        const store = useSketchStore.getState();
+        const s = store.session;
+        if (!s) return false;
+        const view = apiRef.current;
+        const uv = view.fromClient(clientX, clientY);
+        if (!uv) return true;
+        const current = s.dragPreview ?? s.sketch;
+        const hit = hitTest(current, uv, mmPerPxAt(view, uv) * FINGER_HIT);
+        if (!hit) {
+          store.clearSelection();
+          return true;
+        }
+        if (count === 2) {
+          const entity = current.entities.find((e) => e.id === hit.id);
+          if (entity?.kind === 'text') store.editText(entity.id);
+          return true;
+        }
+        // Taps add up (Shapr3D); tapping a selected item again deselects it.
+        store.select([hit.id], { additive: true });
+        return true;
+      },
+      box: (rect, additive) => {
+        const store = useSketchStore.getState();
+        const s = store.session;
+        if (!s) return false;
+        const ids = sketchBoxSelect(
+          s.dragPreview ?? s.sketch,
+          normalizeRect(rect.x0, rect.y0, rect.x1, rect.y1),
+          boxModeFor(rect.x0, rect.x1),
+          'all',
+          apiRef.current.toScreen,
+        );
+        if (additive) {
+          store.select(
+            ids.filter((id) => !s.selection.includes(id)),
+            { additive: true },
+          );
+        } else store.select(ids);
+        return true;
+      },
+    });
+    return () => setSketchTouchHandlers(null);
+  }, []);
 
   // While a box is dragged: Tab cycles the filter, A/E/P choose it, Escape cancels.
   const boxActive = box !== null;
@@ -463,8 +548,132 @@ export function SketchOverlay({
   const uvOf = (event: React.PointerEvent | React.MouseEvent): Vec2 | null =>
     api.fromClient(event.clientX, event.clientY);
 
+  /** A click of the active drawing tool at `uv`, snapped and inferred. */
+  const clickTool = (uv: Vec2, current: SketchData, px: number) => {
+    const s = useSketchStore.getState().session;
+    if (!s) return;
+    const from = segmentStart(current, s.tool);
+    const snap = infer(current, uv, {
+      mmPerPx: px,
+      ...(from ? { from } : {}),
+      gridStep: grid,
+      snaps: snapToggles,
+      body: bodyTargets,
+    });
+    void useSketchStore
+      .getState()
+      .dispatch({ type: 'click', snap, hit: hitTest(current, uv, px), raw: uv });
+  };
+
+  /** A second finger landed while one draws: both fingers navigate; the drawing stops. */
+  const handOverFingers = (event: React.PointerEvent<HTMLDivElement>) => {
+    const touches = [...fingersRef.current].map(([pointerId, p]) => ({ pointerId, ...p }));
+    fingersRef.current.clear();
+    if (inkRef.current) {
+      inkRef.current = null;
+      setInkPath(null);
+    }
+    const drag = dragRef.current;
+    dragRef.current = null;
+    if (drag?.box) setBox(null);
+    else if (drag?.moved && drag.pointIds.length > 0) void useSketchStore.getState().endDrag();
+    api.adoptTouches?.([
+      ...touches,
+      { pointerId: event.pointerId, clientX: event.clientX, clientY: event.clientY },
+    ]);
+  };
+
+  /** A finished pen/finger stroke: a tap acts like a click, a stroke becomes a shape or erases. */
+  const finishInk = (ink: InkStroke) => {
+    const store = useSketchStore.getState();
+    const s = store.session;
+    const first = ink.points[0];
+    if (!s || !first) return;
+    const current = s.dragPreview ?? s.sketch;
+    const scale = ink.kind === 'touch' ? FINGER_HIT : 1;
+    if (!ink.moved) {
+      const uv = api.fromClient(first.x, first.y);
+      if (!uv) return;
+      const px = mmPerPxAt(api, uv) * scale;
+      if (ink.eraser) {
+        const hit = hitTest(current, uv, px, { points: false });
+        if (hit) void applyInk({ kind: 'erase', ids: [hit.id] });
+        return;
+      }
+      if (s.tool.kind === 'select') {
+        if (!ink.shiftKey) store.clearSelection();
+        return;
+      }
+      clickTool(uv, current, px);
+      return;
+    }
+    const stroke = ink.points
+      .map((p) => api.fromClient(p.x, p.y))
+      .filter((p): p is Vec2 => p !== null);
+    const middle = stroke[Math.floor(stroke.length / 2)];
+    if (!middle) return;
+    const prefs = usePreferences.getState();
+    const plan = planInk(
+      current,
+      stroke,
+      {
+        // Fingers are less precise: wider snaps and tolerances.
+        mmPerPx: mmPerPxAt(api, middle) * (ink.kind === 'touch' ? 1.5 : 1),
+        gridStep: grid,
+        snaps: snapToggles,
+        body: bodyTargets,
+        toolKind: s.tool.kind,
+        penShapes: prefs.penShapes,
+        scribbleErase: prefs.scribbleErase,
+      },
+      ink.eraser,
+    );
+    void applyInk(plan);
+  };
+
+  /** The live stroke as an SVG path (overlay px); its width follows the pen pressure. */
+  const inkPathOf = (ink: InkStroke): { d: string; width: number } | null => {
+    const rect = rootRef.current?.getBoundingClientRect();
+    if (!rect) return null;
+    const d = ink.points
+      .map(
+        (p, i) =>
+          `${i === 0 ? 'M' : 'L'}${(p.x - rect.left).toFixed(1)} ${(p.y - rect.top).toFixed(1)}`,
+      )
+      .join('');
+    const pressure =
+      ink.kind === 'pen'
+        ? ink.points.reduce((sum, p) => sum + p.pressure, 0) / ink.points.length
+        : 0.5;
+    return { d, width: 1.5 + 2.5 * Math.max(0, Math.min(1, pressure)) };
+  };
+
   const onPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (event.button !== 0) return; // camera buttons fall through to the viewport
+    const kind = pointerKind(event.pointerType);
+    const prefs = usePreferences.getState();
+    const eraser = kind === 'pen' && (event.button === 5 || (event.buttons & 32) !== 0);
+    if (kind === 'touch') {
+      const role = drawingRole('touch', {
+        fingerDrawing: prefs.fingerDrawing,
+        penSeen: prefs.penSeen || penPresence.penSeen,
+        otherTouches: fingersRef.current.size,
+      });
+      if (role === 'navigate') {
+        if (fingersRef.current.size > 0) {
+          event.stopPropagation();
+          handOverFingers(event);
+        }
+        // The viewport navigates; its taps and boxes come back as sketch selection.
+        return;
+      }
+      // A palm resting while the pen draws.
+      if (penPresence.touchDown(samplePointer(event), prefs.palmRejection)) {
+        event.stopPropagation();
+        return;
+      }
+      fingersRef.current.set(event.pointerId, { clientX: event.clientX, clientY: event.clientY });
+    }
+    if (event.button !== 0 && !eraser) return; // camera buttons fall through to the viewport
     event.stopPropagation();
     const store = useSketchStore.getState();
     const s = store.session;
@@ -497,17 +706,29 @@ export function SketchOverlay({
     const uv = uvOf(event);
     if (!uv) return;
     const current = s.dragPreview ?? s.sketch;
-    const px = mmPerPxAt(api, uv);
+    const px = mmPerPxAt(api, uv) * (kind === 'touch' ? FINGER_HIT : 1);
+    // Pen and drawing fingers: a stroke becomes a shape (or erases), a tap is a click.
+    // On geometry the Select tool still drags it.
+    if (
+      kind !== 'mouse' &&
+      INK_TOOLS.has(s.tool.kind) &&
+      (eraser || prefs.penShapes || prefs.scribbleErase) &&
+      (eraser || s.tool.kind !== 'select' || hitTest(current, uv, px) === null)
+    ) {
+      rootRef.current?.setPointerCapture(event.pointerId);
+      inkRef.current = {
+        pointerId: event.pointerId,
+        kind,
+        eraser,
+        downT: event.timeStamp,
+        shiftKey: event.shiftKey,
+        points: [{ x: event.clientX, y: event.clientY, pressure: event.pressure }],
+        moved: false,
+      };
+      return;
+    }
     if (s.tool.kind !== 'select') {
-      const from = segmentStart(current, s.tool);
-      const snap = infer(current, uv, {
-        mmPerPx: px,
-        ...(from ? { from } : {}),
-        gridStep: grid,
-        snaps: snapToggles,
-        body: bodyTargets,
-      });
-      void store.dispatch({ type: 'click', snap, hit: hitTest(current, uv, px), raw: uv });
+      clickTool(uv, current, px);
       return;
     }
     const target = hitTest(current, uv, px);
@@ -550,10 +771,52 @@ export function SketchOverlay({
   };
 
   const onPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
-    event.stopPropagation();
-    const uv = uvOf(event);
+    const ink = inkRef.current;
+    if (ink && ink.pointerId === event.pointerId) {
+      event.stopPropagation();
+      const native = event.nativeEvent;
+      const coalesced = native.getCoalescedEvents?.() ?? [];
+      for (const e of coalesced.length > 0 ? coalesced : [native]) {
+        ink.points.push({ x: e.clientX, y: e.clientY, pressure: e.pressure });
+      }
+      const first = ink.points[0]!;
+      if (
+        !ink.moved &&
+        Math.hypot(event.clientX - first.x, event.clientY - first.y) > INK_SLOP_PX
+      ) {
+        ink.moved = true;
+        const s = useSketchStore.getState().session;
+        if (
+          s?.tool.kind === 'select' &&
+          !ink.eraser &&
+          event.timeStamp - ink.downT >= INK_HOLD_MS
+        ) {
+          // Held still, then dragged: a selection box (like a long press with a finger).
+          inkRef.current = null;
+          dragRef.current = {
+            pointerId: event.pointerId,
+            startClient: [first.x, first.y],
+            startUv: api.fromClient(first.x, first.y) ?? [0, 0],
+            pointIds: [],
+            starts: [],
+            hit: null,
+            additive: ink.shiftKey || ink.kind === 'touch',
+            moved: true,
+            box: true,
+          };
+          setBox(boxFromDrag(dragRef.current, event.clientX, event.clientY));
+          return;
+        }
+      }
+      if (ink.moved) setInkPath(inkPathOf(ink));
+      return;
+    }
+    // The text gizmo's own pointer (it never registers as a drawing finger).
     const gizmo = gizmoRef.current;
-    if (gizmo && uv) {
+    if (gizmo && gizmo.pointerId === event.pointerId) {
+      event.stopPropagation();
+      const uv = uvOf(event);
+      if (!uv) return;
       const store = useSketchStore.getState();
       if (gizmo.kind === 'move') {
         if (gizmo.anchorId) store.drag([uv]);
@@ -566,6 +829,9 @@ export function SketchOverlay({
       }
       return;
     }
+    if (event.pointerType === 'touch' && !fingersRef.current.has(event.pointerId)) return;
+    event.stopPropagation();
+    const uv = uvOf(event);
     const drag = dragRef.current;
     if (drag) {
       if (
@@ -597,12 +863,23 @@ export function SketchOverlay({
   };
 
   const onPointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (fingersRef.current.delete(event.pointerId)) penPresence.touchUp(event.pointerId);
     const gizmo = gizmoRef.current;
     if (gizmo && gizmo.pointerId === event.pointerId) {
       gizmoRef.current = null;
       event.stopPropagation();
       // An edited text's anchor moved through the solver: one undo step.
       if (gizmo.kind === 'move' && gizmo.anchorId) void useSketchStore.getState().endDrag();
+      return;
+    }
+    const ink = inkRef.current;
+    if (ink && ink.pointerId === event.pointerId) {
+      event.stopPropagation();
+      inkRef.current = null;
+      setInkPath(null);
+      // The snap marker of the hover before the stroke is stale now.
+      setCursor(null);
+      finishInk(ink);
       return;
     }
     const drag = dragRef.current;
@@ -885,8 +1162,29 @@ export function SketchOverlay({
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
-      onPointerLeave={() => {
+      onPointerLeave={(event) => {
+        // A lifted finger always "leaves"; the pen/mouse cursor it would clear is still in use
+        // (a finger tapping a value chip must not unmount the chip under it).
+        if (event.pointerType === 'touch') return;
         if (!dragRef.current) setCursor(null);
+      }}
+      onPointerCancel={(event) => {
+        if (fingersRef.current.delete(event.pointerId)) penPresence.touchUp(event.pointerId);
+        if (inkRef.current?.pointerId === event.pointerId) {
+          inkRef.current = null;
+          setInkPath(null);
+        }
+        const gizmo = gizmoRef.current;
+        if (gizmo?.pointerId === event.pointerId) {
+          gizmoRef.current = null;
+          if (gizmo.kind === 'move' && gizmo.anchorId) void useSketchStore.getState().endDrag();
+        }
+        const drag = dragRef.current;
+        if (drag?.pointerId === event.pointerId) {
+          dragRef.current = null;
+          if (drag.box) setBox(null);
+          else if (drag.moved && drag.pointIds.length > 0) void useSketchStore.getState().endDrag();
+        }
       }}
       onDoubleClick={onDoubleClick}
       onContextMenu={(event) => event.preventDefault()}
@@ -1150,6 +1448,14 @@ export function SketchOverlay({
           <text x={snapScreen[0] + 10} y={snapScreen[1] + 20} className={styles.hint}>
             {hintText}
           </text>
+        ) : null}
+        {inkPath ? (
+          <path
+            d={inkPath.d}
+            className={styles.ink}
+            style={{ strokeWidth: inkPath.width }}
+            data-sketch-ink=""
+          />
         ) : null}
       </svg>
       {dimensions.map(({ d, anchor, text }) => {

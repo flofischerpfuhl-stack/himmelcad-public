@@ -43,3 +43,14 @@
 .selected {
   border-color: var(--hc-geometry-selection);
 }
+
+/* Tablet layout: a dimension chip is a finger-sized tap target (it opens the keypad). */
+:global(html[data-hc-touch]) .label,
+:global(html[data-hc-touch]) .input {
+  min-height: 34px;
+  padding: 6px 10px;
+  font-size: 14px;
+}
+:global(html[data-hc-touch]) .input {
+  width: 96px;
+}

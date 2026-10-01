@@ -66,11 +66,10 @@
   -webkit-box-orient: vertical;
 }
 
-@media (pointer: coarse) {
-  .button {
-    width: 44px;
-    height: 44px;
-  }
+/* Tablet layout (touch primary, or Settings > Touch and pen > Tablet layout: On). */
+:global(html[data-hc-touch]) .button {
+  width: 44px;
+  height: 44px;
 }
 
 .divider {
@@ -87,4 +86,13 @@
   .button {
     transition: none;
   }
+}
+
+:global(html[data-hc-touch]) .labelled {
+  width: 56px;
+  min-height: 52px;
+}
+:global(html[data-hc-touch]) .caption {
+  max-width: 54px;
+  font-size: 10px;
 }

@@ -176,8 +176,13 @@ export interface SceneInput {
   guides?: { lines: readonly [Vec3, Vec3][]; planes: readonly [Vec3, Vec3, Vec3, Vec3][] } | null;
   /** Move/Rotate gizmo centre (the rotation pivot), draggable onto geometry. */
   pivot?: { point: Vec3; hovered: boolean; pickable?: boolean } | null;
-  /** Multiplies the edge pick widths (e.g. 2 for touch/coarse pointers). Default 1. */
+  /**
+   * Multiplies the edge pick widths and the tool handles' hit areas (e.g. 2
+   * for touch/coarse pointers, the tablet layout). Default 1.
+   */
   hitScale?: number;
+  /** Multiplies the drawn size of handle knobs (gizmo centre, value arcs) — finger-sized in the tablet layout. Default 1. */
+  handleScale?: number;
   /** B-rep edge lines on shaded bodies. Default `true`. */
   edgesVisible?: boolean;
   /** Hidden edges, dashed. Default `false`. */
@@ -375,6 +380,7 @@ export function buildScene(input: SceneInput): BuiltScene {
   // Orthographic views: a far eye along the view direction (parallel rays) for ribbons/billboards.
   const eye = billboardEye(input.pose);
   const hitScale = input.hitScale ?? 1;
+  const handleScale = input.handleScale ?? 1;
   const edgeHitWidth = (distance: number): number => baseEdgeHitWidth(distance) * hitScale;
 
   const lit: TriBatch[] = [];
@@ -1201,7 +1207,7 @@ export function buildScene(input: SceneInput): BuiltScene {
       handle.length,
       color,
       eye,
-      worldPerPixel(Math.hypot(...sub3(eye, handle.base))) * 14,
+      worldPerPixel(Math.hypot(...sub3(eye, handle.base))) * 14 * hitScale,
     );
   }
 
@@ -1286,7 +1292,7 @@ export function buildScene(input: SceneInput): BuiltScene {
       pushRibbon(circle, handle.hovered ? 3.5 : 2.5, 0.9);
       if (Math.abs(handle.value) > 1e-9) pushRibbon(arcSegments(0, handle.value), 5, 0.95);
       idBatches.push({
-        positions: buildScreenRibbon(circle, eye, 14, worldPerPixel, 0),
+        positions: buildScreenRibbon(circle, eye, 14 * hitScale, worldPerPixel, 0),
         id,
         mode: 'triangles',
         onTop: true,
@@ -1302,7 +1308,8 @@ export function buildScene(input: SceneInput): BuiltScene {
       ]);
       pushRibbon(spokes, 1.25, 0.7);
       const knob = at(handle.value);
-      const knobRadius = worldPerPixel(Math.hypot(...sub3(eye, knob))) * (handle.hovered ? 7 : 6);
+      const knobRadius =
+        worldPerPixel(Math.hypot(...sub3(eye, knob))) * (handle.hovered ? 7 : 6) * handleScale;
       const dot = { positions: [] as number[], colors: [] as number[] };
       pushBillboardQuad(dot, eye, knob, knobRadius, color, 0.95);
       flat.push({
@@ -1313,7 +1320,7 @@ export function buildScene(input: SceneInput): BuiltScene {
         noClip: true,
       });
       const hit = { positions: [] as number[], colors: [] as number[] };
-      pushBillboardQuad(hit, eye, knob, knobRadius * 1.8, color, 1);
+      pushBillboardQuad(hit, eye, knob, knobRadius * 1.8 * hitScale, color, 1);
       idBatches.push({
         positions: new Float32Array(hit.positions),
         id,
@@ -1321,7 +1328,7 @@ export function buildScene(input: SceneInput): BuiltScene {
         onTop: true,
       });
       idBatches.push({
-        positions: buildScreenRibbon(arc, eye, 12, worldPerPixel, 0),
+        positions: buildScreenRibbon(arc, eye, 12 * hitScale, worldPerPixel, 0),
         id,
         mode: 'triangles',
         onTop: true,
@@ -1332,7 +1339,8 @@ export function buildScene(input: SceneInput): BuiltScene {
   // ---- Move/Rotate gizmo centre (pivot knob) --------------------------------------
   if (input.pivot) {
     const { point, hovered, pickable = true } = input.pivot;
-    const radius = worldPerPixel(Math.hypot(...sub3(eye, point))) * (hovered ? 8 : 6.5);
+    const radius =
+      worldPerPixel(Math.hypot(...sub3(eye, point))) * (hovered ? 8 : 6.5) * handleScale;
     const knob = { positions: [] as number[], colors: [] as number[] };
     pushBillboardQuad(
       knob,
@@ -1352,7 +1360,7 @@ export function buildScene(input: SceneInput): BuiltScene {
     });
     if (pickable) {
       const hit = { positions: [] as number[], colors: [] as number[] };
-      pushBillboardQuad(hit, eye, point, radius * 1.6, input.colors.selection, 1);
+      pushBillboardQuad(hit, eye, point, radius * 1.6 * hitScale, input.colors.selection, 1);
       idBatches.push({
         positions: new Float32Array(hit.positions),
         id: pickTable.add({ kind: 'toolHandle', handle: 'pivot' }),

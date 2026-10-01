@@ -176,21 +176,20 @@
 }
 
 /* Touch: bigger rows and buttons. */
-@media (pointer: coarse) {
-  .row {
-    min-height: 40px;
-  }
-  .rowButton {
-    width: 34px;
-    height: 34px;
-  }
-  .swatch {
-    width: 18px;
-    height: 18px;
-  }
-  .filter {
-    height: 34px;
-  }
+/* Tablet layout (touch primary, or Settings > Touch and pen > Tablet layout: On). */
+:global(html[data-hc-touch]) .row {
+  min-height: 40px;
+}
+:global(html[data-hc-touch]) .rowButton {
+  width: 34px;
+  height: 34px;
+}
+:global(html[data-hc-touch]) .swatch {
+  width: 18px;
+  height: 18px;
+}
+:global(html[data-hc-touch]) .filter {
+  height: 34px;
 }
 
 @media (prefers-reduced-motion: reduce) {

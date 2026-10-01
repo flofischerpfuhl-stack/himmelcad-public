@@ -172,7 +172,9 @@ Items folders/renaming/colour, History filter, rollback marker and
 validated reordering, the shortcut sheet (hold Ctrl or `?`), Settings
 (`Ctrl+,`) and touch/pen gestures. Decisions (e.g. names/folders are item
 properties, colour is a `setAppearance` step) and limits:
-`assembler/SELECTION-NAVIGATION.md`.
+`assembler/SELECTION-NAVIGATION.md`. Touch and pen (gestures, pen strokes
+that become constrained sketch geometry, palm rejection, tablet layout,
+handedness, number keypad, Settings › Touch and pen): `assembler/TOUCH.md`.
 
 ## Shapr3D parity (gap inventory)
 

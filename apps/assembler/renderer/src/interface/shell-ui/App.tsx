@@ -10,6 +10,7 @@ import { LeftDock } from './LeftDock.js';
 import { NoticeToast } from './NoticeToast.js';
 
 import { registeredPanels } from '../../platform/widgets/moduleUi.js';
+import { NumericKeypad } from '../../platform/widgets/NumericKeypad.js';
 import { RightDock } from './RightDock.js';
 import panelStyles from '../../platform/widgets/Panel.module.css';
 import { SettingsDialog } from './SettingsDialog.js';
@@ -121,6 +122,8 @@ export function App(): JSX.Element {
       ) : null}
       <SettingsDialog />
       <ShortcutOverlay />
+      {/* Touch: the number keypad for value fields (tablet layout or Settings). */}
+      <NumericKeypad />
     </div>
   );
 }

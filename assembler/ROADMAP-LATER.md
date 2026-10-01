@@ -83,6 +83,21 @@ Tablet-Layout (Links-/Rechtshänder), große Ziele, Bildschirm-Ziffernblock für
 Maße, Handballenerkennung, Gesten für Undo/Redo. iPad realistisch über die
 Web-Version (PWA); Windows-Tablets über die Desktop-App.
 
+**Stand 2026-10-01 (Block 8, Branch `asm/b8-touch-20261001`): umgesetzt,
+mit emulierter Touch-/Stift-Eingabe geprüft** – Einzelheiten in
+[TOUCH.md](TOUCH.md). Zeigermodell Maus/Finger/Stift mit Druck und
+Handballenerkennung, Gestenerkenner (Orbit, Pan/Pinch/Drehen, Trägheit,
+Doppeltipp auf Fläche, Long-Press-Menü und -Rahmen mit Filter per zweitem
+Finger, Zwei-/Drei-Finger-Tipp und Drei-Finger-Wischen für Undo/Redo),
+Windows-Stift mit Shift/Strg/Alt, Strich-Erkennung im Skizzenmodus (Linie,
+Linienzug, Bogen mit Tangente, Kreis, Rechteck auch gedreht, Kritzeln
+löscht) über die Zeichenwerkzeuge mit deren automatischen Bedingungen,
+Tablet-Layout mit großen Zielen und Fingergriffen, Links-/Rechtshänder,
+Bildschirm-Ziffernblock, Einstellungen „Touch and pen“. Offen: Prüfung auf
+echter Hardware (iPad über die Web-Version, Windows-Stifttablett),
+Linie↔Bogen-Umschalten durch Wackeln während des Zeichnens,
+Ellipsen/Splines aus Strichen.
+
 ## 2. KI-Assistent: „Beschreib das Teil, bekomm ein editierbares Modell“ (≈ 1 Block)
 
 - Auf dem gemeinsamen Paket `@himmelcad/agent` aufbauen (t3code-Adaption
