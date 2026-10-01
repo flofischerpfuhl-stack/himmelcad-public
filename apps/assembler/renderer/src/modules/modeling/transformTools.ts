@@ -204,14 +204,15 @@ function scaleHandles(
 /** Which preset centre draft.center is ('' for a picked point). */
 function centrePreset(draft: ScaleDraft, evaluation: EvaluationResult | undefined): string {
   const c = draft.center;
-  if (c.every((v) => Math.abs(v) < 1e-9)) return 'origin';
   const box = evaluation ? boundsOf(evaluation, draft.bodyIds) : null;
-  if (!box) return '';
-  const mid = (i: number) => round((box.min[i]! + box.max[i]!) / 2);
   const same = (p: number[]) => p.every((v, i) => Math.abs(v - c[i]!) < 1e-6);
-  if (same([mid(0), mid(1), round(box.min[2])])) return 'base';
-  if (same([mid(0), mid(1), mid(2)])) return 'middle';
-  return '';
+  if (box) {
+    const mid = (i: number) => round((box.min[i]! + box.max[i]!) / 2);
+    // The body's own centres first (a part centred at the origin reads as "Base centre").
+    if (same([mid(0), mid(1), round(box.min[2])])) return 'base';
+    if (same([mid(0), mid(1), mid(2)])) return 'middle';
+  }
+  return same([0, 0, 0]) ? 'origin' : '';
 }
 
 function scaleBadges(
