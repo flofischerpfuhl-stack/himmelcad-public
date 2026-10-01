@@ -1026,6 +1026,30 @@ class Document(PrintToolsMixin, InteropMixin):
         params = {"bodyIds": [b.id for b in items], "from": [float(v) for v in start], "to": [float(v) for v in end], "copy": copy}
         return self._feature(self.client.create_feature("translate", params, name=name))
 
+    def pattern_linear(self, bodies: Body | Iterable[Body], direction: str | Edge | SketchLine | Datum, count: int, spacing: float, *, total: bool = False, direction2: str | Edge | SketchLine | Datum | None = None, count2: int = 1, spacing2: float | None = None, name: str | None = None) -> Feature:
+        """Copies bodies ``count`` times along ``direction`` (``"X"``/``"Y"``/``"Z"``, an edge, …),
+        ``spacing`` apart — or ``total=True``: ``spacing`` from the first to the last. ``direction2``
+        with ``count2``/``spacing2`` makes a grid (Shapr3D Pattern 3D, at most 1000 instances)."""
+        items = [bodies] if isinstance(bodies, Body) else list(bodies)
+        pattern: dict[str, Any] = {"kind": "linear", "direction": self._axis_ref(direction), "count": count, "spacing": spacing}
+        if total:
+            pattern["spacingMode"] = "total"
+        if direction2 is not None:
+            pattern["second"] = {"direction": self._axis_ref(direction2), "count": count2, "spacing": spacing if spacing2 is None else spacing2}
+        return self._feature(self.client.create_feature("pattern", {"bodyIds": [b.id for b in items], "pattern": pattern}, name=name))
+
+    def pattern_circular(self, bodies: Body | Iterable[Body], axis: str | Edge | SketchLine | Datum, count: int, angle: float = 360.0, *, between: bool = False, uniform: bool = False, name: str | None = None) -> Feature:
+        """Copies bodies ``count`` times about ``axis``: ``angle`` is the total (360 spreads them
+        evenly) or with ``between=True`` the angle between neighbours; ``uniform=True`` keeps the
+        copies' orientation (moved along the circle, not turned)."""
+        items = [bodies] if isinstance(bodies, Body) else list(bodies)
+        pattern: dict[str, Any] = {"kind": "circular", "axis": self._axis_ref(axis), "count": count, "angle": angle}
+        if between:
+            pattern["angleMode"] = "spacing"
+        if uniform:
+            pattern["uniform"] = True
+        return self._feature(self.client.create_feature("pattern", {"bodyIds": [b.id for b in items], "pattern": pattern}, name=name))
+
     def _primitive(self, shape: str, sizes: dict[str, float], plane: str | Face | Datum | tuple[str, float], center: Sequence[float], op: str, target: Body | None, name: str | None, flip: bool | None = None) -> Body:
         params: dict[str, Any] = {"shape": shape, "plane": self._plane_ref(plane), "center": [float(v) for v in center], "operation": op, **sizes}
         # Like the Add tools: a cut on a face goes into the face (a pocket/hole) unless told otherwise.
@@ -1066,10 +1090,18 @@ class Document(PrintToolsMixin, InteropMixin):
         tilt about their far sides to follow it (Shapr3D Move on an edge)."""
         return self._feature(self.client.create_feature("moveEdge", {"edge": edge.ref, "vector": [float(v) for v in vector]}, name=name))
 
-    def move_face(self, face: Face, vector: Sequence[float], *, name: str | None = None) -> Feature:
+    def move_face(self, face: Face, vector: Sequence[float] = (0.0, 0.0, 0.0), *, turn: float | None = None, turn_axis: Sequence[float] | None = None, turn_point: Sequence[float] | None = None, name: str | None = None) -> Feature:
         """Moves a planar face by ``vector`` in any direction: along its normal it offsets,
-        sideways its planar neighbours tilt to follow (Shapr3D Move on a face)."""
-        return self._feature(self.client.create_feature("moveFace", {"face": face.ref, "vector": [float(v) for v in vector]}, name=name))
+        sideways its planar neighbours tilt to follow (Shapr3D Move on a face). ``turn`` (degrees,
+        right-hand about ``turn_axis``, a direction in the face's plane, through ``turn_point``,
+        default the face centre) then turns it; the neighbours follow."""
+        params: dict[str, Any] = {"face": face.ref, "vector": [float(v) for v in vector]}
+        if turn:
+            if turn_axis is None:
+                raise ValueError("turn= needs turn_axis= (a direction in the face's plane)")
+            point = turn_point if turn_point is not None else face.centroid
+            params["rotation"] = {"point": [float(v) for v in point], "axis": [float(v) for v in turn_axis], "angle": float(turn)}
+        return self._feature(self.client.create_feature("moveFace", params, name=name))
 
     def color(self, body: Body, rgb_hex: str, *, name: str | None = None) -> Feature:
         return self._feature(self.client.create_feature("setAppearance", {"bodyId": body.id, "color": rgb_hex}, name=name))

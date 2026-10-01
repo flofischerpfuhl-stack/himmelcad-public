@@ -1148,6 +1148,30 @@
             },
             "spacing": {
               "type": "number"
+            },
+            "spacingMode": {
+              "enum": ["spacing", "total"],
+              "default": "spacing",
+              "description": "`total`: `spacing` (and `second.spacing`) is first to last instance."
+            },
+            "second": {
+              "type": "object",
+              "properties": {
+                "direction": {
+                  "$ref": "#/$defs/AxisRef"
+                },
+                "count": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 200
+                },
+                "spacing": {
+                  "type": "number"
+                }
+              },
+              "required": ["direction", "count", "spacing"],
+              "additionalProperties": false,
+              "description": "A second direction: a grid of count × second.count instances (at most 1000)."
             }
           },
           "required": ["kind", "direction", "count", "spacing"],
@@ -1171,6 +1195,16 @@
               "type": "number",
               "exclusiveMinimum": 0,
               "maximum": 360
+            },
+            "angleMode": {
+              "enum": ["total", "spacing"],
+              "default": "total",
+              "description": "`spacing`: `angle` is between neighbours instead of the total."
+            },
+            "uniform": {
+              "type": "boolean",
+              "default": false,
+              "description": "Copies keep their orientation (moved along the circle, not turned)."
             }
           },
           "required": ["kind", "axis", "count", "angle"],
@@ -2507,7 +2541,7 @@
     },
     "moveFace": {
       "label": "Move Face",
-      "summary": "Moves a planar face by `vector` (world, mm) in any direction: the part along its normal offsets it (like Offset Face), the part in its plane slides it — every planar neighbour sharing a straight edge tilts about its far side to follow. A face with a curved edge can only move along its normal.",
+      "summary": "Moves a planar face by `vector` (world, mm) in any direction: the part along its normal offsets it (like Offset Face), the part in its plane slides it — every planar neighbour sharing a straight edge tilts about its far side to follow. A face with a curved edge can only move along its normal. `rotation` then turns the face about a line in its plane (the neighbours follow).",
       "params": {
         "type": "object",
         "properties": {
@@ -2516,6 +2550,26 @@
           },
           "vector": {
             "$ref": "#/$defs/Vec3"
+          },
+          "rotation": {
+            "type": "object",
+            "properties": {
+              "point": {
+                "$ref": "#/$defs/Vec3"
+              },
+              "axis": {
+                "$ref": "#/$defs/Vec3"
+              },
+              "angle": {
+                "type": "number",
+                "minimum": -80,
+                "maximum": 80,
+                "description": "Degrees, right-hand about `axis`."
+              }
+            },
+            "required": ["point", "axis", "angle"],
+            "additionalProperties": false,
+            "description": "Turns the face about the line through `point` (moved with the face) along `axis` (projected into the face plane)."
           }
         },
         "required": ["face", "vector"],

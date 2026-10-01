@@ -213,6 +213,7 @@ interface FaceSummary {
   key: string;
   surface: string;
   normal?: number[] | null;
+  centroid?: number[];
 }
 
 export class FuzzHarness {
@@ -765,6 +766,146 @@ export class FuzzHarness {
             dz: between(r[3], -10, 10),
             rz: (r[4] ?? 0) < 0.5 ? 0 : between(r[4], -90, 90, 15),
             copy: (r[5] ?? 0) < 0.3,
+          },
+        });
+      }
+      // Block 8: primitives, Scale, Translate, Move Edge/Face, helical revolve, extrude taper.
+      case 'primitive': {
+        const shape = pick(['box', 'cylinder', 'sphere', 'cone', 'torus'] as const, r[0])!;
+        const body = (r[1] ?? 0) < 0.4 ? await bodyId(r[2]) : null;
+        const face = body ? pick(await this.planarFaces(body), r[3]) : undefined;
+        const s = between(r[4], 1, 12, 0.5);
+        const sizes =
+          shape === 'box'
+            ? { width: s * 2, depth: between(r[5], 2, 20), height: between(r[6], 1, 15) }
+            : shape === 'cylinder'
+              ? { radius: s, height: between(r[6], 1, 15) }
+              : shape === 'sphere'
+                ? { radius: s }
+                : shape === 'cone'
+                  ? { radius: s, radius2: between(r[5], 0, s * 0.8), height: between(r[6], 1, 15) }
+                  : { radius: s + 2, radius2: between(r[5], 0.5, s * 0.8 + 0.5) };
+        const operation = face ? pick(['join', 'cut', 'new'] as const, r[7])! : 'new';
+        return this.api('feature.create', {
+          kind: 'primitive',
+          params: {
+            shape,
+            ...(face
+              ? {
+                  plane: { kind: 'face', face: { bodyId: body, key: face.key } },
+                  center: face.centroid ?? [0, 0, 0],
+                  operation,
+                  ...(operation !== 'new' ? { targetBodyId: body } : {}),
+                  ...(operation === 'cut' ? { flip: true } : {}),
+                }
+              : { center: [between(r[2], -30, 30), between(r[3], -30, 30), 0] }),
+            ...sizes,
+          },
+        });
+      }
+      case 'scale': {
+        const body = await bodyId(r[0]);
+        if (!body) return null;
+        const perAxis = (r[1] ?? 0) < 0.3;
+        return this.api('feature.create', {
+          kind: 'scale',
+          params: {
+            bodyIds: [body],
+            ...(perAxis
+              ? {
+                  factors: [
+                    between(r[2], 0.5, 1.5, 0.05),
+                    between(r[3], 0.5, 1.5, 0.05),
+                    between(r[4], 0.5, 1.5, 0.05),
+                  ],
+                }
+              : { factor: between(r[2], 0.5, 2, 0.05) }),
+            center: [between(r[5], -10, 10), between(r[6], -10, 10), 0],
+            copy: (r[7] ?? 0) < 0.3,
+          },
+        });
+      }
+      case 'translate': {
+        const body = await bodyId(r[0]);
+        if (!body) return null;
+        return this.api('feature.create', {
+          kind: 'translate',
+          params: {
+            bodyIds: [body],
+            from: [between(r[1], -20, 20), between(r[2], -20, 20), 0],
+            to: [between(r[3], -20, 20), between(r[4], -20, 20), between(r[5], -5, 5)],
+            copy: (r[6] ?? 0) < 0.3,
+          },
+        });
+      }
+      case 'moveEdge': {
+        const body = await bodyId(r[0]);
+        if (!body) return null;
+        const lines = (
+          await this.call<{ key: string; curve: string }[]>('edges.list', { bodyId: body })
+        ).filter((e) => e.curve === 'line');
+        const edge = pick(lines, r[1]);
+        if (!edge) return null;
+        return this.api('feature.create', {
+          kind: 'moveEdge',
+          params: {
+            edge: { bodyId: body, key: edge.key },
+            vector: [between(r[2], -4, 4), between(r[3], -4, 4), between(r[4], -4, 4)],
+          },
+        });
+      }
+      case 'moveFace': {
+        const body = await bodyId(r[0]);
+        if (!body) return null;
+        const face = pick(await this.planarFaces(body), r[1]);
+        if (!face) return null;
+        return this.api('feature.create', {
+          kind: 'moveFace',
+          params: {
+            face: { bodyId: body, key: face.key },
+            vector: [between(r[2], -4, 4), between(r[3], -4, 4), between(r[4], -4, 4)],
+          },
+        });
+      }
+      case 'helix': {
+        const sketch = pick(await sketches(), r[0]);
+        if (!sketch) return null;
+        const bodies = await this.bodies();
+        const operation = bodies.length === 0 ? 'new' : pick(['new', 'join'] as const, r[1])!;
+        const target = operation === 'new' ? undefined : pick(bodies, r[2])?.id;
+        return this.api('feature.create', {
+          kind: 'revolve',
+          params: {
+            profile: { kind: 'sketch', featureId: sketch.id },
+            axis: {
+              kind: 'world',
+              axis: pick(['X', 'Y', 'Z'] as const, r[3])!,
+              origin: [between(r[4], -40, 40), 0, 0],
+            },
+            angle: 360,
+            helix: {
+              pitch: between(r[5], 2, 40) * ((r[6] ?? 0) < 0.2 ? -1 : 1),
+              turns: between(r[7], 0.5, 2, 0.25),
+              ...((r[6] ?? 0) > 0.8 ? { leftHanded: true } : {}),
+            },
+            operation,
+            ...(target ? { targetBodyId: target } : {}),
+          },
+        });
+      }
+      case 'taper': {
+        const sketch = pick(await sketches(), r[0]);
+        if (!sketch) return null;
+        const sides = pick(['one', 'one', 'symmetric', 'two'] as const, r[1])!;
+        return this.api('feature.create', {
+          kind: 'extrude',
+          params: {
+            profile: { kind: 'sketch', featureId: sketch.id },
+            distance: between(r[2], 1, 15) * ((r[3] ?? 0) < 0.2 ? -1 : 1),
+            symmetric: sides === 'symmetric',
+            ...(sides === 'two' ? { distance2: between(r[4], 1, 8) } : {}),
+            taper: between(r[5], -15, 15, 0.5) || 3,
+            operation: 'new',
           },
         });
       }

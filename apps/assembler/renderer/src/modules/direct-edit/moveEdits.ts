@@ -208,7 +208,69 @@ export function applyMoveFace(
   if (Math.abs(along) >= NO_MOVE_MM) {
     offsetResolvedFaces(kit, ctx, body, [first], along, feature.id);
   }
-  if (length(slide) < NO_MOVE_MM) return;
+  if (length(slide) >= NO_MOVE_MM) slideFace(kit, ctx, body, key, slide, feature.id);
+  if (feature.rotation && Math.abs(feature.rotation.angle) >= 1e-9) {
+    rotateFace(kit, ctx, body, key, feature.rotation, v, feature.id);
+  }
+}
+
+/** Largest face rotation, degrees (a face turned onto its neighbours cannot be rebuilt). */
+export const MAX_FACE_ROTATION = 80;
+
+/**
+ * Turns the planar face `key` by `rotation.angle` degrees about the line
+ * through `rotation.point` (moved along with the face by `moved`) along
+ * `rotation.axis` (projected into the face's plane); the neighbours are
+ * trimmed or extended to meet it (OCCT's draft about that line).
+ */
+function rotateFace(
+  kit: FeatureKit,
+  ctx: ReplayContextLike,
+  body: BodyStateLike,
+  key: string,
+  rotation: { point: Vec3; axis: Vec3; angle: number },
+  moved: Vec3,
+  featureId: string,
+): void {
+  const { angle } = rotation;
+  if (!Number.isFinite(angle) || Math.abs(angle) > MAX_FACE_ROTATION) {
+    kit.fail(`A face turns by at most ${MAX_FACE_ROTATION}°`);
+  }
+  if (![...rotation.point, ...rotation.axis].every(Number.isFinite)) {
+    kit.fail('The rotation needs a point and an axis');
+  }
+  const index = body.faces.findIndex((f) => baseFaceKey(f.key) === key);
+  if (index < 0) kit.fail('Move Face failed: the moved face could not be found again');
+  const geom = body.faces[index]!;
+  const n = geom.normal;
+  if (geom.surface !== 'plane' || !n) kit.fail('Only planar faces can be turned');
+  // The axis in the face's plane, through the (moved) point dropped onto the plane.
+  const raw = sub(rotation.axis, scale(n, dot(rotation.axis, n)));
+  if (length(raw) < 1e-6) kit.fail('The rotation axis must lie in the face (not along its normal)');
+  const a = normalize(raw);
+  const p0 = add(rotation.point, moved);
+  const point = sub(p0, scale(n, dot(sub(p0, geom.centroid), n)));
+  // Right-hand rotation about `a`: the side `n × a` moves outwards for a positive angle;
+  // a positive draft angle tilts that side inwards, so the draft angle is the negative.
+  const pull = cross(n, a);
+  applyTilts(
+    kit,
+    ctx,
+    body,
+    [{ index, pull, neutralPoint: point, angle: (-angle * Math.PI) / 180 }],
+    featureId,
+  );
+}
+
+/** Slides the planar face `key` in its plane: every planar neighbour tilts to follow. */
+function slideFace(
+  kit: FeatureKit,
+  ctx: ReplayContextLike,
+  body: BodyStateLike,
+  key: string,
+  slide: Vec3,
+  featureId: string,
+): void {
   // The face (moved along its normal, same key) and its edges as they are now.
   const topology = kit.topologyOf(body.shape);
   const index = body.faces.findIndex((f) => baseFaceKey(f.key) === key);
@@ -233,7 +295,7 @@ export function applyMoveFace(
     );
     if (item && !items.some((i) => i.index === item.index)) items.push(item);
   }
-  applyTilts(kit, ctx, body, items, feature.id);
+  applyTilts(kit, ctx, body, items, featureId);
 }
 
 /** Refuses a sideways move a neighbour cannot follow (a curved shared edge across the move). */

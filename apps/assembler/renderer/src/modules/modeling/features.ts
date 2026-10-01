@@ -121,14 +121,32 @@ export function parseMirroredSketchId(id: string): { mirrorId: string; index: nu
 }
 
 export type PatternDefinition =
-  | { kind: 'linear'; direction: AxisRef; count: number; spacing: Millimeters }
+  | {
+      kind: 'linear';
+      direction: AxisRef;
+      count: number;
+      /** Distance between neighbours, or with `spacingMode: 'total'` from the first to the last. */
+      spacing: Millimeters;
+      spacingMode?: 'spacing' | 'total';
+      /** A second direction (a grid of `count × second.count`), Shapr3D's Pattern 3D. */
+      second?: { direction: AxisRef; count: number; spacing: Millimeters };
+    }
   | {
       kind: 'circular';
       axis: AxisRef;
       count: number;
-      /** Total angle in degrees; 360 spreads `count` instances evenly around. */
+      /**
+       * Total angle in degrees (360 spreads `count` instances evenly around),
+       * or with `angleMode: 'spacing'` the angle between neighbours.
+       */
       angle: number;
+      angleMode?: 'total' | 'spacing';
+      /** Copies keep their orientation (moved along the circle, not turned). */
+      uniform?: boolean;
     };
+
+/** Most instances of a two-direction pattern (bounds evaluation cost). */
+export const MAX_PATTERN_INSTANCES = 1000;
 
 /** Copies bodies in a linear or circular pattern (independent copies, like Shapr3D's Pattern 3D). */
 export interface PatternFeature extends FeatureBase {

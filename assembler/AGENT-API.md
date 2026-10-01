@@ -575,6 +575,23 @@ implementing one, and slicer checks of the 3MF/STL files.
   HimmelCAD OCCT build the face moves with `BRepOffset_MakeOffset` (neighbours
   re-extend); on the replicad build a slab is joined/cut (a step next to
   inclined neighbours; `OCCT-BUILD-SPIKE.md`).
+- **Block 8 kinds and fields** (`GAP-INVENTORY.md` MOD-03/05/16/18/19, UI-02):
+  `extrude.taper` (degrees, ±80; positive narrows away from the start plane,
+  holes widen; Distance extent only; sides of lines, arcs and circles),
+  `revolve.helix` (`pitch` per turn — negative climbs against the axis —,
+  `turns`, `leftHanded`; turns may not overlap), `scale` (`bodyIds`,
+  `factor` or per-axis `factors` — per-axis needs the HimmelCAD OCCT build
+  8.0.1-hc.3 —, `center`, `copy`), `translate` (`bodyIds`, `from`, `to`,
+  `copy`), `primitive` (`shape` box/cylinder/sphere/cone/torus on `plane`
+  at `center`, sizes per shape, `flip` = into the face, New/Join/Cut/
+  Intersect), `moveEdge` (`edge` between two planar faces, `vector`: the
+  faces tilt about their far sides) and `moveFace` (planar `face`, `vector`
+  in any direction: normal part = offset, sideways part = planar neighbours
+  tilt). Python: `doc.extrude(…, taper=)`, `doc.revolve(…, pitch=, turns=|
+height=, left_handed=)`, `doc.scale`, `doc.translate`, `doc.box`/
+  `cylinder`/`sphere`/`cone`/`torus` (a cut on a face goes into it unless
+  `flip=False`), `doc.move_edge`, `doc.move_face`
+  (`tests/test_assembler_block8.py`).
 - **Print-part kinds** (hole, emboss, draft, rib, thicken) and the optional
   fillet/chamfer/shell/boolean params (`radius2`, `rules`, `mode`/`distance2`/
   `angle`/`flip`, `direction`/`clearance`/`faceThickness`, `keepTools`) have closed

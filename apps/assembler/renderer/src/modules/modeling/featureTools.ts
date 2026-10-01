@@ -1316,6 +1316,7 @@ export function modelingDraftBadges(draft: ModelingDraft): DraftBadge[] {
             };
           },
         },
+        ...patternModeBadges(draft),
       ];
     case 'split':
       return [planeBadge(draft.plane, 'Split plane')];
@@ -1377,6 +1378,116 @@ export function modelingDraftBadges(draft: ModelingDraft): DraftBadge[] {
         },
       ];
   }
+}
+
+/**
+ * Pattern options beyond type and direction (MOD-20): spacing between
+ * neighbours or total length, a second direction (a grid), and for a
+ * circular pattern total angle or angle between, rotated or uniform copies.
+ * Switching how a value is read keeps the instances where they are.
+ */
+function patternModeBadges(draft: PatternDraft): DraftBadge[] {
+  const p = draft.pattern;
+  const roundValue = (v: number) => Math.round(v * 1000) / 1000;
+  if (p.kind === 'linear') {
+    return [
+      {
+        ariaLabel: 'Pattern spacing',
+        value: p.spacingMode ?? 'spacing',
+        options: [
+          { value: 'spacing', label: 'Spacing' },
+          { value: 'total', label: 'Total' },
+        ],
+        apply: (d, value) => {
+          if (d.kind !== 'pattern' || d.pattern.kind !== 'linear') return d;
+          const q = d.pattern;
+          if ((q.spacingMode ?? 'spacing') === value) return d;
+          const toTotal = value === 'total';
+          const convert = (spacing: number, count: number) =>
+            roundValue(toTotal ? spacing * (count - 1) : spacing / Math.max(1, count - 1));
+          const { spacingMode: _drop, ...rest } = q;
+          return {
+            ...d,
+            pattern: {
+              ...rest,
+              spacing: convert(q.spacing, q.count),
+              ...(toTotal ? { spacingMode: 'total' as const } : {}),
+              ...(q.second
+                ? { second: { ...q.second, spacing: convert(q.second.spacing, q.second.count) } }
+                : {}),
+            },
+          };
+        },
+      },
+      {
+        ariaLabel: 'Pattern directions',
+        value: p.second ? 'two' : 'one',
+        options: [
+          { value: 'one', label: 'One direction' },
+          { value: 'two', label: 'Two directions' },
+        ],
+        apply: (d, value, evaluation) => {
+          if (d.kind !== 'pattern' || d.pattern.kind !== 'linear') return d;
+          const { second, ...rest } = d.pattern;
+          if (value === 'one') return { ...d, pattern: rest };
+          if (second) return d;
+          const first = axisLine(evaluation, d.pattern.direction, [])?.dir ?? [1, 0, 0];
+          // The world axis most across the first direction.
+          const axis =
+            (['X', 'Y', 'Z'] as WorldAxis[])
+              .filter((a) => Math.abs(dot(worldAxisVector(a), first)) < 1 - 1e-6)
+              .sort(
+                (a, b) =>
+                  Math.abs(dot(worldAxisVector(a), first)) -
+                  Math.abs(dot(worldAxisVector(b), first)),
+              )[0] ?? 'Y';
+          return {
+            ...d,
+            pattern: {
+              ...rest,
+              second: { direction: { kind: 'world', axis }, count: 2, spacing: rest.spacing },
+            },
+          };
+        },
+      },
+    ];
+  }
+  return [
+    {
+      ariaLabel: 'Pattern angle',
+      value: p.angleMode ?? 'total',
+      options: [
+        { value: 'total', label: 'Total angle' },
+        { value: 'spacing', label: 'Angle between' },
+      ],
+      apply: (d, value) => {
+        if (d.kind !== 'pattern' || d.pattern.kind !== 'circular') return d;
+        const q = d.pattern;
+        if ((q.angleMode ?? 'total') === value) return d;
+        const full = Math.abs(q.angle) >= 360 - 1e-9;
+        const { angleMode: _drop, ...rest } = q;
+        if (value === 'spacing') {
+          const step = full ? 360 / q.count : q.angle / Math.max(1, q.count - 1);
+          return { ...d, pattern: { ...rest, angle: roundValue(step), angleMode: 'spacing' } };
+        }
+        const total = Math.min(360, q.angle * (q.count - 1));
+        return { ...d, pattern: { ...rest, angle: roundValue(total) } };
+      },
+    },
+    {
+      ariaLabel: 'Pattern copies',
+      value: p.uniform ? 'uniform' : 'rotated',
+      options: [
+        { value: 'rotated', label: 'Rotated' },
+        { value: 'uniform', label: 'Uniform' },
+      ],
+      apply: (d, value) => {
+        if (d.kind !== 'pattern' || d.pattern.kind !== 'circular') return d;
+        const { uniform: _drop, ...rest } = d.pattern;
+        return { ...d, pattern: value === 'uniform' ? { ...rest, uniform: true } : rest };
+      },
+    },
+  ];
 }
 
 // ---- handles & chips ----------------------------------------------------------------------
@@ -1567,17 +1678,19 @@ export function modelingDraftHandles(
         const line = axisLine(evaluation, p.direction, features);
         if (!line) return [];
         const dir = line.dir;
-        const lastCentre = add(centre, scale(dir, p.spacing * (p.count - 1)));
-        return [
+        const total = p.spacingMode === 'total';
+        const step = total ? p.spacing / Math.max(1, p.count - 1) : p.spacing;
+        const lastCentre = add(centre, scale(dir, step * (p.count - 1)));
+        const out: DraftHandle[] = [
           {
             kind: 'linear',
             id: 'spacing',
-            label: 'Pattern spacing',
+            label: total ? 'Pattern length' : 'Pattern spacing',
             unit: 'mm',
             value: p.spacing,
             base: centre,
             dir,
-            length: Math.max(Math.abs(p.spacing), STEM_MM),
+            length: Math.max(Math.abs(step), STEM_MM),
             apply: (d, value) =>
               d.kind === 'pattern' && d.pattern.kind === 'linear'
                 ? {
@@ -1591,6 +1704,47 @@ export function modelingDraftHandles(
           },
           { ...count, kind: 'chip', at: add(lastCentre, scale(dir, 6)) },
         ];
+        const second = p.second;
+        const line2 = second ? axisLine(evaluation, second.direction, features) : null;
+        if (second && line2) {
+          const dir2 = line2.dir;
+          const step2 = total ? second.spacing / Math.max(1, second.count - 1) : second.spacing;
+          const lastRow = add(centre, scale(dir2, step2 * (second.count - 1)));
+          const setSecond = (d: FeatureDraft, patch: Partial<typeof second>): FeatureDraft =>
+            d.kind === 'pattern' && d.pattern.kind === 'linear' && d.pattern.second
+              ? { ...d, pattern: { ...d.pattern, second: { ...d.pattern.second, ...patch } } }
+              : d;
+          out.push(
+            {
+              kind: 'linear',
+              id: 'spacing2',
+              label: total ? 'Second direction length' : 'Second direction spacing',
+              unit: 'mm',
+              value: second.spacing,
+              base: centre,
+              dir: dir2,
+              length: Math.max(Math.abs(step2), STEM_MM),
+              apply: (d, value) =>
+                setSecond(d, {
+                  spacing: Math.abs(value) < MIN_FEATURE_SIZE_MM ? MIN_FEATURE_SIZE_MM : value,
+                }),
+            },
+            {
+              kind: 'chip',
+              id: 'count2',
+              label: 'Second direction count',
+              prefix: '×',
+              unit: 'count',
+              value: second.count,
+              at: add(lastRow, scale(dir2, 6)),
+              apply: (d, value) =>
+                setSecond(d, {
+                  count: Math.max(1, Math.min(MAX_PATTERN_COUNT, Math.round(value))),
+                }),
+            },
+          );
+        }
+        return out;
       }
       const line = axisLine(evaluation, p.axis, features);
       if (!line) return [];

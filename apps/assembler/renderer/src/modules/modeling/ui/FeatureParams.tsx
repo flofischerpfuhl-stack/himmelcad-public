@@ -406,19 +406,57 @@ export function ModelingFeatureParams({
           />
           {p.kind === 'linear' ? (
             <ExpressionField
-              label="Spacing"
+              label={p.spacingMode === 'total' ? 'Total length' : 'Spacing'}
               value={p.spacing}
               unit="mm"
               onCommit={(v) => edit({ pattern: { ...p, spacing: v } })}
             />
           ) : (
             <ExpressionField
-              label="Total angle"
+              label={p.angleMode === 'spacing' ? 'Angle between' : 'Total angle'}
               value={p.angle}
               unit="°"
               onCommit={(v) => edit({ pattern: { ...p, angle: v } })}
             />
           )}
+          {p.kind === 'linear' && p.second ? (
+            <>
+              <ExpressionField
+                label="Count 2"
+                value={p.second.count}
+                onCommit={(v) =>
+                  edit({ pattern: { ...p, second: { ...p.second!, count: Math.round(v) } } })
+                }
+              />
+              <ExpressionField
+                label={p.spacingMode === 'total' ? 'Total length 2' : 'Spacing 2'}
+                value={p.second.spacing}
+                unit="mm"
+                onCommit={(v) => edit({ pattern: { ...p, second: { ...p.second!, spacing: v } } })}
+              />
+            </>
+          ) : null}
+          {p.kind === 'circular' ? (
+            <div>
+              <span className={styles.paramLabel}>Copies</span>
+              <Select
+                aria-label={`${feature.name} copies`}
+                value={p.uniform ? 'uniform' : 'rotated'}
+                options={[
+                  { value: 'rotated', label: 'Rotated' },
+                  { value: 'uniform', label: 'Uniform' },
+                ]}
+                onChange={(event) =>
+                  edit({
+                    pattern: {
+                      ...p,
+                      uniform: event.currentTarget.value === 'uniform' || undefined,
+                    },
+                  })
+                }
+              />
+            </div>
+          ) : null}
           <span className={styles.paramNote}>
             {p.kind === 'linear'
               ? `Linear along the ${axisText(p.direction)}`

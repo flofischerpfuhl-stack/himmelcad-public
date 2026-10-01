@@ -75,6 +75,12 @@ export interface MoveFaceFeature extends FeatureBase {
   kind: 'moveFace';
   face: FaceRef;
   vector: Vec3;
+  /**
+   * Then turns the face by `angle` degrees (right-hand) about the line
+   * through `point` (moved with the face) along `axis` (in the face's plane);
+   * the neighbours follow (Shapr3D's gizmo rings on a face).
+   */
+  rotation?: { point: Vec3; axis: Vec3; angle: number };
 }
 
 export type DirectEditFeature =
@@ -139,5 +145,15 @@ registerFeatureKind({
   validate: (r, path, h) => {
     h.faceRef(r.face, `${path}.face`);
     if (!isVec3(r.vector)) h.fail(`${path}.vector`, 'expected a Vec3');
+    if (r.rotation !== undefined) {
+      const raw = r.rotation;
+      if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+        h.fail(`${path}.rotation`, 'expected an object');
+      }
+      const rot = raw as Record<string, unknown>;
+      if (!isVec3(rot.point)) h.fail(`${path}.rotation.point`, 'expected a Vec3');
+      if (!isVec3(rot.axis)) h.fail(`${path}.rotation.axis`, 'expected a Vec3');
+      if (!isNumber(rot.angle)) h.fail(`${path}.rotation.angle`, 'expected a number');
+    }
   },
 });

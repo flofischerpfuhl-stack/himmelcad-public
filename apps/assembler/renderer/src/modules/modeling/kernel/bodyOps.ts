@@ -25,6 +25,7 @@ import { sampleEdge } from '../../../foundation/geometry-kernel/sketchProjection
 import {
   mirroredSketchId,
   MAX_PATTERN_COUNT,
+  MAX_PATTERN_INSTANCES,
   MAX_SCALE_FACTOR,
   MIN_SCALE_FACTOR,
   type AlignFeature,
@@ -59,6 +60,7 @@ import {
 } from '../../../foundation/geometry-kernel/features/refs.js';
 import {
   add,
+  applyPoint,
   cross,
   dot,
   length,
@@ -280,38 +282,94 @@ export function applyPattern(
     kit.fail(`Pattern count must be a whole number from 2 to ${MAX_PATTERN_COUNT}`);
   }
   const bodies = bodiesOf(kit, ctx, feature.bodyIds);
-  let opsFor: (k: number) => RigidOp[];
+  /** The motion of instance `k` of a body whose box centre is `centre`. */
+  let opsFor: (k: number, centre: Vec3) => RigidOp[];
+  /** Second direction of a linear grid: its count and the move of its `j`-th row. */
+  let rows: { count: number; vector: (j: number) => Vec3 } | null = null;
   if (pattern.kind === 'linear') {
-    if (!(Math.abs(pattern.spacing) >= MIN_FEATURE_SIZE_MM)) {
+    const total = pattern.spacingMode === 'total';
+    const spacing = total ? pattern.spacing / (pattern.count - 1) : pattern.spacing;
+    if (!(Math.abs(spacing) >= MIN_FEATURE_SIZE_MM)) {
       kit.fail(`Pattern spacing must be at least ${MIN_FEATURE_SIZE_MM} mm`);
     }
     const { dir } = resolveAxis(kit, ctx, pattern.direction);
-    opsFor = (k) => [{ kind: 'translate', vector: scale(dir, pattern.spacing * k) }];
+    opsFor = (k) => [{ kind: 'translate', vector: scale(dir, spacing * k) }];
+    const second = pattern.second;
+    if (second) {
+      if (!Number.isInteger(second.count) || second.count < 1 || second.count > MAX_PATTERN_COUNT) {
+        kit.fail(
+          `The second direction count must be a whole number from 1 to ${MAX_PATTERN_COUNT}`,
+        );
+      }
+      if (pattern.count * second.count > MAX_PATTERN_INSTANCES) {
+        kit.fail(`A pattern makes at most ${MAX_PATTERN_INSTANCES} instances`);
+      }
+      const spacing2 =
+        total && second.count > 1 ? second.spacing / (second.count - 1) : second.spacing;
+      if (second.count > 1 && !(Math.abs(spacing2) >= MIN_FEATURE_SIZE_MM)) {
+        kit.fail(`Pattern spacing must be at least ${MIN_FEATURE_SIZE_MM} mm`);
+      }
+      const dir2 = resolveAxis(kit, ctx, second.direction).dir;
+      if (length(cross(dir, dir2)) < 1e-6) kit.fail('The two pattern directions must differ');
+      rows = { count: second.count, vector: (j) => scale(dir2, spacing2 * j) };
+    }
   } else {
     if (!(Math.abs(pattern.angle) >= 0.1 && Math.abs(pattern.angle) <= 360)) {
       kit.fail('Pattern angle must be between 0.1° and 360°');
     }
     const axis = resolveAxis(kit, ctx, pattern.axis);
     const full = Math.abs(pattern.angle) >= 360 - 1e-9;
-    const step = full ? 360 / pattern.count : pattern.angle / (pattern.count - 1);
-    opsFor = (k) => [
-      { kind: 'rotate', point: axis.point, axis: axis.dir, angle: (step * k * Math.PI) / 180 },
-    ];
+    const step =
+      pattern.angleMode === 'spacing'
+        ? pattern.angle
+        : full
+          ? 360 / pattern.count
+          : pattern.angle / (pattern.count - 1);
+    if (Math.abs(step * (pattern.count - 1)) > 360 + 1e-9) {
+      kit.fail('The instances would go round more than once; use a smaller angle or count');
+    }
+    const turn = (k: number): RigidOp => ({
+      kind: 'rotate',
+      point: axis.point,
+      axis: axis.dir,
+      angle: (step * k * Math.PI) / 180,
+    });
+    opsFor = pattern.uniform
+      ? // Uniform: the copy moves to where its box centre turns to, keeping its orientation.
+        (k, centre) => [
+          { kind: 'translate', vector: sub(applyPoint(opsAffine([turn(k)]), centre), centre) },
+        ]
+      : (k) => [turn(k)];
   }
   bodies.forEach((body, b) => {
-    for (let k = 1; k < pattern.count; k += 1) {
-      addCopy(
-        kit,
-        ctx,
-        feature.id,
-        body,
-        opsFor(k),
-        extraBodyId(feature.id, b * MAX_PATTERN_COUNT + k),
-        `${body.name} (${k + 1})`,
-      );
+    const [min, max] = kit.boundsOf(body.shape);
+    const centre = scale(add(min, max), 0.5);
+    for (let j = 0; j < (rows?.count ?? 1); j += 1) {
+      for (let k = 0; k < pattern.count; k += 1) {
+        if (j === 0 && k === 0) continue;
+        const ops = opsFor(k, centre);
+        const shift = rows && j > 0 ? rows.vector(j) : null;
+        // Row 0 keeps the one-direction ids; further rows get ids of their own.
+        const index =
+          j === 0
+            ? b * MAX_PATTERN_COUNT + k
+            : GRID_ID_BASE + (b * MAX_PATTERN_COUNT + j) * MAX_PATTERN_COUNT + k;
+        addCopy(
+          kit,
+          ctx,
+          feature.id,
+          body,
+          shift ? [...ops, { kind: 'translate', vector: shift }] : ops,
+          extraBodyId(feature.id, index),
+          j === 0 ? `${body.name} (${k + 1})` : `${body.name} (${k + 1}, ${j + 1})`,
+        );
+      }
     }
   });
 }
+
+/** First body-id index of a pattern's second-direction rows (above every one-direction id). */
+const GRID_ID_BASE = 1_000_000;
 
 // ---- Split -------------------------------------------------------------------------
 

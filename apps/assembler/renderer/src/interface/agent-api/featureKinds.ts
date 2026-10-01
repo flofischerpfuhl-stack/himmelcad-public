@@ -264,9 +264,18 @@ function normalise(
     case 'pattern': {
       const pattern = out.pattern as Json | undefined;
       if (pattern?.kind === 'linear' && pattern.direction !== undefined) {
+        const second = pattern.second as Json | undefined;
         out.pattern = {
           ...pattern,
           direction: axisRef(pattern.direction, 'params.pattern.direction'),
+          ...(isRecord(second) && second.direction !== undefined
+            ? {
+                second: {
+                  ...second,
+                  direction: axisRef(second.direction, 'params.pattern.second.direction'),
+                },
+              }
+            : {}),
         };
       } else if (pattern?.kind === 'circular' && pattern.axis !== undefined) {
         out.pattern = { ...pattern, axis: axisRef(pattern.axis, 'params.pattern.axis') };

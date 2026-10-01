@@ -41,6 +41,18 @@ export function DirectEditParams({
             onCommit={(v) => edit({ vector: vector.map((c, j) => (j === i ? v : c)) })}
           />
         ))}
+        {feature.kind === 'moveFace' && feature.rotation ? (
+          <ExpressionField
+            label="Turn"
+            value={feature.rotation.angle}
+            unit="°"
+            onCommit={(v) =>
+              edit({
+                rotation: v === 0 ? undefined : { ...feature.rotation!, angle: v },
+              })
+            }
+          />
+        ) : null}
         <span className={styles.paramNote}>
           {feature.kind === 'moveEdge'
             ? 'The two faces at the edge tilt about their far sides'

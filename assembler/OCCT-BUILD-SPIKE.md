@@ -7,7 +7,7 @@ has no cache). Merged into `feat/assembler-phase0-20260929` together with the
 interop work (IGES and the XCAF STEP reader are wired, see "Integration").
 Recipe and records:
 `vendor/occt-wasm/` (README, `build.sh`, `artifacts.sha256`),
-`LICENSES/THIRD_PARTY.md` ("`@himmelcad/occt-wasm` 8.0.1-hc.2"),
+`LICENSES/THIRD_PARTY.md` ("`@himmelcad/occt-wasm` 8.0.1-hc.3"),
 `scripts/check-licenses.mjs`. The built module lives in a local artifact cache
 outside git (owner decision 2026-09-30, see "Switching the default").
 
@@ -416,3 +416,25 @@ switched, commit check, Block-6 fuzz fixes; no other agents on the host):
 
 The emboss label face-name pins (`embossText.test.ts`) are per module; hc.2
 names the batched label's split faces exactly like replicad 1.1.0.
+
+## 8.0.1-hc.3 (Block 8, 2026-10-01)
+
+One more binding, `BRepBuilderAPI_GTransform`, for the per-axis Scale
+(MOD-19): a general affine map of a shape (OCCT converts surfaces a
+similarity cannot carry to NURBS). Rebuilt with the unchanged recipe in the
+WSL distro (`/root/occt-asm`, image already unpacked; a LF copy of
+`vendor/occt-wasm` under `/root/hc3-recipe`, `build.sh --install
+/mnt/d/AgentWork/HimmelCAD-Assembler/occt-wasm`): one link of about 21 min on
+2 cores. The `.js` loader is again byte-identical to hc.1/hc.2; the `.wasm`
+grew by 1,304 bytes (25,350,953). The class is detected on its own
+(`occtExtras.ts` `gTransformClass`), so a cache still holding hc.2 keeps
+every other extra; without it per-axis factors are refused with the reason
+(uniform Scale uses `gp_Trsf::SetScale` and works on every build).
+
+Edge moves (MOD-16) did not need a new binding: the draft
+(`BRepOffsetAPI_DraftAngle`, in replicad's build) replaces planar faces by
+tilted planes and recomputes edges and vertices exactly, which is all a
+translated edge between two planar faces (and a face slid in its plane)
+needs. A general "replace face by surface" (`LocOpe`/`BRepFeat` face
+replacement, Shapr3D's Replace Face, MOD-23) stays out of reach of both
+builds.

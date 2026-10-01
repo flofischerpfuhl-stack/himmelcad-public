@@ -91,6 +91,21 @@ class HelperTests(unittest.TestCase):
         top = Face("body:a", "a:end:0", "top", "plane", (0, 0, 1), (0, 0, 10), 100.0)
         self.doc.move_face(top, (4, 0, 2))
         self.assertEqual(self.params(), {"face": top.ref, "vector": [4.0, 0.0, 2.0]})
+        self.doc.move_face(top, turn=15, turn_axis=(1, 0, 0))
+        self.assertEqual(self.params()["rotation"], {"point": [0.0, 0.0, 10.0], "axis": [1.0, 0.0, 0.0], "angle": 15.0})
+        with self.assertRaises(ValueError):
+            self.doc.move_face(top, turn=15)
+
+    def test_pattern_grid_and_uniform_circle(self) -> None:
+        a = Body(self.doc, "body:a")
+        self.doc.pattern_linear(a, "X", 3, 20, total=True, direction2="Y", count2=2, spacing2=8)
+        self.assertEqual(
+            self.params()["pattern"],
+            {"kind": "linear", "direction": {"kind": "world", "axis": "X"}, "count": 3, "spacing": 20, "spacingMode": "total", "second": {"direction": {"kind": "world", "axis": "Y"}, "count": 2, "spacing": 8}},
+        )
+        self.doc.pattern_circular([a], "Z", 4, 45, between=True, uniform=True)
+        self.assertEqual(self.params()["pattern"]["angleMode"], "spacing")
+        self.assertTrue(self.params()["pattern"]["uniform"])
 
 
 @unittest.skipUnless(shutil.which("node") and HEADLESS.is_file(), "needs node and a built assembler-headless (pnpm --filter @himmelcad/assembler build:headless)")

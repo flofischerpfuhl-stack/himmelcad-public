@@ -537,6 +537,101 @@ void test('Move Face slides a face sideways (neighbours tilt) and along its norm
   assert.match(refused.errors['m'] ?? '', /curved edge/);
 });
 
+void test('Move Face turns a face about a line in its plane; the neighbours follow', async () => {
+  const first = await evaluate([...box('a', 0, 0, 10, 10, 10)]);
+  const top = faceRef(only(first, 'body:a'), planeAt(2, 10));
+  // About the top face's back edge line (y = 10) by 20°: the front rises, a wedge on top.
+  const turned = await evaluate([
+    ...box('a', 0, 0, 10, 10, 10),
+    {
+      ...base('m'),
+      kind: 'moveFace',
+      face: top,
+      vector: [0, 0, 0],
+      rotation: { point: [5, 10, 10], axis: [-1, 0, 0], angle: 20 },
+    } as MoveFaceFeature,
+  ]);
+  noErrors(turned);
+  const rise = 10 * Math.tan((20 * Math.PI) / 180);
+  near(only(turned, 'body:a').volume, 1000 + 0.5 * 10 * 10 * rise, 1e-3, 'turned top');
+  near(only(turned, 'body:a').max[2], 10 + rise, 1e-3, 'front edge up');
+  const tooFar = await evaluate([
+    ...box('a', 0, 0, 10, 10, 10),
+    {
+      ...base('m'),
+      kind: 'moveFace',
+      face: top,
+      vector: [0, 0, 0],
+      rotation: { point: [5, 10, 10], axis: [0, 0, 1], angle: 20 },
+    } as MoveFaceFeature,
+  ]);
+  assert.match(tooFar.errors['m'] ?? '', /must lie in the face/);
+});
+
+// ---- Pattern (MOD-20) ------------------------------------------------------------------------------
+
+void test('Pattern: two directions, total length, angle between, uniform copies', async () => {
+  const grid = await evaluate([
+    ...box('a', 0, 0, 4, 4, 4),
+    {
+      ...base('p'),
+      kind: 'pattern',
+      bodyIds: ['body:a'],
+      pattern: {
+        kind: 'linear',
+        direction: { kind: 'world', axis: 'X' },
+        count: 3,
+        spacing: 20,
+        spacingMode: 'total',
+        second: { direction: { kind: 'world', axis: 'Y' }, count: 2, spacing: 8 },
+      },
+    } as Feature,
+  ]);
+  noErrors(grid);
+  assert.equal(grid.bodies.length, 6, '3 × 2 instances');
+  const far = grid.bodies.find(
+    (b) => Math.abs(b.min[0] - 20) < 1e-6 && Math.abs(b.min[1] - 8) < 1e-6,
+  );
+  assert.ok(far, 'the last instance at (20, 8): total length 20 over 3, 8 over 2');
+  const turned = await evaluate([
+    ...box('a', 10, -2, 4, 4, 4),
+    {
+      ...base('p'),
+      kind: 'pattern',
+      bodyIds: ['body:a'],
+      pattern: {
+        kind: 'circular',
+        axis: { kind: 'world', axis: 'Z' },
+        count: 3,
+        angle: 90,
+        angleMode: 'spacing',
+        uniform: true,
+      },
+    } as Feature,
+  ]);
+  noErrors(turned);
+  assert.equal(turned.bodies.length, 3);
+  // Uniform: the copy at 90° keeps its orientation — still 4 × 4 in X and Y, centred on (0, 12).
+  const up = turned.bodies.find((b) => b.min[1] > 5)!;
+  bbox(up, [-2, 10, 0], [2, 14, 4], 1e-6);
+  const tooMany = await evaluate([
+    ...box('a', 10, -2, 4, 4, 4),
+    {
+      ...base('p'),
+      kind: 'pattern',
+      bodyIds: ['body:a'],
+      pattern: {
+        kind: 'circular',
+        axis: { kind: 'world', axis: 'Z' },
+        count: 6,
+        angle: 90,
+        angleMode: 'spacing',
+      },
+    } as Feature,
+  ]);
+  assert.match(tooMany.errors['p'] ?? '', /round more than once/);
+});
+
 void test('The new kinds round-trip through .hcasm', async () => {
   const first = await evaluate([...box('a', 0, 0, 10, 10, 10)]);
   const a = only(first, 'body:a');

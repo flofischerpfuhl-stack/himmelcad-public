@@ -188,9 +188,29 @@ export function validateModelingFeature(r: Rec, path: string, h: FormatHelpers):
       if (p.kind === 'linear') {
         axis(p.direction, `${path}.pattern.direction`);
         if (!isNumber(p.spacing)) h.fail(`${path}.pattern.spacing`, 'expected a number');
+        if (
+          p.spacingMode !== undefined &&
+          p.spacingMode !== 'spacing' &&
+          p.spacingMode !== 'total'
+        ) {
+          h.fail(`${path}.pattern.spacingMode`, 'expected "spacing" or "total"');
+        }
+        if (p.second !== undefined) {
+          const s = p.second;
+          if (!isRecord(s)) h.fail(`${path}.pattern.second`, 'expected an object');
+          axis(s.direction, `${path}.pattern.second.direction`);
+          if (!isNumber(s.count)) h.fail(`${path}.pattern.second.count`, 'expected a number');
+          if (!isNumber(s.spacing)) h.fail(`${path}.pattern.second.spacing`, 'expected a number');
+        }
       } else if (p.kind === 'circular') {
         axis(p.axis, `${path}.pattern.axis`);
         if (!isNumber(p.angle)) h.fail(`${path}.pattern.angle`, 'expected a number');
+        if (p.angleMode !== undefined && p.angleMode !== 'total' && p.angleMode !== 'spacing') {
+          h.fail(`${path}.pattern.angleMode`, 'expected "total" or "spacing"');
+        }
+        if (p.uniform !== undefined && typeof p.uniform !== 'boolean') {
+          h.fail(`${path}.pattern.uniform`, 'expected a boolean');
+        }
       } else {
         h.fail(`${path}.pattern.kind`, 'expected "linear" or "circular"');
       }

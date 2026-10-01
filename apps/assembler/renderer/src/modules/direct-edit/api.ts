@@ -48,11 +48,31 @@ const KIND_SCHEMAS: Record<string, FeatureKindSpec> = {
   moveFace: {
     label: 'Move Face',
     summary:
-      'Moves a planar face by `vector` (world, mm) in any direction: the part along its normal offsets it (like Offset Face), the part in its plane slides it — every planar neighbour sharing a straight edge tilts about its far side to follow. A face with a curved edge can only move along its normal.',
-    params: schemaObject({ face: schemaRef('FaceInput'), vector: schemaRef('Vec3') }, [
-      'face',
-      'vector',
-    ]),
+      'Moves a planar face by `vector` (world, mm) in any direction: the part along its normal offsets it (like Offset Face), the part in its plane slides it — every planar neighbour sharing a straight edge tilts about its far side to follow. A face with a curved edge can only move along its normal. `rotation` then turns the face about a line in its plane (the neighbours follow).',
+    params: schemaObject(
+      {
+        face: schemaRef('FaceInput'),
+        vector: schemaRef('Vec3'),
+        rotation: {
+          type: 'object',
+          properties: {
+            point: schemaRef('Vec3'),
+            axis: schemaRef('Vec3'),
+            angle: {
+              type: 'number',
+              minimum: -80,
+              maximum: 80,
+              description: 'Degrees, right-hand about `axis`.',
+            },
+          },
+          required: ['point', 'axis', 'angle'],
+          additionalProperties: false,
+          description:
+            'Turns the face about the line through `point` (moved with the face) along `axis` (projected into the face plane).',
+        },
+      },
+      ['face', 'vector'],
+    ),
   },
 };
 

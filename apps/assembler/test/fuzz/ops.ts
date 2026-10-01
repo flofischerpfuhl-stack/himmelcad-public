@@ -60,6 +60,14 @@ export const OP_KINDS = [
   'exchangeStep',
   'exchangeIges',
   'exchangeDxf',
+  // Block 8: primitives, Scale, Translate, Move Edge/Face, helical revolve, extrude taper.
+  'primitive',
+  'scale',
+  'translate',
+  'moveEdge',
+  'moveFace',
+  'helix',
+  'taper',
 ] as const;
 
 export type OpKind = (typeof OP_KINDS)[number];
@@ -123,6 +131,13 @@ const WEIGHTS: Record<OpKind, number> = {
   exchangeStep: 1,
   exchangeIges: 1,
   exchangeDxf: 1,
+  primitive: 3,
+  scale: 2,
+  translate: 2,
+  moveEdge: 2,
+  moveFace: 2,
+  helix: 1,
+  taper: 2,
 };
 
 /** mulberry32: small, fast, seedable. */

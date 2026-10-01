@@ -365,6 +365,8 @@ export interface MoveFaceDraft {
   kind: 'moveFace';
   face: FaceRef;
   vector: Vec3;
+  /** A turn about one in-plane axis through the face's anchor (the gizmo's rings on a face). */
+  rotation?: { point: Vec3; axis: Vec3; angle: number };
 }
 
 declare module '../../foundation/commands/draftTools.js' {
@@ -509,7 +511,7 @@ export const MOVE_FACE_DRAFT_TOOL = defineDraftTool<MoveFaceDraft>({
     return ref && ref.signature.surface === 'plane' ? { ...draft, face: ref } : draft;
   },
   toFeature: (draft, base) =>
-    draft.vector.every((c) => c === 0)
+    draft.vector.every((c) => c === 0) && !draft.rotation?.angle
       ? null
       : {
           id: base.id,
@@ -518,22 +520,53 @@ export const MOVE_FACE_DRAFT_TOOL = defineDraftTool<MoveFaceDraft>({
           kind: 'moveFace',
           face: draft.face,
           vector: draft.vector,
+          ...(draft.rotation?.angle ? { rotation: draft.rotation } : {}),
         },
   meta: () => ({
     label: 'Move Face',
     shortcut: 'M',
     prompt:
-      'Drag an arrow or type a value: along the normal the face offsets, sideways its neighbours tilt to follow.',
+      'Drag an arrow or an arc, or type a value: the face moves or turns, its neighbours follow.',
   }),
   handles: (draft, evaluation) => {
     const anchor = faceAnchor(evaluation, draft.face);
     if (!anchor) return [];
     const frame = frameForFace(anchor.normal, anchor.point);
-    return moveHandles(draft, anchor.point, [
-      { dir: anchor.normal, label: 'Normal offset', prefix: 'N' },
-      { dir: frame.u, label: 'Slide 1', prefix: '↔' },
-      { dir: frame.v, label: 'Slide 2', prefix: '↕' },
-    ]);
+    const moved = add(anchor.point, draft.vector);
+    // Turning arcs about the two in-plane axes (one turn at a time; the other resets).
+    const tilts = ([frame.u, frame.v] as const).map((axis, i): DraftToolHandle<MoveFaceDraft> => {
+      const same =
+        draft.rotation !== undefined && Math.abs(dot(draft.rotation.axis, axis)) > 1 - 1e-9;
+      return {
+        kind: 'angle',
+        id: `tilt${i}`,
+        label: `Turn about axis ${i + 1}`,
+        prefix: '∠',
+        unit: 'deg',
+        value: same ? draft.rotation!.angle : 0,
+        center: moved,
+        axis,
+        ref: anchor.normal,
+        // Two radii, so the arcs' value chips do not cover each other (or the arrows').
+        radius: STEM_MM * (2 + i * 0.75),
+        apply: (d, value) => {
+          const angle = Math.max(-80, Math.min(80, Math.round(value * 1000) / 1000));
+          if (angle === 0) {
+            const { rotation: _drop, ...rest } = d;
+            return rest;
+          }
+          return { ...d, rotation: { point: anchor.point, axis, angle } };
+        },
+      };
+    });
+    return [
+      ...moveHandles(draft, anchor.point, [
+        { dir: anchor.normal, label: 'Normal offset', prefix: 'N' },
+        { dir: frame.u, label: 'Slide 1', prefix: '↔' },
+        { dir: frame.v, label: 'Slide 2', prefix: '↕' },
+      ]),
+      ...tilts,
+    ];
   },
   modifiedBodyIds: (draft) => [draft.face.bodyId],
   ghostsModifiedBodies: () => true,

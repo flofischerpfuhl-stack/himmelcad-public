@@ -441,6 +441,20 @@ const DEFS_TAIL: Record<string, JsonSchema> = {
           direction: ref('AxisRef'),
           count: { type: 'integer', minimum: 2, maximum: 200 },
           spacing: num,
+          spacingMode: {
+            enum: ['spacing', 'total'],
+            default: 'spacing',
+            description: '`total`: `spacing` (and `second.spacing`) is first to last instance.',
+          },
+          second: obj(
+            {
+              direction: ref('AxisRef'),
+              count: { type: 'integer', minimum: 1, maximum: 200 },
+              spacing: num,
+            },
+            ['direction', 'count', 'spacing'],
+            'A second direction: a grid of count × second.count instances (at most 1000).',
+          ),
         },
         ['kind', 'direction', 'count', 'spacing'],
       ),
@@ -450,6 +464,16 @@ const DEFS_TAIL: Record<string, JsonSchema> = {
           axis: ref('AxisRef'),
           count: { type: 'integer', minimum: 2, maximum: 200 },
           angle: { type: 'number', exclusiveMinimum: 0, maximum: 360 },
+          angleMode: {
+            enum: ['total', 'spacing'],
+            default: 'total',
+            description: '`spacing`: `angle` is between neighbours instead of the total.',
+          },
+          uniform: {
+            type: 'boolean',
+            default: false,
+            description: 'Copies keep their orientation (moved along the circle, not turned).',
+          },
         },
         ['kind', 'axis', 'count', 'angle'],
         '`angle` is the total angle in degrees; 360 spreads the instances evenly.',
