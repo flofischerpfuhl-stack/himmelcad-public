@@ -2,11 +2,11 @@
 import { create } from 'zustand';
 
 import { notify } from '../../foundation/commands/notices.js';
+import { host, type HostSlicerInfo, type HostSlicerList } from '../../foundation/host/index.js';
 import { openInSlicer } from './handoff.js';
 
-type SlicersApi = NonNullable<Window['assembler']>['slicers'];
-type SlicerListInfo = Awaited<ReturnType<SlicersApi['list']>>;
-type SlicerInfo = SlicerListInfo['slicers'][number];
+type SlicerListInfo = HostSlicerList;
+type SlicerInfo = HostSlicerInfo;
 
 export interface SlicerState {
   /** `false` in the browser build (no main process: "Open in slicer" downloads the 3MF). */
@@ -28,7 +28,7 @@ export interface SlicerState {
 }
 
 function api() {
-  return typeof window !== 'undefined' ? window.assembler?.slicers : undefined;
+  return host().slicers ?? undefined;
 }
 
 export const useSlicerStore = create<SlicerState>((set, get) => {

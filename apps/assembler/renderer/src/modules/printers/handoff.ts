@@ -8,6 +8,7 @@ import { useItemsStore, withDisplayNames } from '../../foundation/commands/items
 import { referenceMeshToBody } from '../../foundation/commands/referenceMesh.js';
 import { useAssemblerStore } from '../../foundation/commands/store.js';
 import * as io from '../../foundation/document/persistence.js';
+import { host } from '../../foundation/host/index.js';
 
 function sanitizeFileName(name: string): string {
   return name.trim().replace(/[\\/:*?"<>|]+/g, '_') || 'Model';
@@ -35,7 +36,7 @@ export async function openInSlicer(
     return { ok: false, message: 'There is nothing to print yet.' };
   }
   const bytes = handoffThreeMf();
-  const api = typeof window !== 'undefined' ? window.assembler?.slicers : undefined;
+  const api = host().slicers;
   if (!api) {
     await io.exportBinary(
       bytes,

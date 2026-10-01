@@ -20,6 +20,7 @@ import {
 } from '@himmelcad/ui';
 
 import { onCloseRequested, onOpenRequested } from '../../foundation/document/persistence.js';
+import { host } from '../../foundation/host/index.js';
 import { MAX_SAVED_VIEWS, useWorkspaceStore } from './workspace.js';
 import { useProjectStore } from './project/projectStore.js';
 import { CommandGroupMenu } from './CommandGroupMenu.js';
@@ -321,6 +322,30 @@ function HelpMenu(): JSX.Element {
           License texts, source locations and replacement instructions ship with the application in
           <code> licenses/THIRD-PARTY-NOTICES.txt</code>.
         </p>
+        {host().kind === 'web' ? (
+          // The web build serves them next to the app (with the OCCT build recipe, LGPL source offer).
+          <p>
+            Open the{' '}
+            <a
+              className={styles.aboutLink}
+              href="licenses/THIRD-PARTY-NOTICES.txt"
+              target="_blank"
+              rel="noreferrer"
+            >
+              third-party notices
+            </a>{' '}
+            or the{' '}
+            <a
+              className={styles.aboutLink}
+              href="licenses/SOURCE-OFFER.txt"
+              target="_blank"
+              rel="noreferrer"
+            >
+              LGPL source offer
+            </a>
+            .
+          </p>
+        ) : null}
       </Dialog>
     </>
   );

@@ -14,6 +14,7 @@
     { "path": "packages/@himmelcad/specs" },
     { "path": "apps/assembler" },
     { "path": "apps/assembler/tsconfig.typecheck-electron.json" },
+    { "path": "apps/assembler-web" },
     { "path": "apps/builder" },
     { "path": "apps/builder/tsconfig.typecheck-electron.json" },
     { "path": "apps/photolab" },

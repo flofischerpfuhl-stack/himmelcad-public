@@ -1,0 +1,36 @@
+{
+  "name": "@himmelcad/assembler-web",
+  "version": "0.0.0",
+  "private": true,
+  "description": "HimmelCAD Assembler in the browser - offline-capable PWA composed from the Assembler modules",
+  "license": "BUSL-1.1",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build && node scripts/postbuild.mjs",
+    "preview": "node scripts/serve.mjs",
+    "typecheck": "tsc -b tsconfig.json",
+    "test": "node --test scripts/postbuild.test.mjs",
+    "test:e2e": "pnpm build && node --test --test-concurrency=1 --test-timeout=300000 e2e/web.e2e.test.mjs",
+    "test:e2e:browsers": "pnpm build && node --test --test-concurrency=1 --test-timeout=300000 e2e/otherBrowsers.e2e.test.mjs"
+  },
+  "dependencies": {
+    "@fontsource/inter": "5.3.0",
+    "@himmelcad/assembler": "workspace:*",
+    "@himmelcad/theme": "workspace:*",
+    "@himmelcad/ui": "workspace:*",
+    "lucide-react": "^0.460.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "zustand": "^5.0.12"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.2",
+    "playwright-core": "^1.57.0",
+    "typescript": "^5.6.2",
+    "vite": "^5.4.8"
+  }
+}

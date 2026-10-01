@@ -47,7 +47,7 @@ redefine the end goal. This is that inventory. First written 2026-09-30
 
 | Group                                              |    Rows |    done | partial | missing | blocked | deferred | Weighted parity |
 | -------------------------------------------------- | ------: | ------: | ------: | ------: | ------: | -------: | --------------: |
-| 1. UI shell                                        |      23 |      16 |       6 |       1 |       0 |        0 |            89 % |
+| 1. UI shell                                        |      24 |      16 |       7 |       1 |       0 |        0 |            87 % |
 | 2. Selection                                       |      12 |      10 |       1 |       1 |       0 |        0 |            90 % |
 | 3. Sketching                                       |      19 |      12 |       6 |       1 |       0 |        0 |            84 % |
 | 4. Constraints and dimensions                      |       9 |       6 |       2 |       1 |       0 |        0 |            84 % |
@@ -60,11 +60,11 @@ redefine the end goal. This is that inventory. First written 2026-09-30
 | 11. Visualization                                  |       6 |       1 |       2 |       1 |       0 |        2 |            60 % |
 | 12. Touch and pen                                  |       8 |       3 |       1 |       4 |       0 |        0 |            55 % |
 | 13. Settings and preferences                       |       7 |       5 |       2 |       0 |       0 |        0 |            89 % |
-| 14. Agent and automation (HimmelCAD extension, U5) |       2 |       1 |       1 |       0 |       0 |        0 |            88 % |
+| 14. Agent and automation (HimmelCAD extension, U5) |       3 |       2 |       1 |       0 |       0 |        0 |            90 % |
 | 15. Printing-specific                              |       5 |       5 |       0 |       0 |       0 |        0 |           100 % |
-| **All**                                            | **173** | **105** |  **45** |  **18** |   **1** |    **4** |        **81 %** |
+| **All**                                            | **175** | **106** |  **46** |  **18** |   **1** |    **4** |        **81 %** |
 
-Overall weighted parity **81 %** (unweighted 75 %) over 169 rows; 4 owner-deferred rows (cloud, drawings, XR, generative render) excluded.
+Overall weighted parity **81 %** (unweighted 75 %) over 171 rows; 4 owner-deferred rows (cloud, drawings, XR, generative render) excluded.
 
 ### Top 15 remaining gaps (highest value first, then value per effort)
 
@@ -81,10 +81,10 @@ Overall weighted parity **81 %** (unweighted 75 %) over 169 rows; 4 owner-deferr
 | HIS-15  | missing | M      | 2     | No reference images (canvas) — see IMP-07                                                                                 |
 | UI-02   | partial | M      | 2     | "Add" is empty ("No Add commands in Phase 0")                                                                             |
 | UI-17   | partial | M      | 2     | Translate missing (MOD-18); a tool started with a full selection has no Next step                                         |
+| UI-24   | partial | M      | 2     | No native app; not yet tried on a real iPad; tablet layout, pen and touch gaps in §12                                     |
 | SK-09   | partial | M      | 2     | No splines/ellipses; no per-loop arrows                                                                                   |
 | SK-11   | partial | M      | 2     | One bundled font (no installed fonts), no alignment, no gizmo placement                                                   |
 | SK-12   | partial | M      | 2     | One direction; count/angle not editable after creation                                                                    |
-| SK-14   | partial | M      | 2     | Arcs/curves not supported                                                                                                 |
 
 ## Revisions
 
@@ -93,6 +93,7 @@ Overall weighted parity **81 %** (unweighted 75 %) over 169 rows; 4 owner-deferr
 | 2026-09-30 | `asm/gaps-20260930`    |            66 % | Baseline (first inventory, 173 rows; 74 done, 63 partial, 31 missing, 1 blocked, 4 deferred).                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | 2026-09-30 | `asm/gaps-20260930`    |            74 % | Fixes: UI-03/DIR-02 face → Offset Face, UI-04 Align rule, UI-05/MOD-17 Rotate Around Axis, UI-07 More, UI-10 search, UI-13 finish hint, SEL-02, SK-19/SET-07/CON-04 snap popover, HIS-02/HIS-05 card settings and keys, HIS-10/HIS-11 Items, VIEW-03/04/07, MEA-03, SET-04 shortcuts. Correction: UI-18 (Help menu exists).                                                                                                                                                                                                                        |
 | 2026-09-30 | `asm/parity2-20260930` |            80 % | Parity round 2: MOD-01 Intersect, MOD-02 extents (To Object, Through All, two sides, start offset), MOD-30 construction planes/axes (+ SK-01, UI-02 Construct menu, HIS-10 Items rows), UI-16 tool before selection (pick sessions, + UI-17 Next), HIS-07 Fix…, SK-19/SET-07 3D body snaps and far edges, SK-02, SK-04, SK-07, CON-04, MOD-08 Keep Target, MOD-21 sketch/face/axis mirror, HIS-04 isolated filter; MOD-16/DIR-03 plane tiles, auto-orient, face and sketch-region move (edges still refused). Screens `p2-*.png` (`p2-shots.mjs`). |
+| 2026-10-01 | `asm/b8-web-20261001`  |            81 % | Block 8 web: new rows UI-24 (iPad via the browser PWA, partial) and AGT-03 (in-page agent API, done); the web build itself is `assembler/WEB.md`.                                                                                                                                                                                                                                                                                                                                                                                                  |
 
 Keep the tables below as the source; regenerate the summary with
 `node g-count.mjs --write` (`D:\AgentWork\HimmelCAD-Assembler\shots`) and add
@@ -126,6 +127,7 @@ a revision row. Screenshots of the fixes: `D:\AgentWork\HimmelCAD-Assembler\shot
 | UI-21 | Hold Ctrl (Windows) shows the shortcut overview (D, int §6)                                                                                                                        | done    | `useGlobalKeyboard.ts` `CTRL_HOLD_MS`, `ShortcutOverlay.tsx`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | —                                                                                                                                                       | —      | 1     |
 | UI-22 | Panel shortcuts Items Ctrl+Alt+S, History Ctrl+Alt+H (D, int §6)                                                                                                                   | done    | `useGlobalKeyboard.ts`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | —                                                                                                                                                       | —      | 1     |
 | UI-23 | Left-/right-handed menu side (iPad) (D, int §1)                                                                                                                                    | missing | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | No handedness option (desktop-first)                                                                                                                    | S      | 1     |
+| UI-24 | Runs on iPad, Shapr3D's original platform (D, scope §1)                                                                                                                            | partial | Browser version as an offline PWA (`apps/assembler-web`, `assembler/WEB.md`); WebKit (Safari's engine) smoke and Chromium e2e pass, installable, works offline                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | No native app; not yet tried on a real iPad; tablet layout, pen and touch gaps in §12                                                                   | M      | 2     |
 
 ## 2. Selection
 
@@ -332,10 +334,11 @@ a revision row. Screenshots of the fixes: `D:\AgentWork\HimmelCAD-Assembler\shot
 
 ## 14. Agent and automation (HimmelCAD extension, U5)
 
-| ID     | Shapr3D behaviour (evidence)                                            | Status  | Evidence in Assembler                                                  | Gap                                                   | Effort | Value |
-| ------ | ----------------------------------------------------------------------- | ------- | ---------------------------------------------------------------------- | ----------------------------------------------------- | ------ | ----- |
-| AGT-01 | (No Shapr3D equivalent; U5) One command layer for UI, Python and agents | done    | `api/` `hcasm.agent-api@1`, headless CLI, Python SDK                   | UI-only tools (see below) not all in the API          | —      | 3     |
-| AGT-02 | New UI behaviours exposed to agents (adaptive suggestions, search) (I)  | partial | Agent API has features/sketch/print/measure; no command-registry query | Agents cannot ask "what would the adaptive bar offer" | S      | 1     |
+| ID     | Shapr3D behaviour (evidence)                                                         | Status  | Evidence in Assembler                                                                                                              | Gap                                                   | Effort | Value |
+| ------ | ------------------------------------------------------------------------------------ | ------- | ---------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- | ------ | ----- |
+| AGT-01 | (No Shapr3D equivalent; U5) One command layer for UI, Python and agents              | done    | `api/` `hcasm.agent-api@1`, headless CLI, Python SDK                                                                               | UI-only tools (see below) not all in the API          | —      | 3     |
+| AGT-02 | New UI behaviours exposed to agents (adaptive suggestions, search) (I)               | partial | Agent API has features/sketch/print/measure; no command-registry query                                                             | Agents cannot ask "what would the adaptive bar offer" | S      | 1     |
+| AGT-03 | (No Shapr3D equivalent; U5) Agent access where no local socket is possible (browser) | done    | Web build: Agent Access exposes `window.himmelcadAssembler.agent.request()` (same `hcasm.agent-api@1` session; `assembler/WEB.md`) | Python SDK cannot reach a browser tab (by design)     | —      | 1     |
 
 ## 15. Printing-specific
 

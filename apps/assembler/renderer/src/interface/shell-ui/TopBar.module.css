@@ -134,3 +134,15 @@
   outline: 2px solid var(--hc-focus-ring);
   outline-offset: 1px;
 }
+
+/* Links in the About dialog (web build: license texts served next to the app). */
+.aboutLink {
+  color: var(--hc-accent-base);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.aboutLink:focus-visible {
+  outline: 2px solid var(--hc-accent-base);
+  outline-offset: 1px;
+}

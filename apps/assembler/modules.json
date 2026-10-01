@@ -2,6 +2,7 @@
   "$comment": "Module map of HimmelCAD Assembler (ADR 0032, assembler/MODULES.md). Every source file under renderer/src, headless and electron belongs to exactly one module: the longest matching path prefix wins. Layers are listed bottom-up; inside foundation, platform and interface a module may import only the modules listed before it; domain modules never import each other. Checked by scripts/check-assembler-modules.mjs against module-allowlist.json.",
   "version": 1,
   "layers": ["foundation", "platform", "domain", "interface", "product"],
+  "sourceRoots": ["renderer/src", "headless", "electron", "../assembler-web/src"],
   "externalOnly": {
     "replicad": ["geometry-kernel"],
     "replicad-opencascadejs": ["geometry-kernel"],
@@ -12,9 +13,16 @@
     "foundation": ["react", "react-dom", "lucide-react", "electron"],
     "platform": ["electron"],
     "domain": ["electron"],
-    "interface": ["electron"]
+    "interface": ["electron"],
+    "product": ["electron"]
   },
   "modules": [
+    {
+      "id": "host",
+      "layer": "foundation",
+      "summary": "Platform host contract: project files, recent projects, recovery, window lifecycle, slicer hand-off, agent transport; the desktop bridge adapter and the plain-browser fallback. Products install their implementation.",
+      "paths": ["renderer/src/foundation/host/"]
+    },
     {
       "id": "jobs",
       "layer": "foundation",
@@ -165,6 +173,12 @@
       "layer": "product",
       "summary": "assembler-headless CLI composition (JSON-RPC over stdio).",
       "paths": ["headless/"]
+    },
+    {
+      "id": "web",
+      "layer": "product",
+      "summary": "assembler-web (PWA) composition: the web host (File System Access, IndexedDB, in-page agent API), service worker registration, update and offline chrome.",
+      "paths": ["../assembler-web/src/"]
     },
     {
       "id": "desktop-host",

@@ -39,52 +39,85 @@ function status(status: KernelStatusInfo): void {
   post({ type: 'status', status });
 }
 
-async function download(url: string): Promise<ArrayBuffer> {
-  const response = await fetch(url);
+/**
+ * Downloads and compiles the OCCT module in one pass: the response streams
+ * through a byte counter (progress) into `WebAssembly.instantiateStreaming`,
+ * so compilation overlaps the download and no second 25 MB copy is held.
+ * A compressed response (`Content-Encoding: br/gzip`, static web hosting)
+ * has a `Content-Length` of the compressed size while the stream yields
+ * decoded bytes, so its total is unknown and progress is indeterminate.
+ */
+async function instantiateOcct(
+  url: string,
+  imports: WebAssembly.Imports,
+): Promise<WebAssembly.WebAssemblyInstantiatedSource> {
+  const response = await fetch(url, { credentials: 'same-origin' });
   if (!response.ok || !response.body) throw new Error(`HTTP ${response.status} for ${url}`);
-  const total = Number(response.headers.get('content-length')) || 0;
-  const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
+  const encoding = (response.headers.get('content-encoding') ?? '').trim().toLowerCase();
+  const total =
+    encoding === '' || encoding === 'identity'
+      ? Number(response.headers.get('content-length')) || 0
+      : 0;
   let received = 0;
   let lastReport = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    chunks.push(value);
-    received += value.byteLength;
-    const now = performance.now();
-    if (now - lastReport > 100) {
-      lastReport = now;
-      const mb = (n: number) => (n / 1048576).toFixed(1);
-      status({
-        status: 'loading',
-        message: total
-          ? `Loading CAD kernel… ${mb(received)} of ${mb(total)} MB`
-          : `Loading CAD kernel… ${mb(received)} MB`,
-        progress: total ? Math.min(1, received / total) * 0.8 : null,
-        loadMs: null,
-      });
-    }
+  const mb = (n: number) => (n / 1048576).toFixed(1);
+  const counter = new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, controller) {
+      received += chunk.byteLength;
+      const now = performance.now();
+      if (now - lastReport > 100) {
+        lastReport = now;
+        status({
+          status: 'loading',
+          message: total
+            ? `Loading CAD kernel… ${mb(received)} of ${mb(total)} MB`
+            : `Loading CAD kernel… ${mb(received)} MB`,
+          progress: total ? Math.min(1, received / total) * 0.8 : null,
+          loadMs: null,
+        });
+      }
+      controller.enqueue(chunk);
+    },
+    flush() {
+      status({ status: 'loading', message: 'Starting CAD kernel…', progress: 0.85, loadMs: null });
+    },
+  });
+  const counted = new Response(response.body.pipeThrough(counter), {
+    headers: { 'Content-Type': 'application/wasm' },
+  });
+  if (typeof WebAssembly.instantiateStreaming === 'function') {
+    return WebAssembly.instantiateStreaming(counted, imports);
   }
-  const bytes = new Uint8Array(received);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return bytes.buffer;
+  return WebAssembly.instantiate(await counted.arrayBuffer(), imports);
 }
 
 async function load(): Promise<KernelEvaluator> {
   const start = performance.now();
   status({ status: 'loading', message: 'Loading CAD kernel…', progress: 0, loadMs: null });
-  const wasmBinary = await download(wasmUrl);
-  status({ status: 'loading', message: 'Starting CAD kernel…', progress: 0.85, loadMs: null });
   // Dynamic import on purpose: the LGPL Emscripten glue stays its own chunk
   // next to the .wasm instead of being bundled into this worker's code, so
   // both LGPL files remain separately replaceable (docs/DEPENDENCY-POLICY.md).
   const { default: init } = await import('replicad-opencascadejs');
-  const oc = await init({ wasmBinary, locateFile: () => wasmUrl });
+  // The glue's `instantiateWasm` hook (Emscripten MODULARIZE) hands us the
+  // imports; a failure there must reject the load, not leave `init` pending.
+  let failLoad: (error: unknown) => void = () => undefined;
+  const failed = new Promise<never>((_, reject) => {
+    failLoad = reject;
+  });
+  const options = {
+    locateFile: () => wasmUrl,
+    instantiateWasm: (
+      imports: WebAssembly.Imports,
+      receive: (instance: WebAssembly.Instance, module: WebAssembly.Module) => void,
+    ) => {
+      instantiateOcct(wasmUrl, imports).then(
+        (source) => receive(source.instance, source.module),
+        failLoad,
+      );
+      return {};
+    },
+  } as unknown as Parameters<typeof init>[0];
+  const oc = await Promise.race([init(options), failed]);
   const evaluator = createEvaluator(oc);
   const loadMs = performance.now() - start;
   status({

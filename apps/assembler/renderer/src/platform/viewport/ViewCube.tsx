@@ -6,8 +6,7 @@ import { ContextMenu, MenuItem, MenuSeparator, clampMenuPosition } from '@himmel
 import {
   CUBE_FACES,
   cubeCellDirection,
-  cubeFaceMatrix3d,
-  cubeMatrix3d,
+  cubeFaceTransforms,
   isFaceOnView,
   type CameraPose,
   type CameraPresetName,
@@ -19,6 +18,8 @@ import styles from './ViewCube.module.css';
 const DRAG_THRESHOLD_PX = 4;
 /** Half the cube's edge length, px (the face box is 96 px). */
 const HALF = 48;
+/** Perspective distance, px (the eye sits this far in front of the cube centre). */
+const PERSPECTIVE = 500;
 
 export interface ViewCubeProps {
   pose: CameraPose;
@@ -55,7 +56,10 @@ function cellName(face: CubeFace, i: Cell, j: Cell): string {
 /**
  * Top-right orientation cube (CSS-3D), Shapr3D-style. Its orientation comes
  * from the same camera basis as the scene (`cubeMatrix3d`), so the face in
- * front is always the side the camera looks from. Click a face for that
+ * front is always the side the camera looks from. Each face carries its full
+ * transform (`perspective() · cube · face`) and is shown only while it faces
+ * the eye (`cubeFaceTransforms`): no `preserve-3d`, no `backface-visibility`,
+ * which WebKit (Safari, iPad) and the other engines handle differently. Click a face for that
  * view, an edge for the 45° edge view, a corner for the isometric view;
  * drag to orbit; double-click for the home view; right-click for Home, Fit
  * and the projection. In a face-on view two arrows roll it by 90°.
@@ -97,7 +101,7 @@ export function ViewCube(props: ViewCubeProps): JSX.Element {
   };
 
   const faceOn = isFaceOnView(props.pose);
-  const cubeTransform = `matrix3d(${cubeMatrix3d(props.pose).join(',')})`;
+  const faces = cubeFaceTransforms(props.pose, HALF, PERSPECTIVE);
 
   return (
     <div
@@ -116,18 +120,24 @@ export function ViewCube(props: ViewCubeProps): JSX.Element {
       <div className={styles.stage}>
         <div
           className={styles.cube}
-          style={{ transform: cubeTransform }}
           onDoubleClick={(event) => {
             event.stopPropagation();
             props.onHome();
           }}
         >
-          {CUBE_FACES.map((face) => (
+          {faces.map(({ face, matrix, visible, depth }) => (
             <div
               key={face.name}
               className={styles.face}
               data-face={face.name}
-              style={{ transform: `matrix3d(${cubeFaceMatrix3d(face, HALF).join(',')})` }}
+              data-visible={visible ? 'true' : 'false'}
+              // A hidden face takes no clicks and no focus; visible ones never overlap (convex).
+              aria-hidden={visible ? undefined : true}
+              style={{
+                transform: `perspective(${PERSPECTIVE}px) matrix3d(${matrix.join(',')})`,
+                visibility: visible ? 'visible' : 'hidden',
+                zIndex: Math.round(depth) + HALF + 1,
+              }}
             >
               {([1, 0, -1] as const).map((j) =>
                 ([-1, 0, 1] as const).map((i) => (

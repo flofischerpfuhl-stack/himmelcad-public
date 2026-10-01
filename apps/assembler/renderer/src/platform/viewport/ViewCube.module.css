@@ -21,13 +21,12 @@
 .stage {
   position: absolute;
   inset: 0;
-  perspective: 500px;
 }
 
+/* Each face carries its own perspective and cube transform (`ViewCube.tsx`): no preserve-3d. */
 .cube {
   position: absolute;
   inset: 0;
-  transform-style: preserve-3d;
   cursor: grab;
 }
 
@@ -43,8 +42,6 @@
   background: var(--hc-bg-island);
   border: 1px solid var(--hc-border-strong);
   box-shadow: var(--hc-shadow-chip);
-  backface-visibility: hidden;
-  -webkit-backface-visibility: hidden;
   box-sizing: border-box;
 }
 

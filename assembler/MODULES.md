@@ -50,16 +50,17 @@ domain modules never import each other. npm packages are owned too: only
 Lucide or Electron, only files under `electron/` import Electron.
 
 ```text
-product     app (desktop renderer)  ·  headless (CLI)  ·  desktop-host (Electron)      [later: assembler-web]
+product     app (desktop renderer)  ·  headless (CLI)  ·  desktop-host (Electron)  ·  web (PWA)
 interface   agent-api  <  shell-ui
 domain      sketching · modeling · direct-edit · construction · parameters · measure ·
             display · interop · templates · print · printers          (no domain → domain)
 platform    input  <  viewport  <  widgets                            (+ @himmelcad/hardware-profile, shared)
-foundation  jobs  <  document  <  sketch-solver  <  geometry-kernel  <  commands
+foundation  host  <  jobs  <  document  <  sketch-solver  <  geometry-kernel  <  commands
 ```
 
 | Module          | Layer      | Owns                                                                                                                                                                                                                                                                                                                      | Folder                                      |
 | --------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
+| host            | foundation | The **platform host contract** (`host.ts`: project files, recent projects, recovery, window lifecycle, slicer hand-off, agent transport), the desktop bridge adapter and the plain-browser fallback; `host()`/`installHost()`; products install theirs.                                                                   | `renderer/src/foundation/host`              |
 | jobs            | foundation | `SingleJobWorker`: one job at a time, cancel = terminate the worker, progress, inline fallback for tests/headless. Later: budgets, timeouts.                                                                                                                                                                              | `renderer/src/foundation/jobs`              |
 | document        | foundation | Value types and references (faces, edges, planes, axes, profiles), the **feature-kind registry** (`featureKinds.ts`), the nine core kinds the evaluator implements (`document.ts`, `coreKinds.ts`), parameters and the formula parser, `.hcasm` format with **registrable migrations**, validation helpers, persistence.  | `renderer/src/foundation/document`          |
 | sketch-solver   | foundation | Sketch data model and the `sketch` kind (`sketchFeature.ts`: type, validator, v1→v2 migration), planeGCS (worker + in-process), regions, projections, dimension values, text outlines.                                                                                                                                    | `renderer/src/foundation/sketch-solver`     |
@@ -83,6 +84,7 @@ foundation  jobs  <  document  <  sketch-solver  <  geometry-kernel  <  commands
 | shell-ui        | interface  | Layout, docks, the panel/mode-button/History-card hosts, History and Items panels, command search, menus, dialogs, project lifecycle UI, workspace state.                                                                                                                                                                 | `renderer/src/interface/shell-ui`           |
 | app             | product    | Desktop renderer composition: `composition.ts`, `uiComposition.ts`, `kernelModules.ts`, `kernel.worker.ts`, `main.tsx`, dev tooling.                                                                                                                                                                                      | `renderer/src/app`, `renderer/src/main.tsx` |
 | headless        | product    | `assembler-headless`: CLI composition and the kernel thread (`kernelThread.ts`, `threadKernel.ts`, time budget).                                                                                                                                                                                                          | `headless/`                                 |
+| web             | product    | `apps/assembler-web`: the PWA composition (same modules, UI parts and workers as `app`), the web host, service worker, update/offline chrome ([WEB.md](WEB.md)).                                                                                                                                                          | `../assembler-web/src`                      |
 | desktop-host    | product    | Electron main/preload.                                                                                                                                                                                                                                                                                                    | `electron/`                                 |
 
 Deliberate narrowing of ADR 0032 for Assembler (ADR 0033 allows its own
@@ -540,3 +542,29 @@ Left open (not violations): headless `project.save`/`project.open`/
 (Items, reference meshes, pins, view state) are not saved or restored
 headless (as before the restructure; the app goes through the project
 store); `startModules` is desktop-only by design.
+
+## 7. Block 8: the web product and the host contract
+
+`apps/assembler-web` is the second renderer product ([WEB.md](WEB.md)). It stays
+a folder-module composition, as §1 anticipated, without lifting modules into
+packages: its sources import the modules by relative path
+(`../../assembler/renderer/src/…`), `modules.json` lists `../assembler-web/src`
+under `sourceRoots` and as module `web` (product layer), so the check covers it;
+`tsc` reads the modules through the `apps/assembler` project reference
+(declarations), Vite bundles them from source. Products may use each other's
+files (the web product reuses `app/composition.ts`, `app/uiComposition.ts`,
+`app/kernel.worker.ts`), and no product may import Electron (`externalForbidden.product`).
+
+Everything the renderer needs from its environment is the foundation module
+`host` (lowest in the layer): code calls `host()` instead of reading
+`window.assembler`. Rules for new code:
+
+- A capability that differs between desktop and web goes into `AssemblerHost`
+  with a desktop adapter (`desktopHost.ts`), a plain-browser fallback
+  (`browserHost.ts`) and the web implementation (`apps/assembler-web/src/host`);
+  `null` + `unavailableReason` where a host cannot offer it — never a dead button.
+- Only `foundation/host/desktopHost.ts` touches `window.assembler`
+  (`document/persistence.ts` keeps its API and delegates).
+- A product installs its host before it imports the composition
+  (`installHost`, web: `src/installHost.ts` as the first import); stores read
+  capabilities when they are created.

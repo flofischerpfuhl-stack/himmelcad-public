@@ -117,6 +117,13 @@ The Assembler's default OCCT module since the Block-6 integration
 instead). A release that ships it must publish `vendor/occt-wasm` at its
 commit (condition 3).
 
+The web build (`apps/assembler-web`, Block 8, `assembler/WEB.md` §8) ships the
+same two files as static assets and offers the source from the same place as
+the application: a copy of `vendor/occt-wasm` under `licenses/source/occt-wasm/`
+and `licenses/SOURCE-OFFER.txt` (how to replace the module in a copy of the
+static site), linked from Help › About. A deployment keeps these files for as
+long as it serves that version.
+
 | Field                   | Value                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Component               | `vendor/occt-wasm` (`package.json` name `@himmelcad/occt-wasm`, version `8.0.1-hc.2`, not an npm dependency): the `replicad-opencascadejs` 1.1.0 build configuration relinked with 6 more bindings (`BRepAlgoAPI_Defeaturing`, `IGESControl_Controller/Reader/Writer`, `STEPCAFControl_Reader`, `HimmelcadOffset`) and one added C++ file (`build-config/wrappers/himmelcad-offset.cpp`, a facade over `BRepOffset_MakeOffset`).                                                                                                                                  |
