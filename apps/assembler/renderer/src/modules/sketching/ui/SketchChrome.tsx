@@ -39,7 +39,9 @@ import fieldStyles from '../../../platform/widgets/ExpressionField.module.css';
 import { findCommand } from '../../../foundation/commands/registry.js';
 import { useAssemblerStore } from '../../../foundation/commands/store.js';
 import { CONSTRAINT_INFO } from '../constraintRules.js';
+import { patternOf, type PatternPatch } from '../operations.js';
 import { useSketchStore, type SketchSession } from '../session.js';
+import type { SketchPattern } from '../../../foundation/sketch-solver/types.js';
 import type { SketchTool, SketchToolKind } from '../tools.js';
 import styles from './SketchChrome.module.css';
 
@@ -109,8 +111,10 @@ export function toolPrompt(tool: SketchTool): string {
       return 'Click the segments to remove.';
     case 'offset':
       return tool.curveId
-        ? 'Move to a side, click or type a distance.'
-        : 'Click the curve or chain to offset.';
+        ? 'Move to a side, click or type a distance. Click another curve to add its loop.'
+        : tool.mode === 'single'
+          ? 'Click the curve to offset.'
+          : 'Click the curve or chain to offset.';
     case 'dimension':
       return tool.first
         ? 'Click a second item, or click empty space to place the dimension.'
@@ -141,9 +145,13 @@ export function toolPrompt(tool: SketchTool): string {
         : 'Click the line to mirror about.';
     case 'pattern':
       if (tool.step === 'geometry') return 'Click the curves to repeat, then Enter (or Next).';
-      return tool.mode === 'linear'
-        ? 'Move along the direction and click where the last copy goes, or type the spacing.'
-        : 'Click the centre of the pattern.';
+      if (tool.mode === 'circular') return 'Click the centre of the pattern.';
+      if (tool.directions === 2) {
+        return tool.first
+          ? 'Second direction: click where its last copy goes, or type the spacing.'
+          : 'First direction: click where its last copy goes, or type the spacing.';
+      }
+      return 'Move along the direction and click where the last copy goes, or type the spacing.';
     case 'corner':
       return tool.pointId
         ? `Move to size the ${tool.mode === 'fillet' ? 'fillet' : 'chamfer'}, click or type it.`
@@ -321,6 +329,28 @@ function ToolOptions({ tool }: { tool: SketchTool }): JSX.Element | null {
           ]}
         />
       );
+    case 'offset':
+      return (
+        <div className={styles.row} role="group" aria-label="Offset options">
+          <Option
+            value="chain"
+            current={tool.mode}
+            label="Chain"
+            onSelect={() => setOption({ mode: 'chain' })}
+          />
+          <Option
+            value="single"
+            current={tool.mode}
+            label="Single"
+            onSelect={() => setOption({ mode: 'single' })}
+          />
+          {tool.loops.length > 1 ? (
+            <span className={styles.count}>
+              {tool.loops.length} loops · click an arrow to flip its side
+            </span>
+          ) : null}
+        </div>
+      );
     case 'corner':
       return (
         <Modes
@@ -387,7 +417,37 @@ function ToolOptions({ tool }: { tool: SketchTool }): JSX.Element | null {
                 onCommit={(n) => setOption({ angle: n })}
               />
             </label>
-          ) : null}
+          ) : (
+            <>
+              <span className={styles.separator} aria-hidden />
+              <Option
+                value={1}
+                current={tool.directions}
+                label="1 direction"
+                onSelect={() => setOption({ directions: 1 })}
+              />
+              <Option
+                value={2}
+                current={tool.directions}
+                label="2 directions"
+                onSelect={() => setOption({ directions: 2 })}
+              />
+              {tool.directions === 2 ? (
+                <label className={styles.inlineField}>
+                  <span>Count 2</span>
+                  <NumberInput
+                    aria-label="Pattern count, second direction"
+                    value={tool.count2}
+                    min={2}
+                    max={200}
+                    step={1}
+                    precision={0}
+                    onCommit={(n) => setOption({ count2: n })}
+                  />
+                </label>
+              ) : null}
+            </>
+          )}
           {tool.step === 'geometry' ? (
             <>
               <span className={styles.count}>{tool.ids.length} selected</span>
@@ -481,6 +541,84 @@ function TextPanel({ tool }: { tool: Extract<SketchTool, { kind: 'text' }> }): J
       />
     </div>
   );
+}
+
+/**
+ * Shapr3D: selecting an element of a sketch pattern brings its controls
+ * back. With the Select tool and a pattern element selected, its count
+ * (and second count / total angle) can be changed; the copies are rebuilt
+ * as one undo step.
+ */
+function PatternPanel({ session }: { session: SketchSession }): JSX.Element | null {
+  const pattern = selectedPattern(session);
+  if (!pattern) return null;
+  const edit = (patch: PatternPatch) =>
+    void useSketchStore.getState().editPattern(pattern.id, patch);
+  return (
+    <div
+      className={styles.textPanel}
+      role="group"
+      aria-label="Pattern"
+      data-sketch-pattern-panel=""
+      onPointerDown={(event) => event.stopPropagation()}
+    >
+      <span className={styles.panelTitle}>
+        {pattern.kind === 'linear' ? 'Linear pattern' : 'Circular pattern'}
+      </span>
+      <label className={styles.inlineField}>
+        <span>Count</span>
+        <NumberInput
+          aria-label="Pattern count"
+          value={pattern.count}
+          min={2}
+          max={200}
+          step={1}
+          precision={0}
+          onCommit={(n) => edit({ count: n })}
+        />
+      </label>
+      {pattern.count2 !== undefined ? (
+        <label className={styles.inlineField}>
+          <span>Count 2</span>
+          <NumberInput
+            aria-label="Pattern count, second direction"
+            value={pattern.count2}
+            min={2}
+            max={200}
+            step={1}
+            precision={0}
+            onCommit={(n) => edit({ count2: n })}
+          />
+        </label>
+      ) : null}
+      {pattern.kind === 'circular' ? (
+        <label className={styles.inlineField}>
+          <span>Angle</span>
+          <NumberInput
+            aria-label="Pattern angle"
+            value={pattern.angle ?? 360}
+            min={-360}
+            max={360}
+            step={15}
+            unit="°"
+            onCommit={(n) => edit({ angle: n })}
+          />
+        </label>
+      ) : (
+        <span className={styles.count}>Spacing: edit its dimension</span>
+      )}
+    </div>
+  );
+}
+
+/** The recorded pattern the sketch selection belongs to (Select tool only). */
+export function selectedPattern(session: SketchSession): SketchPattern | null {
+  if (session.tool.kind !== 'select') return null;
+  for (const id of session.selection) {
+    const pattern = patternOf(session.sketch, id);
+    if (pattern) return pattern;
+  }
+  return null;
 }
 
 function ProjectionWarning({ featureId }: { featureId: string }): JSX.Element | null {
@@ -589,6 +727,7 @@ export function SketchChrome(): JSX.Element | null {
         <ProjectionWarning featureId={session.featureId} />
       )}
       {session.tool.kind === 'text' ? <TextPanel tool={session.tool} /> : null}
+      <PatternPanel session={session} />
       <div
         className={styles.palette}
         onPointerDown={(event) => event.stopPropagation()}

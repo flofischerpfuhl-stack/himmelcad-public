@@ -1473,6 +1473,13 @@
             },
             "description": "Region fingerprints {key, sample, area, box} recorded on every write (geometric re-binding of redrawn profiles); maintained by the server."
           },
+          "patterns": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            },
+            "description": "Editable sketch patterns {id, kind: \"linear\"|\"circular\", sources, count, count2?, lines?, center?, angle?, created}; created by sketch.pattern, changed with sketch.editPattern."
+          },
           "profiles": {
             "type": "array",
             "items": {
@@ -2727,7 +2734,7 @@
         "required": [],
         "additionalProperties": false
       },
-      "result": "[{featureId, name, plane, frame: {origin,u,v,normal}, entities, constraints, dimensions, regions: [{key, area, sample, center, holes, entityIds}], consumed}]"
+      "result": "[{featureId, name, plane, frame: {origin,u,v,normal}, entities, constraints, dimensions, patterns: [{id, kind, sources, count, count2?, lines?, center?, angle?, created}], regions: [{key, area, sample, center, holes, entityIds}], consumed}]"
     },
     "datums.list": {
       "kind": "query",
@@ -2891,7 +2898,7 @@
     "measure.get": {
       "kind": "query",
       "capability": "document.read",
-      "summary": "The Measure panel's measurement of 1..n items (one body: size/volume/mass/area; one edge: length or radius/diameter; one face: area (+ cylinder diameter); two items: exact minimum distance from the kernel, parallel distance or angle; several bodies: combined box/volume/mass). Values carry `unit` (mm, mm², mm³, deg, g); `approx` marks mesh estimates.",
+      "summary": "The Measure panel's measurement of 1..n items (one body: size/volume/mass/area; one edge: length or radius/diameter; one face: area (+ cylinder diameter); two items: exact minimum distance from the kernel, parallel distance or angle, each distance with its ΔX/ΔY/ΔZ components; several bodies: combined box/volume/mass; several edges/faces/bodies: total length/area/volume/mass). Values carry `unit` (mm, mm², mm³, deg, g); `approx` marks mesh estimates.",
       "params": {
         "type": "object",
         "properties": {
@@ -2917,7 +2924,7 @@
     "measure.distance": {
       "kind": "query",
       "capability": "document.read",
-      "summary": "Exact minimum distance between two bodies/faces/edges/points (kernel BRepExtrema_DistShapeShape) and the closest points.",
+      "summary": "Exact minimum distance between two bodies/faces/edges/points (kernel BRepExtrema_DistShapeShape), the closest points and the X/Y/Z components of the distance (`delta`, absolute).",
       "params": {
         "type": "object",
         "properties": {
@@ -2936,7 +2943,7 @@
         "required": ["a", "b"],
         "additionalProperties": false
       },
-      "result": "{distance, pointA, pointB, unit: \"mm\", exact: true}"
+      "result": "{distance, pointA, pointB, delta: [dx, dy, dz], unit: \"mm\", exact: true}"
     },
     "measure.angle": {
       "kind": "query",
@@ -3679,7 +3686,7 @@
       "kind": "command",
       "capability": "document.write",
       "transactional": true,
-      "summary": "Repeats curves/points `ids`: linear (`direction`, `spacing` — a spacing dimension drives every copy) or circular (`center`, `angle` total degrees, 360 = full turn); `count` includes the original.",
+      "summary": "Repeats curves/points `ids`: linear (`direction`, `spacing` — a spacing dimension drives every copy; with `count2`, `direction2`, `spacing2` a grid in two directions) or circular (`center`, `angle` total degrees, 360 = full turn); `count` includes the original. The pattern is recorded (`patternId`) so count/count2/angle stay editable (sketch.editPattern).",
       "params": {
         "type": "object",
         "properties": {
@@ -3711,6 +3718,18 @@
             "type": "number",
             "exclusiveMinimum": 0
           },
+          "count2": {
+            "type": "integer",
+            "minimum": 2,
+            "maximum": 200
+          },
+          "direction2": {
+            "$ref": "#/$defs/Vec2"
+          },
+          "spacing2": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
           "center": {
             "$ref": "#/$defs/Vec2"
           },
@@ -3728,6 +3747,89 @@
           }
         },
         "required": ["featureId", "ids", "count"],
+        "additionalProperties": false
+      },
+      "result": "{featureId, patternId, createdIds, dof, regions, revision, committed}"
+    },
+    "sketch.editPattern": {
+      "kind": "command",
+      "capability": "document.write",
+      "transactional": true,
+      "summary": "Changes a recorded sketch pattern (sketches.list → patterns): `count`, `count2` (two-direction linear patterns) or `angle` (circular, total degrees). The copies are rebuilt from the sources; spacing dimensions, direction lines and the centre stay.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "featureId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "patternId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 2,
+            "maximum": 200
+          },
+          "count2": {
+            "type": "integer",
+            "minimum": 2,
+            "maximum": 200
+          },
+          "angle": {
+            "type": "number"
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Optimistic concurrency: the command fails with `conflict` unless the document revision still equals this value."
+          }
+        },
+        "required": ["featureId", "patternId"],
+        "additionalProperties": false
+      },
+      "result": "{featureId, patternId, pattern, dof, regions, revision, committed}"
+    },
+    "sketch.offset": {
+      "kind": "command",
+      "capability": "document.write",
+      "transactional": true,
+      "summary": "Offsets each curve of `ids` with its chain (connected curves; `single: true` only the curve) by `distance`: closed loops to the `outside` (default) or `inside`, open chains to the `left`/`right` of the curve direction. Lines and arcs offset exactly; ellipses, elliptical arcs and splines become fit splines through their true offset. New, unconstrained geometry.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "featureId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
+          },
+          "distance": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "side": {
+            "enum": ["outside", "inside", "left", "right"],
+            "default": "outside"
+          },
+          "single": {
+            "type": "boolean",
+            "default": false
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Optimistic concurrency: the command fails with `conflict` unless the document revision still equals this value."
+          }
+        },
+        "required": ["featureId", "ids", "distance"],
         "additionalProperties": false
       },
       "result": "{featureId, createdIds, dof, regions, revision, committed}"

@@ -8,7 +8,10 @@
  */
 import {
   addThreePointArc,
-  offsetChain,
+  chainIds,
+  offsetArrowAt,
+  offsetChains,
+  offsetOutwardSign,
   offsetSide,
   SketchBuilder,
   tangentArc,
@@ -19,7 +22,7 @@ import {
 import {
   circleThrough,
   dist,
-  entityCurve,
+  entityCurves,
   isFullCircle,
   normalize,
   sampleCurve,
@@ -100,7 +103,18 @@ export type SketchTool =
       inscribed: boolean;
     }
   | { kind: 'trim' }
-  | { kind: 'offset'; curveId: string | null }
+  | {
+      kind: 'offset';
+      /** The first picked curve: the cursor's side of it sets the distance. */
+      curveId: string | null;
+      /**
+       * Every loop (chain, or single curve) offset together, the first included;
+       * `flip` turns that loop to its other side (Shapr3D per-loop arrows).
+       */
+      loops: OffsetLoop[];
+      /** Chain: through connected curves (default); single: only the picked curve. */
+      mode: 'chain' | 'single';
+    }
   | {
       kind: 'dimension';
       first: string | null;
@@ -109,6 +123,12 @@ export type SketchTool =
   | AdvancedTool;
 
 export type SketchToolKind = SketchTool['kind'];
+
+/** One loop of the Offset tool. */
+export interface OffsetLoop {
+  curveId: string;
+  flip: boolean;
+}
 
 export type ToolEvent =
   | { type: 'click'; snap: Inference; hit: SketchHit | null; raw: Vec2 }
@@ -160,7 +180,7 @@ export function initialTool(kind: SketchToolKind, selection: readonly string[] =
     case 'trim':
       return { kind };
     case 'offset':
-      return { kind, curveId: null };
+      return { kind, curveId: null, loops: [], mode: 'chain' };
     case 'dimension':
       return { kind, first: null, mode: 'aligned' };
     default:
@@ -724,25 +744,111 @@ function reducePolygon(
 
 // ---- offset ----------------------------------------------------------------------------
 
+/** A curve the Offset tool can take (not text). */
+function offsettable(sketch: SketchData, id: string): boolean {
+  const e = entityMap(sketch).get(id);
+  return isCurve(e) && e.kind !== 'text';
+}
+
+/** The loop (index) a curve belongs to, or -1. */
+function loopIndexOf(
+  sketch: SketchData,
+  tool: Extract<SketchTool, { kind: 'offset' }>,
+  curveId: string,
+): number {
+  return tool.loops.findIndex((loop) =>
+    tool.mode === 'single' ? loop.curveId === curveId : chainIds(sketch, loop.curveId).has(curveId),
+  );
+}
+
+/**
+ * The Offset tool started on a selection: one loop per selected chain (or
+ * per selected curve in single mode), ready for a distance.
+ */
+export function offsetToolFor(
+  sketch: SketchData,
+  selection: readonly string[],
+  mode: 'chain' | 'single' = 'chain',
+): Extract<SketchTool, { kind: 'offset' }> {
+  let tool: Extract<SketchTool, { kind: 'offset' }> = {
+    kind: 'offset',
+    curveId: null,
+    loops: [],
+    mode,
+  };
+  for (const id of selection) {
+    if (!offsettable(sketch, id) || loopIndexOf(sketch, tool, id) >= 0) continue;
+    tool = {
+      ...tool,
+      curveId: tool.curveId ?? id,
+      loops: [...tool.loops, { curveId: id, flip: false }],
+    };
+  }
+  return tool;
+}
+
+/**
+ * Signed distance of every loop for the distance `signed` of the first
+ * loop (its cursor side): closed loops go to the same side as the first
+ * (all outwards or all inwards), open ones to the same side of their own
+ * curve; a flipped loop goes the other way.
+ */
+export function offsetLoopDistances(
+  sketch: SketchData,
+  tool: Extract<SketchTool, { kind: 'offset' }>,
+  signed: number,
+): { curveId: string; distance: number; single: boolean }[] {
+  const magnitude = Math.abs(signed);
+  const s0 = Math.sign(signed) || 1;
+  const single = tool.mode === 'single';
+  const first = tool.loops[0];
+  const out0 = first ? offsetOutwardSign(sketch, first.curveId, single) : 0;
+  return tool.loops.map((loop, i) => {
+    let sign = s0;
+    if (i > 0) {
+      const outI = offsetOutwardSign(sketch, loop.curveId, single);
+      if (out0 !== 0 && outI !== 0) sign = s0 * out0 * outI;
+    }
+    if (loop.flip) sign = -sign;
+    return { curveId: loop.curveId, distance: sign * magnitude, single };
+  });
+}
+
 function reduceOffset(
   sketch: SketchData,
   tool: Extract<SketchTool, { kind: 'offset' }>,
   event: Exclude<ToolEvent, { type: 'finish' }>,
 ): ToolStep {
   if (!tool.curveId) {
-    if (event.type === 'click' && event.hit?.kind === 'curve')
-      return { tool: { ...tool, curveId: event.hit.id } };
+    if (
+      event.type === 'click' &&
+      event.hit?.kind === 'curve' &&
+      offsettable(sketch, event.hit.id)
+    ) {
+      return {
+        tool: { ...tool, curveId: event.hit.id, loops: [{ curveId: event.hit.id, flip: false }] },
+      };
+    }
     return { tool };
   }
+  // A click on a curve of another loop adds that loop (several loops offset together).
+  if (event.type === 'click' && event.hit?.kind === 'curve' && offsettable(sketch, event.hit.id)) {
+    if (loopIndexOf(sketch, tool, event.hit.id) < 0) {
+      return { tool: { ...tool, loops: [...tool.loops, { curveId: event.hit.id, flip: false }] } };
+    }
+  }
   const side = offsetSide(sketch, tool.curveId, event.snap.pos);
-  const distance =
+  const signed =
     event.type === 'value'
       ? event.field === 'distance'
         ? (Math.sign(side) || 1) * event.value
         : 0
       : side;
-  const edit = offsetChain(sketch, tool.curveId, distance);
-  return edit ? { tool: initialTool('offset'), edit } : { tool };
+  if (Math.abs(signed) < 1e-6) return { tool };
+  const edit = offsetChains(sketch, offsetLoopDistances(sketch, tool, signed));
+  return edit
+    ? { tool: { ...initialTool('offset'), mode: tool.mode } as SketchTool, edit }
+    : { tool, notice: 'The offset would fold over a curve: use a smaller distance.' };
 }
 
 // ---- dimension -------------------------------------------------------------------------
@@ -860,6 +966,8 @@ export interface ToolPreview {
   highlight: string[];
   /** Value chips: field, current value and where to show them. */
   chips: { field: ValueField; value: number; at: Vec2 }[];
+  /** Offset: one direction arrow per loop (`dir` = the side it goes to); clicking flips it. */
+  arrows?: { index: number; at: Vec2; dir: Vec2 }[];
 }
 
 const EMPTY_PREVIEW: ToolPreview = { curves: [], points: [], highlight: [], chips: [] };
@@ -1030,22 +1138,37 @@ export function toolPreview(
       if (!tool.curveId)
         return { ...EMPTY_PREVIEW, highlight: hit?.kind === 'curve' ? [hit.id] : [] };
       const side = offsetSide(sketch, tool.curveId, c);
-      const edit = offsetChain(sketch, tool.curveId, side);
+      const loops = offsetLoopDistances(sketch, tool, side);
+      const edit = Math.abs(side) > 1e-6 ? offsetChains(sketch, loops) : null;
       const curves: Vec2[][] = [];
       if (edit) {
         const before = new Set(sketch.entities.map((e) => e.id));
         const map = entityMap(edit.sketch);
         for (const e of edit.sketch.entities) {
           if (before.has(e.id) || !isCurve(e)) continue;
-          const curve = entityCurve(map, e);
-          if (curve) curves.push(sampleCurve(curve));
+          for (const { curve } of entityCurves(map, e)) curves.push(sampleCurve(curve));
         }
       }
+      // Several loops: an arrow per loop shows its side and flips it when clicked.
+      const arrows =
+        tool.loops.length > 1
+          ? loops.flatMap((loop, index) => {
+              const place = offsetArrowAt(sketch, loop.curveId);
+              if (!place) return [];
+              const s = Math.sign(loop.distance) || 1;
+              return [{ index, at: place.at, dir: [place.left[0] * s, place.left[1] * s] as Vec2 }];
+            })
+          : [];
+      const highlight =
+        tool.mode === 'single'
+          ? tool.loops.map((l) => l.curveId)
+          : tool.loops.flatMap((l) => [...chainIds(sketch, l.curveId)]);
       return {
         ...EMPTY_PREVIEW,
         curves,
-        highlight: [tool.curveId],
+        highlight: [...highlight, ...(hit?.kind === 'curve' ? [hit.id] : [])],
         chips: [{ field: 'distance', value: Math.abs(side), at: c }],
+        arrows,
       };
     }
     case 'dimension':

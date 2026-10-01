@@ -499,6 +499,12 @@ const CORE_FEATURE_KIND_SCHEMAS: Record<string, FeatureKindSpec> = {
           description:
             'Region fingerprints {key, sample, area, box} recorded on every write (geometric re-binding of redrawn profiles); maintained by the server.',
         },
+        patterns: {
+          type: 'array',
+          items: { type: 'object' },
+          description:
+            'Editable sketch patterns {id, kind: "linear"|"circular", sources, count, count2?, lines?, center?, angle?, created}; created by sketch.pattern, changed with sketch.editPattern.',
+        },
         profiles: {
           type: 'array',
           items: ref('SketchShape'),

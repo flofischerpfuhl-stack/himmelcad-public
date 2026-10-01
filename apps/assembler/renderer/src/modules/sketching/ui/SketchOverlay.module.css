@@ -230,6 +230,30 @@
   stroke-linecap: round;
 }
 
+/* Offset with several loops: one clickable direction arrow per loop. */
+.offsetArrow {
+  pointer-events: all;
+  cursor: pointer;
+}
+
+.offsetArrowHit {
+  fill: transparent;
+}
+
+.offsetArrowShaft {
+  stroke: var(--hc-geometry-active-preview);
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+.offsetArrowHead {
+  fill: var(--hc-geometry-active-preview);
+}
+
+.offsetArrow:hover .offsetArrowShaft {
+  stroke-width: 3;
+}
+
 .srOnly {
   position: absolute;
   width: 1px;

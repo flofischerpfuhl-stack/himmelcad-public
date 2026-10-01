@@ -27,7 +27,8 @@ METHODS = (
     "sketch.addProfile", "sketch.addPolyline", "sketch.addArc", "sketch.addConstraint",
     "sketch.addDimension", "sketch.setDimension", "sketch.deleteItems",
     "sketch.addSpline", "sketch.addEllipse", "sketch.addSlot", "sketch.addPolygon", "sketch.addText",
-    "sketch.mirror", "sketch.pattern", "sketch.roundCorner", "sketch.project", "sketch.setReference",
+    "sketch.mirror", "sketch.pattern", "sketch.editPattern", "sketch.offset", "sketch.roundCorner",
+    "sketch.project", "sketch.setReference",
     "transaction.begin", "transaction.preview", "transaction.commit", "transaction.cancel",
     "history.undo", "history.redo",
     "export.stl", "export.3mf", "export.step", "import.step",
@@ -129,11 +130,14 @@ class AssemblerClient:
         return self.call("parameters.list")
 
     def measure(self, items: Sequence[Mapping[str, Any]], *, scope: str | None = None) -> Mapping[str, Any]:
-        """The Measure panel's measurement of 1..n targets (``{"kind": "body"|"face"|"edge"|"point", ...}``)."""
+        """The Measure panel's measurement of 1..n targets (``{"kind": "body"|"face"|"edge"|"point", ...}``).
+
+        Several edges/faces/bodies also give their sums ("Total length (n edges)", "Total area (n faces)",
+        "Total volume"); distances come with their ΔX/ΔY/ΔZ components (secondary values)."""
         return self.call("measure.get", {"items": [dict(i) for i in items], "scope": scope})
 
     def measure_distance(self, a: Mapping[str, Any], b: Mapping[str, Any], *, scope: str | None = None) -> Mapping[str, Any]:
-        """Exact minimum distance (kernel) between two targets and the closest points."""
+        """Exact minimum distance (kernel) between two targets, the closest points and ``delta`` (absolute X/Y/Z components)."""
         return self.call("measure.distance", {"a": dict(a), "b": dict(b), "scope": scope})
 
     def measure_angle(self, a: Mapping[str, Any], b: Mapping[str, Any], *, scope: str | None = None) -> Mapping[str, Any]:
@@ -218,9 +222,17 @@ class AssemblerClient:
         """Mirrors sketch curves/points about the line ``axis`` (symmetric constraints)."""
         return self.call("sketch.mirror", {"featureId": feature_id, "ids": list(ids), "axis": axis})
 
-    def pattern_sketch(self, feature_id: str, ids: list[str], count: int, *, mode: str = "linear", direction: tuple[float, float] | None = None, spacing: float | None = None, center: tuple[float, float] | None = None, center_point_id: str | None = None, angle: float | None = None) -> Mapping[str, Any]:
-        """Linear (``direction``, ``spacing``) or circular (``center``, ``angle``) sketch pattern."""
-        return self.call("sketch.pattern", {"featureId": feature_id, "ids": list(ids), "count": count, "mode": mode, "direction": list(direction) if direction else None, "spacing": spacing, "center": list(center) if center else None, "centerPointId": center_point_id, "angle": angle})
+    def pattern_sketch(self, feature_id: str, ids: list[str], count: int, *, mode: str = "linear", direction: tuple[float, float] | None = None, spacing: float | None = None, count2: int | None = None, direction2: tuple[float, float] | None = None, spacing2: float | None = None, center: tuple[float, float] | None = None, center_point_id: str | None = None, angle: float | None = None) -> Mapping[str, Any]:
+        """Linear (``direction``, ``spacing``; with ``count2``/``direction2``/``spacing2`` a two-direction grid) or circular (``center``, ``angle``) sketch pattern. The result's ``patternId`` keeps it editable (:meth:`edit_pattern`)."""
+        return self.call("sketch.pattern", {"featureId": feature_id, "ids": list(ids), "count": count, "mode": mode, "direction": list(direction) if direction else None, "spacing": spacing, "count2": count2, "direction2": list(direction2) if direction2 else None, "spacing2": spacing2, "center": list(center) if center else None, "centerPointId": center_point_id, "angle": angle})
+
+    def edit_pattern(self, feature_id: str, pattern_id: str, *, count: int | None = None, count2: int | None = None, angle: float | None = None) -> Mapping[str, Any]:
+        """Changes a recorded sketch pattern's ``count``, ``count2`` (two directions) or ``angle`` (circular); the copies are rebuilt."""
+        return self.call("sketch.editPattern", {"featureId": feature_id, "patternId": pattern_id, "count": count, "count2": count2, "angle": angle})
+
+    def offset_sketch(self, feature_id: str, ids: list[str], distance: float, *, side: str = "outside", single: bool = False) -> Mapping[str, Any]:
+        """Offsets each curve's chain (``single``: only the curve) by ``distance``: closed loops ``outside``/``inside``, open chains ``left``/``right``."""
+        return self.call("sketch.offset", {"featureId": feature_id, "ids": list(ids), "distance": distance, "side": side, "single": single})
 
     def round_corner(self, feature_id: str, point: str, size: float, *, mode: str = "fillet") -> Mapping[str, Any]:
         """Fillets (radius) or chamfers (set-back) the corner at ``point`` between two lines."""

@@ -9,8 +9,21 @@
  */
 import type { EvaluationResult } from '../../foundation/geometry-kernel/types.js';
 import type { Feature } from '../../foundation/document/document.js';
-import { SketchBuilder, type SnapTarget } from '../../foundation/sketch-solver/edits.js';
-import { circularPattern, linearPattern, mirrorGeometry, roundCorner } from './operations.js';
+import {
+  offsetChains,
+  offsetOutwardSign,
+  SketchBuilder,
+  type SnapTarget,
+} from '../../foundation/sketch-solver/edits.js';
+import {
+  circularPattern,
+  editPattern,
+  linearPattern,
+  mirrorGeometry,
+  roundCorner,
+  type PatternPatch,
+  type SecondDirection,
+} from './operations.js';
 import {
   addProjection,
   edgeSampleFromSegments,
@@ -36,6 +49,8 @@ export const ADVANCED_SKETCH_METHODS = [
   'sketch.addText',
   'sketch.mirror',
   'sketch.pattern',
+  'sketch.editPattern',
+  'sketch.offset',
   'sketch.roundCorner',
   'sketch.project',
   'sketch.setReference',
@@ -244,6 +259,16 @@ export async function advancedSketchEdit(
       const selection = ids(p.ids, 'ids');
       const count = typeof p.count === 'number' ? Math.round(p.count) : 0;
       if (count < 2 || count > 200) throw new ApiError('invalidParams', 'count: 2 to 200');
+      let second: SecondDirection | undefined;
+      if (p.mode !== 'circular' && p.count2 !== undefined) {
+        const count2 = typeof p.count2 === 'number' ? Math.round(p.count2) : 0;
+        if (count2 < 2 || count2 > 200) throw new ApiError('invalidParams', 'count2: 2 to 200');
+        second = {
+          count: count2,
+          direction: vec(p.direction2 ?? [0, 1], 'direction2'),
+          spacing: positive(p.spacing2, 'spacing2'),
+        };
+      }
       const edit =
         p.mode === 'circular'
           ? circularPattern(
@@ -259,8 +284,81 @@ export async function advancedSketchEdit(
               count,
               vec(p.direction ?? [1, 0], 'direction'),
               positive(p.spacing, 'spacing'),
+              second ? { second } : {},
             );
-      if (!edit) throw new ApiError('invalidParams', 'Nothing to pattern: give curve or point ids');
+      if (!edit) {
+        throw new ApiError(
+          'invalidParams',
+          second
+            ? 'Nothing to pattern: give curve or point ids and two different directions (at most 400 instances)'
+            : 'Nothing to pattern: give curve or point ids',
+        );
+      }
+      const patterns = edit.sketch.patterns ?? [];
+      return {
+        sketch: edit.sketch,
+        result: {
+          patternId: patterns[patterns.length - 1]?.id ?? null,
+          createdIds: createdIds(data, edit.sketch),
+        },
+      };
+    }
+    case 'sketch.editPattern': {
+      const patternId = String(p.patternId);
+      const patch: PatternPatch = {
+        ...(typeof p.count === 'number' ? { count: p.count } : {}),
+        ...(typeof p.count2 === 'number' ? { count2: p.count2 } : {}),
+        ...(typeof p.angle === 'number' ? { angle: p.angle } : {}),
+      };
+      if (Object.keys(patch).length === 0) {
+        throw new ApiError('invalidParams', 'Give count, count2 or angle');
+      }
+      if (!(data.patterns ?? []).some((x) => x.id === patternId)) {
+        throw new ApiError('notFound', `No pattern "${patternId}" in this sketch`, {
+          hint: "sketches.list lists each sketch's patterns (id, kind, count, sources).",
+        });
+      }
+      const edit = editPattern(data, patternId, patch);
+      if ('reason' in edit) throw new ApiError('invalidParams', edit.reason);
+      const record = edit.sketch.patterns?.find((x) => x.id === patternId);
+      return {
+        sketch: edit.sketch,
+        result: { patternId, pattern: record ?? null },
+      };
+    }
+    case 'sketch.offset': {
+      const curves = ids(p.ids, 'ids');
+      const distance = positive(p.distance, 'distance');
+      const side = typeof p.side === 'string' ? p.side : 'outside';
+      if (!['outside', 'inside', 'left', 'right'].includes(side)) {
+        throw new ApiError('invalidParams', 'side: "outside", "inside", "left" or "right"');
+      }
+      const single = p.single === true;
+      const loops = curves.map((curveId) => {
+        const e = data.entities.find((x) => x.id === curveId);
+        if (!e || e.kind === 'point' || e.kind === 'text') {
+          throw new ApiError('invalidParams', `"${curveId}" is no curve that can be offset`);
+        }
+        // Closed loops: outside/inside; open curves: left/right of their direction (outside = left).
+        const outward = offsetOutwardSign(data, curveId, single);
+        const sign =
+          outward !== 0 && (side === 'outside' || side === 'inside')
+            ? side === 'outside'
+              ? outward
+              : -outward
+            : side === 'right' || side === 'inside'
+              ? -1
+              : 1;
+        return { curveId, distance: sign * distance, single };
+      });
+      const edit = offsetChains(data, loops);
+      if (!edit) {
+        throw new ApiError(
+          'invalidParams',
+          'The offset folds over a curve (the distance exceeds a radius of curvature on that side)',
+          { hint: 'Use a smaller distance or the other side.' },
+        );
+      }
       return { sketch: edit.sketch, result: { createdIds: createdIds(data, edit.sketch) } };
     }
     case 'sketch.roundCorner': {

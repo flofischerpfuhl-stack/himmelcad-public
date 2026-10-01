@@ -88,6 +88,7 @@ async function listSketches(ctx: ApiContext, p: Json): Promise<Json[]> {
         entities: sketch.entities,
         constraints: sketch.constraints,
         dimensions: sketch.dimensions,
+        patterns: sketch.patterns ?? [],
         regions: describeRegions(sketch, evaluated),
       };
     })

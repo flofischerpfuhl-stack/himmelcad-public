@@ -6,6 +6,7 @@
  * rounded corner), so later dimension edits keep them consistent.
  */
 import {
+  deleteItems,
   SketchBuilder,
   type EditResult,
   type SnapTarget,
@@ -30,6 +31,7 @@ import {
   type SketchCurve,
   type SketchData,
   type SketchEntity,
+  type SketchPattern,
   type Vec2,
 } from '../../foundation/sketch-solver/types.js';
 
@@ -192,13 +194,128 @@ export function mirrorGeometry(
 
 // ---- patterns --------------------------------------------------------------------------
 
+/** One direction of a linear pattern. */
+export interface PatternDirection {
+  direction: Vec2;
+  spacing: number;
+  horizontal?: boolean;
+  vertical?: boolean;
+}
+
+/** The second direction of a linear pattern (Shapr3D: linear in 1–2 directions). */
+export interface SecondDirection extends PatternDirection {
+  count: number;
+}
+
+const MAX_PATTERN_COUNT = 200;
+/** Upper bound of copies per pattern (count × count2), so a grid cannot explode the sketch. */
+const MAX_PATTERN_INSTANCES = 400;
+
+/** The curve ids among `ids` (what a pattern selects after it was made). */
+function curveIdsAmong(b: SketchBuilder, ids: readonly string[]): string[] {
+  const curves = new Set(b.entities.filter((e) => e.kind !== 'point').map((e) => e.id));
+  return ids.filter((id) => curves.has(id));
+}
+
+/** The patterned points (no origin) and copyable curves (no text) of a selection. */
+function patternGeometry(
+  sketch: SketchData,
+  ids: readonly string[],
+): { curves: SketchCurve[]; pointIds: string[] } {
+  const { curves, points } = selectionGeometry(sketch, ids);
+  return {
+    curves: curves.filter((c) => c.kind !== 'text'),
+    pointIds: points.filter((p) => p !== ORIGIN_ID),
+  };
+}
+
+/**
+ * Adds the copies of a linear pattern: instance (i, j) of every point sits
+ * at `point + i·step1 + j·step2`, tied to the previous instance along its
+ * direction by a `translate` constraint over that direction's line
+ * (`base → h1`, `base → h2`). Returns the created point and curve ids.
+ */
+function addLinearCopies(
+  b: SketchBuilder,
+  geometry: { curves: SketchCurve[]; pointIds: string[] },
+  positions: ReadonlyMap<string, Vec2>,
+  base: string,
+  dirs: { handle: string; step: Vec2; count: number }[],
+): string[] {
+  const [d1, d2] = dirs as [(typeof dirs)[number], (typeof dirs)[number] | undefined];
+  const count2 = d2?.count ?? 1;
+  const created: string[] = [];
+  const identity = new Map(geometry.pointIds.map((p) => [p, p]));
+  // instances[i][j]: point id → its copy in instance (i, j).
+  const instances: Map<string, string>[][] = [];
+  for (let i = 0; i < d1.count; i += 1) {
+    instances.push([]);
+    for (let j = 0; j < count2; j += 1) {
+      if (i === 0 && j === 0) {
+        instances[0]!.push(identity);
+        continue;
+      }
+      const previous = j === 0 ? instances[i - 1]![0]! : instances[i]![j - 1]!;
+      const handle = j === 0 ? d1.handle : d2!.handle;
+      const current = new Map<string, string>();
+      for (const p of geometry.pointIds) {
+        // The base point's first copy along a direction is that direction's handle itself
+        // (a separate point there would make the next translate degenerate for the solver).
+        if (p === base && i + j === 1) {
+          current.set(p, handle);
+          continue;
+        }
+        const pos = positions.get(p)!;
+        const at: Vec2 = add(add(pos, scale(d1.step, i)), d2 ? scale(d2.step, j) : [0, 0]);
+        const copy = b.addPoint(at);
+        current.set(p, copy);
+        created.push(copy);
+        b.constrain('translate', [previous.get(p)!, copy, base, handle]);
+      }
+      instances[i]!.push(current);
+      for (const curve of geometry.curves) {
+        const id = copyCurve(b, curve, (pid) => current.get(pid) ?? pid, false);
+        if (!id) continue;
+        created.push(id);
+        if (curve.kind === 'circle') b.constrain('equal', [curve.id, id]);
+      }
+    }
+  }
+  return created;
+}
+
+/** A construction direction line from `base` to a new handle point, with its spacing dimension. */
+function addDirectionLine(
+  b: SketchBuilder,
+  base: string,
+  basePos: Vec2,
+  dir: PatternDirection,
+): { line: string; handle: string; step: Vec2 } {
+  const step = scale(normalize(dir.direction), dir.spacing);
+  const handle = b.addPoint(add(basePos, step));
+  const line = b.addLine(base, handle, true);
+  if (dir.horizontal) b.constrain('horizontal', [line], true);
+  else if (dir.vertical) b.constrain('vertical', [line], true);
+  b.dimensions.push({
+    id: b.id('m'),
+    name: nextDimensionName(b.data),
+    kind: 'distance',
+    refs: [line],
+    value: dir.spacing,
+  });
+  return { line, handle, step };
+}
+
 /**
  * Linear sketch pattern: `count` instances (the selection included) along
- * `direction`, `spacing` apart. The first defining point of the selection
- * and its first copy span a construction line carrying the spacing
- * dimension; every copy is tied to the previous instance by `translate`
- * constraints over that line, so the spacing dimension and the line's
- * direction drive the whole pattern. Circles keep an Equal radius.
+ * `direction`, `spacing` apart — and, with `second`, a grid of
+ * `count × second.count` instances along two directions. The first defining
+ * point of the selection is the base of a construction line per direction
+ * carrying the spacing dimension; every copy is tied to the previous
+ * instance by `translate` constraints over that line, so the spacing
+ * dimensions and the lines' directions drive the whole pattern. Circles keep
+ * an Equal radius. The pattern is recorded (`SketchData.patterns`) so its
+ * counts stay editable ({@link editPattern}).
  */
 export function linearPattern(
   sketch: SketchData,
@@ -206,57 +323,102 @@ export function linearPattern(
   count: number,
   direction: Vec2,
   spacing: number,
-  options: { horizontal?: boolean; vertical?: boolean } = {},
+  options: { horizontal?: boolean; vertical?: boolean; second?: SecondDirection } = {},
 ): EditResult | null {
   const n = Math.round(count);
-  if (n < 2 || !(spacing > 0)) return null;
-  const map = entityMap(sketch);
-  const { curves, points } = selectionGeometry(sketch, ids);
-  const copyable = curves.filter((c) => c.kind !== 'text');
-  const pointIds = points.filter((p) => p !== ORIGIN_ID);
-  if (pointIds.length === 0) return null;
-  const d = normalize(direction);
-  if (!(Math.hypot(d[0], d[1]) > 0)) return null;
-  const b = new SketchBuilder(sketch);
-  const base = pointIds[0]!;
-  const step = scale(d, spacing);
-  // Instance k of every point; instance 0 is the original.
-  const instances: Map<string, string>[] = [new Map(pointIds.map((p) => [p, p]))];
-  const created: string[] = [];
-  for (let k = 1; k < n; k += 1) {
-    const current = new Map<string, string>();
-    for (const p of pointIds) {
-      const pos = pointPos(map, p)!;
-      current.set(p, b.addPoint(add(pos, scale(step, k))));
-    }
-    instances.push(current);
+  const n2 = options.second ? Math.round(options.second.count) : 1;
+  if (n < 2 || n > MAX_PATTERN_COUNT || !(spacing > 0)) return null;
+  if (options.second && (n2 < 2 || n2 > MAX_PATTERN_COUNT || !(options.second.spacing > 0))) {
+    return null;
   }
-  // The direction line: from the base point to its first copy.
-  const handle = instances[1]!.get(base)!;
-  const line = b.addLine(base, handle, true);
-  if (options.horizontal) b.constrain('horizontal', [line], true);
-  else if (options.vertical) b.constrain('vertical', [line], true);
-  const spacingId = b.id('m');
-  b.dimensions.push({
-    id: spacingId,
-    name: nextDimensionName(b.data),
-    kind: 'distance',
-    refs: [line],
-    value: spacing,
+  if (n * n2 > MAX_PATTERN_INSTANCES) return null;
+  const map = entityMap(sketch);
+  const geometry = patternGeometry(sketch, ids);
+  if (geometry.pointIds.length === 0) return null;
+  const valid = (d: Vec2) => Math.hypot(d[0], d[1]) > 0;
+  if (!valid(direction) || (options.second && !valid(options.second.direction))) return null;
+  if (options.second) {
+    const a = normalize(direction);
+    const c = normalize(options.second.direction);
+    if (Math.abs(cross(a, c)) < 1e-6) return null; // the two directions must differ
+  }
+  const b = new SketchBuilder(sketch);
+  const base = geometry.pointIds[0]!;
+  const positions = new Map(geometry.pointIds.map((p) => [p, pointPos(map, p)!]));
+  const basePos = positions.get(base)!;
+  const first = addDirectionLine(b, base, basePos, {
+    direction,
+    spacing,
+    ...(options.horizontal ? { horizontal: true } : {}),
+    ...(options.vertical ? { vertical: true } : {}),
   });
-  for (let k = 1; k < n; k += 1) {
-    for (const p of pointIds) {
-      if (k === 1 && p === base) continue; // the handle itself
-      b.constrain('translate', [instances[k - 1]!.get(p)!, instances[k]!.get(p)!, base, handle]);
+  const second = options.second ? addDirectionLine(b, base, basePos, options.second) : null;
+  const created = addLinearCopies(b, geometry, positions, base, [
+    { handle: first.handle, step: first.step, count: n },
+    ...(second ? [{ handle: second.handle, step: second.step, count: n2 }] : []),
+  ]);
+  const record: SketchPattern = {
+    id: b.id('pat'),
+    kind: 'linear',
+    sources: [...ids].filter((id) => map.has(id)),
+    count: n,
+    ...(second ? { count2: n2 } : {}),
+    lines: second ? [first.line, second.line] : [first.line],
+    created,
+  };
+  b.patterns.push(record);
+  return b.result([...curveIdsAmong(b, created), first.line, ...(second ? [second.line] : [])]);
+}
+
+/** Step angle of a circular pattern: a full turn divides by `count`, less spreads first to last. */
+function circularStep(count: number, total: number): number {
+  const full = Math.abs(Math.abs(total) - 360) < 1e-9;
+  return full ? total / count : total / (count - 1);
+}
+
+/** Adds the copies of a circular pattern about point `c`; returns the created ids. */
+function addCircularCopies(
+  b: SketchBuilder,
+  geometry: { curves: SketchCurve[]; pointIds: string[] },
+  positions: ReadonlyMap<string, Vec2>,
+  c: string,
+  cPos: Vec2,
+  count: number,
+  total: number,
+  /** Ties patterned points that lie on the centre to it (only when the pattern is made). */
+  tieCentre = true,
+): string[] {
+  const stepAngle = circularStep(count, total);
+  const created: string[] = [];
+  let previous = new Map(geometry.pointIds.map((p) => [p, p]));
+  for (let k = 1; k < count; k += 1) {
+    const current = new Map<string, string>();
+    for (const p of geometry.pointIds) {
+      const pos = positions.get(p)!;
+      if (p === c || dist(pos, cPos) < 1e-9) {
+        current.set(p, p === c ? p : c);
+        if (p !== c && k === 1 && tieCentre) b.constrain('coincident', [p, c]);
+        continue;
+      }
+      const copy = b.addPoint(rotateAbout(pos, cPos, stepAngle * k));
+      current.set(p, copy);
+      created.push(copy);
+      b.constraints.push({
+        id: b.id('k'),
+        kind: 'rotate',
+        refs: [previous.get(p)!, copy, c],
+        value: stepAngle,
+      });
     }
-    for (const curve of copyable) {
-      const id = copyCurve(b, curve, (pid) => instances[k]!.get(pid) ?? pid, false);
+    for (const curve of geometry.curves) {
+      const id = copyCurve(b, curve, (pid) => current.get(pid) ?? pid, false);
       if (!id) continue;
       created.push(id);
       if (curve.kind === 'circle') b.constrain('equal', [curve.id, id]);
     }
+    previous = current;
   }
-  return b.result([...created, line]);
+  return created;
 }
 
 /**
@@ -264,7 +426,7 @@ export function linearPattern(
  * `total` degrees (360 = full turn, instances `total / count` apart; less
  * than 360 spreads them from first to last). Copies are tied to the
  * previous instance by `rotate` constraints. Points on the centre are
- * shared.
+ * shared. Recorded like {@link linearPattern} (count and angle editable).
  */
 export function circularPattern(
   sketch: SketchData,
@@ -274,46 +436,141 @@ export function circularPattern(
   total = 360,
 ): EditResult | null {
   const n = Math.round(count);
-  if (n < 2 || !(Math.abs(total) > 0)) return null;
+  if (n < 2 || n > MAX_PATTERN_COUNT || !(Math.abs(total) > 0) || Math.abs(total) > 360) {
+    return null;
+  }
   const map = entityMap(sketch);
-  const { curves, points } = selectionGeometry(sketch, ids);
-  const copyable = curves.filter((c) => c.kind !== 'text');
-  const pointIds = points.filter((p) => p !== ORIGIN_ID);
-  if (pointIds.length === 0 && copyable.length === 0) return null;
-  const full = Math.abs(Math.abs(total) - 360) < 1e-9;
-  const stepAngle = full ? total / n : total / (n - 1);
+  const geometry = patternGeometry(sketch, ids);
+  if (geometry.pointIds.length === 0 && geometry.curves.length === 0) return null;
   const b = new SketchBuilder(sketch);
   const c = b.pointFor(center);
-  const cPos = center.pos;
-  const created: string[] = [];
-  let previous = new Map(pointIds.map((p) => [p, p]));
-  for (let k = 1; k < n; k += 1) {
-    const current = new Map<string, string>();
-    for (const p of pointIds) {
-      const pos = pointPos(map, p)!;
-      if (p === c || dist(pos, cPos) < 1e-9) {
-        current.set(p, p === c ? p : c);
-        if (p !== c) b.constrain('coincident', [p, c]);
-        continue;
-      }
-      const copy = b.addPoint(rotateAbout(pos, cPos, stepAngle * k));
-      current.set(p, copy);
-      b.constraints.push({
-        id: b.id('k'),
-        kind: 'rotate',
-        refs: [previous.get(p)!, copy, c],
-        value: stepAngle,
-      });
+  const positions = new Map(geometry.pointIds.map((p) => [p, pointPos(map, p)!]));
+  const created = addCircularCopies(b, geometry, positions, c, center.pos, n, total);
+  b.patterns.push({
+    id: b.id('pat'),
+    kind: 'circular',
+    sources: [...ids].filter((id) => map.has(id)),
+    count: n,
+    center: c,
+    angle: total,
+    created,
+  });
+  return b.result(curveIdsAmong(b, created));
+}
+
+/** The pattern a sketch item belongs to (a source, a copy or a direction line), if any. */
+export function patternOf(sketch: SketchData, id: string): SketchPattern | null {
+  for (const pattern of sketch.patterns ?? []) {
+    if (
+      pattern.sources.includes(id) ||
+      pattern.created.includes(id) ||
+      (pattern.lines ?? []).includes(id)
+    ) {
+      return pattern;
     }
-    for (const curve of copyable) {
-      const id = copyCurve(b, curve, (pid) => current.get(pid) ?? pid, false);
-      if (!id) continue;
-      created.push(id);
-      if (curve.kind === 'circle') b.constrain('equal', [curve.id, id]);
-    }
-    previous = current;
   }
-  return b.result(created);
+  return null;
+}
+
+/** What can change on an existing pattern. */
+export interface PatternPatch {
+  count?: number;
+  count2?: number;
+  /** Circular: total angle, degrees. */
+  angle?: number;
+}
+
+/**
+ * Changes a recorded pattern (Shapr3D: selecting a pattern element brings
+ * its badges back): the copies are removed and rebuilt from the sources'
+ * current geometry with the new count / second count / total angle; the
+ * direction lines, their spacing dimensions and the centre stay. Copies'
+ * own extra constraints and geometry attached to removed copies go with
+ * them. A reason when the patch does not apply.
+ */
+export function editPattern(
+  sketch: SketchData,
+  patternId: string,
+  patch: PatternPatch,
+): EditResult | { reason: string } {
+  const record = (sketch.patterns ?? []).find((p) => p.id === patternId);
+  if (!record) return { reason: 'That pattern no longer exists.' };
+  const count = patch.count !== undefined ? Math.round(patch.count) : record.count;
+  const count2 =
+    patch.count2 !== undefined ? Math.round(patch.count2) : (record.count2 ?? undefined);
+  if (!(count >= 2 && count <= MAX_PATTERN_COUNT)) return { reason: 'Use 2 to 200 instances.' };
+  if (count2 !== undefined) {
+    if (record.kind !== 'linear' || (record.lines ?? []).length < 2) {
+      return { reason: 'This pattern has one direction.' };
+    }
+    if (!(count2 >= 2 && count2 <= MAX_PATTERN_COUNT)) return { reason: 'Use 2 to 200 instances.' };
+  }
+  if (count * (count2 ?? 1) > MAX_PATTERN_INSTANCES) {
+    return { reason: `At most ${MAX_PATTERN_INSTANCES} instances per pattern.` };
+  }
+  const angle = patch.angle ?? record.angle;
+  if (
+    record.kind === 'circular' &&
+    !(angle !== undefined && angle !== 0 && Math.abs(angle) <= 360)
+  ) {
+    return { reason: 'Use an angle above 0 and up to 360°.' };
+  }
+  // Remove the old copies (geometry hanging on them goes too), keep the record's frame.
+  const cleared = deleteItems(sketch, record.created);
+  const map = entityMap(cleared);
+  const geometry = patternGeometry(cleared, record.sources);
+  if (geometry.pointIds.length === 0 && geometry.curves.length === 0) {
+    return { reason: 'The pattern has nothing left to repeat.' };
+  }
+  const positions = new Map(geometry.pointIds.map((p) => [p, pointPos(map, p)!]));
+  const b = new SketchBuilder(cleared);
+  let created: string[];
+  if (record.kind === 'linear') {
+    const lines = (record.lines ?? []).map((id) => map.get(id));
+    if (lines.length === 0 || lines.some((l) => l?.kind !== 'line')) {
+      return { reason: 'The pattern direction line was deleted.' };
+    }
+    const [l1, l2] = lines as Extract<SketchEntity, { kind: 'line' }>[];
+    const base = l1!.a;
+    const basePos = pointPos(map, base);
+    if (!basePos || !geometry.pointIds.includes(base)) {
+      return { reason: 'The pattern base point is no longer patterned.' };
+    }
+    const dirOf = (line: Extract<SketchEntity, { kind: 'line' }>, n: number) => ({
+      handle: line.b,
+      step: sub(pointPos(map, line.b)!, basePos),
+      count: n,
+    });
+    created = addLinearCopies(b, geometry, positions, base, [
+      dirOf(l1!, count),
+      ...(l2 && count2 !== undefined ? [dirOf(l2, count2)] : []),
+    ]);
+  } else {
+    const centerPos = pointPos(map, record.center!);
+    if (!centerPos) return { reason: 'The pattern centre was deleted.' };
+    created = addCircularCopies(
+      b,
+      geometry,
+      positions,
+      record.center!,
+      centerPos,
+      count,
+      angle!,
+      false,
+    );
+  }
+  const index = b.patterns.findIndex((p) => p.id === record.id);
+  const next: SketchPattern = {
+    ...record,
+    sources: record.sources.filter((id) => map.has(id)),
+    count,
+    ...(count2 !== undefined ? { count2 } : {}),
+    ...(record.kind === 'circular' ? { angle: angle! } : {}),
+    created,
+  };
+  if (index >= 0) b.patterns[index] = next;
+  else b.patterns.push(next);
+  return b.result([...record.sources.filter((id) => map.has(id))]);
 }
 
 // ---- fillet / chamfer ------------------------------------------------------------------

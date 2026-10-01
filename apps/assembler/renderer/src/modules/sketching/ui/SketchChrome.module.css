@@ -118,6 +118,14 @@
   min-width: 200px;
 }
 
+.panelTitle {
+  align-self: center;
+  font-family: var(--hc-font-ui);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--hc-fg-default);
+}
+
 .inlineField {
   display: inline-flex;
   align-items: center;

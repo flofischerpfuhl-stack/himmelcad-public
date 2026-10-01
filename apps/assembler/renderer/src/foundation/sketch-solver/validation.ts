@@ -242,6 +242,56 @@ export function validateSketchData(raw: Raw): SketchValidationError | null {
       }
     }
   }
+  const patterns = raw.patterns;
+  if (patterns !== undefined) {
+    if (!Array.isArray(patterns)) return { path: 'patterns', message: 'expected an array' };
+    const count = (v: unknown) => Number.isInteger(v) && (v as number) >= 2 && (v as number) <= 200;
+    for (const [i, p] of patterns.entries()) {
+      const path = `patterns[${i}]`;
+      if (!isRecord(p)) return { path, message: 'expected an object' };
+      if (!isString(p.id) || p.id === '') {
+        return { path: `${path}.id`, message: 'expected a non-empty string' };
+      }
+      if (ids.has(p.id)) return { path: `${path}.id`, message: `duplicate id "${p.id}"` };
+      ids.add(p.id);
+      if (p.kind !== 'linear' && p.kind !== 'circular') {
+        return { path: `${path}.kind`, message: 'expected "linear" or "circular"' };
+      }
+      if (!count(p.count)) return { path: `${path}.count`, message: 'expected an integer 2..200' };
+      const entityIds = (v: unknown, min: number) =>
+        Array.isArray(v) && v.length >= min && v.every((id) => isString(id) && kinds.has(id));
+      if (!entityIds(p.sources, 1)) {
+        return { path: `${path}.sources`, message: 'expected ids of entities of this sketch' };
+      }
+      if (!entityIds(p.created, 0)) {
+        return { path: `${path}.created`, message: 'expected ids of entities of this sketch' };
+      }
+      if (p.kind === 'linear') {
+        const lines = p.lines;
+        if (
+          !Array.isArray(lines) ||
+          lines.length < 1 ||
+          lines.length > 2 ||
+          !lines.every((id) => isString(id) && kinds.get(id) === 'line')
+        ) {
+          return { path: `${path}.lines`, message: 'expected one or two line ids' };
+        }
+        if (
+          (lines.length === 2) !== (p.count2 !== undefined) ||
+          (p.count2 !== undefined && !count(p.count2))
+        ) {
+          return { path: `${path}.count2`, message: 'expected an integer 2..200 with two lines' };
+        }
+      } else {
+        if (!isString(p.center) || !(p.center === ORIGIN_ID || kinds.get(p.center) === 'point')) {
+          return { path: `${path}.center`, message: 'expected the id of a point entity' };
+        }
+        if (!isNumber(p.angle) || p.angle === 0 || Math.abs(p.angle) > 360) {
+          return { path: `${path}.angle`, message: 'expected a non-zero angle within ±360' };
+        }
+      }
+    }
+  }
   const memory = raw.regionMemory;
   if (memory !== undefined) {
     if (!Array.isArray(memory)) return { path: 'regionMemory', message: 'expected an array' };

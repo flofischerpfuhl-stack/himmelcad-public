@@ -129,6 +129,7 @@ const FIELD_LABEL: Record<ValueField, string> = {
   height: 'Height',
   distance: 'Offset distance',
   count: 'Count',
+  count2: 'Count 2',
   spacing: 'Spacing',
   angle: 'Angle',
   major: 'First radius',
@@ -958,6 +959,49 @@ export function SketchOverlay({
             <circle key={`pp${i}`} cx={s[0]} cy={s[1]} r={3} className={styles.previewPoint} />
           ) : null;
         })}
+        {preview?.arrows?.map((arrow) => {
+          const s = api.toScreen(arrow.at);
+          const ahead = api.toScreen([
+            arrow.at[0] + arrow.dir[0] * scale,
+            arrow.at[1] + arrow.dir[1] * scale,
+          ]);
+          if (!s || !ahead) return null;
+          const dx = ahead[0] - s[0];
+          const dy = ahead[1] - s[1];
+          const l = Math.hypot(dx, dy) || 1;
+          const [ux, uy] = [dx / l, dy / l];
+          const tip: [number, number] = [s[0] + ux * 30, s[1] + uy * 30];
+          const head = `M${tip[0]} ${tip[1]}L${tip[0] - ux * 9 - uy * 5} ${tip[1] - uy * 9 + ux * 5}L${tip[0] - ux * 9 + uy * 5} ${tip[1] - uy * 9 - ux * 5}Z`;
+          return (
+            <g
+              key={`arrow${arrow.index}`}
+              className={styles.offsetArrow}
+              data-offset-arrow={arrow.index}
+              role="button"
+              aria-label={`Flip loop ${arrow.index + 1}`}
+              onPointerDown={(event) => {
+                if (event.button !== 0) return;
+                event.stopPropagation();
+                useSketchStore.getState().flipOffsetLoop(arrow.index);
+              }}
+            >
+              <circle
+                cx={s[0] + ux * 18}
+                cy={s[1] + uy * 18}
+                r={16}
+                className={styles.offsetArrowHit}
+              />
+              <line
+                x1={s[0] + ux * 6}
+                y1={s[1] + uy * 6}
+                x2={tip[0] - ux * 6}
+                y2={tip[1] - uy * 6}
+                className={styles.offsetArrowShaft}
+              />
+              <path d={head} className={styles.offsetArrowHead} />
+            </g>
+          );
+        })}
         {textPreview.map((c, i) => {
           const d = pathOf(c, api, true);
           return d ? <path key={`t${i}`} d={d} className={styles.preview} /> : null;
@@ -1010,7 +1054,7 @@ export function SketchOverlay({
             const at = api.toScreen(chip.at);
             if (!at) return null;
             const angle = chip.field === 'angle';
-            const count = chip.field === 'count';
+            const count = chip.field === 'count' || chip.field === 'count2';
             return (
               <ToolValueChip
                 key={chip.field}

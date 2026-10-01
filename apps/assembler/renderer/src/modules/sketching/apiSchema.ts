@@ -33,7 +33,7 @@ export const SKETCHES_LIST_METHODS: Record<string, MethodSpec> = {
       'Sketches with frame, entities, constraints, dimensions and their detected profiles (regions with stable keys, the boundary entity ids and world-space centres).',
     params: obj({ scope }),
     result:
-      '[{featureId, name, plane, frame: {origin,u,v,normal}, entities, constraints, dimensions, regions: [{key, area, sample, center, holes, entityIds}], consumed}]',
+      '[{featureId, name, plane, frame: {origin,u,v,normal}, entities, constraints, dimensions, patterns: [{id, kind, sources, count, count2?, lines?, center?, angle?, created}], regions: [{key, area, sample, center, holes, entityIds}], consumed}]',
   },
 };
 
@@ -293,7 +293,7 @@ export const SKETCH_EDIT_METHODS: Record<string, MethodSpec> = {
     capability: 'document.write',
     transactional: true,
     summary:
-      'Repeats curves/points `ids`: linear (`direction`, `spacing` — a spacing dimension drives every copy) or circular (`center`, `angle` total degrees, 360 = full turn); `count` includes the original.',
+      'Repeats curves/points `ids`: linear (`direction`, `spacing` — a spacing dimension drives every copy; with `count2`, `direction2`, `spacing2` a grid in two directions) or circular (`center`, `angle` total degrees, 360 = full turn); `count` includes the original. The pattern is recorded (`patternId`) so count/count2/angle stay editable (sketch.editPattern).',
     params: obj(
       {
         featureId: str,
@@ -302,12 +302,53 @@ export const SKETCH_EDIT_METHODS: Record<string, MethodSpec> = {
         count: { type: 'integer', minimum: 2, maximum: 200 },
         direction: ref('Vec2'),
         spacing: positive,
+        count2: { type: 'integer', minimum: 2, maximum: 200 },
+        direction2: ref('Vec2'),
+        spacing2: positive,
         center: ref('Vec2'),
         centerPointId: str,
         angle: num,
         expectedRevision: revision,
       },
       ['featureId', 'ids', 'count'],
+    ),
+    result: '{featureId, patternId, createdIds, dof, regions, revision, committed}',
+  },
+  'sketch.editPattern': {
+    kind: 'command',
+    capability: 'document.write',
+    transactional: true,
+    summary:
+      'Changes a recorded sketch pattern (sketches.list → patterns): `count`, `count2` (two-direction linear patterns) or `angle` (circular, total degrees). The copies are rebuilt from the sources; spacing dimensions, direction lines and the centre stay.',
+    params: obj(
+      {
+        featureId: str,
+        patternId: str,
+        count: { type: 'integer', minimum: 2, maximum: 200 },
+        count2: { type: 'integer', minimum: 2, maximum: 200 },
+        angle: num,
+        expectedRevision: revision,
+      },
+      ['featureId', 'patternId'],
+    ),
+    result: '{featureId, patternId, pattern, dof, regions, revision, committed}',
+  },
+  'sketch.offset': {
+    kind: 'command',
+    capability: 'document.write',
+    transactional: true,
+    summary:
+      'Offsets each curve of `ids` with its chain (connected curves; `single: true` only the curve) by `distance`: closed loops to the `outside` (default) or `inside`, open chains to the `left`/`right` of the curve direction. Lines and arcs offset exactly; ellipses, elliptical arcs and splines become fit splines through their true offset. New, unconstrained geometry.',
+    params: obj(
+      {
+        featureId: str,
+        ids: { type: 'array', items: str, minItems: 1 },
+        distance: positive,
+        side: { enum: ['outside', 'inside', 'left', 'right'], default: 'outside' },
+        single: { type: 'boolean', default: false },
+        expectedRevision: revision,
+      },
+      ['featureId', 'ids', 'distance'],
     ),
     result: '{featureId, createdIds, dof, regions, revision, committed}',
   },
