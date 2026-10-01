@@ -9,12 +9,13 @@ import { create } from 'zustand';
 import type { KernelAdapter } from '../../foundation/geometry-kernel/adapter.js';
 import { projectPersistence } from '../../foundation/document/projectPersistence.js';
 import { useAssemblerStore } from '../../foundation/commands/store.js';
+import { host } from '../../foundation/host/index.js';
 import { agentPrintability, usePrintStore } from '../../modules/print/printStore.js';
 import { handleJsonRpcText } from './jsonRpc.js';
 import { APP_CAPABILITIES, AgentSession, type SessionHost } from './session.js';
 
 export interface AutomationState {
-  /** `true` in the desktop app (the endpoint needs the Electron main process). */
+  /** `true` where the host has an agent transport (desktop endpoint, web in-page API). */
   available: boolean;
   enabled: boolean;
   url: string | null;
@@ -28,8 +29,9 @@ export interface AutomationState {
   connectionText: () => string | null;
 }
 
+/** The host's agent transport: the desktop loopback endpoint or the web's in-page API (`foundation/host`). */
 function api() {
-  return typeof window !== 'undefined' ? window.assembler?.automation : undefined;
+  return host().automation ?? undefined;
 }
 
 export const useAutomationStore = create<AutomationState>((set, get) => ({
@@ -56,7 +58,9 @@ export const useAutomationStore = create<AutomationState>((set, get) => ({
   },
   connectionText: () => {
     const { url, token, enabled } = get();
-    return enabled && url && token ? JSON.stringify({ url, token }) : null;
+    if (!enabled || !url) return null;
+    // The web's in-page API has no token: only scripts in the page itself can reach it.
+    return JSON.stringify(token ? { url, token } : { url });
   },
 }));
 

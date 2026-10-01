@@ -1,67 +1,35 @@
 /**
- * File I/O abstraction over the two runtimes this app ships for
- * (`apps/assembler/README.md`): Electron (native dialogs + filesystem via
- * `window.assembler.project`, see `electron/fileApi.ts`) and the browser
- * (`pnpm dev:web`, file input for Open, downloads for Save/Export). Callers
- * (`projectStore.ts`, the `file.*` commands) never branch on the runtime
- * themselves — they call these functions.
+ * File I/O for the project lifecycle and the exchange formats, over the
+ * platform host (`foundation/host`): the desktop app (native dialogs and
+ * filesystem through `window.assembler`), the web product (File System
+ * Access API or upload/download, IndexedDB) or a plain browser
+ * (`pnpm dev:web`). Callers (`projectStore.ts`, the `file.*` commands,
+ * exports) never branch on the runtime themselves — they call these
+ * functions.
  */
-// `window.assembler`'s type comes from the ambient augmentation in
-// `../../global.d.ts` (included by both `tsconfig.json`, the renderer
-// program, and `tsconfig.test.json`, see its `include`).
+import { host, type HostRecentFileInfo } from '../host/index.js';
 
 export interface OpenResult {
-  /** Electron: the absolute path opened. Web: `null` — a File object has no path. */
+  /** Desktop: the absolute path opened. Web: an opaque file-handle id, or `null` for an uploaded copy. */
   path: string | null;
   text: string;
 }
 
 export interface SaveResult {
-  /** Electron: the absolute path saved to. Web: `null` — a download has no path. */
+  /** Desktop: the absolute path saved to. Web: an opaque file-handle id, or `null` for a download. */
   path: string | null;
 }
 
+/** `true` in the desktop app (the Electron preload bridge is the host). */
 function isElectron(): boolean {
-  return typeof window !== 'undefined' && window.assembler !== undefined;
+  return host().kind === 'desktop';
 }
 
 export { isElectron };
 
 /** Opens a native/browser file picker for a `.hcasm` project and reads its text. `null` if cancelled. */
 export async function openProjectDialog(): Promise<OpenResult | null> {
-  if (isElectron()) {
-    const result = await window.assembler!.project.openDialog();
-    return result ? { path: result.path, text: result.text } : null;
-  }
-  return openViaFileInput('.hcasm');
-}
-
-function openViaFileInput(accept: string): Promise<OpenResult | null> {
-  return new Promise((resolve) => {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = accept;
-    input.style.display = 'none';
-    let settled = false;
-    const finish = (value: OpenResult | null) => {
-      if (settled) return;
-      settled = true;
-      input.remove();
-      resolve(value);
-    };
-    input.addEventListener('change', () => {
-      const file = input.files?.[0];
-      if (!file) {
-        finish(null);
-        return;
-      }
-      void file.text().then((text) => finish({ path: null, text }));
-    });
-    // A cancelled native picker fires no event Chromium exposes reliably across
-    // platforms; the caller's UI is expected to tolerate "no change" (no-op).
-    document.body.appendChild(input);
-    input.click();
-  });
+  return host().files.openProject();
 }
 
 function bytesToBase64(bytes: Uint8Array): string {
@@ -74,250 +42,115 @@ function bytesToBase64(bytes: Uint8Array): string {
 }
 
 /**
- * Opens a native/browser file picker for a STEP file (`.step`/`.stp`) and
- * returns its bytes as base64, ready to embed in an `ImportStepFeature`.
+ * Opens a file picker for a STEP file (`.step`/`.stp`) and returns its bytes
+ * as base64, ready to embed in an `ImportStepFeature`.
  */
 export async function openStepDialog(): Promise<{ fileName: string; base64: string } | null> {
-  if (isElectron()) {
-    // Electron has no dedicated binary-open dialog in this app's IPC surface
-    // yet (only the project-file open dialog); reuse the browser picker,
-    // which works identically inside Electron's Chromium renderer.
-    return openBinaryViaFileInput('.step,.stp');
-  }
-  return openBinaryViaFileInput('.step,.stp');
+  const picked = await host().files.openBinary('.step,.stp');
+  return picked ? { fileName: picked.fileName, base64: bytesToBase64(picked.bytes) } : null;
 }
 
 /**
- * Opens a native/browser file picker for an STL file (`.stl`) and returns
- * its raw bytes, ready for `kernel/stlImport.ts#parseStl`. Binary and ASCII
- * STL are both plain bytes here; format detection happens in the parser.
+ * Opens a file picker for an STL file (`.stl`) and returns its raw bytes,
+ * ready for `kernel/stlImport.ts#parseStl`. Binary and ASCII STL are both
+ * plain bytes here; format detection happens in the parser.
  */
 export async function openStlDialog(): Promise<{ fileName: string; bytes: Uint8Array } | null> {
-  return openBinaryBytesViaFileInput('.stl');
-}
-
-function openBinaryBytesViaFileInput(
-  accept: string,
-): Promise<{ fileName: string; bytes: Uint8Array } | null> {
-  return new Promise((resolve) => {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = accept;
-    input.style.display = 'none';
-    let settled = false;
-    const finish = (value: { fileName: string; bytes: Uint8Array } | null) => {
-      if (settled) return;
-      settled = true;
-      input.remove();
-      resolve(value);
-    };
-    input.addEventListener('change', () => {
-      const file = input.files?.[0];
-      if (!file) {
-        finish(null);
-        return;
-      }
-      void file
-        .arrayBuffer()
-        .then((buffer) => finish({ fileName: file.name, bytes: new Uint8Array(buffer) }));
-    });
-    document.body.appendChild(input);
-    input.click();
-  });
-}
-
-function openBinaryViaFileInput(
-  accept: string,
-): Promise<{ fileName: string; base64: string } | null> {
-  return new Promise((resolve) => {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = accept;
-    input.style.display = 'none';
-    let settled = false;
-    const finish = (value: { fileName: string; base64: string } | null) => {
-      if (settled) return;
-      settled = true;
-      input.remove();
-      resolve(value);
-    };
-    input.addEventListener('change', () => {
-      const file = input.files?.[0];
-      if (!file) {
-        finish(null);
-        return;
-      }
-      void file
-        .arrayBuffer()
-        .then((buffer) =>
-          finish({ fileName: file.name, base64: bytesToBase64(new Uint8Array(buffer)) }),
-        );
-    });
-    document.body.appendChild(input);
-    input.click();
-  });
+  return host().files.openBinary('.stl');
 }
 
 /**
- * Saves `text` to `path` if given (Electron, "Save"), otherwise prompts
- * ("Save As" / web download). Returns the path saved to (Electron) or
- * `null` (web, or cancelled).
+ * Saves `text` to `path` if given ("Save"), otherwise prompts ("Save As" /
+ * web download). Returns where it was saved (`path` `null` for a download),
+ * or `null` if cancelled.
  */
 export async function saveProjectText(
   text: string,
   options: { path?: string | null; suggestedName: string; forceDialog?: boolean },
 ): Promise<SaveResult | null> {
-  if (isElectron()) {
-    const api = window.assembler!.project;
-    let path = options.forceDialog ? null : (options.path ?? null);
-    if (!path) {
-      const chosen = await api.saveDialog(options.suggestedName);
-      if (!chosen) return null;
-      path = chosen.path;
-    }
-    await api.save(path, text);
-    return { path };
-  }
-  downloadBlob(new Blob([text], { type: 'application/json' }), options.suggestedName);
-  return { path: null };
+  return host().files.saveProject(text, options);
 }
 
-/** Exports binary `bytes` via a native "Save As" dialog (Electron) or a browser download. */
+/** Exports binary `bytes` via a "Save As" dialog (desktop, Chromium) or a browser download. */
 export async function exportBinary(
   bytes: Uint8Array,
   suggestedName: string,
   filters: { name: string; extensions: string[] }[],
   mimeType: string,
 ): Promise<SaveResult | null> {
-  if (isElectron()) {
-    const api = window.assembler!.project;
-    const chosen = await api.exportDialog(suggestedName, filters);
-    if (!chosen) return null;
-    await api.writeBinary(chosen.path, bytes);
-    return { path: chosen.path };
-  }
-  downloadBlob(new Blob([new Uint8Array(bytes)], { type: mimeType }), suggestedName);
-  return { path: null };
-}
-
-function downloadBlob(blob: Blob, suggestedName: string): void {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = suggestedName;
-  a.style.display = 'none';
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 30_000);
-}
-
-const WEB_RECOVERY_KEY = 'himmelcad-assembler:recovery';
-
-/** `localStorage` when available (browser/Electron renderer); `null` under Node (tests) or when blocked (private mode). */
-function webStorage(): Storage | null {
-  try {
-    return typeof localStorage !== 'undefined' ? localStorage : null;
-  } catch {
-    return null;
-  }
+  return host().files.exportBinary(bytes, suggestedName, filters, mimeType);
 }
 
 export async function readRecovery(): Promise<{ text: string; when: string } | null> {
-  if (isElectron()) return window.assembler!.project.readRecovery();
-  const raw = webStorage()?.getItem(WEB_RECOVERY_KEY);
-  if (!raw) return null;
-  try {
-    const parsed = JSON.parse(raw) as { text: string; when: string };
-    if (typeof parsed.text === 'string' && typeof parsed.when === 'string') return parsed;
-    return null;
-  } catch {
-    return null;
-  }
+  return host().recovery.read();
 }
 
 export async function writeRecovery(text: string): Promise<void> {
-  if (isElectron()) {
-    await window.assembler!.project.writeRecovery(text);
-    return;
-  }
-  webStorage()?.setItem(WEB_RECOVERY_KEY, JSON.stringify({ text, when: new Date().toISOString() }));
+  await host().recovery.write(text);
 }
 
 export async function clearRecovery(): Promise<void> {
-  if (isElectron()) {
-    await window.assembler!.project.clearRecovery();
-    return;
-  }
-  webStorage()?.removeItem(WEB_RECOVERY_KEY);
+  await host().recovery.clear();
 }
 
 /**
- * Registers the Electron main-process close confirmation. No-op on the web
- * (there is no equivalent "window close" to intercept there; browsers get
- * `beforeunload` instead, wired separately by the caller if desired).
+ * Registers the host's close confirmation (Electron: the main process asks
+ * before the window closes). No-op on the web, where `beforeunload` can only
+ * show the browser's own prompt (the web product wires that itself).
  */
 export function onCloseRequested(listener: () => void): () => void {
-  if (isElectron()) return window.assembler!.project.onCloseRequested(listener);
-  return () => undefined;
+  return host().window.onCloseRequested(listener);
 }
 
 /**
- * Fires when the main process wants a `.hcasm` opened outside the normal
- * Open dialog: the app was launched with a file argument (double-click on a
- * `.hcasm`, or a command-line path) or a second app instance forwarded its
- * argv (`electron/main.ts`, single-instance lock). No-op on the web (there
- * is no OS file association or process argv there).
+ * Fires when the host wants a `.hcasm` opened outside the normal Open
+ * dialog: launched with a file argument (double-click, command line) or a
+ * second instance forwarded its argv (`electron/main.ts`); in the installed
+ * web app, a file opened through the operating system (File Handling API).
  */
 export function onOpenRequested(listener: (opened: OpenResult) => void): () => void {
-  if (isElectron()) {
-    return window.assembler!.project.onOpenRequested((path, text) => listener({ path, text }));
-  }
-  return () => undefined;
+  return host().window.onOpenRequested(listener);
 }
 
 export async function respondClose(allow: boolean): Promise<void> {
-  if (isElectron()) await window.assembler!.project.respondClose(allow);
+  await host().window.respondClose(allow);
 }
 
-export interface RecentFileInfo {
-  path: string;
-  name: string;
-  missing: boolean;
-  /** Last opened/saved in the app (ISO 8601). */
-  openedAt?: string;
-  /** File modification time (ISO 8601), `null` when missing. */
-  modifiedAt?: string | null;
-  /** Home screen preview from the file (`data:image/png;base64,…`). */
-  thumbnail?: string | null;
-}
+export type RecentFileInfo = HostRecentFileInfo;
 
 export interface RecentOpenResult {
   path: string;
   text: string;
 }
 
-/** `[]` on the web (no filesystem paths to remember there — the browser Open flow has no path). */
+/** `true` if this host remembers recent projects (desktop; web with the File System Access API). */
+export function hasRecentFiles(): boolean {
+  return host().recentFiles !== null;
+}
+
+/** Why recent projects are not listed (empty when they are). */
+export function recentFilesUnavailableReason(): string {
+  return host().recentFiles ? '' : host().unavailableReason('recentFiles');
+}
+
+/** `[]` where the host cannot remember project locations. */
 export async function listRecentFiles(): Promise<RecentFileInfo[]> {
-  if (isElectron()) return window.assembler!.recentFiles.list();
-  return [];
+  return (await host().recentFiles?.list()) ?? [];
 }
 
 export async function removeRecentFile(path: string): Promise<void> {
-  if (isElectron()) await window.assembler!.recentFiles.remove(path);
+  await host().recentFiles?.remove(path);
 }
 
 export async function openRecentFile(path: string): Promise<RecentOpenResult | null> {
-  if (isElectron()) return window.assembler!.recentFiles.openPath(path);
-  return null;
+  return (await host().recentFiles?.openPath(path)) ?? null;
 }
 
-/** A project at `path` opened successfully: it goes to the top of Open Recent (Electron). */
+/** A project at `path` opened successfully: it goes to the top of Open Recent. */
 export async function confirmOpenedFile(path: string): Promise<void> {
-  if (isElectron()) await window.assembler!.recentFiles.confirmOpened(path);
+  await host().recentFiles?.confirmOpened(path);
 }
 
 export async function locateRecentFile(oldPath: string): Promise<RecentOpenResult | null> {
-  if (isElectron()) return window.assembler!.recentFiles.locate(oldPath);
-  return null;
+  return (await host().recentFiles?.locate(oldPath)) ?? null;
 }

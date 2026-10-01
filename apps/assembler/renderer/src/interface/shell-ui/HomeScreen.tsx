@@ -20,10 +20,11 @@ import { Button, Spinner, registerEscapeRung } from '@himmelcad/ui';
 
 import { findCommand } from '../../foundation/commands/registry.js';
 import {
-  isElectron,
+  hasRecentFiles,
   listRecentFiles,
   locateRecentFile,
   openRecentFile,
+  recentFilesUnavailableReason,
   removeRecentFile,
   type RecentFileInfo,
 } from '../../foundation/document/persistence.js';
@@ -300,7 +301,9 @@ export function HomeScreen(): JSX.Element | null {
                           ? 'Missing — moved or deleted'
                           : relativeTime(entry.modifiedAt ?? entry.openedAt)}
                       </span>
-                      <span className={styles.recentPath}>{folderOf(entry.path)}</span>
+                      <span className={styles.recentPath}>
+                        {entry.location ?? folderOf(entry.path)}
+                      </span>
                     </button>
                     <div className={styles.recentActions}>
                       {entry.missing ? (
@@ -323,9 +326,9 @@ export function HomeScreen(): JSX.Element | null {
               </ul>
             ) : (
               <p className={styles.empty}>
-                {isElectron()
+                {hasRecentFiles()
                   ? 'Projects you open or save appear here, with a preview of the model.'
-                  : 'Recent projects are listed in the desktop app.'}
+                  : recentFilesUnavailableReason()}
               </p>
             )}
           </section>

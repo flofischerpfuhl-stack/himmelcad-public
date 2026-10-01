@@ -2,8 +2,9 @@
  * File > Open Recent submenu: up to 8 most-recently-opened/saved `.hcasm`
  * paths (`electron/recentFiles.ts`, persisted in `userData`). A missing
  * file (moved/deleted since) is shown greyed out with Locate…/Remove
- * instead of Open. Web builds never show this (no filesystem paths there —
- * `listRecentFiles` resolves to `[]`).
+ * instead of Open. The web product lists file handles it kept in IndexedDB
+ * (File System Access API); a plain browser never shows this
+ * (`listRecentFiles` resolves to `[]`).
  */
 import { useEffect, useState } from 'react';
 
@@ -72,7 +73,7 @@ export function RecentFilesMenu(): JSX.Element {
           <span key={entry.path} style={{ display: 'flex', alignItems: 'center', width: '100%' }}>
             <MenuItem
               disabled={entry.missing}
-              title={entry.missing ? `${entry.path} (missing)` : entry.path}
+              title={`${entry.location ? `${entry.name} · ${entry.location}` : entry.path}${entry.missing ? ' (missing)' : ''}`}
               style={{ flex: 1, opacity: entry.missing ? 0.5 : 1 }}
               onSelect={() => openEntry(entry.path)}
             >

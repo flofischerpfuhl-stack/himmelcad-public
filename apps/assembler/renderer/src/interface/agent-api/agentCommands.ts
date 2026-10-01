@@ -4,6 +4,7 @@
  * (`module.ts`); moved out of the command registry unchanged.
  */
 import type { Command } from '../../foundation/commands/registry.js';
+import { host } from '../../foundation/host/index.js';
 import { useAutomationStore } from './automationStore.js';
 
 export const AGENT_COMMANDS: readonly Command[] = [
@@ -15,7 +16,7 @@ export const AGENT_COMMANDS: readonly Command[] = [
     availability: () => {
       const automation = useAutomationStore.getState();
       if (!automation.available) {
-        return { enabled: false, reason: 'Only available in the desktop app.' };
+        return { enabled: false, reason: host().unavailableReason('automation') };
       }
       return { enabled: true, recommended: automation.enabled };
     },

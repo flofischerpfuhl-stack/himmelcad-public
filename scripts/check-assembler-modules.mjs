@@ -31,7 +31,11 @@ import { importSpecifiers } from './check-module-dependencies.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const appRoot = join(root, 'apps/assembler');
-const SOURCE_ROOTS = ['renderer/src', 'headless', 'electron'];
+// Source roots relative to `apps/assembler`; `modules.json` `sourceRoots` overrides them (the web
+// product's `../assembler-web/src` is one: products are compositions of the same modules).
+const DEFAULT_SOURCE_ROOTS = ['renderer/src', 'headless', 'electron'];
+const sourceRootsOf = (manifest) =>
+  (manifest.sourceRoots ?? DEFAULT_SOURCE_ROOTS).filter((root) => existsSync(join(appRoot, root)));
 const SOURCE_EXTENSIONS = new Set(['.ts', '.tsx', '.mts', '.cts', '.js', '.mjs']);
 const RESOLVE_EXTENSIONS = ['', '.ts', '.tsx', '.d.ts', '/index.ts', '/index.tsx'];
 const LAYERS_WITH_ORDER = new Set(['foundation', 'platform', 'interface']);
@@ -112,7 +116,7 @@ export function externalRuleFor(manifest, from, specifier, fromFile = '') {
   return null;
 }
 
-function sourceFiles() {
+function sourceFiles(sourceRoots) {
   const files = [];
   const visit = (directory) => {
     for (const entry of readdirSync(directory, { withFileTypes: true })) {
@@ -124,12 +128,12 @@ function sourceFiles() {
       }
     }
   };
-  for (const sourceRoot of SOURCE_ROOTS) visit(join(appRoot, sourceRoot));
+  for (const sourceRoot of sourceRoots) visit(join(appRoot, sourceRoot));
   return files.sort();
 }
 
 /** Every file (sources and assets such as CSS modules) under the source roots, app-relative. */
-function allFiles() {
+function allFiles(sourceRoots) {
   const files = [];
   const visit = (directory) => {
     for (const entry of readdirSync(directory, { withFileTypes: true })) {
@@ -140,7 +144,7 @@ function allFiles() {
       } else files.push(toPosix(relative(appRoot, path)));
     }
   };
-  for (const sourceRoot of SOURCE_ROOTS) visit(join(appRoot, sourceRoot));
+  for (const sourceRoot of sourceRoots) visit(join(appRoot, sourceRoot));
   return files.sort();
 }
 
@@ -245,16 +249,18 @@ function describeRule(rule) {
 }
 
 function collect(manifest) {
-  const files = allFiles();
+  const sourceRoots = sourceRootsOf(manifest);
+  const files = allFiles(sourceRoots);
   const edges = [];
-  for (const path of sourceFiles()) {
+  for (const path of sourceFiles(sourceRoots)) {
     const fromFile = toPosix(relative(appRoot, path));
     for (const specifier of importSpecifiers(path)) {
       if (specifier.startsWith('.')) {
         const target = resolveRelative(path, specifier);
         if (!target) continue; // tsc reports unresolved imports
         const targetFile = toPosix(relative(appRoot, target));
-        if (targetFile.startsWith('..')) continue; // outside the app (types/, packages)
+        // Outside the source roots (types/, packages); the web product's files are inside.
+        if (targetFile.startsWith('..') && !moduleOf(manifest, targetFile)) continue;
         edges.push({ fromFile, target: targetFile, external: false });
       } else if (!specifier.startsWith('node:')) {
         edges.push({ fromFile, target: specifier, external: true });
