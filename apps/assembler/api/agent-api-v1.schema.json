@@ -2622,7 +2622,8 @@
           },
           "fileName": {
             "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "default": "image"
           },
           "pixelWidth": {
             "type": "number",
@@ -2643,12 +2644,14 @@
             "exclusiveMinimum": 0
           },
           "rotation": {
-            "type": "number"
+            "type": "number",
+            "default": 0
           },
           "opacity": {
             "type": "number",
             "minimum": 0.05,
-            "maximum": 1
+            "maximum": 1,
+            "default": 0.6
           }
         },
         "required": ["imageId", "pixelWidth", "pixelHeight", "plane", "center", "width"],

@@ -228,6 +228,29 @@ void test('canvas: refusals carry readable reasons', async () => {
   );
 });
 
+void test('canvas: feature.create takes what the kind schema requires; the defaults fill the rest', async () => {
+  await reset();
+  // `fileName`, `rotation`, `opacity` and the plane's `offset` are optional in the published
+  // schema (with defaults); the stored step has them all, so the file validator accepts it.
+  const created = await call<{ featureId: string }>('feature.create', {
+    kind: 'referenceImage',
+    params: {
+      imageId: 'img-1',
+      pixelWidth: 40,
+      pixelHeight: 20,
+      plane: { kind: 'plane', plane: 'XZ' },
+      center: [0, 0],
+      width: 50,
+    },
+  });
+  const [image] = images();
+  assert.equal(image?.id, created.featureId);
+  assert.deepEqual(
+    [image!.fileName, image!.rotation, image!.opacity, image!.plane],
+    ['image', 0, 0.6, { kind: 'plane', plane: 'XZ', offset: 0 }],
+  );
+});
+
 void test('canvas: pictures round-trip through the project file; unused ones are not written', async () => {
   await reset();
   await call('image.insert', { data: toBase64(png(64, 64, 1)), fileName: 'keep.png' });

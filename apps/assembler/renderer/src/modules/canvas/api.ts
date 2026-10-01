@@ -220,14 +220,14 @@ const KIND_SCHEMAS: Record<string, FeatureKindSpec> = {
     params: schemaObject(
       {
         imageId: schemaString,
-        fileName: schemaString,
+        fileName: { ...schemaString, default: 'image' },
         pixelWidth: schemaPositive,
         pixelHeight: schemaPositive,
         plane: schemaRef('SketchPlane'),
         center: schemaRef('Vec2'),
         width: schemaPositive,
-        rotation: schemaNumber,
-        opacity: { type: 'number', minimum: 0.05, maximum: 1 },
+        rotation: { ...schemaNumber, default: 0 },
+        opacity: { type: 'number', minimum: 0.05, maximum: 1, default: DEFAULT_IMAGE_OPACITY },
       },
       ['imageId', 'pixelWidth', 'pixelHeight', 'plane', 'center', 'width'],
     ),

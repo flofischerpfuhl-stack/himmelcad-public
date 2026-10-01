@@ -285,6 +285,10 @@ function normalise(
       }
       return out;
     }
+    case 'referenceImage':
+      // The published SketchPlane leaves a world plane's offset optional; the file stores it.
+      if (out.plane !== undefined) out.plane = planeRef(out.plane, 'params.plane');
+      return out;
     case 'align':
       for (const field of ['face', 'target'] as const) {
         if (out[field] !== undefined) {
@@ -494,6 +498,9 @@ function defaults(kind: string, params: Json): Json {
         center: [0, 0, 0],
         operation: 'new',
       };
+    case 'referenceImage':
+      // Optional in the published kind schema (its `default`s), required in the file.
+      return { fileName: 'image', rotation: 0, opacity: 0.6 };
     default:
       return {};
   }
