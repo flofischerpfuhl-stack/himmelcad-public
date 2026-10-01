@@ -1,0 +1,46 @@
+Himmel:CAD Assembler (web) - LGPL source offer and replacement
+=============================================================
+
+The web version of Himmel:CAD Assembler is a set of static files. Two
+libraries in it are under the GNU Lesser General Public License and stay
+separate, replaceable files (see THIRD-PARTY-NOTICES.txt in this folder for
+components, versions, licences and upstream source locations):
+
+- Open CASCADE Technology (OCCT) 8.0.1 compiled to WebAssembly:
+  assets/himmelcad_occt-<hash>.wasm and assets/himmelcad_occt-<hash>.js
+  (or assets/replicad_single-<hash>.{wasm,js} in builds made with
+  HIMMELCAD_OCCT=replicad, which are unmodified from replicad-opencascadejs
+  1.1.0).
+- FreeCAD planeGCS compiled to WebAssembly (unmodified, @salusoft89/planegcs
+  1.2.0): assets/planegcs-<hash>.wasm and assets/planegcs-<hash>.js.
+
+Source of the modified OCCT build
+---------------------------------
+
+The HimmelCAD OCCT module (@himmelcad/occt-wasm, version in
+source/occt-wasm/package.json) is a modified build. Its complete build
+recipe - build script, the added C++ sources, the extra bindings and the
+pinned revisions of every upstream input - ships with this site in
+
+  licenses/source/occt-wasm/
+
+(README.md, build.sh, build-config/, tools/, LICENSE,
+OCCT-LGPL-EXCEPTION.txt, artifacts.sha256 with the SHA-256 of the shipped
+files), under the LGPL 2.1 with the Open CASCADE exception. All upstream
+inputs (OCCT tag V8_0_1, the opencascade.js and replicad revisions named in
+README.md) are public at the URLs given there. It is offered from the same
+place as the application itself for as long as this version is served.
+
+Replacing a library
+-------------------
+
+You may modify these libraries, rebuild them (licenses/source/occt-wasm/
+build.sh for OCCT; the planeGCS repository's build for planeGCS) and use your
+build with this application: copy the site (every file it consists of is
+listed in sw.js, the service worker's precache list), replace the two files
+of the library keeping their names, remove the "sha256" entry of the
+replaced .wasm from sw.js (the service worker checks the shipped modules'
+checksums), and serve the folder over HTTPS (or http://localhost) from any
+web server that sends .wasm files as application/wasm. You may
+reverse-engineer the application to the extent needed to debug such
+modifications.

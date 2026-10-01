@@ -1,0 +1,41 @@
+/* Bottom right, below the right panel column (it ends 64px above the bottom): the corner the
+   shell leaves free (docks and panels top and sides, the status strip, tool session and notices
+   bottom centre, the modes bottom left). Half the width at most, so it never reaches the
+   status strip in the middle. */
+.host {
+  position: absolute;
+  right: calc(14px + env(safe-area-inset-right, 0px));
+  bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+  z-index: var(--hc-z-toast);
+  max-width: min(420px, max(240px, calc(50vw - 72px)));
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--hc-space-2);
+  /* Only the toasts take input; the gaps between them stay the viewport's. */
+  pointer-events: none;
+}
+
+/* Above the Agent Access indicator, which shares the corner while access is on. */
+.host[data-raised] {
+  bottom: calc(52px + env(safe-area-inset-bottom, 0px));
+}
+
+.host > * {
+  pointer-events: auto;
+}
+
+.offline {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--hc-space-1);
+  padding: 3px var(--hc-space-2);
+  background: var(--hc-bg-island);
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-chip);
+  box-shadow: var(--hc-shadow-chip);
+  font-family: var(--hc-font-ui);
+  font-size: 12px;
+  color: var(--hc-fg-muted);
+  white-space: nowrap;
+}

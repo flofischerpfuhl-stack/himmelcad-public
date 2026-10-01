@@ -9,6 +9,8 @@
   position: relative;
   width: 100vw;
   height: 100vh;
+  /* Mobile browsers (the web app on iPad/phones): the visible height, without the URL bar. */
+  height: 100dvh;
   overflow: hidden;
   background: var(--hc-bg-void);
   color: var(--hc-fg-default);

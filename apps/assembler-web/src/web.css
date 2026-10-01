@@ -1,0 +1,19 @@
+/* Document base of the web product (the shell's own base is `assembler.css`). */
+
+html,
+body {
+  /* A drag that reaches the page edge must not pull-to-refresh, navigate back or bounce the page. */
+  overscroll-behavior: none;
+}
+
+body {
+  -webkit-tap-highlight-color: transparent;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+#hc-root {
+  /* The app is the page: nothing scrolls behind it (iOS rubber-banding). */
+  position: fixed;
+  inset: 0;
+}

@@ -22,7 +22,7 @@
  */
 import { deflateSync } from 'node:zlib';
 import { mkdir, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -86,16 +86,21 @@ function fillRoundedSquare(buffer, size, radius, color) {
   }
 }
 
-/** Draws the isometric box mark centred in a `size`x`size` RGBA buffer. */
-function drawIcon(size) {
+/**
+ * Draws the isometric box mark centred in a `size`x`size` RGBA buffer.
+ * `maskable`: a full-bleed background with the mark inside the 80 % safe
+ * circle of a web app manifest `maskable` icon (used by apps/assembler-web).
+ */
+export function drawIcon(size, { maskable = false } = {}) {
   const buffer = new Uint8Array(size * size * 4);
-  fillRoundedSquare(buffer, size, size * 0.22, BG);
+  fillRoundedSquare(buffer, size, maskable ? 0 : size * 0.22, BG);
 
+  const scale = maskable ? 0.78 : 1;
   const cx = size * 0.5;
   const cy = size * 0.53;
-  const w = size * 0.34; // half-width of the cube's footprint
-  const hTop = size * 0.18; // top-face rhombus half-height
-  const hSide = size * 0.24; // side-face height
+  const w = size * 0.34 * scale; // half-width of the cube's footprint
+  const hTop = size * 0.18 * scale; // top-face rhombus half-height
+  const hSide = size * 0.24 * scale; // side-face height
 
   /** @type {Point} */ const top = [cx, cy - hSide];
   /** @type {Point} */ const left = [cx - w, cy - hSide + hTop];
@@ -144,7 +149,7 @@ function chunk(type, data) {
 }
 
 /** Encodes an RGBA `Uint8Array` as a minimal 8-bit truecolour-with-alpha PNG. */
-function encodePng(size, rgba) {
+export function encodePng(size, rgba) {
   const signature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
   const ihdrData = Buffer.alloc(13);
   ihdrData.writeUInt32BE(size, 0);
@@ -210,4 +215,5 @@ async function main() {
   console.log(`[generate-icon] wrote ${join(OUT_DIR, 'icon.ico')} (sizes: ${icoSizes.join(', ')})`);
 }
 
-await main();
+// Run as a script (`pnpm icon`); apps/assembler-web imports `drawIcon`/`encodePng`.
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) await main();
