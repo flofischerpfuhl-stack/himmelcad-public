@@ -17,8 +17,9 @@ the code is in `apps/assembler/renderer/src/{viewport,model,chrome}`.
 
 Preferences: theme, toolbar labels (icons / hover / always), display units
 (mm / inch — read-outs and tool value chips only; documents stay mm, sketch
-dimensions stay mm), grid defaults, navigation preset, projection and field
-of view, camera animation, single-key hotkeys.
+dimensions stay mm), grid defaults, navigation preset, orbit pivot (Orbit around),
+projection (Orthographic / Adaptive / Perspective) and field of view, camera
+animation, single-key hotkeys.
 
 ## Body names, folders and colour — decision
 
@@ -68,11 +69,10 @@ of view, camera animation, single-key hotkeys.
   Top). Tests check all six presets and iso.
 - Cube: faces → preset views; edge strips → the 12 edge views; corners → the
   8 isometric views; drag orbits; double-click → Home (iso + fit); right-click
-  → Home, Zoom to fit, Perspective/Orthographic, Save view; in face-on views
-  two arrows roll the view by 90°.
-- Projection: perspective (FOV 15–90°) or orthographic, kept at the same
-  apparent size (`withFov`). Transitions animate (300 ms ease-out) unless
-  reduced motion or turned off.
+  → Home, Zoom to fit, the three projections (checked), Save view; in face-on
+  views two arrows roll the view by 90°.
+- Camera transitions animate (300 ms ease-out) unless reduced motion or
+  turned off. Projection and pivot: the two sections below.
 - Zoom to selection `Z`; Look at face = pointer over a face + Space (or one
   selected planar face) — Shapr3D's mapping; `F` stays Fillet.
 - Saved views: up to 8 (View menu, cube menu, command search; the used count
@@ -93,8 +93,101 @@ of view, camera animation, single-key hotkeys.
 - Navigation presets (`viewport/navigation.ts`, data): Shapr3D (right drag
   orbit, middle / Shift+right pan), Fusion 360 style (Shift+middle orbit,
   middle pan), SolidWorks style (middle orbit, Ctrl+middle pan). Wheel zoom in
-  all; right click without drag opens the context menu. The wheel direction
-  of Fusion/SolidWorks was not verified against those products.
+  all (at the cursor, below); right click without drag opens the context
+  menu. The wheel direction of Fusion/SolidWorks was not verified against
+  those products.
+
+## Projection (owner decision 2026-10-01)
+
+Three modes, one user preference (`preferences.ts` `projection`, not per
+project), policy in `viewport/projection.ts`:
+
+| Mode                       | Behaviour                                                                                                                                                                                                                                                                                                                      |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Orthographic** (default) | Parallel projection everywhere.                                                                                                                                                                                                                                                                                                |
+| **Adaptive**               | Like Fusion 360's "Perspective with Ortho Faces": perspective while the user orbits freely; parallel while a sketch is open and after a view-cube face/edge/corner click, a named view (Front … Iso, Ctrl+1…7, Nearest ortho view), Home, a saved view or Look at face — until the next orbit (mouse, pen, finger, cube drag). |
+| **Perspective**            | The field of view from Settings (15–90°) everywhere.                                                                                                                                                                                                                                                                           |
+
+Where: a compact three-choice row in the Display popover (right dock), View
+menu entries with a check (Orthographic/Adaptive/Perspective projection, Next
+projection), command search ("orthographic", "perspective", "adaptive",
+"projection"), **Alt+P** cycles (with a notice), the view cube's context menu
+and Settings › Navigation › Projection (same preference; the field of view
+stays there). Preferences stored by older builds with `perspective` (the old
+default, `projectionChosen` missing) move to Orthographic; a later choice is
+kept. The agent API exposes no view state, so there is no API method or
+Python call for it.
+
+Transitions never jump in apparent size: a camera animation carries the
+change (`lerpPose` blends the perspective strength `tan(fov/2)` while the
+visible height at the target follows the zoom); otherwise a 220 ms blend
+(`withFovAt`) keeps the plane through the orbit pivot (or the target)
+exactly in place and size — the target moves along the viewing axis to that
+plane. Blends pass through ≥ 2° perspective and end exactly on 0
+(orthographic). Zoom-dependent sizes (grid extent, axes, edge pick ribbons)
+follow the visible height at the target, not the eye distance.
+
+While a sketch is open the world axis out of its plane (within 1°) is hidden
+in every mode (`ViewportMode.drawingPlaneNormal`, scene `sketchNormal`); in
+perspective it showed as a misleading diagonal line. Sketch snapping to far
+edges (`bodySnaps.ts`) follows the projection the sketch is shown in
+(Orthographic and Adaptive: on).
+
+## Orbit and zoom pivot (owner request 2026-10-01)
+
+Orbit turns about a pivot decided **once per gesture** (mouse/pen: where the
+button went down, when the drag passes the click threshold; finger:
+`orbitStart`; pen Shift-hover: when the modifier starts it), from a 64 × 64
+px window (device pixels × dpr) of the id pass's new depth attachment around
+the cursor (`gl.ts` `readPickDepthWindow`; the lazily drawn picking pass
+writes its window depth, 24 bits, into a second colour attachment —
+WebGL2 cannot read a depth buffer back). Rules (`viewport/orbitPivot.ts`):
+
+1. **surface** — something pickable is drawn under the cursor: its depth.
+2. **near** — the cursor is in a hole/slot or just beside the part: the
+   depths drawn within 32 CSS px, weighted by `(1 − d/R)²` and linearised
+   (perspective or orthographic clip planes of that frame), averaged — over a
+   bore the pivot sits inside it at rim depth, not on whatever is behind it.
+3. **model** — nothing near: the depth of the visible model's centre
+   (`target` without a model).
+
+The pivot is always the point on the cursor ray at that depth, so it stays
+under the cursor while the view turns (`camera.ts` `orbitAbout`: the
+camera rotates rigidly about it; inertia glides keep it). No depth data
+(before the first frame, or the camera moved since the last drawn frame,
+e.g. during a kernel rebuild nothing waits) → rule 3 immediately. A subtle
+dot shows the pivot during an orbit only (`data-pivot`, `data-pivot-rule`
+for tests). Settings › Navigation › **Orbit around**: Point under cursor
+(default) / Selection (the selection's bounds centre, else the cursor rules)
+/ Screen centre (the old orbit about the target). Dragging the view cube
+orbits about the target.
+
+**Zoom** (owner rule 2026-10-01) stays anchored purely at the cursor's pixel
+— over the model or over empty background (`camera.ts` `zoomAtRay`):
+orthographic views scale about that pixel and read no depth at all;
+perspective dollies along the cursor ray, and the depth of the pivot rules
+(read once per wheel burst — kept while the wheel keeps turning within
+300 ms and 4 px —, at pen-Alt-down and at the start of a pinch) only sets the
+step, so a zoom-in never passes the surface under the cursor. Adaptive:
+whichever projection is active. No dot for zoom. Pinch zoom anchors at the
+fingers' midpoint the same way and two-finger pan moves the content at that
+depth 1:1.
+
+Cost (Radeon Vega 8, headed Chromium, bracket template, DEV probes
+`window.__assembler.pivotPrefetchAt` / `pivotAt`, 30 runs each): an orbit
+starts reading the window at pointer/finger down into a pixel buffer with a
+fence (`gl.ts` `requestPickDepthWindow`) and takes it when the drag passes
+the click threshold (`takePickDepthWindow`, never waits) — 0.5 ms median,
+0.8 ms max, ready in 30 of 30 runs (id pass drawn first included). The
+synchronous fallback (wheel in perspective, pen hover, a read not ready yet)
+is 0.6–0.7 ms median with a fresh id pass, 1.9 ms when the id pass has to be
+drawn first, but up to 6–9 ms when it waits behind a frame's GPU work. The
+CPU part (rules and ray on 64 × 64) is 0.04 ms (`bench:interactive` row
+"e orbit pivot"). Orbit and zoom frames read nothing: orbit frame cost A/B
+against 6ef20984 (90 back-to-back frames, GPU synced, 6 interleaved runs)
+0.935 → 0.948 ms orthographic, 1.014 → 1.019 ms perspective. Evidence:
+`D:\AgentWork\HimmelCAD-Assembler\shots\nav\` (`pivot-headed.json`,
+`frames-ab.md`, `bench-ab.md`).
 
 ## Items and History
 
@@ -158,3 +251,11 @@ of view, camera animation, single-key hotkeys.
 - The id buffer is from the last drawn frame; boxes are evaluated on release
   (no live candidate highlight while dragging).
 - Rollback marker and Select Through are not saved with the project.
+- Pivot: the search radius is fixed (32 CSS px), so a bore wider than about
+  64 px on screen falls back to the model-centre depth (still on the cursor
+  ray); only pickable geometry counts (not the grid, not reference-image
+  quads). The depth is that of the last drawn frame; when the camera moved
+  since (no frame in between) the model rule is used instead of waiting.
+- Adaptive treats Look at face and saved views as standard views (the
+  research archive documents only cube faces/edges/corners as parallel
+  views, Report §5).

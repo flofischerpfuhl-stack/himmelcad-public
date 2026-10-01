@@ -278,3 +278,12 @@ export_step/export_iges/formats` (`interop.py`), `AssemblerClient` counterparts.
 - DXF: 2D in the XY plane of the drawing; no text/dimensions/hatches/layers/colours on import;
   INSERT arrays: first copy only. DWG is not read.
 - Export "per body" asks for one file name per body (stop on Cancel), like the STL export.
+- Mesh exports (STL, 3MF, OBJ) at `resolution: "fine"` (0.005 mm, 6°) re-mesh a copy of
+  every body; on swept/helical bodies OCCT's mesher is slow there. Profiled 2026-10-01
+  (headless, `D:\AgentWork\HimmelCAD-Assembler\shots\nav\obj-profile*.mjs`): a 4-turn helical
+  revolve (Ø4 wire, pitch 6) exports OBJ in 0.5 s at the shown resolution (71 k triangles,
+  the OBJ text itself ≈ 0.2 s more than STL), 0.3 s coarse, but 8.3 s fine (199 k
+  triangles; `export.meshStats` fine costs the same); the Block 8 smoke document's 2-turn
+  spring: 0.3 s / 3.5 s. The time is `BRepMesh` on the sweep's B-spline faces, not the
+  writer or a replay — no obvious fix (the preset is the user's choice); the 13.5 s seen in
+  the Block 8 integration smoke was not reproduced at the default resolution.

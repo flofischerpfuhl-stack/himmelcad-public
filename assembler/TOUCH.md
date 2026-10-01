@@ -23,18 +23,18 @@ are **O**. No Shapr3D assets were copied.
 
 ### Fingers (3D view and sketches)
 
-| Gesture                       | Does                                                                                                                    |
-| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| One finger drag               | Orbit (in a sketch only when fingers do not draw)                                                                       |
-| Two fingers                   | Pan with the centroid, pinch zoom at the centroid, twist rolls the view after a 12° dead zone (Settings: Twist to roll) |
-| Flick (one or two fingers)    | The camera glides (Settings: Inertia; off with reduced motion)                                                          |
-| Tap                           | Select; taps add up; tap on empty canvas clears                                                                         |
-| Double tap                    | On a face: look at it; on empty canvas: fit the view; on an edge/profile: like a double click (body, open the sketch)   |
-| Long press                    | A ring appears; release opens the context menu; drag draws a box (left → right inside, right → left touching)           |
-| Second finger during a box    | Taps the box’s filter chips (All / Bodies / Faces / Edges)                                                              |
-| Two-finger tap                | Undo (the registry’s `edit.undo`, same availability and notice)                                                         |
-| Three-finger tap              | Redo                                                                                                                    |
-| Three-finger swipe left/right | Undo / Redo                                                                                                             |
+| Gesture                       | Does                                                                                                                                                                 |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| One finger drag               | Orbit about the point under the finger (pivot rules, SELECTION-NAVIGATION.md); in a sketch only when fingers do not draw                                             |
+| Two fingers                   | Pan with the centroid (1:1 at the depth under it), pinch zoom anchored at the centroid's pixel, twist rolls the view after a 12° dead zone (Settings: Twist to roll) |
+| Flick (one or two fingers)    | The camera glides (Settings: Inertia; off with reduced motion)                                                                                                       |
+| Tap                           | Select; taps add up; tap on empty canvas clears                                                                                                                      |
+| Double tap                    | On a face: look at it; on empty canvas: fit the view; on an edge/profile: like a double click (body, open the sketch)                                                |
+| Long press                    | A ring appears; release opens the context menu; drag draws a box (left → right inside, right → left touching)                                                        |
+| Second finger during a box    | Taps the box’s filter chips (All / Bodies / Faces / Edges)                                                                                                           |
+| Two-finger tap                | Undo (the registry’s `edit.undo`, same availability and notice)                                                                                                      |
+| Three-finger tap              | Redo                                                                                                                                                                 |
+| Three-finger swipe left/right | Undo / Redo                                                                                                                                                          |
 
 A double tap counts when the second finger goes down within 400 ms of the
 first lift and 30 px of it (the viewport’s double-click window). Multi-finger
@@ -106,7 +106,19 @@ shows captions instead of hover tips (Toolbar labels “On hover” → always);
 widens the tool column and adds Undo/Redo to it; gives tool handles
 finger-sized hit areas and knobs (`scene.ts` `hitScale` 2, `handleScale`
 1.5; mouse rendering unchanged). Hover-only affordances are shown on
-hover-less devices (Home recents; Measure rows already were).
+hover-less devices (Home recents; Measure rows already were). Since the
+navigation block (2026-10-01): small shared buttons (`data-size="small"`:
+Cancel/Done in panels, Load, Locate, dialog actions) are at least 36 px tall,
+History card menus 34 px, the Items colour swatch takes a finger-sized tap,
+the project name, the Display trigger and the projection choices are taller;
+with the Items panel open the tool session bar is centred between it and the
+right dock (at 1180 px it covered the panel's header).
+
+**Phone width** (< 600 px, web build): the right dock's controls (Snap · Grid,
+Display, Parameters, History) would sit in the middle of the model, so they
+collapse into one **View options** button under the view cube that opens the
+same controls as a small sheet (tap outside or Esc closes it); their popovers
+open at the bottom of the screen. Tablet and desktop are unchanged.
 
 **Handedness** (Settings › Tools, `html[data-hc-hand="left"]`): right-handed
 keeps the tools on the left (the free hand taps them while the pen draws);

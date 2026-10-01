@@ -346,6 +346,25 @@ Added in Block 8 (touch and pen, [TOUCH.md](TOUCH.md)):
   and `data-hc-keypad-units` on inputs (`platform/widgets/NumericKeypad.tsx`);
   plain `inputmode="decimal"` inputs get the number layout.
 
+Added in the navigation block (2026-10-01, [SELECTION-NAVIGATION.md](SELECTION-NAVIGATION.md)):
+
+- **`ViewportMode.drawingPlaneNormal()`** (`platform/viewport/domOverlays.ts`):
+  the plane a running mode draws on (sketching: the open sketch); the
+  viewport hides the world axis out of it and Adaptive shows it in parallel
+  projection. `modeDrawingPlaneNormal()` reads it.
+- **Projection policy** (`platform/viewport/projection.ts`, pure) and the
+  pivot rules (`platform/viewport/orbitPivot.ts`, pure); camera math in
+  `camera.ts` (`withFovAt`, `orbitAbout`, `zoomAtRay`, `pointAtViewDepth`).
+- **Id pass depth**: the picking framebuffer has a second colour attachment
+  with the packed window depth (`gl.ts` `readPickDepthWindow`); every id
+  program writes both outputs.
+- **`Command.checked`** (a mode in effect: menus show a check) and
+  **`Command.separatorBefore`** (menus draw a separator above it) in
+  `commands/registry.ts`; `CommandGroupMenu` renders both.
+- Shared `@himmelcad/ui` `Button` marks its size (`data-size`), so a
+  product's tablet layout can size small buttons (additive; Builder and
+  PhotoLab unchanged).
+
 Compositions (`renderer/src/app`):
 
 - `composition.ts` — the module list; `installModules` at import. Imported
