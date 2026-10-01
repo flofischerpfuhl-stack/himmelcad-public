@@ -28,6 +28,7 @@ from himmelcad.assembler import (  # noqa: E402
     Edge,
     EdgeSet,
     FeatureFailedError,
+    KernelTimeoutError,
     LoopbackTransport,
     ReferenceNotFoundError,
     SketchConflictError,
@@ -128,6 +129,10 @@ class ContractTests(unittest.TestCase):
         conflict = error_from_rpc({"data": {"code": "conflict", "message": "x"}})
         self.assertIsInstance(conflict, ConflictError)
         self.assertTrue(conflict.retryable)
+        timeout = error_from_rpc({"code": -32016, "data": {"code": "kernelTimeout", "message": "stopped", "details": {"committed": False, "budgetMs": 120000}}})
+        self.assertIsInstance(timeout, KernelTimeoutError)
+        self.assertEqual(timeout.budget_ms, 120000)
+        self.assertFalse(timeout.retryable)
 
 
 class ModelingLayerTests(unittest.TestCase):

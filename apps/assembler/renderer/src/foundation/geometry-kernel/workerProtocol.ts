@@ -55,6 +55,17 @@ export type WorkerRequest =
       features: Feature[];
       a: DistanceTarget;
       b: DistanceTarget;
+    }
+  | {
+      /**
+       * A named query a host adds to its worker (`workerHost.ts` `queries`), e.g. the
+       * headless CLI's cold re-evaluation for determinism checks. Answered by
+       * `queryResult` / `queryFailed`; an unknown query fails.
+       */
+      type: 'query';
+      jobId: number;
+      query: string;
+      params: unknown;
     };
 
 /** A body whose mesh arrays were already sent with the previous result (`meshRef: true`). */
@@ -71,4 +82,6 @@ export type WorkerResponse =
   | { type: 'meshResult'; jobId: number; bodies: ExportMeshBody[] }
   | { type: 'meshFailed'; jobId: number; message: string }
   | { type: 'measureResult'; jobId: number; result: DistanceMeasurement }
-  | { type: 'measureFailed'; jobId: number; message: string };
+  | { type: 'measureFailed'; jobId: number; message: string }
+  | { type: 'queryResult'; jobId: number; value: unknown }
+  | { type: 'queryFailed'; jobId: number; message: string };

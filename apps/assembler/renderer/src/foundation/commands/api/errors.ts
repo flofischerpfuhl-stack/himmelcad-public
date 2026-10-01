@@ -42,6 +42,11 @@ export const API_ERROR_CODES = [
   'confirmationRequired',
   /** Recognised but not supported by the current model. */
   'unsupported',
+  /**
+   * The CAD kernel did not finish within its time budget (an OCCT operation that does not
+   * return); it was stopped and restarted, nothing was committed. `details.budgetMs`.
+   */
+  'kernelTimeout',
   /** The operation was cancelled. */
   'cancelled',
   /** The CAD kernel failed or an unexpected error occurred. */
@@ -107,5 +112,6 @@ export const JSON_RPC_ERROR: Record<ApiErrorCode, number> = {
   permissionDenied: -32003,
   confirmationRequired: -32013,
   unsupported: -32014,
+  kernelTimeout: -32016,
   cancelled: -32800,
 };

@@ -25,6 +25,10 @@
  */
 import type { KernelAdapter } from '../../foundation/geometry-kernel/adapter.js';
 import {
+  isKernelTimeout,
+  type KernelTimeoutError,
+} from '../../foundation/geometry-kernel/timeout.js';
+import {
   MESH_RESOLUTIONS,
   type MeshResolution,
 } from '../../foundation/geometry-kernel/meshExport.js';
@@ -365,6 +369,7 @@ export class AgentSession {
       const outcome = await job.outcome;
       if (outcome.kind === 'done') return outcome.result;
       if (outcome.kind === 'failed') {
+        if (outcome.code === 'kernelTimeout') throw kernelTimeoutError(outcome.message);
         throw new ApiError('internal', `CAD kernel failed: ${outcome.message}`);
       }
       // superseded/cancelled by a UI preview: try again.
@@ -1106,6 +1111,17 @@ function similarMethods(method: string): string[] {
   return sameFamily.length > 0 ? sameFamily : all;
 }
 
+/**
+ * The kernel stopped a computation that exceeded its time budget (F13,
+ * `foundation/geometry-kernel/timeout.ts`): nothing was committed.
+ */
+function kernelTimeoutError(message: string, budgetMs?: number): ApiError {
+  return new ApiError('kernelTimeout', message, {
+    hint: 'The kernel was restarted and the document is unchanged. Change the parameters (e.g. a smaller fillet radius or a different edge set), or split the operation, and retry.',
+    details: { committed: false, ...(budgetMs !== undefined ? { budgetMs } : {}) },
+  });
+}
+
 function hintForKernelError(error: string): string {
   if (error.startsWith('Missing reference')) {
     return 'A face/edge/body reference no longer exists; re-list faces/edges and pass current keys.';
@@ -1127,6 +1143,9 @@ function hintForKernelError(error: string): string {
  */
 function exportFailure(what: string, error: unknown): ApiError {
   const message = error instanceof Error ? error.message : String(error);
+  if (isKernelTimeout(error)) {
+    return kernelTimeoutError(`${what}: ${message}`, (error as KernelTimeoutError).budgetMs);
+  }
   const failing = /^Cannot export: (.*)$/s.exec(message);
   if (failing) {
     return new ApiError('featureFailed', `${what} needs every step to evaluate: ${failing[1]}`, {

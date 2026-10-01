@@ -41,11 +41,7 @@
       "id": "geometry-kernel",
       "layer": "foundation",
       "summary": "The only place that knows OCCT: adapter, worker, evaluator with the per-kind evaluator registry, caches, naming, tessellation, STEP/IGES/mesh-solid exchange, OCCT module loader.",
-      "paths": [
-        "renderer/src/foundation/geometry-kernel/",
-        "headless/nodeKernel.ts",
-        "headless/occtModule.ts"
-      ]
+      "paths": ["renderer/src/foundation/geometry-kernel/", "headless/occtModule.ts"]
     },
     {
       "id": "commands",
