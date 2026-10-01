@@ -581,11 +581,20 @@ byte-identical apart from F13's `kernelTimeout` error code, and the
 command list (ids, labels, groups, shortcuts, keywords, adaptive rules,
 order) is identical to the pre-restructure build. Allowlist: 0.
 
-Left open (not violations): headless `project.save`/`project.open`/
-`project.new` work on features and parameters only — module sections
-(Items, reference meshes, pins, view state) are not saved or restored
-headless (as before the restructure; the app goes through the project
-store); `startModules` is desktop-only by design.
+Left open (not violations): `startModules` is desktop-only by design.
+Since Block 8 (sketch stream) headless `project.save`/`project.open`/
+`project.new` save and load the modules' top-level fields through the
+project sections (`collectProjectSections().fields`, `loadProjectSections`:
+Items, reference meshes, reference-image pictures); the view state stays
+app-only.
+
+**Block 8 integration** (four streams merged: web, model, sketch, touch).
+The project schema stays 3: every addition is an optional field or a new
+kind (README "Files"), no migration. The command list only gained entries
+(14 ids; existing ids, labels, groups, shortcuts, keywords, adaptive rules
+and order unchanged), the API schema only gained methods, kinds and
+optional properties. The kernel-thread registration test names the new
+kinds; the web build uses the same compositions (hc.3 wasm, `canvas`).
 
 ## 7. Block 8: the web product and the host contract
 
