@@ -26,9 +26,10 @@ export interface ApiContribution {
   defs?: readonly { order: number; defs: Readonly<Record<string, JsonSchema>> }[];
   featureKinds?: readonly { order: number; kinds: Readonly<Record<string, FeatureKindSpec>> }[];
   /**
-   * Handlers of methods whose spec another block publishes (the published
-   * order keeps a method inside a core block until that block is split):
-   * the module owns the behaviour, the contract text stays where it is.
+   * Handlers of methods whose schema another module's block still publishes
+   * (phase B: a module takes over the handlers first; the schema's owner
+   * hands the specs over later without changing the published order). A
+   * method has at most one handler.
    */
   handlers?: Readonly<Record<string, ApiHandler>>;
 }

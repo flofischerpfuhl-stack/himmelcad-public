@@ -358,7 +358,7 @@ export interface AssemblerState extends AssemblerStateExtensions {
   setIsolatedBodyIds: (bodyIds: string[] | null) => void;
 
   activeTool: ToolSession | null;
-  // The modules' tools add their actions through slices (e.g. eginExtrude, modules/modeling/tools.ts).
+  // The modules' tools add their actions through slices (e.g. `beginExtrude`, `modules/modeling/tools.ts`).
   /** Starts a feature tool (a registered draft kind: Revolve, Hole, Offset Face, …) with a live preview. */
   beginFeatureTool: (draft: FeatureDraft) => void;
   /** Starts `commandId` before its selection: the pill asks for the references (`pickSession.ts`). */
@@ -682,20 +682,6 @@ const NO_PREVIEW: KernelPreviewFields = {
   previewPending: false,
   previewError: null,
 };
-
-/**
- * Readers of view-state fields a module persists in the project file's
- * `viewState` (display mode, edge toggles, face section plane: the display
- * module), applied by {@link AssemblerState.applyViewState} after the core
- * fields. Registered from the module's `onInstall`.
- */
-const projectViewReaders: ((view: ProjectViewState) => Partial<ViewState>)[] = [];
-
-export function registerProjectViewReader(
-  read: (view: ProjectViewState) => Partial<ViewState>,
-): void {
-  if (!projectViewReaders.includes(read)) projectViewReaders.push(read);
-}
 
 /** A kernel computation running longer than this shows progress and a Cancel button, ms. */
 export let LONG_OPERATION_MS = 2000;
@@ -1649,10 +1635,6 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
             : typeof view.grid?.step === 'number'
               ? { gridAuto: false }
               : {}),
-          ...projectViewReaders.reduce<Partial<ViewState>>(
-            (fields, read) => ({ ...fields, ...read(view) }),
-            {},
-          ),
         };
         const preset = view.camera?.preset;
         if (preset && (validPresets as readonly string[]).includes(preset)) {

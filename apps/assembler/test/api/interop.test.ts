@@ -17,11 +17,11 @@ import {
 import {
   assemblyFilingPending,
   fileImportedAssemblies,
-} from '../../renderer/src/interop/importFolders.js';
+} from '../../renderer/src/modules/interop/importFolders.js';
 import { EMPTY_ITEMS_META, useItemsStore } from '../../renderer/src/foundation/commands/items.js';
 import { useAssemblerStore } from '../../renderer/src/foundation/commands/store.js';
 import { parseStepStructure } from '../../renderer/src/foundation/geometry-kernel/step/stepStructure.js';
-import { parseDxf } from '../../renderer/src/interop/dxf.js';
+import { parseDxf } from '../../renderer/src/modules/interop/dxf.js';
 import { selectedOcctModule } from '../../headless/occtModule.js';
 import { setSketchSolverFactory } from '../../renderer/src/foundation/sketch-solver/solverProvider.js';
 import { createNodeKernelAdapter } from '../kernel/nodeKernel.js';

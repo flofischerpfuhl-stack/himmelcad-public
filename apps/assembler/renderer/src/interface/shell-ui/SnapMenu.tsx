@@ -19,10 +19,10 @@ import {
 } from '../../platform/viewport/gridResolution.js';
 import { usePreferences } from '../../platform/input/preferences.js';
 import type { AssemblerState } from '../../foundation/commands/store.js';
-import { useViewportUi } from '../../model/viewportUi.js';
+import { useViewportUi } from '../../platform/viewport/viewportUi.js';
 
 import type { SketchSnapToggles } from '../../platform/input/snapToggles.js';
-import menuStyles from '../../chrome/DisplayMenu.module.css';
+import menuStyles from '../../modules/display/ui/DisplayMenu.module.css';
 import styles from './RightDock.module.css';
 
 const SNAP_ROWS: readonly { key: keyof SketchSnapToggles; label: string; hint: string }[] = [

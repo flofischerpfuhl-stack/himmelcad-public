@@ -3,7 +3,10 @@ import test from 'node:test';
 
 import { type SetAppearanceFeature } from '../../renderer/src/foundation/document/document.js';
 import { createDemoDocument } from '../../renderer/src/foundation/commands/demoDocument.js';
-import { applyBodyColour, applyBodyMaterial } from '../../renderer/src/model/appearance.js';
+import {
+  applyBodyColour,
+  applyBodyMaterial,
+} from '../../renderer/src/modules/display/appearance.js';
 import { moveFeature } from '../../renderer/src/interface/shell-ui/historyTools.js';
 import { usePrintStore } from '../../renderer/src/modules/print/printStore.js';
 import { useAssemblerStore } from '../../renderer/src/foundation/commands/store.js';

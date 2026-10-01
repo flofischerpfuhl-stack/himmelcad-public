@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { withBodyColour, normalizeHexColour } from '../../renderer/src/model/appearance.js';
+import {
+  withBodyColour,
+  normalizeHexColour,
+} from '../../renderer/src/modules/display/appearance.js';
 import {
   COMMANDS,
   type Command,

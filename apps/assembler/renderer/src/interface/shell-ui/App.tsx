@@ -1,10 +1,6 @@
 import { useCallback, useState } from 'react';
 
 import { AgentAccessIndicator } from '../agent-api/ui/AgentAccessIndicator.js';
-import { AnalysisLegend } from '../../chrome/AnalysisLegend.js';
-import { ExportImageDialog } from '../../chrome/ExportImageDialog.js';
-import { MeasurePanel } from '../../chrome/MeasurePanel.js';
-import { ColourDialog } from '../../chrome/ColourDialog.js';
 import { CommandContextMenu } from './ContextMenu.js';
 import { CommandSearch } from './CommandSearch.js';
 import { HomeScreen } from './HomeScreen.js';
@@ -16,14 +12,12 @@ import { NoticeToast } from './NoticeToast.js';
 import { registeredPanels } from '../../platform/widgets/moduleUi.js';
 import { RightDock } from './RightDock.js';
 import panelStyles from '../../platform/widgets/Panel.module.css';
-import { SectionControls } from '../../chrome/SectionControls.js';
 import { SettingsDialog } from './SettingsDialog.js';
 import { ShortcutOverlay } from './ShortcutOverlay.js';
 import { StatusStrip } from './StatusStrip.js';
 import { ToolSession } from './ToolSession.js';
 import { TopBar } from './TopBar.js';
 import { useGlobalKeyboard } from './useGlobalKeyboard.js';
-import { InteropChrome } from '../../interop/ui/InteropChrome.js';
 import { useAssemblerStore, type SelectionItem } from '../../foundation/commands/store.js';
 import { Viewport } from '../../platform/viewport/Viewport.js';
 import styles from './App.module.css';
@@ -39,7 +33,9 @@ interface ContextMenuState {
  * and right docks, Items/History panels, the adaptive toolbar, tool-session
  * pill, status strip, command search and context menu floating above it as
  * rounded islands (docs/DESIGN-SYSTEM.md "Visual language"), plus the
- * Settings dialog, shortcut overlay and colour dialog.
+ * Settings dialog and shortcut overlay. Module panels and dialogs (Section
+ * View, Measure, Print mode, import/export, colour, image export …) come
+ * from the UI registry (`platform/widgets/moduleUi.ts`).
  */
 export function App(): JSX.Element {
   const state = useAssemblerStore((s) => s);
@@ -96,20 +92,16 @@ export function App(): JSX.Element {
         </div>
       ) : null}
       <ToolSession state={state} />
-      {state.viewState.sectionEnabled ? <SectionControls state={state} /> : null}
       {overlayPanels.map((panel) => {
         // The modules' floating chrome and dialogs (sketch chrome, Print mode, Slicers…), registered with
         // defineModuleUi; each decides its own visibility.
         const Panel = panel.component;
         return <Panel key={panel.id} state={state} onContextMenu={openContextMenuAt} />;
       })}
-      {state.viewState.measureEnabled ? <MeasurePanel state={state} /> : null}
-      <AnalysisLegend state={state} />
       <StatusStrip state={state} />
       <KernelActivity state={state} />
       <AgentAccessIndicator />
       <HomeScreen />
-      <InteropChrome />
       <NoticeToast />
 
       {commandSearch ? (
@@ -128,8 +120,6 @@ export function App(): JSX.Element {
         />
       ) : null}
       <SettingsDialog />
-      <ColourDialog />
-      <ExportImageDialog />
       <ShortcutOverlay />
     </div>
   );

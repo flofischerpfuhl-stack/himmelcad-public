@@ -16,6 +16,7 @@
  *   renderer. It lives in the platform layer because it names React
  *   components and viewport types; foundation stays UI-free.
  */
+import { registerProjectSection, type ProjectSection } from '../document/projectSections.js';
 import type { KernelAdapter } from '../geometry-kernel/adapter.js';
 import { registerApiContribution, type ApiContribution } from './api/registry.js';
 import { registerDraftTool, type DraftTool, type RegisteredDraft } from './draftTools.js';
@@ -50,6 +51,13 @@ export interface AssemblerModule {
   /** State and actions merged into the one application store (`store.ts` `installStoreSlice`). */
   storeSlice?: StoreSliceCreator;
   /**
+   * The module's data in the project file besides the features (pins, saved
+   * views, display settings …): what Save writes, what Open/New restore and
+   * what makes the project unsaved (`document/projectSections.ts`). The file
+   * side — field validators and key order — registers in `format.ts`.
+   */
+  fileFormatFields?: readonly ProjectSection[];
+  /**
    * Registration-time hooks into the gate (a modal-session probe, the notice
    * toast): run once by {@link installModules}, in every program that
    * installs the module (app, headless, tests).
@@ -81,6 +89,7 @@ export function installModules(modules: readonly AssemblerModule[]): void {
     for (const tool of module.draftTools ?? []) registerDraftTool(tool);
     if (module.projectTemplates) registerProjectTemplates(module.id, module.projectTemplates);
     if (module.storeSlice) installStoreSlice(module.id, module.storeSlice);
+    for (const section of module.fileFormatFields ?? []) registerProjectSection(section);
     module.onInstall?.();
   }
 }

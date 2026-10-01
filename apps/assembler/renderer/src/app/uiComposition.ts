@@ -8,6 +8,9 @@ import { installModuleUis } from '../platform/widgets/moduleUi.js';
 import { shellUi } from '../interface/shell-ui/module.ui.js';
 import { constructionUi } from '../modules/construction/module.ui.js';
 import { directEditUi } from '../modules/direct-edit/module.ui.js';
+import { displayUi } from '../modules/display/module.ui.js';
+import { interopUi } from '../modules/interop/module.ui.js';
+import { measureUi } from '../modules/measure/module.ui.js';
 import { modelingUi } from '../modules/modeling/module.ui.js';
 import { parametersUi } from '../modules/parameters/module.ui.js';
 import { printUi } from '../modules/print/module.ui.js';
@@ -22,5 +25,8 @@ installModuleUis([
   parametersUi,
   printUi,
   printersUi,
+  measureUi,
+  displayUi,
+  interopUi,
   shellUi,
 ]);

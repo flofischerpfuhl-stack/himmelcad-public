@@ -85,6 +85,12 @@ export interface ModuleUi {
   featureIcons?: Readonly<Partial<Record<string, LucideIcon>>>;
   /** Icons of the module's commands (toolbar, menus, search). */
   commandIcons?: Readonly<Partial<Record<string, LucideIcon>>>;
+  /**
+   * Desktop-only wiring that needs the browser (a GPU probe, DOM listeners),
+   * run once when the UI parts are installed; the headless CLI and the tests
+   * never load `module.ui.ts`.
+   */
+  install?: () => void;
 }
 
 export function defineModuleUi(ui: ModuleUi): ModuleUi {
@@ -122,6 +128,7 @@ export function installModuleUis(uis: readonly ModuleUi[]): void {
     for (const [id, icon] of Object.entries(ui.commandIcons ?? {})) {
       if (icon) commandIcons.set(id, icon);
     }
+    ui.install?.();
   }
   panels.sort((a, b) => a.order - b.order);
   modeButtons.sort((a, b) => a.order - b.order);

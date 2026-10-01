@@ -1,6 +1,8 @@
 /**
- * Project file lifecycle: dirty tracking, Save/Open/New, exports, autosave
- * and crash recovery. Kept as its own zustand store — additive to
+ * Project file lifecycle: dirty tracking, Save/Open/New, autosave and crash
+ * recovery, the busy status of File exports (the exports themselves belong
+ * to their modules: `modules/interop/meshExports.ts`, print). Offered to code
+ * below the shell as {@link PROJECT_PERSISTENCE}. Kept as its own zustand store — additive to
  * `model/store.ts` (the document/tool store) rather than folded into it, so
  * the two stores can evolve independently (see the module-owner split in
  * `apps/assembler/README.md`). `model/store.ts` only gained one small,
@@ -11,44 +13,29 @@ import { create } from 'zustand';
 
 import { APP_CAPABILITIES, AgentSession } from '../../agent-api/session.js';
 import type { KernelAdapter } from '../../../foundation/geometry-kernel/adapter.js';
-import { parseStl, suggestStlUnitHint, type StlUnitHint } from '../../../kernel/stlImport.js';
-import {
-  exportBodyStl,
-  stlBufferForMeshes,
-} from '../../../foundation/geometry-kernel/stlExport.js';
-import { buildThreeMf } from '../../../foundation/geometry-kernel/threeMf.js';
 import type { Feature } from '../../../foundation/document/document.js';
+import type { ProjectPersistence } from '../../../foundation/document/projectPersistence.js';
 import {
-  EMPTY_ITEMS_META,
-  isEmptyItemsMeta,
-  itemsMetaSnapshot,
-  useItemsStore,
-  withDisplayNames,
-} from '../../../foundation/commands/items.js';
-import {
-  referenceMeshFromParsedStl,
-  referenceMeshToBody,
-  type ReferenceMesh,
-} from '../../../foundation/commands/referenceMesh.js';
-import { parsePins, serializePins, useMeasureStore } from '../../../model/measureStore.js';
-import { shownFeatures, useAssemblerStore } from '../../../foundation/commands/store.js';
-import { viewDisplayToProject } from '../../../model/viewDisplay.js';
-import { parseSavedViews, useWorkspaceStore } from '../workspace.js';
+  decodeReferenceMeshes,
+  encodeReferenceMeshes,
+} from '../../../foundation/commands/projectFields.js';
+import { useAssemblerStore } from '../../../foundation/commands/store.js';
 import {
   CURRENT_SCHEMA_VERSION,
   ProjectFormatError,
   loadProjectFile,
   saveProjectFile,
   type ProjectFileV1,
-  type ProjectViewState,
-  type ReferenceMeshRecordV1,
 } from '../../../foundation/document/format.js';
+import { MeshPayloadTooLargeError } from '../../../foundation/document/meshCodec.js';
 import {
-  decodeMeshPayload,
-  encodeMeshPayload,
-  MeshPayloadTooLargeError,
-} from '../../../foundation/document/meshCodec.js';
+  collectProjectSections,
+  loadProjectSections,
+  registerProjectSection,
+  watchProjectSections,
+} from '../../../foundation/document/projectSections.js';
 import * as io from '../../../foundation/document/persistence.js';
+import { useWorkspaceStore } from '../workspace.js';
 import { renderProjectThumbnail } from './thumbnail.js';
 
 import {
@@ -91,8 +78,6 @@ export interface ProjectFileState {
   loadError: string | null;
   pendingAction: PendingAction;
   recoveryOffer: RecoveryOffer | null;
-  /** A just-imported STL whose bounding box suggests it may not be in millimetres; the user must confirm/rescale or keep as-is (never applied silently). */
-  unitHintOffer: { meshId: string; hint: StlUnitHint; scaleToMm: number } | null;
 
   attachKernelAdapter: (adapter: KernelAdapter) => void;
   clearLoadError: () => void;
@@ -137,15 +122,8 @@ export interface ProjectFileState {
   openFromResult: (opened: io.OpenResult) => Promise<boolean>;
   save: () => Promise<void>;
   saveAs: () => Promise<void>;
-  exportStlAll: () => Promise<void>;
-  exportStlBody: (bodyId: string) => Promise<void>;
-  export3mf: () => Promise<void>;
-  exportStep: () => Promise<void>;
-  importStep: () => Promise<void>;
-  /** File > Import > STL…: reads, parses (binary or ASCII) and adds a reference mesh; offers a unit-rescale confirmation when the bbox suggests metres/inches. */
-  importStl: () => Promise<void>;
-  /** Applies the offered unit rescale (uniform `scaleToMm`) to the mesh's own coordinates, or keeps it as-is; either way clears the offer. Never applied without this explicit call. */
-  resolveUnitHint: (apply: boolean) => void;
+  /** Runs `task` (an export) with `message` as the busy status. */
+  runBusy: (message: string, task: () => Promise<unknown>) => Promise<void>;
 
   checkRecovery: () => Promise<void>;
   restoreRecovery: () => void;
@@ -181,84 +159,42 @@ function restoreExtras(project: ProjectFileV1 | null): void {
   }
 }
 
-/** Captures the current view-only state for persistence; never affects geometry or undo history. */
-function currentViewState(): ProjectViewState {
-  const doc = useAssemblerStore.getState();
-  const display = viewDisplayToProject(doc.viewState);
-  const measurements = serializePins(useMeasureStore.getState().pins);
-  return {
-    displayMode: display.displayMode,
-    display: display.display,
-    camera: doc.viewState.cameraRequest ? { preset: doc.viewState.cameraRequest.preset } : {},
-    section: {
-      enabled: doc.viewState.sectionEnabled,
-      axis: doc.viewState.sectionAxis,
-      offset: doc.viewState.sectionOffset,
-      flipped: doc.viewState.sectionFlipped,
-      ...display.sectionExtras,
-    },
-    ...(measurements.length > 0 ? { measurements } : {}),
-    grid: {
-      visible: doc.viewState.gridVisible,
-      snap: doc.viewState.snapToGrid,
-      step: doc.viewState.gridStep,
-      auto: doc.viewState.gridAuto,
-    },
-    panels: {
-      items: doc.panels.items,
-      history: doc.panels.history,
-      parameters: doc.panels.parameters,
-    },
-  };
-}
-
-/** Encodes every reference mesh's triangle data (gzip+base64, `meshCodec.ts`) for the `.hcasm` file. */
-async function encodeReferenceMeshes(
-  meshes: readonly ReferenceMesh[],
-): Promise<ReferenceMeshRecordV1[]> {
-  return Promise.all(
-    meshes.map(async (m) => ({
-      id: m.id,
-      name: m.name,
-      fileName: m.fileName,
-      data: await encodeMeshPayload({
-        positions: m.positions,
-        normals: m.normals,
-        indices: m.indices,
-      }),
-      min: m.min,
-      max: m.max,
-      transform: { ...m.transform },
-      hidden: m.hidden,
-      ...(m.color ? { color: m.color } : {}),
-    })),
-  );
-}
-
-/** Inverse of {@link encodeReferenceMeshes}; propagates {@link MeshPayloadTooLargeError} so a load that exceeds the size limit is rejected with a clear message, never a silent partial load. */
-async function decodeReferenceMeshes(
-  records: readonly ReferenceMeshRecordV1[],
-): Promise<ReferenceMesh[]> {
-  return Promise.all(
-    records.map(async (r) => {
-      const buffers = await decodeMeshPayload(r.data);
-      return {
-        id: r.id,
-        name: r.name,
-        fileName: r.fileName,
-        positions: buffers.positions,
-        normals: buffers.normals,
-        indices: buffers.indices,
-        min: r.min,
-        max: r.max,
-        transform: { ...r.transform },
-        hidden: r.hidden,
-        ...(r.color ? { color: r.color } : {}),
-      } satisfies ReferenceMesh;
-    }),
-  );
-}
-
+/**
+ * The document store's own view state (camera preset, section, grid,
+ * panels) as a project section; the modules' parts (display, pins, saved
+ * views) come from their own sections (`foundation/document/projectSections.ts`).
+ * Applied on Open by the store (`applyViewState`). View-only: never dirty.
+ */
+registerProjectSection({
+  id: 'commands.viewState',
+  order: 100,
+  save: () => {
+    const doc = useAssemblerStore.getState();
+    return {
+      viewState: {
+        camera: doc.viewState.cameraRequest ? { preset: doc.viewState.cameraRequest.preset } : {},
+        section: {
+          enabled: doc.viewState.sectionEnabled,
+          axis: doc.viewState.sectionAxis,
+          offset: doc.viewState.sectionOffset,
+          flipped: doc.viewState.sectionFlipped,
+        },
+        grid: {
+          visible: doc.viewState.gridVisible,
+          snap: doc.viewState.snapToGrid,
+          step: doc.viewState.gridStep,
+          auto: doc.viewState.gridAuto,
+        },
+        panels: {
+          items: doc.panels.items,
+          history: doc.panels.history,
+          parameters: doc.panels.parameters,
+        },
+      },
+    };
+  },
+  load: () => undefined,
+});
 /**
  * The project file text Save would write now: features, view state, saved
  * views, Items names/folders and reference meshes. Also what an agent's
@@ -276,9 +212,9 @@ export async function currentProjectText(projectName?: string): Promise<string> 
 async function currentProjectPayload(options: { thumbnail?: string | null } = {}): Promise<string> {
   const doc = useAssemblerStore.getState();
   const project = useProjectStore.getState();
-  const items = itemsMetaSnapshot(useItemsStore.getState());
-  const savedViews = useWorkspaceStore.getState().savedViews;
   const referenceMeshes = await encodeReferenceMeshes(doc.referenceMeshes);
+  // The modules' fields and view-state parts (items, display, pins, saved views …).
+  const sections = await collectProjectSections();
   return saveProjectFile({
     projectName: doc.projectName,
     ...(options.thumbnail ? { thumbnail: options.thumbnail } : {}),
@@ -286,18 +222,16 @@ async function currentProjectPayload(options: { thumbnail?: string | null } = {}
     appVersion: APP_VERSION,
     parameters: doc.parameters,
     referenceMeshes,
-    // One view-state object: display/section/grid/panels/camera plus the saved views.
-    viewState: { ...currentViewState(), ...(savedViews.length > 0 ? { savedViews } : {}) },
+    ...sections.fields,
+    // One view-state object: the store's parts and the modules' parts.
+    viewState: sections.viewState,
     createdAt: project.createdAt,
-    ...(isEmptyItemsMeta(items) ? {} : { items }),
   });
 }
 
-/** Restores the non-feature parts of a project (item names/folders, saved views). */
+/** Restores the non-feature parts of a project (the modules' sections: items, pins, saved views …). */
 function applyProjectExtras(project: ProjectFileV1 | null): void {
-  useItemsStore.getState().setItemsMeta(project?.items ?? EMPTY_ITEMS_META);
-  useWorkspaceStore.getState().setSavedViews(parseSavedViews(project?.viewState?.savedViews));
-  useMeasureStore.getState().setPins(parsePins(project?.viewState?.measurements));
+  loadProjectSections(project);
 }
 
 /** Node's `Timeout` (unlike the browser's numeric handle) exposes `unref()` so it never keeps a test process alive. */
@@ -341,7 +275,7 @@ function ensureSubscription(): void {
   if (subscribed) return;
   subscribed = true;
   baselineFeatures = useAssemblerStore.getState().features;
-  // Item names/folders, saved views and reference meshes are saved with the project too.
+  // Item names/folders, saved views, pins and reference meshes are saved with the project too.
   const markDirty = () => {
     if (restoringExtras) return;
     extrasDirty = true;
@@ -362,20 +296,9 @@ function ensureSubscription(): void {
     if (dirty !== useProjectStore.getState().dirty) useProjectStore.setState({ dirty });
     if (dirty) writeRecoverySoon();
   });
-  useItemsStore.subscribe((state, prev) => {
-    if (
-      state.names !== prev.names ||
-      state.folders !== prev.folders ||
-      state.parent !== prev.parent
-    ) {
-      markDirty();
-    }
-  });
-  useWorkspaceStore.subscribe((state, prev) => {
-    if (state.savedViews !== prev.savedViews) markDirty();
-  });
-  useMeasureStore.subscribe((state, prev) => {
-    if (state.pins !== prev.pins) markDirty();
+  // The modules' sections (items, pins, saved views …), also those registered later.
+  watchProjectSections((section) => {
+    section.subscribe?.(markDirty);
   });
   ensureAutosave();
 }
@@ -390,7 +313,6 @@ export const useProjectStore = create<ProjectFileState>((set, get) => ({
   loadError: null,
   pendingAction: null,
   recoveryOffer: null,
-  unitHintOffer: null,
 
   attachKernelAdapter: (adapter) => {
     kernelAdapter = adapter;
@@ -638,150 +560,13 @@ export const useProjectStore = create<ProjectFileState>((set, get) => ({
     }
   },
 
-  exportStlAll: async () => {
-    const doc = useAssemblerStore.getState();
-    const visibleMeshes = doc.referenceMeshes.filter((m) => !m.hidden);
-    if (doc.evaluation.bodies.length === 0 && visibleMeshes.length === 0) return;
-    set({ busyMessage: 'Exporting STL…' });
+  runBusy: async (message, task) => {
+    set({ busyMessage: message });
     try {
-      const meshBodies = visibleMeshes.map(referenceMeshToBody);
-      const bytes = new Uint8Array(
-        stlBufferForMeshes([...doc.evaluation.bodies, ...meshBodies].map((b) => b.mesh)),
-      );
-      await io.exportBinary(
-        bytes,
-        `${sanitizeFileName(doc.projectName)}.stl`,
-        [{ name: 'STL', extensions: ['stl'] }],
-        'model/stl',
-      );
+      await task();
     } finally {
       set({ busyMessage: null });
     }
-  },
-  exportStlBody: async (bodyId) => {
-    const doc = useAssemblerStore.getState();
-    const body = withDisplayNames(doc.evaluation.bodies, useItemsStore.getState()).find(
-      (b) => b.id === bodyId,
-    );
-    if (!body) return;
-    set({ busyMessage: 'Exporting STL…' });
-    try {
-      const buffer = exportBodyStl(doc.evaluation.bodies, bodyId);
-      if (!buffer) return;
-      await io.exportBinary(
-        new Uint8Array(buffer),
-        `${sanitizeFileName(body.name)}.stl`,
-        [{ name: 'STL', extensions: ['stl'] }],
-        'model/stl',
-      );
-    } finally {
-      set({ busyMessage: null });
-    }
-  },
-  export3mf: async () => {
-    const doc = useAssemblerStore.getState();
-    const visibleMeshes = doc.referenceMeshes.filter((m) => !m.hidden);
-    if (doc.evaluation.bodies.length === 0 && visibleMeshes.length === 0) return;
-    set({ busyMessage: 'Exporting 3MF…' });
-    try {
-      // 3MF objects carry the user's body names and `setAppearance` colours (`Body.color`).
-      const bytes = buildThreeMf([
-        ...withDisplayNames(doc.evaluation.bodies, useItemsStore.getState()),
-        ...visibleMeshes.map(referenceMeshToBody),
-      ]);
-      await io.exportBinary(
-        bytes,
-        `${sanitizeFileName(doc.projectName)}.3mf`,
-        [{ name: '3MF', extensions: ['3mf'] }],
-        'model/3mf',
-      );
-    } finally {
-      set({ busyMessage: null });
-    }
-  },
-  exportStep: async () => {
-    const doc = useAssemblerStore.getState();
-    if (!kernelAdapter || doc.evaluation.bodies.length === 0) return;
-    set({ busyMessage: 'Exporting STEP…' });
-    try {
-      const bytes = await kernelAdapter.exportStep(shownFeatures(doc));
-      await io.exportBinary(
-        bytes,
-        `${sanitizeFileName(doc.projectName)}.step`,
-        [{ name: 'STEP', extensions: ['step', 'stp'] }],
-        'model/step',
-      );
-    } catch (error) {
-      set({
-        loadError: `STEP export failed: ${error instanceof Error ? error.message : String(error)}`,
-      });
-    } finally {
-      set({ busyMessage: null });
-    }
-  },
-  importStep: async () => {
-    const opened = await io.openStepDialog();
-    if (!opened) return;
-    useAssemblerStore
-      .getState()
-      .addImportedBody({ data: opened.base64, fileName: opened.fileName });
-  },
-  importStl: async () => {
-    const opened = await io.openStlDialog();
-    if (!opened) return;
-    try {
-      const parsed = parseStl(opened.bytes);
-      if (parsed.triangleCount === 0) {
-        set({ loadError: `"${opened.fileName}" has no usable triangles.` });
-        return;
-      }
-      const id = `refmesh-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-      const mesh = referenceMeshFromParsedStl({
-        id,
-        name: opened.fileName.replace(/\.stl$/i, '') || 'Reference mesh',
-        fileName: opened.fileName,
-        parsed,
-      });
-      useAssemblerStore.getState().importReferenceMesh(mesh);
-      const suggestion = suggestStlUnitHint(parsed.min, parsed.max);
-      if (suggestion) {
-        set({
-          unitHintOffer: { meshId: id, hint: suggestion.hint, scaleToMm: suggestion.scaleToMm },
-        });
-      }
-    } catch (error) {
-      set({
-        loadError: `Could not import "${opened.fileName}": ${error instanceof Error ? error.message : String(error)}`,
-      });
-    }
-  },
-  resolveUnitHint: (apply) => {
-    const offer = get().unitHintOffer;
-    set({ unitHintOffer: null });
-    if (!offer || !apply) return;
-    const mesh = useAssemblerStore.getState().referenceMeshes.find((m) => m.id === offer.meshId);
-    if (!mesh) return;
-    // Rescales the mesh's own coordinates uniformly around its own origin
-    // (not the document-level `transform`, which stays an independent
-    // translation applied on top) — an explicit, one-time, user-confirmed
-    // edit, never automatic.
-    const scale = offer.scaleToMm;
-    const positions = new Float32Array(mesh.positions.length);
-    for (let i = 0; i < positions.length; i += 1) positions[i] = mesh.positions[i]! * scale;
-    const min: [number, number, number] = [
-      mesh.min[0] * scale,
-      mesh.min[1] * scale,
-      mesh.min[2] * scale,
-    ];
-    const max: [number, number, number] = [
-      mesh.max[0] * scale,
-      mesh.max[1] * scale,
-      mesh.max[2] * scale,
-    ];
-    useAssemblerStore.getState().removeReferenceMesh(mesh.id);
-    useAssemblerStore
-      .getState()
-      .importReferenceMesh({ ...mesh, positions, normals: mesh.normals, min, max });
   },
 
   checkRecovery: async () => {
@@ -854,6 +639,21 @@ async function createPendingTemplate(): Promise<void> {
   pendingTemplate = null;
   if (id) await useProjectStore.getState().newFromTemplate(id);
 }
+
+/**
+ * The project lifecycle for code below the shell (agent `project.*`, a
+ * `.hcasm` dropped on the window); installed by the shell module.
+ */
+export const PROJECT_PERSISTENCE: ProjectPersistence = {
+  hasUnsavedChanges: () => useProjectStore.getState().dirty,
+  open: async (text) => {
+    const ok = await useProjectStore.getState().openFromResult({ path: null, text });
+    if (!ok) throw new Error(useProjectStore.getState().loadError ?? 'Could not open the project');
+  },
+  newProject: (name) => useProjectStore.getState().newProject(name),
+  text: (projectName) => currentProjectText(projectName),
+  requestOpen: (load) => useProjectStore.getState().requestOpenFile(load),
+};
 
 async function openPendingFile(): Promise<void> {
   const load = pendingOpen;

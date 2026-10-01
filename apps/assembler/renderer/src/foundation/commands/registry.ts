@@ -160,6 +160,7 @@ export const COMMAND_ORDER = {
   print: 1000,
   printers: 1010,
   display: 1100,
+  measureTools: 1150,
   section: 1200,
   measure: 1250,
   history: 1300,

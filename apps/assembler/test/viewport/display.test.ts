@@ -23,8 +23,7 @@ import {
   imageExportSize,
   imageFileName,
   unpremultiply,
-} from '../../renderer/src/viewport/imageExport.js';
-
+} from '../../renderer/src/platform/viewport/imageExport.js';
 import {
   sectionClip,
   sectionHandle,

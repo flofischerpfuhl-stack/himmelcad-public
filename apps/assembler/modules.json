@@ -105,46 +105,19 @@
       "id": "measure",
       "layer": "domain",
       "summary": "Measure mode: measurements, pinned dimensions, Measure panel and overlay, measure API.",
-      "paths": [
-        "renderer/src/modules/measure/",
-        "renderer/src/model/measure.ts",
-        "renderer/src/model/measureLive.ts",
-        "renderer/src/model/measureStore.ts",
-        "renderer/src/model/commands/measureCommands.ts",
-        "renderer/src/chrome/MeasurePanel",
-        "renderer/src/chrome/measurePlacement.ts",
-        "renderer/src/viewport/MeasureOverlay.tsx",
-        "renderer/src/api/measureApi.ts"
-      ]
+      "paths": ["renderer/src/modules/measure/"]
     },
     {
       "id": "display",
       "layer": "domain",
       "summary": "Display features: appearance/colour, display-mode and section commands and menus, analysis legend, image export, persisted view display.",
-      "paths": [
-        "renderer/src/modules/display/",
-        "renderer/src/model/appearance.ts",
-        "renderer/src/model/viewDisplay.ts",
-        "renderer/src/model/viewportUi.ts",
-        "renderer/src/model/commands/displayCommands.ts",
-        "renderer/src/chrome/AnalysisLegend",
-        "renderer/src/chrome/ColourDialog",
-        "renderer/src/chrome/DisplayMenu",
-        "renderer/src/chrome/ExportImageDialog",
-        "renderer/src/chrome/SectionControls",
-        "renderer/src/viewport/imageExport.ts"
-      ]
+      "paths": ["renderer/src/modules/display/"]
     },
     {
       "id": "interop",
       "layer": "domain",
       "summary": "Import/export: STEP/IGES/DXF/STL/3MF/OBJ, reference meshes, mesh to solid, import worker, interop API.",
-      "paths": [
-        "renderer/src/modules/interop/",
-        "renderer/src/interop/",
-        "renderer/src/kernel/stlImport.ts",
-        "renderer/src/api/interopApi.ts"
-      ]
+      "paths": ["renderer/src/modules/interop/"]
     },
     {
       "id": "templates",

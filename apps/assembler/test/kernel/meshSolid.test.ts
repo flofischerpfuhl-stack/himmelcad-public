@@ -10,8 +10,8 @@ import {
   meshSolidFeature,
   referenceMeshWorldPositions,
   referenceMeshesFromImport,
-} from '../../renderer/src/interop/importActions.js';
-import { parseMeshFile } from '../../renderer/src/interop/importParsers.js';
+} from '../../renderer/src/modules/interop/importActions.js';
+import { parseMeshFile } from '../../renderer/src/modules/interop/importParsers.js';
 import {
   MeshSolidError,
   decodeMeshSolidPayload,

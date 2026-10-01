@@ -35,6 +35,12 @@ export interface Preferences {
   animateCamera: boolean;
   /** `high`: ambient occlusion and the ground contact shadow; `standard`: plain lighting (slow GPUs). */
   renderQuality: RenderQuality;
+  /**
+   * The user picked `renderQuality` (Settings, Display menu, command). Until
+   * then the display module may start a session at its GPU tier's preset
+   * (`standard` on a software rasterizer, `modules/display/gpuTier.ts`).
+   */
+  renderQualityChosen: boolean;
   /** Last "Export image…" settings. */
   imageExport: ImageExportPreference;
   /** Where the user last dragged the Measure panel (CSS px from the window's top left); `null` = automatic placement. */
@@ -111,6 +117,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   fov: 45,
   animateCamera: true,
   renderQuality: 'high',
+  renderQualityChosen: false,
   imageExport: DEFAULT_IMAGE_EXPORT,
   measurePanelPosition: null,
   showHomeOnStartup: true,
@@ -175,6 +182,11 @@ export function parsePreferences(text: string | null): Preferences {
   ): Preferences[K] => (valid(r[key]) ? (r[key] as Preferences[K]) : DEFAULT_PREFERENCES[key]);
   const oneOf = (values: readonly unknown[]) => (v: unknown) => values.includes(v);
   const bool = (v: unknown) => typeof v === 'boolean';
+  // Stored before the flag existed: a non-default quality was the user's choice.
+  const renderQualityChosen =
+    typeof r.renderQualityChosen === 'boolean'
+      ? r.renderQualityChosen
+      : r.renderQuality === 'standard';
   const number = (lo: number, hi: number) => (v: unknown) =>
     typeof v === 'number' && Number.isFinite(v) && v >= lo && v <= hi;
   return {
@@ -188,7 +200,10 @@ export function parsePreferences(text: string | null): Preferences {
     projection: pick('projection', oneOf(['perspective', 'orthographic'])),
     fov: pick('fov', number(10, 90)),
     animateCamera: pick('animateCamera', bool),
-    renderQuality: pick('renderQuality', oneOf(['high', 'standard'])),
+    renderQuality: renderQualityChosen
+      ? pick('renderQuality', oneOf(['high', 'standard']))
+      : DEFAULT_PREFERENCES.renderQuality,
+    renderQualityChosen,
     imageExport: parseImageExport(r.imageExport),
     measurePanelPosition: parsePanelPosition(r.measurePanelPosition),
     showHomeOnStartup: pick('showHomeOnStartup', bool),
@@ -221,7 +236,10 @@ function snapshot(state: PreferencesState): Preferences {
 export const usePreferences = create<PreferencesState>((set, get) => ({
   ...parsePreferences(storage()?.getItem(STORAGE_KEY) ?? null),
   setPreference: (key, value) => {
-    set({ [key]: value } as Partial<PreferencesState>);
+    set({
+      [key]: value,
+      ...(key === 'renderQuality' ? { renderQualityChosen: true } : {}),
+    } as Partial<PreferencesState>);
     persist(snapshot(get()));
   },
   resetPreferences: () => {

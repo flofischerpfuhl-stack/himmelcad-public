@@ -34,7 +34,7 @@ import type { Body, EvaluationResult } from '../../foundation/geometry-kernel/ty
 import type { Feature } from '../../foundation/document/document.js';
 import type { SketchFeature } from '../../foundation/sketch-solver/sketchFeature.js';
 import { resolveParameterValues } from '../../foundation/document/parameters.js';
-import { runMeasureQuery } from '../../api/measureApi.js';
+import { runMeasureQuery } from '../../modules/measure/measureApi.js';
 import {
   exportDxf,
   importDxf,
@@ -45,8 +45,8 @@ import {
   interopFormats,
   meshToSolid,
   stepExportOptions,
-} from '../../api/interopApi.js';
-import { stepAssemblyFromItems } from '../../interop/stepTree.js';
+} from '../../modules/interop/interopApi.js';
+import { stepAssemblyFromItems } from '../../modules/interop/stepTree.js';
 import { useItemsStore } from '../../foundation/commands/items.js';
 import {
   ProjectFormatError,

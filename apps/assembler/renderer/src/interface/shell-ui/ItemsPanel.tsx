@@ -58,6 +58,7 @@ import {
 import { consumedSketchIds, isSketchVisible } from '../../foundation/document/sketchVisibility.js';
 import type { AssemblerState, SelectionItem } from '../../foundation/commands/store.js';
 import { useWorkspaceStore } from './workspace.js';
+import { useDisplayDialogs } from '../../modules/display/dialogs.js';
 import { useSketchStore } from '../../modules/sketching/session.js';
 import { anchoredMenuStyle } from '../../platform/widgets/anchoredMenu.js';
 import panelStyles from '../../platform/widgets/Panel.module.css';
@@ -720,7 +721,7 @@ function LeafRowView(props: LeafRowProps): JSX.Element {
           title="Colour…"
           onClick={(event) => {
             event.stopPropagation();
-            if (bodyId) useWorkspaceStore.getState().setColourDialog([bodyId]);
+            if (bodyId) useDisplayDialogs.getState().setColourDialog([bodyId]);
           }}
         />
       ) : (

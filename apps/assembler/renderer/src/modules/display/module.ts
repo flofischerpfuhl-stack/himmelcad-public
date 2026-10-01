@@ -1,17 +1,13 @@
 /**
- * The display module (assembler/MODULES.md): appearance, display modes,
- * section and visibility commands, analysis legend, image export. Phase B
- * moves its files from `model/`, `chrome/` and `viewport/` here.
+ * The display module (assembler/MODULES.md): appearance and colour,
+ * display modes, section and visibility commands, the analysis legend,
+ * image export and the view display saved with a project. Registered here
+ * and in `module.ui.ts`.
  */
 import { COMMAND_ORDER } from '../../foundation/commands/registry.js';
 import { defineAssemblerModule } from '../../foundation/commands/module.js';
-import { registerProjectViewReader } from '../../foundation/commands/store.js';
-import { viewDisplayFromProject } from '../../model/viewDisplay.js';
-import {
-  DISPLAY_COMMANDS,
-  SECTION_COMMANDS,
-  VISIBILITY_COMMANDS,
-} from '../../model/commands/displayCommands.js';
+import { DISPLAY_COMMANDS, SECTION_COMMANDS, VISIBILITY_COMMANDS } from './displayCommands.js';
+import { DISPLAY_PROJECT_SECTION } from './projectFile.js';
 
 export const displayModule = defineAssemblerModule({
   id: 'display',
@@ -20,6 +16,5 @@ export const displayModule = defineAssemblerModule({
     { order: COMMAND_ORDER.section, commands: SECTION_COMMANDS },
     { order: COMMAND_ORDER.visibility, commands: VISIBILITY_COMMANDS },
   ],
-  // Display mode, edge toggles and the face section plane saved in the project file.
-  onInstall: () => registerProjectViewReader(viewDisplayFromProject),
+  fileFormatFields: [DISPLAY_PROJECT_SECTION],
 });

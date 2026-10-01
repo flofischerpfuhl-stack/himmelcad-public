@@ -29,9 +29,8 @@ import {
   INTEROP_METHODS,
   STEP_EXPORT_PARAMS,
   STEP_IMPORT_STRUCTURE,
-} from '../../api/interopApi.js';
+} from '../../modules/interop/interopApi.js';
 import { BLEND_OPTION_PARAMS } from '../../modules/modeling/printSchema.js';
-
 import type { FeatureKindSpec, MethodSpec } from '../../foundation/commands/api/contract.js';
 import {
   API_DEFS,
