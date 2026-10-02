@@ -28,8 +28,12 @@ export interface ViewportClick {
   item: SelectionItem | null;
   isDouble: boolean;
   touch: boolean;
+  /** Shift/Ctrl (or Selection Extension): the click adds to the selection. */
+  additive?: boolean;
   /** Host-relative CSS position of the click. */
   hostPoint: [number, number];
+  /** The pointer ray (world), or `null` before the camera is known. */
+  ray?: () => { origin: Vec3; direction: Vec3 } | null;
   /** Host-relative CSS position of a world point, or `null` behind the camera. */
   project: (point: Vec3) => [number, number] | null;
   /** The bodies drawn right now (hidden and isolated-away bodies excluded). */

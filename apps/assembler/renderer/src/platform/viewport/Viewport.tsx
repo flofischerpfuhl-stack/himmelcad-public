@@ -1554,7 +1554,17 @@ export function Viewport(props: ViewportProps): JSX.Element {
             item: selectionFromPick(pick, isDouble),
             isDouble,
             touch,
+            additive,
             hostPoint: [clientX - rect.left, clientY - rect.top],
+            ray: () => {
+              const r = rayAtClient(clientX, clientY);
+              return r
+                ? {
+                    origin: [r.origin[0], r.origin[1], r.origin[2]],
+                    direction: [r.direction[0], r.direction[1], r.direction[2]],
+                  }
+                : null;
+            },
             project: (p) => {
               const sp = projectHost(p);
               return sp ? [sp[0], sp[1]] : null;

@@ -26,6 +26,7 @@ import {
   withoutAbsentStepFolders,
 } from '../../renderer/src/foundation/commands/items.js';
 import { installStepFolderSync } from '../../renderer/src/foundation/commands/stepFolders.js';
+import { IMAGE_CLICK, imageAtRay } from '../../renderer/src/modules/canvas/viewportImages.js';
 import { createNodeKernelAdapter } from '../kernel/nodeKernel.js';
 
 const store = useAssemblerStore;
@@ -331,4 +332,49 @@ void test('Split Body: two selected bodies are split in one step; a double-click
   store.getState().undo();
   await store.getState().whenSettled();
   assert.equal(store.getState().evaluation.bodies.length, 3, 'one undo step');
+});
+
+// ---- Reference images pickable in the viewport (HIS-15) -------------------------------------------
+
+void test('Reference images: a click on the picture selects it unless a body lies in front', async () => {
+  const image = {
+    ...base('img'),
+    kind: 'referenceImage',
+    imageId: 'pic-1',
+    fileName: 'plan.png',
+    pixelWidth: 200,
+    pixelHeight: 100,
+    plane: { kind: 'plane', plane: 'XY', offset: 0 },
+    center: [0, 0],
+    width: 100,
+    rotation: 0,
+    opacity: 0.6,
+  } as unknown as Feature;
+  await load([image, cube('a', [30, 0, 0], 10)]);
+  const down = (x: number, y: number) => ({
+    origin: [x, y, 100] as [number, number, number],
+    direction: [0, 0, -1] as [number, number, number],
+  });
+  assert.equal(imageAtRay(store.getState(), down(0, 0))?.featureId, 'img');
+  assert.equal(imageAtRay(store.getState(), down(0, 40)), null, 'outside the picture (height 50)');
+  const click = (x: number, y: number, pick: unknown, surface: [number, number, number] | null) =>
+    IMAGE_CLICK.click({
+      state: store.getState(),
+      pick: pick as never,
+      item: null,
+      isDouble: false,
+      touch: false,
+      hostPoint: [0, 0],
+      project: () => null,
+      visibleBodies: () => store.getState().evaluation.bodies,
+      surfacePoint: () => surface,
+      ray: () => down(x, y),
+    });
+  store.getState().clearSelection();
+  assert.equal(click(0, 0, null, null), true);
+  assert.deepEqual(store.getState().selection, [{ kind: 'feature', featureId: 'img' }]);
+  // Over the cube (its top at z = 10, in front of the picture at z = 0) the body keeps the click.
+  store.getState().clearSelection();
+  assert.equal(click(30, 0, { kind: 'face', bodyId: 'body:a', faceKey: 'x' }, [30, 0, 10]), false);
+  assert.deepEqual(store.getState().selection, []);
 });
