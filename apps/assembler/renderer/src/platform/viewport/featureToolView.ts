@@ -84,6 +84,9 @@ export function draftHandleSet(handles: readonly DraftHandle[]): ToolHandleSet {
         value: h.value,
         ring: false,
         color: null,
+        ...(h.drag ? { drag: h.drag } : {}),
+        ...(h.lever !== undefined ? { lever: h.lever } : {}),
+        ...(h.snapDeg !== undefined ? { snapDeg: h.snapDeg } : {}),
       });
       // Beside the arc's middle, so the chip never covers the knob being dragged.
       out.chips.push({ ...chip, at: angleAt({ ...h, radius: h.radius * 1.25 }, h.value / 2) });

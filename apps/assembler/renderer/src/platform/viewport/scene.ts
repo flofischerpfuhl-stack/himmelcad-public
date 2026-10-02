@@ -252,6 +252,14 @@ export interface AngleHandleState {
   color: readonly [number, number, number] | null;
   /** Drag snapping step in degrees (default 15°, Shift: 0.1°). */
   snapDeg?: number;
+  /**
+   * How a drag maps to the value (`angleDrag.ts`): `turn` (default: the
+   * pointer's angle about the centre, `arc` when the plane is seen edge-on)
+   * or `lever` (a tilt: the tip's sideways displacement over {@link lever}).
+   */
+  drag?: 'turn' | 'lever';
+  /** Lever length, mm (`lever` handles; default: `radius`), e.g. the extrude height. */
+  lever?: number;
   hovered: boolean;
 }
 

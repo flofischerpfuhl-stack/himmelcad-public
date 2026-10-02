@@ -24,6 +24,7 @@
  * Not unit tested (requires a GL context); the pure inputs are.
  */
 import type { MaterialParams } from './displayModes.js';
+import type { CoarseDepthMap } from './orbitPivot.js';
 import { isStable } from './bodyGeometry.js';
 
 type Vec3 = readonly [number, number, number];
@@ -614,6 +615,51 @@ void main() {
   outDepth = encodeDepth(gl_FragCoord.z);
 }`;
 
+/** A triangle covering the viewport, without vertex buffers (`gl_VertexID` 0..2). */
+const FULLSCREEN_VS = `#version 300 es
+void main() {
+  vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2));
+  gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
+}`;
+
+/** Upper bound of the coarse depth map's block side, device pixels (the shader's loop bound). */
+export const MAX_DEPTH_BLOCK_PX = 32;
+
+/**
+ * The orbit pivot's coarse depth map (`orbitPivot.ts` `nearestPivotDepth`): one output
+ * texel per `uBlock`² block of the id pass's depth attachment, holding the nearest drawn
+ * depth of the block (packed as in `encodeDepth`, A = 1) or nothing (A = 0).
+ */
+const DEPTH_REDUCE_FS = `#version 300 es
+precision highp float;
+precision highp int;
+uniform highp sampler2D uDepth;
+uniform int uBlock;
+uniform ivec2 uSize;
+out vec4 outColor;
+void main() {
+  ivec2 origin = ivec2(gl_FragCoord.xy) * uBlock;
+  uint best = 0xFFFFFFFFu;
+  vec4 bestTexel = vec4(0.0);
+  for (int y = 0; y < ${MAX_DEPTH_BLOCK_PX}; y++) {
+    if (y >= uBlock) break;
+    for (int x = 0; x < ${MAX_DEPTH_BLOCK_PX}; x++) {
+      if (x >= uBlock) break;
+      ivec2 p = origin + ivec2(x, y);
+      if (p.x >= uSize.x || p.y >= uSize.y) continue;
+      vec4 t = texelFetch(uDepth, p, 0);
+      if (t.a < 0.5) continue;
+      uvec3 b = uvec3(t.rgb * 255.0 + 0.5);
+      uint key = b.r | (b.g << 8u) | (b.b << 16u);
+      if (key < best) {
+        best = key;
+        bestTexel = t;
+      }
+    }
+  }
+  outColor = bestTexel;
+}`;
+
 const ID_VS = `#version 300 es
 in vec3 aPosition;
 uniform mat4 uViewProj;
@@ -779,7 +825,16 @@ export class ViewportRenderer {
   private idFbo: WebGLFramebuffer | null = null;
   private idColorTex: WebGLTexture | null = null;
   private idDepthRb: WebGLRenderbuffer | null = null;
-  private idDepthColorRb: WebGLRenderbuffer | null = null;
+  private idDepthColorTex: WebGLTexture | null = null;
+  /** Orbit pivot: the whole view's depth reduced to one texel per block (nearest depth). */
+  private readonly depthReduce: Program;
+  private coarseFbo: WebGLFramebuffer | null = null;
+  private coarseTex: WebGLTexture | null = null;
+  private coarseWidth = 0;
+  private coarseHeight = 0;
+  private coarseReadBuffer: WebGLBuffer | null = null;
+  private coarseRead: { width: number; height: number; block: number; fence: WebGLSync } | null =
+    null;
   /** Pixel buffer and fence of an asynchronous depth-window read (orbit pivot). */
   private depthReadBuffer: WebGLBuffer | null = null;
   private depthRead: {
@@ -855,6 +910,7 @@ export class ViewportRenderer {
     this.meshId = linkProgram(gl, MESH_ID_VS, MESH_ID_FS, ['aPosition', 'aLocal']);
     this.shadowProgram = linkProgram(gl, SHADOW_VS, SHADOW_FS, ['aPosition']);
     this.imageProgram = linkProgram(gl, IMAGE_VS, IMAGE_FS, ['aPosition', 'aUv']);
+    this.depthReduce = linkProgram(gl, FULLSCREEN_VS, DEPTH_REDUCE_FS, []);
     this.dynamicBuffer = gl.createBuffer()!;
     this.dynamicBuffer2 = gl.createBuffer()!;
     this.dynamicIndexBuffer = gl.createBuffer()!;
@@ -1621,7 +1677,7 @@ export class ViewportRenderer {
     if (this.idFbo) gl.deleteFramebuffer(this.idFbo);
     if (this.idColorTex) gl.deleteTexture(this.idColorTex);
     if (this.idDepthRb) gl.deleteRenderbuffer(this.idDepthRb);
-    if (this.idDepthColorRb) gl.deleteRenderbuffer(this.idDepthColorRb);
+    if (this.idDepthColorTex) gl.deleteTexture(this.idDepthColorTex);
     this.idWidth = Math.max(1, width);
     this.idHeight = Math.max(1, height);
     const tex = gl.createTexture()!;
@@ -1643,14 +1699,30 @@ export class ViewportRenderer {
     gl.bindRenderbuffer(gl.RENDERBUFFER, depth);
     gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT24, this.idWidth, this.idHeight);
     // Second colour attachment: the packed window depth of what the id pass drew
-    // (WebGL2 cannot read a depth renderbuffer back).
-    const depthColor = gl.createRenderbuffer()!;
-    gl.bindRenderbuffer(gl.RENDERBUFFER, depthColor);
-    gl.renderbufferStorage(gl.RENDERBUFFER, gl.RGBA8, this.idWidth, this.idHeight);
+    // (WebGL2 cannot read a depth renderbuffer back). A texture, so the orbit pivot's
+    // whole-view coarse depth map can be reduced from it on the GPU (`requestPickDepthCoarse`).
+    const depthColor = gl.createTexture()!;
+    gl.bindTexture(gl.TEXTURE_2D, depthColor);
+    gl.texImage2D(
+      gl.TEXTURE_2D,
+      0,
+      gl.RGBA8,
+      this.idWidth,
+      this.idHeight,
+      0,
+      gl.RGBA,
+      gl.UNSIGNED_BYTE,
+      null,
+    );
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.bindTexture(gl.TEXTURE_2D, null);
     const fbo = gl.createFramebuffer()!;
     gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
-    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT1, gl.RENDERBUFFER, depthColor);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT1, gl.TEXTURE_2D, depthColor, 0);
     gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, depth);
     gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1]);
     gl.readBuffer(gl.COLOR_ATTACHMENT0);
@@ -1658,7 +1730,7 @@ export class ViewportRenderer {
     this.idFbo = fbo;
     this.idColorTex = tex;
     this.idDepthRb = depth;
-    this.idDepthColorRb = depthColor;
+    this.idDepthColorTex = depthColor;
   }
 
   /** Draws the recorded id pass if it is out of date. */
@@ -1956,6 +2028,140 @@ export class ViewportRenderer {
     this.gl.deleteSync(this.depthRead.fence);
     this.depthRead = null;
   }
+
+  /**
+   * Reduces the id pass's depth attachment to one texel per `block`² device
+   * pixels (the nearest depth drawn in the block) into a small framebuffer:
+   * one full-screen draw (≈ one texel fetch per pixel). `null` when there is
+   * nothing to reduce (no frame yet).
+   */
+  private drawCoarseDepth(block: number): { width: number; height: number; block: number } | null {
+    const gl = this.gl;
+    if (!this.ensurePick() || !this.idFbo || !this.idDepthColorTex) return null;
+    const b = Math.max(1, Math.min(MAX_DEPTH_BLOCK_PX, Math.round(block)));
+    const width = Math.ceil(this.idWidth / b);
+    const height = Math.ceil(this.idHeight / b);
+    if (
+      !this.coarseFbo ||
+      !this.coarseTex ||
+      this.coarseWidth !== width ||
+      this.coarseHeight !== height
+    ) {
+      if (this.coarseFbo) gl.deleteFramebuffer(this.coarseFbo);
+      if (this.coarseTex) gl.deleteTexture(this.coarseTex);
+      const tex = gl.createTexture()!;
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+      const fbo = gl.createFramebuffer()!;
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      this.coarseFbo = fbo;
+      this.coarseTex = tex;
+      this.coarseWidth = width;
+      this.coarseHeight = height;
+    }
+    const p = this.depthReduce;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.coarseFbo);
+    gl.viewport(0, 0, width, height);
+    gl.disable(gl.DEPTH_TEST);
+    gl.disable(gl.BLEND);
+    gl.disable(gl.STENCIL_TEST);
+    gl.useProgram(p.program);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, this.idDepthColorTex);
+    gl.uniform1i(this.u(p, 'uDepth'), 0);
+    gl.uniform1i(this.u(p, 'uBlock'), b);
+    gl.uniform2i(this.u(p, 'uSize'), this.idWidth, this.idHeight);
+    this.resetAttribs();
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    gl.bindTexture(gl.TEXTURE_2D, null);
+    gl.enable(gl.DEPTH_TEST);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    return { width, height, block: b };
+  }
+
+  /** The coarse map as {@link CoarseDepthMap} from its bytes (bottom-up rows). */
+  private coarseMap(
+    bytes: Uint8Array,
+    size: { width: number; height: number; block: number },
+  ): CoarseDepthMap {
+    return {
+      width: size.width,
+      height: size.height,
+      block: size.block,
+      // Blocks are aligned to the bottom-left corner (GL); rows here are top first.
+      offsetY: this.idHeight - size.height * size.block,
+      z: ViewportRenderer.decodeDepth(bytes, size.width, size.height),
+    };
+  }
+
+  /**
+   * The whole view's coarse depth map (orbit pivot rule "nearest"), read at
+   * once: draws the reduction and waits for it. Cheap after a synchronous
+   * window read (the GPU is idle then); otherwise prefer
+   * {@link requestPickDepthCoarse}. `null` before the first frame.
+   */
+  readPickDepthCoarse(block: number): CoarseDepthMap | null {
+    const gl = this.gl;
+    const size = this.drawCoarseDepth(block);
+    if (!size || !this.coarseFbo) return null;
+    const bytes = new Uint8Array(size.width * size.height * 4);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.coarseFbo);
+    gl.readPixels(0, 0, size.width, size.height, gl.RGBA, gl.UNSIGNED_BYTE, bytes);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    return this.coarseMap(bytes, size);
+  }
+
+  /**
+   * Starts drawing and reading the coarse depth map without waiting (pixel
+   * buffer + fence), like {@link requestPickDepthWindow}; once per gesture.
+   */
+  requestPickDepthCoarse(block: number): boolean {
+    const gl = this.gl;
+    this.cancelPickDepthCoarse();
+    const size = this.drawCoarseDepth(block);
+    if (!size || !this.coarseFbo) return false;
+    this.coarseReadBuffer ??= gl.createBuffer();
+    if (!this.coarseReadBuffer) return false;
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, this.coarseReadBuffer);
+    gl.bufferData(gl.PIXEL_PACK_BUFFER, size.width * size.height * 4, gl.STREAM_READ);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.coarseFbo);
+    gl.readPixels(0, 0, size.width, size.height, gl.RGBA, gl.UNSIGNED_BYTE, 0);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+    const fence = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
+    if (!fence) return false;
+    gl.flush();
+    this.coarseRead = { ...size, fence };
+    return true;
+  }
+
+  /** The map {@link requestPickDepthCoarse} read, if the GPU is done; never waits. */
+  takePickDepthCoarse(block: number): CoarseDepthMap | null {
+    const gl = this.gl;
+    const read = this.coarseRead;
+    if (!read || !this.coarseReadBuffer) return null;
+    if (read.block !== Math.max(1, Math.min(MAX_DEPTH_BLOCK_PX, Math.round(block)))) return null;
+    const status = gl.clientWaitSync(read.fence, 0, 0);
+    if (status !== gl.ALREADY_SIGNALED && status !== gl.CONDITION_SATISFIED) return null;
+    this.cancelPickDepthCoarse();
+    const bytes = new Uint8Array(read.width * read.height * 4);
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, this.coarseReadBuffer);
+    gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, bytes);
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+    return this.coarseMap(bytes, read);
+  }
+
+  /** Drops an unfinished {@link requestPickDepthCoarse}. */
+  cancelPickDepthCoarse(): void {
+    if (!this.coarseRead) return;
+    this.gl.deleteSync(this.coarseRead.fence);
+    this.coarseRead = null;
+  }
   // ---- offscreen image export -------------------------------------------------------------------
 
   /** Largest image side {@link renderImage} can produce on this GPU. */
@@ -2058,9 +2264,14 @@ export class ViewportRenderer {
     if (this.idFbo) gl.deleteFramebuffer(this.idFbo);
     if (this.idColorTex) gl.deleteTexture(this.idColorTex);
     if (this.idDepthRb) gl.deleteRenderbuffer(this.idDepthRb);
-    if (this.idDepthColorRb) gl.deleteRenderbuffer(this.idDepthColorRb);
+    if (this.idDepthColorTex) gl.deleteTexture(this.idDepthColorTex);
     this.cancelPickDepthWindow();
+    this.cancelPickDepthCoarse();
     if (this.depthReadBuffer) gl.deleteBuffer(this.depthReadBuffer);
+    if (this.coarseReadBuffer) gl.deleteBuffer(this.coarseReadBuffer);
+    if (this.coarseFbo) gl.deleteFramebuffer(this.coarseFbo);
+    if (this.coarseTex) gl.deleteTexture(this.coarseTex);
+    gl.deleteProgram(this.depthReduce.program);
     if (this.aoFbo) gl.deleteFramebuffer(this.aoFbo);
     if (this.aoDepthTex) gl.deleteTexture(this.aoDepthTex);
     if (this.shadowFbo) gl.deleteFramebuffer(this.shadowFbo);

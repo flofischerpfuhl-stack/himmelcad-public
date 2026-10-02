@@ -69,6 +69,7 @@ import {
 } from '../../renderer/src/platform/viewport/camera.js';
 import { unprojectRay } from '../../renderer/src/platform/viewport/math.js';
 import {
+  nearestPivotDepth,
   pivotDepth,
   type DepthProjection,
 } from '../../renderer/src/platform/viewport/orbitPivot.js';
@@ -533,25 +534,66 @@ function scenarioPivot(runs: number): StepRow[] {
       const point = found && ray ? pointAtViewDepth(c.pose, ray, found.depth) : null;
       const ms = performance.now() - t0;
       if (!point || found?.rule !== 'near') throw new Error('pivot: no point in the bore');
-      rows.push({
-        scenario: s,
-        step: c.label,
-        wallMs: ms,
-        uiMs: 0,
-        solverMs: 0,
-        regionsMs: 0,
-        kernelMs: 0,
-        featureMs: 0,
-        validityMs: 0,
-        namingMs: 0,
-        tessellateMs: 0,
-        reused: 0,
-        evaluated: 0,
-        printMs: null,
-      });
+      rows.push(pivotRow(s, c.label, ms));
     }
   }
+  // Rule "nearest": a bore wider than the window (the window is empty), so the coarse map of a
+  // 1920 × 1080 view (8 px blocks: 240 × 135) is searched for the rim — the CPU part per gesture.
+  const projection: DepthProjection = { near: 10, far: 1000, orthographic: false };
+  const block = 8;
+  const map = {
+    width: 240,
+    height: 135,
+    block,
+    offsetY: 1080 - 135 * block,
+    z: new Float32Array(240 * 135),
+  };
+  const windowZ = (d: number) =>
+    (projection.far + projection.near - (2 * projection.far * projection.near) / d) /
+      (projection.far - projection.near) /
+      2 +
+    0.5;
+  for (let row = 0; row < map.height; row += 1) {
+    for (let col = 0; col < map.width; col += 1) {
+      const r = Math.hypot(col + 0.5 - 120, row + 0.5 - 67.5);
+      map.z[row * map.width + col] = r < 40 ? Number.NaN : r < 90 ? windowZ(100) : Number.NaN;
+    }
+  }
+  const empty = new Float32Array(64 * 64).fill(Number.NaN);
+  const pose: CameraPose = { ...DEFAULT_POSE, fov: 45 };
+  for (let i = 0; i < runs; i += 1) {
+    const t0 = performance.now();
+    const found = pivotDepth(
+      { width: 64, height: 64, z: empty, cx: 32, cy: 32, cssPerSample: 1 },
+      projection,
+    );
+    const nearest = found ? null : nearestPivotDepth(map, { x: 960, y: 540 }, projection);
+    const ray = unprojectRay(viewProjectionMatrix(pose, 1.6), 640, 400, 1280, 800);
+    const point = nearest && ray ? pointAtViewDepth(pose, ray, nearest.depth) : null;
+    const ms = performance.now() - t0;
+    if (!point || nearest?.rule !== 'nearest') throw new Error('pivot: no rim found');
+    rows.push(pivotRow(s, 'nearest rule (empty window + 240×135 coarse map)', ms));
+  }
   return rows;
+}
+
+function pivotRow(scenario: string, step: string, ms: number): StepRow {
+  return {
+    scenario,
+    step,
+    wallMs: ms,
+    uiMs: 0,
+    solverMs: 0,
+    regionsMs: 0,
+    kernelMs: 0,
+    featureMs: 0,
+    validityMs: 0,
+    namingMs: 0,
+    tessellateMs: 0,
+    reused: 0,
+    evaluated: 0,
+    printMs: null,
+  };
 }
 
 // ---- report ---------------------------------------------------------------------------------

@@ -14,6 +14,11 @@ import {
   pivotSnapPoint,
   toolHandleSet,
 } from '../../renderer/src/modules/modeling/toolHandles.js';
+import {
+  MIN_LEVER_PX,
+  screenAngleDrag,
+  screenDragAngle,
+} from '../../renderer/src/platform/viewport/angleDrag.js';
 
 /** A unit-ish box body (two triangles per face are enough for bbox/centroid checks). */
 function boxBody(): Body {
@@ -133,4 +138,64 @@ void test('move tool: three rings + pivot, ring values write the rotation, copy 
   assert.equal(preview.bodies.length, 2);
   assert.deepEqual(preview.newIds, ['body:b::copy']);
   store.getState().cancel();
+});
+
+// ---- angle handle drags (Block 9: `angleDrag.ts`) ---------------------------------------------
+
+void test('a tilt handle drags like a lever: 28 px turn a 5° taper by a few degrees, not 45°', () => {
+  // The owner's case: about 28 px of drag. The lever is at least 200 px on screen.
+  const drag = {
+    kind: 'lever' as const,
+    startDeg: 5,
+    start: [0, 0] as [number, number],
+    tangent: [1, 0] as [number, number],
+    leverPx: MIN_LEVER_PX,
+  };
+  const after = screenDragAngle(drag, [28, 0]);
+  assert.ok(after > 5 && after < 14, `5° + 28 px → ${after}°`);
+  assert.equal(screenDragAngle(drag, [0, 0]), 5, 'no displacement keeps the value');
+  assert.ok(Math.abs(screenDragAngle(drag, [0, 50]) - 5) < 1e-9, 'across the tangent: no change');
+  // Geometric: tan θ grows linearly with the tip's displacement; never past 90°.
+  const t = Math.tan((5 * Math.PI) / 180) + 100 / MIN_LEVER_PX;
+  assert.ok(Math.abs(screenDragAngle(drag, [100, 0]) - (Math.atan(t) * 180) / Math.PI) < 1e-9);
+  assert.ok(screenDragAngle(drag, [1e6, 0]) < 90);
+  // Arc length: one radian per lever length.
+  const arc = { ...drag, kind: 'arc' as const, startDeg: 0 };
+  assert.ok(Math.abs(screenDragAngle(arc, [MIN_LEVER_PX, 0]) - 180 / Math.PI) < 1e-9);
+});
+
+void test('the screen drag follows the projected lever: long levers are calmer, short ones bounded', () => {
+  // A top view at k px per mm; the arc lies in the XY plane about +Z, zero along +X.
+  const project = (k: number) => (p: readonly [number, number, number]) =>
+    [p[0] * k, -p[1] * k] as const;
+  const handle = {
+    center: [0, 0, 0] as [number, number, number],
+    axis: [0, 0, 1] as [number, number, number],
+    ref: [1, 0, 0] as [number, number, number],
+  };
+  const long = screenAngleDrag('lever', handle, 0, 100, [0, 0], project(5))!;
+  assert.equal(long.leverPx, 500, 'a 100 mm lever at 5 px/mm');
+  assert.deepEqual(
+    long.tangent.map((v) => Math.round(v * 1e9) / 1e9 + 0),
+    [0, -1],
+    'grows towards +Y (screen up)',
+  );
+  const short = screenAngleDrag('lever', handle, 0, 2, [0, 0], project(5))!;
+  assert.equal(short.leverPx, MIN_LEVER_PX, 'a 2 mm lever is not hypersensitive');
+  // Arc: the tangent at the current value (at 90°: towards −X).
+  const arc = screenAngleDrag('arc', handle, 90, 10, [0, 0], project(5))!;
+  assert.deepEqual(
+    arc.tangent.map((v) => Math.round(v * 1e9) / 1e9 + 0),
+    [-1, 0],
+  );
+  // Looking straight along the tangent: drag across the lever instead (never a dead handle).
+  const along = screenAngleDrag(
+    'lever',
+    handle,
+    0,
+    10,
+    [0, 0],
+    (p) => [p[0] * 5, p[2] * 5] as const,
+  )!;
+  assert.ok(Math.hypot(...along.tangent) > 0.99);
 });

@@ -549,6 +549,9 @@ export const MOVE_FACE_DRAFT_TOOL = defineDraftTool<MoveFaceDraft>({
         ref: anchor.normal,
         // Two radii, so the arcs' value chips do not cover each other (or the arrows').
         radius: STEM_MM * (2 + i * 0.75),
+        // A tilt of at most ±80°: dragged like a lever (as the extrude taper), whole degrees.
+        drag: 'lever',
+        snapDeg: 1,
         apply: (d, value) => {
           const angle = Math.max(-80, Math.min(80, Math.round(value * 1000) / 1000));
           if (angle === 0) {
