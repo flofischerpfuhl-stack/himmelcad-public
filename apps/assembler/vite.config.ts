@@ -95,6 +95,36 @@ function occtCacheFiles(): Plugin {
   };
 }
 
+// The favicon (the app's procedural placeholder mark, `scripts/generate-icon.mjs`, as on the
+// web): without one, a browser asks for `/favicon.ico` on every load and logs a 404 (Block 9).
+// Loaded at run time, not bundled into the config: the script starts with a shebang.
+const iconScript = new URL('./scripts/generate-icon.mjs', import.meta.url).href;
+const { drawIcon, encodePng } = (await import(/* @vite-ignore */ iconScript)) as {
+  drawIcon: (size: number, options?: { maskable?: boolean }) => Uint8Array;
+  encodePng: (size: number, rgba: Uint8Array) => Uint8Array;
+};
+const FAVICON = 'favicon-32.png';
+
+function favicon(): Plugin {
+  const png = () => encodePng(32, drawIcon(32));
+  return {
+    name: 'assembler-favicon',
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        if ((req.url ?? '').split('?')[0] !== `/${FAVICON}`) {
+          next();
+          return;
+        }
+        res.setHeader('Content-Type', 'image/png');
+        res.end(png());
+      });
+    },
+    generateBundle() {
+      this.emitFile({ type: 'asset', fileName: FAVICON, source: png() });
+    },
+  };
+}
+
 export default defineConfig({
   root: 'renderer',
   base: './',
@@ -103,7 +133,7 @@ export default defineConfig({
   cacheDir: fileURLToPath(
     new URL(occtSelection ? 'node_modules/.vite-himmelcad' : 'node_modules/.vite', import.meta.url),
   ),
-  plugins: [react(), kernelWorkerCsp(), occtCacheFiles()],
+  plugins: [react(), kernelWorkerCsp(), occtCacheFiles(), favicon()],
   resolve: { alias: occtSelection?.aliases ?? [] },
   server: {
     port: 5175,
