@@ -14,6 +14,11 @@ import type { FingerDrawing } from './pointer.js';
 export type LengthUnit = 'mm' | 'in';
 export type ToolbarLabels = 'icons' | 'hover' | 'always';
 
+/** Accent colour of the interface (Shapr3D Settings › Accent colour); `blue` is the theme's own. */
+export type AccentColor = 'blue' | 'teal' | 'violet' | 'green' | 'pink';
+
+export const ACCENT_COLORS: readonly AccentColor[] = ['blue', 'teal', 'violet', 'green', 'pink'];
+
 /** Where the Undo/Redo buttons sit (the tablet layout always shows them by the tools too). */
 export type UndoRedoPlacement = 'titleBar' | 'bottomBar';
 export type ThemeName = 'dark' | 'light';
@@ -39,6 +44,8 @@ export interface Preferences {
   labels: ToolbarLabels;
   /** Undo/Redo buttons in the title bar or at the bottom of the tool column (Shapr3D, Windows). */
   undoRedoPlacement: UndoRedoPlacement;
+  /** Accent colour of buttons, focus rings and sketch outlines. */
+  accent: AccentColor;
   /** Single-letter shortcuts (E = Extrude, …). Off: typing a letter opens command search. */
   singleKeyHotkeys: boolean;
   navigationPreset: NavigationPresetId;
@@ -160,6 +167,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   gridStep: 5,
   labels: 'hover',
   undoRedoPlacement: 'titleBar',
+  accent: 'blue',
   singleKeyHotkeys: true,
   navigationPreset: 'shapr3d',
   theme: 'dark',
@@ -266,6 +274,7 @@ export function parsePreferences(text: string | null): Preferences {
     gridStep: pick('gridStep', number(0.01, 1000)),
     labels: pick('labels', oneOf(['icons', 'hover', 'always'])),
     undoRedoPlacement: pick('undoRedoPlacement', oneOf(['titleBar', 'bottomBar'])),
+    accent: pick('accent', oneOf([...ACCENT_COLORS])),
     singleKeyHotkeys: pick('singleKeyHotkeys', bool),
     navigationPreset: pick('navigationPreset', oneOf(NAVIGATION_PRESETS.map((p) => p.id))),
     theme: pick('theme', oneOf(['dark', 'light'])),

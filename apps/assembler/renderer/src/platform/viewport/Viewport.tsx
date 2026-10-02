@@ -804,6 +804,8 @@ export function Viewport(props: ViewportProps): JSX.Element {
   const projection = usePreferences((p) => p.projection);
   const fovSetting = usePreferences((p) => p.fov);
   const theme = usePreferences((p) => p.theme);
+  // The accent colour (Settings) tints the sketch outlines: re-read the colours with it.
+  const accent = usePreferences((p) => p.accent);
   // The render loop blends to the projection the setting asks for (`wantedFovNow`).
   useEffect(() => {
     dirtyRef.current = true;
@@ -811,7 +813,7 @@ export function Viewport(props: ViewportProps): JSX.Element {
   useEffect(() => {
     colorsRef.current = readViewportColors();
     dirtyRef.current = true;
-  }, [theme]);
+  }, [theme, accent]);
   const renderQuality = usePreferences((p) => p.renderQuality);
   useEffect(() => {
     dirtyRef.current = true;

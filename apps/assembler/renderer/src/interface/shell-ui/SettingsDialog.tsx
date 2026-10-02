@@ -10,6 +10,7 @@ import {
   type LengthUnit,
   type OrbitAround,
   type Projection,
+  type AccentColor,
   type TabletLayoutSetting,
   type ThemeName,
   type ToolbarLabels,
@@ -90,6 +91,20 @@ export function SettingsDialog(): JSX.Element {
               { value: 'light', label: 'Light' },
             ]}
             onChange={(e) => set('theme', e.currentTarget.value as ThemeName)}
+          />
+        </Row>
+        <Row label="Accent colour" hint="Buttons, focus rings and sketch outlines">
+          <Select
+            aria-label="Accent colour"
+            value={prefs.accent}
+            options={[
+              { value: 'blue', label: 'Blue' },
+              { value: 'teal', label: 'Teal' },
+              { value: 'violet', label: 'Violet' },
+              { value: 'green', label: 'Green' },
+              { value: 'pink', label: 'Pink' },
+            ]}
+            onChange={(e) => set('accent', e.currentTarget.value as AccentColor)}
           />
         </Row>
         <Row label="Toolbar labels" hint="Icon names in the side toolbars">
