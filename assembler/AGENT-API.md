@@ -121,6 +121,68 @@ chips take arithmetic only (`2 * 3`), no names, so they have no list.
   `test_document_parameters_drive_a_sketch_dimension_and_an_extrude` — the
   latter against the real headless process).
 
+### Ranges, slider and sweep (Block 9, ForgeCAD analysis §6 #3)
+
+- **Range.** A parameter may carry `min`, `max` (bounds of its value) and
+  `step` (the slider increment; an input aid, not a constraint). Each is a
+  number, text with a unit (`"5 mm"`) or a formula over other parameters
+  (`"wall * 2"`, stored as `minExpression`/… next to the last resolved
+  number, like `expression`/`value`). `parameter.create`/`parameter.edit`
+  take `min`/`max`/`step` (`null` removes one); `parameters.list` returns
+  them. Rules (`foundation/document/parameters.ts`,
+  `modules/parameters/parameterEdits.ts`): `min ≤ max`, `step > 0`; a value
+  outside the range — typed, computed by a formula, or pushed out by a
+  dependent's formula bound — refuses the edit with `invalidParams`
+  (`details.outOfRange: {parameterId, name, value, min?, max?}`, message
+  "wall = 5 mm is outside its range 1–4 mm. Nothing was changed."). Nothing
+  is ever clamped; only the panel's slider cannot leave the range. Only what
+  an edit touches is checked, so a file that already holds an out-of-range
+  value (an older build) stays editable; the panel flags it.
+- **Slider.** With both bounds the Parameters panel shows a compact slider
+  under the value field (the field stays primary; finger-sized in the tablet
+  layout). Dragging previews live: each value is planned like an edit and
+  evaluated on the kernel's preview channel with the incremental prefix
+  cache and preview tessellation, at most one request in flight and always
+  the newest value next; the viewport shows it (`documentPreview`) while the
+  document is untouched. Release commits one undo step through
+  `editParameter` (refused like a typed value if a step would fail); Esc
+  during the drag drops it. Arrow keys step and commit on key release.
+- **`parameters.sweep`** (query, never changes the document; "Test range"
+  in the panel runs the same code, `modules/parameters/sweep.ts`):
+  `parameters: [{parameterId, min?, max?, values?}]` (1–4), `mode: "range"`
+  (min, nominal, max) or `"samples"` (`samples` 2–16 values, min and max
+  included), `combine: "each"` (one at a time, the others nominal; the
+  nominal state once) or `"all"` (every combination); at most 64 samples,
+  else `invalidParams` with the count. Values must lie within a stored
+  range; a parameter without one needs `min`/`max` in the call; a
+  formula-driven parameter is refused (sweep what it reads). Each sample is
+  planned with the edit planner (sketches re-solved, formulas re-resolved)
+  and rebuilt on the kernel's `background` channel (lowest priority; never
+  delays the document or tool previews; steps below the History rollback
+  bar are not evaluated). Result: `axes`, and per sample `values`,
+  `nominal`, `outcome` (`rebuilt` | `refused` — the planner could not apply
+  the values, `reason` and `featureId`/`featureName` of the sketch | `failed`
+  — the kernel failed), `ok`, `errors` (every failing step: `featureId`,
+  `featureName`, the kernel's `message`), `bodies`, `volume` (mm³), `checks`
+  and `ms`; `passed`, `failed`, `total`, `cancelled`, `checksAvailable`.
+- **Checks per sample.** `checks` are the document's stored checks run by
+  the checks module through `foundation/commands/documentChecks.ts`
+  (`registerDocumentCheckRunner`; contract in MODULES.md §3 "Document
+  checks"): `[{checkId, name, status: pass|fail|error, message?, measured?}]`,
+  `null` when no checks module is installed (never an empty pass). A sample
+  with a failing check is not `ok`.
+- **UI.** Test range (flask button in the panel header): parameters with a
+  range, values (Min · nominal · max / Samples), One at a time / All
+  combinations, Run with progress and Cancel (stops at the running sample;
+  the finished ones stay), a compact table: the values per sample and
+  "Rebuilt" or the failing step and the kernel's reason.
+- **Python.** `doc.param("wall", 2, min=1.2, max="height / 4", step=0.2)`,
+  `Parameter.set_range(min, max, step=…)` (`None` keeps, `NULL` removes),
+  `Parameter.min/.max/.step`, `Parameter.sweep(mode=…, samples=…)`,
+  `doc.sweep("wall", "height", mode="samples", samples=4, combine="all")`;
+  client `sweep_parameters`. Tests: `test/model/parameterRanges.test.ts`,
+  `sdk/python/tests/test_assembler_block9.py` (headless).
+
 ## Measurement and display
 
 - **Measure queries** (`api/measureApi.ts`, 2026-09-30) return the Measure
@@ -208,7 +270,7 @@ small in-repo validator (no new dependency).
 | History      | `history.undo`, `history.redo`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | Files        | `export.stl` (`format` binary/ascii, `resolution`), `export.3mf` (`resolution`), `export.obj` (`resolution`), `image.insert` / `image.calibrate` (reference images), `export.step` (`schema`, `unit`, `structure`, `visibleOnly`), `export.dxf`, `export.meshStats`, `import.step` (`structure`), `import.mesh`, `import.dxf`, `mesh.toSolid`, `interop.formats` (`INTEROP.md`), `project.new`, `project.open`, `project.save`                                                                                                                                                                                                                                               |
 | 3D printing  | `print.analyze` (query), `print.orientations` (query), `print.placeOnPlate`, `print.orient` (one transform step each) — see `assembler/PRINTING.md`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| Parameters   | `parameters.list` (query), `parameter.create`, `parameter.edit`, `parameter.delete` — see "Document parameters" above                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| Parameters   | `parameters.list` (query), `parameter.create`, `parameter.edit`, `parameter.delete`; Block 9: `min`/`max`/`step` on create/edit, query `parameters.sweep` — see "Document parameters" above                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | Measure      | `measure.get`, `measure.distance`, `measure.angle`, `measure.area`, `measure.volume` (queries) — see "Measurement and display" below                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | View         | `selection.set` (not undoable)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 

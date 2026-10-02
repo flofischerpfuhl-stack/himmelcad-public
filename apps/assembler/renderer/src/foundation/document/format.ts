@@ -9,6 +9,11 @@
  * understand is rejected with a clear message rather than opened read-only
  * or partially, because a CAD feature list is a single indivisible
  * document — there is no meaningful "read-only partial" B-rep history.
+ *
+ * Versioning: additions are optional fields (no schema bump); an optional
+ * field that changes what a feature builds is a format capability, listed
+ * in the file's `requires` so an older reader refuses it instead of
+ * building the plain feature (`formatCapabilities.ts`, README "Files").
  */
 import type { EdgeRef, FaceRef, Feature } from './document.js';
 import './coreKinds.js';

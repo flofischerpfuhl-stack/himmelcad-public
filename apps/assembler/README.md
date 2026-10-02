@@ -321,13 +321,32 @@ manifold objects, names, colours, item transforms) and Open in Slicer
   of `pattern`, `split.profile`/`keepOriginal`, and the feature kinds
   `referenceImage`, `primitive`, `scale`, `translate`, `moveEdge` and
   `moveFace`. Files without them read exactly as before, so the schema
-  stays 3 and there is no migration. Older builds refuse a file with a new
-  kind (unknown kind) but ignore unknown optional fields: a tapered
-  extrude, a helical revolve or a two-direction pattern opens there as the
-  plain feature (no released build is affected; decide on a version bump
-  or a minimum-reader field before the first release). Dirty tracking covers features,
-  Items, saved views and reference meshes; the feature-id counter is reseeded
-  from each loaded document.
+  stays 3 and there is no migration. Block 9 adds, also optional: the
+  parameter range `min`/`max`/`step` (+ `minExpression`/`maxExpression`/
+  `stepExpression`; strictly typed, `step > 0`, `min ≤ max`; a value
+  outside its range still loads and is flagged in the panel). Dirty
+  tracking covers features, Items, saved views and reference meshes; the
+  feature-id counter is reseeded from each loaded document.
+- **Versioning rule (minimum reader, Block 9).** Older builds refuse a file
+  with a new feature kind, but they ignore unknown optional fields — so an
+  optional field that changes what a feature _builds_ would open as the
+  plain feature. Such fields are **format capabilities**
+  (`foundation/document/formatCapabilities.ts`, declared by the feature
+  kind that owns them): a file that uses one lists it, with a readable
+  label, in `requires` (right after `schemaVersion`), e.g.
+  `"requires": [{ "id": "extrude.taper", "label": "Extrude taper" }]`, and a
+  reader that does not know an id refuses the file: "This project needs a
+  newer HimmelCAD Assembler: it uses Extrude taper. Update the app to open
+  it." Today's capabilities: `extrude.taper`, `revolve.helix`,
+  `pattern.twoDirections`, `pattern.totalLength`, `pattern.angleSpacing`,
+  `pattern.uniform`, `split.profile`, `split.keepOriginal`. The list is
+  written only when a capability is used (other files are byte-identical),
+  is derived from the features at every save, and leaves the schema at 3.
+  Rules for new fields: geometry-changing optional field → declare a
+  capability (new id, never reused); view state or metadata → plain
+  optional field; a change old readers cannot even parse → bump the schema
+  with a migration. Builds before this rule (none released) ignore
+  `requires`.
 - STL import (File > Import STL…, binary or ASCII, `kernel/stlImport.ts`):
   a reference mesh is shown, measured (bounding box), hidden, renamed,
   filed in folders, deleted and exported (STL/3MF) like a body, but it is
@@ -359,7 +378,9 @@ manifold objects, names, colours, item transforms) and Open in Slicer
   New project, Open…, templates, recent projects with thumbnails, a crash
   recovery offer (instead of the dialog while Home is up) and a "Getting
   started" card whose five keys are read from the command registry. A modal
-  layer: Escape/close returns to the current document; only File shortcuts
+  layer: Escape/close returns to the current document — at start a blank
+  "Untitled" project (Block 9: the app never starts with the sample
+  bracket, desktop and web; `startWithBlankDocument`); only File shortcuts
   work while it is open; everything is a real button (Tab order: New, Open,
   templates, recent projects). Unsaved changes are asked about by the same
   dialog as New/Open (`projectStore` pending action `template`).
