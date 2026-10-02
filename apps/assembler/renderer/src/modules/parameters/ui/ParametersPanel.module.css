@@ -42,8 +42,14 @@
 }
 
 .unitSelect {
-  flex: 0 0 44px;
-  width: 44px;
+  flex: 0 0 56px;
+  width: 56px;
+}
+
+/* The shared trigger's padding and gap leave no room for "mm" in a narrow field. */
+.unitSelect .unitTrigger {
+  gap: 2px;
+  padding: 0 4px 0 6px;
 }
 
 .deleteButton {
@@ -168,6 +174,12 @@
   gap: 2px;
   font-size: 10px;
   color: var(--hc-fg-subtle);
+}
+
+/* In the column the value field's flex basis would become its height. */
+.rangeField .valueInput {
+  flex: 0 0 auto;
+  width: 100%;
 }
 
 .testRange {

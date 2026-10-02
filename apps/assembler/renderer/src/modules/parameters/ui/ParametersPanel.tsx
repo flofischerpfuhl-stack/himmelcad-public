@@ -353,6 +353,7 @@ function ParameterRow({
         />
         <Select
           wrapClassName={styles.unitSelect}
+          className={styles.unitTrigger}
           aria-label={`${parameter.name} unit`}
           value={parameter.unit}
           options={UNIT_OPTIONS}
@@ -602,6 +603,7 @@ function NewParameterRow({
       />
       <Select
         wrapClassName={styles.unitSelect}
+        className={styles.unitTrigger}
         aria-label="New parameter unit"
         value={unit}
         options={UNIT_OPTIONS}
