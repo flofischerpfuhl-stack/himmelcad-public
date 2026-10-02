@@ -325,7 +325,12 @@ manifold objects, names, colours, item transforms) and Open in Slicer
   kind (unknown kind) but ignore unknown optional fields: a tapered
   extrude, a helical revolve or a two-direction pattern opens there as the
   plain feature (no released build is affected; decide on a version bump
-  or a minimum-reader field before the first release). Dirty tracking covers features,
+  or a minimum-reader field before the first release). Block 9 adds, also
+  additive: the kind `replaceFace`, the optional fields `align.from`/`to`/
+  `turn`, `split.bodyIds`, `pattern.third`/`sketchIds` (these change the
+  geometry, so an older build that ignores them evaluates the step
+  differently — list them for the minimum-reader mechanism) and
+  `items.folders[].featureId` (display only). Dirty tracking covers features,
   Items, saved views and reference meshes; the feature-id counter is reseeded
   from each loaded document.
 - STL import (File > Import STL…, binary or ASCII, `kernel/stlImport.ts`):

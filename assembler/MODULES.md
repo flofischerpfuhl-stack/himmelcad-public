@@ -365,6 +365,22 @@ Added in the navigation block (2026-10-01, [SELECTION-NAVIGATION.md](SELECTION-N
   product's tablet layout can size small buttons (additive; Builder and
   PhotoLab unchanged).
 
+Added in Block 9 (parity stream, branch `asm/b9-parity-20261002`):
+
+- **Step folders** (`commands/stepFolders.ts`): `registerStepFolderKind(kind,
+sources)` — a new step of that kind files its source bodies and the bodies
+  it created into an Items folder named after it (Pattern registers it);
+  `installStepFolderSync(store)` in a module's `install`. `ItemFolder.featureId`
+  ties the folder to its step: `buildItemTree(rows, meta, liveFeatureIds)`
+  hides folders of absent steps, Save drops them (`withoutAbsentStepFolders`).
+- **`StoreCore.kernel()`**: the attached adapter, for module slices that need a
+  one-off kernel export outside the evaluation queue (the unlinked copy).
+- **`ViewportClick.additive` / `ray()`** (`viewport/viewportHooks.ts`): Shift
+  and the pointer ray for module click handlers (canvas picks images).
+- **`API_ORDER.methods.modeling`** (650): modelling methods (`body.copyUnlinked`).
+- Store `setSuppressed` / `deleteFeature` take one id or several (one undo step).
+- Direct-edit exports `rotateFace` (`moveEdits.ts`) for Replace Face's tilt.
+
 Compositions (`renderer/src/app`):
 
 - `composition.ts` — the module list; `installModules` at import. Imported
