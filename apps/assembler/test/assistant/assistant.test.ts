@@ -194,7 +194,11 @@ async function setup(): Promise<FakeHarness> {
     store,
     subscribeStore: (listener) =>
       store.subscribe((state, previous) => {
-        if (state.features !== previous.features || state.parameters !== previous.parameters)
+        if (
+          state.features !== previous.features ||
+          state.parameters !== previous.parameters ||
+          state.checks !== previous.checks
+        )
           listener();
       }),
   });
@@ -291,6 +295,35 @@ void test('a turn: tool calls become History steps, the turn is one undo step, t
   assert.equal(useProjectSkills.getState().skills[0]?.id, 'team-rules');
 });
 
+void test('a turn that also stores a check is one undo step; a check edit counts as a step', async () => {
+  const harness = await setup();
+  await useAssistant.getState().send('Make a plate and keep it under 1 cm³');
+  textOf(await harness.call('hcasm_call', plate('Plate', 0)));
+  const added = textOf(
+    await harness.call('hcasm_call', {
+      method: 'checks.add',
+      params: { kind: 'bodyCount', params: { max: 3 }, name: 'At most 3 bodies' },
+    }),
+  );
+  assert.equal((added.check as Json).displayName, 'At most 3 bodies');
+  assert.equal(store.getState().checks.length, 1);
+  // A query in between is no step.
+  const run = textOf(await harness.call('hcasm_call', { method: 'checks.run', params: {} }));
+  assert.equal(run.passed, true);
+  harness.lifecycle('completed');
+
+  // One undo removes both the sketch and the check; redo brings both back.
+  store.getState().undo();
+  await store.getState().whenSettled();
+  assert.equal(store.getState().features.length, 0);
+  assert.equal(store.getState().checks.length, 0);
+  assert.equal(store.getState().history.canUndo, false, 'nothing else to undo');
+  store.getState().redo();
+  await store.getState().whenSettled();
+  assert.equal(store.getState().features.length, 1);
+  assert.equal(store.getState().checks.length, 1);
+  store.getState().commitChecks([]);
+});
 void test('the next turn continues the same provider thread', async () => {
   const harness = await setup();
   await useAssistant.getState().send('first');
@@ -407,6 +440,22 @@ void test('approval rules: only work from before the turn, project replacement a
   assert.ok(classifyForTurn(turn, 'history.undo', {}, state));
   assert.equal(classifyForTurn({ ...turn, steps: 2 }, 'history.undo', {}, state), null);
   assert.equal(classifyForTurn(turn, 'feature.edit', { featureId: 'f1' }, state), null);
+  // Stored checks (checks module): removing the user's check asks, one the turn added does not.
+  const withChecks = { ...turn, preexistingChecks: new Set(['c1']) };
+  const checkState = {
+    ...state,
+    checks: [
+      { id: 'c1', kind: 'clearance', name: 'Lid gap', params: { min: 0.3 } },
+      { id: 'c2', kind: 'volume', params: { min: 1 } },
+    ] as never,
+  };
+  assert.match(
+    classifyForTurn(withChecks, 'checks.remove', { checkId: 'c1' }, checkState)!.title,
+    /Lid gap/,
+  );
+  assert.ok(classifyForTurn(withChecks, 'checks.remove', { checkId: 'Lid gap' }, checkState));
+  assert.equal(classifyForTurn(withChecks, 'checks.remove', { checkId: 'c2' }, checkState), null);
+  assert.equal(classifyForTurn(withChecks, 'checks.update', { checkId: 'c1' }, checkState), null);
 });
 
 void test('stored transcripts keep messages, tools and approvals, not reasoning', () => {

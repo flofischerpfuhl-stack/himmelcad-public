@@ -34,7 +34,11 @@ export const assistantModule = defineAssemblerModule({
       store: useAssemblerStore,
       subscribeStore: (listener) =>
         useAssemblerStore.subscribe((state, previous) => {
-          if (state.features !== previous.features || state.parameters !== previous.parameters)
+          if (
+            state.features !== previous.features ||
+            state.parameters !== previous.parameters ||
+            state.checks !== previous.checks
+          )
             listener();
         }),
     });

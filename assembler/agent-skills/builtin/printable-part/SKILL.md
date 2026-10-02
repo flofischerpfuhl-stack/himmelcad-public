@@ -2,7 +2,7 @@
 id: printable-part
 name: Design a printable part
 description: Workflow from a plain-language request to a checked, editable, printable part, with the acceptance rules to meet before saying it is done.
-version: 1
+version: 2
 scope: built-in
 tags: [workflow, printing, modeling]
 ---
@@ -57,7 +57,15 @@ The part is done only when:
 - walls are at least the nozzle-safe minimum (0.8 mm default `minWallMm`);
 - holes and pins meet `minHoleMm`/`minPinMm`;
 - the part fits the build volume if the user named a printer;
-- the bounding box matches the requested outer size (`bodies.list` bbox).
+- the bounding box matches the requested outer size (`bodies.list` bbox);
+- parts that must fit together (a lid on an enclosure, a pin in a hole,
+  print-in-place parts) have the clearance the fit needs: measure it with
+  `measure.clearance {a, b}` (`relation` must not be `overlap`) and keep
+  it as a stored check, `checks.add {kind: "clearance", params: {a, b,
+min: 0.2}}` (0.2–0.4 mm for a printed fit), so it is re-checked after
+  every later change; `checks.run` must report `passed`. When the fit
+  depends on a parameter, `parameters.sweep` over its range shows whether
+  the check holds at the ends (skill `parametric-part`).
 
 ## 5. Report
 

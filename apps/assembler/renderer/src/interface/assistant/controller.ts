@@ -67,6 +67,7 @@ export interface AssistantStoreApi {
     AssemblerState,
     | 'features'
     | 'parameters'
+    | 'checks'
     | 'evaluation'
     | 'selection'
     | 'projectName'
@@ -98,9 +99,10 @@ interface Turn {
   sessionId: string;
   threadId: string;
   mark: HistoryMark;
-  /** Features and parameters the turn found (deleting them needs approval). */
+  /** Features, parameters and stored checks the turn found (deleting them needs approval). */
   preexisting: Set<string>;
   preexistingParameters: Set<string>;
+  preexistingChecks: Set<string>;
   /** Committed writes minus undos of this turn. */
   steps: number;
   /** Feature-list changes not made by the agent while the turn ran. */
@@ -282,6 +284,7 @@ export const useAssistant = create<AssistantState>((set, get) => ({
         mark: state.markHistory(),
         preexisting: new Set(state.features.map((f) => f.id)),
         preexistingParameters: new Set(state.parameters.map((p) => p.id)),
+        preexistingChecks: new Set(state.checks.map((c) => c.id)),
         steps: 0,
         foreignChanges: 0,
         unsubscribeStore: () => undefined,
@@ -746,12 +749,20 @@ async function answerTool(bridge: HostAssistant, id: string, request: HostAssist
   await bridge.respondTool(id, result);
 }
 
+/** Agent-API methods that edit the stored checks (one undo step each). */
+const CHECK_EDITS: ReadonlySet<string> = new Set(['checks.add', 'checks.update', 'checks.remove']);
+
 function countStep(turn: Turn, method: string, result: unknown): void {
   const value = result as Json | null;
   if (method === 'history.undo') turn.steps -= 1;
   else if (method === 'history.redo') turn.steps += 1;
   else if (value && value.committed === true) turn.steps += 1;
-  else if (method === 'transaction.commit' || method.startsWith('parameter.')) {
+  else if (
+    method === 'transaction.commit' ||
+    method.startsWith('parameter.') ||
+    // Stored checks: each edit is an undo step of its own (checks module).
+    CHECK_EDITS.has(method)
+  ) {
     if (value && (Array.isArray(value.featureIds) || typeof value.revision === 'number'))
       turn.steps += 1;
   }
@@ -759,10 +770,11 @@ function countStep(turn: Turn, method: string, result: unknown): void {
 
 /** Which calls need the user's approval (destructive to work that existed before the turn). */
 export function classifyForTurn(
-  turn: Pick<Turn, 'preexisting' | 'preexistingParameters' | 'steps'>,
+  turn: Pick<Turn, 'preexisting' | 'preexistingParameters' | 'steps'> &
+    Partial<Pick<Turn, 'preexistingChecks'>>,
   method: string,
   params: Json,
-  state: Pick<AssemblerState, 'features' | 'parameters'>,
+  state: Pick<AssemblerState, 'features' | 'parameters'> & Partial<Pick<AssemblerState, 'checks'>>,
 ): ApprovalRequest | null {
   switch (method) {
     case 'project.new':
@@ -796,6 +808,17 @@ export function classifyForTurn(
         method,
         title: `Delete the parameter “${name}”`,
         detail: 'The parameter existed before the assistant started.',
+      };
+    }
+    case 'checks.remove': {
+      const key = String(params.checkId ?? '');
+      // `checkId` may also be the check's label, as `checks.remove` accepts it.
+      const check = (state.checks ?? []).find((c) => c.id === key || c.name === key);
+      if (!check || !turn.preexistingChecks?.has(check.id)) return null;
+      return {
+        method,
+        title: `Remove the check “${check.name ?? check.kind}”`,
+        detail: 'The check existed before the assistant started. Undo brings it back.',
       };
     }
     case 'history.undo':

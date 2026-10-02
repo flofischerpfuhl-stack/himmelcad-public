@@ -6,9 +6,20 @@
  * left-dock button shows that one is running.
  */
 import { useCallback, useMemo, useRef, useState } from 'react';
-import { BookOpen, Info, Lock, MessageSquare, Plus, RefreshCw, Trash2, X } from 'lucide-react';
+import {
+  BookOpen,
+  Info,
+  Lock,
+  MessageSquare,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Trash2,
+  X,
+} from 'lucide-react';
 
 import { AgentChatPanel, type AgentTimelineRow } from '@himmelcad/agent';
+import { Select } from '@himmelcad/ui';
 
 import { eventsFromStored, useAssistant } from '../controller.js';
 import { useAssistantSessions } from '../sessions.js';
@@ -115,6 +126,18 @@ function SessionBar(): JSX.Element {
   const busy = useAssistant((s) => s.busy);
   const active = sessions.find((s) => s.id === activeId) ?? null;
   const [renaming, setRenaming] = useState<string | null>(null);
+  // The shared dropdown (never the platform's native select): names are cut with an ellipsis
+  // in the trigger and shown in full in the list, also in the narrow tablet island.
+  const sessionOptions = useMemo(
+    () => [
+      { value: '', label: 'New session' },
+      ...[...sessions].reverse().map((session) => ({
+        value: session.id,
+        label: `${session.name}${session.state === 'interrupted' ? ' · interrupted' : ''}`,
+      })),
+    ],
+    [sessions],
+  );
   return (
     <div className={styles.sessionBar}>
       {renaming !== null && active ? (
@@ -135,28 +158,30 @@ function SessionBar(): JSX.Element {
           }}
         />
       ) : (
-        <select
+        <Select
+          wrapClassName={styles.sessionSelectWrap}
           className={styles.sessionSelect}
           aria-label="Session"
           value={activeId ?? ''}
           disabled={busy}
+          options={sessionOptions}
           onChange={(event) => {
             if (event.currentTarget.value)
               useAssistant.getState().selectSession(event.currentTarget.value);
             else useAssistant.getState().newSession();
           }}
-          onDoubleClick={() => active && setRenaming(active.name)}
-          title={active ? 'Double-click to rename' : undefined}
-        >
-          <option value="">New session</option>
-          {[...sessions].reverse().map((session) => (
-            <option key={session.id} value={session.id}>
-              {session.name}
-              {session.state === 'interrupted' ? ' · interrupted' : ''}
-            </option>
-          ))}
-        </select>
+        />
       )}
+      <button
+        type="button"
+        className={styles.iconButton}
+        aria-label="Rename session"
+        title="Rename this session"
+        disabled={busy || !active || renaming !== null}
+        onClick={() => active && setRenaming(active.name)}
+      >
+        <Pencil size={13} />
+      </button>
       <button
         type="button"
         className={styles.iconButton}

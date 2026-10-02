@@ -78,7 +78,7 @@ export const ASSISTANT_TOOLS: readonly McpToolDefinition[] = [
   {
     name: 'hcasm_call',
     description:
-      'Call one method of the HimmelCAD Assembler agent API (hcasm.agent-api@1) on the open project: queries (document.get, features.list, bodies.list, faces.list, edges.list, print.analyze, measure.*), modeling writes (feature.create/edit/delete, sketch.*, parameter.*), transactions, history.undo/redo. Units mm, Z up. Every write is one editable History step; the whole assistant turn is one undo step for the user. Returns the method result as JSON or an error {code, message, hint, details}. Look parameters up with hcasm_methods first.',
+      'Call one method of the HimmelCAD Assembler agent API (hcasm.agent-api@1) on the open project: queries (document.get, features.list, bodies.list, faces.list, edges.list, print.analyze, measure.* incl. measure.clearance, checks.run, parameters.sweep), modeling writes (feature.create/edit/delete incl. replaceFace and align, body.copyUnlinked, sketch.*, parameter.*, stored checks checks.add/update/remove), transactions, history.undo/redo. Units mm, Z up. Every write is one editable History step; the whole assistant turn is one undo step for the user. Returns the method result as JSON or an error {code, message, hint, details}. Look parameters up with hcasm_methods first.',
     inputSchema: {
       type: 'object',
       properties: {

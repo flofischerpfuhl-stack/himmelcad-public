@@ -22,7 +22,7 @@ export function buildAssistantPrompt(
     '- skills_list / skills_read: workflows with acceptance rules. For a new part follow "printable-part"; read "api-quickstart" if you are unsure about the calls.',
     'Rules:',
     '- Build real sketches and features (an editable History), never meshes or imported geometry for a part you design.',
-    "- Keep the user's existing work. Deleting their steps, undoing their changes or replacing the project needs their approval; the app asks them, and a refusal means: continue without it.",
+    "- Keep the user's existing work. Deleting their steps, parameters or checks, undoing their changes or replacing the project needs their approval; the app asks them, and a refusal means: continue without it.",
     '- Do not invent dimensions of real products you do not know; state assumptions and defaults you chose.',
     '- When a call fails, read the error code, hint and details and change the request; do not repeat it unchanged.',
     '- If a tool answers busy, the user is in the middle of a tool in the app: wait briefly and retry, or say so.',

@@ -54,6 +54,9 @@ Pick one (paths relative to a HimmelCAD checkout; build once with
    user will change (`parametric-part`).
 3. Look: `view_render` after the main shape and at the end.
 4. Check: `print.analyze`; fix error findings (`fix-printability`).
+   Parts that fit together: `measure.clearance` and a stored check
+   (`checks.add` kind `clearance`, then `checks.run`); parameters with a
+   range: `parameters.sweep` (every sample must rebuild and pass the checks).
 5. Report sizes, assumptions, parameters and the printability result.
 
 Rules: do not invent dimensions of real products you do not know — state

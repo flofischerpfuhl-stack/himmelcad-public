@@ -107,35 +107,33 @@
   min-width: 0;
 }
 
-.sessionSelect,
+/* The shared Select (`@himmelcad/ui`): it fills the bar and cuts long names with an ellipsis. */
+.sessionSelectWrap {
+  flex: 1;
+  width: auto;
+  min-width: 0;
+}
+
+.sessionSelectWrap .sessionSelect {
+  height: 26px;
+  min-height: 26px;
+  padding: 0 8px;
+  font: inherit;
+}
+
 .sessionName {
   flex: 1;
   min-width: 0;
   height: 26px;
-  padding: 0 24px 0 8px;
+  padding: 0 8px;
   font: inherit;
   color: var(--hc-fg-default);
   background-color: var(--hc-bg-input);
   border: 1px solid var(--hc-border-default);
   border-radius: var(--hc-radius-sm);
-  appearance: none;
-  background-image:
-    linear-gradient(45deg, transparent 50%, var(--hc-fg-muted) 50%),
-    linear-gradient(135deg, var(--hc-fg-muted) 50%, transparent 50%);
-  background-position:
-    calc(100% - 13px) 11px,
-    calc(100% - 9px) 11px;
-  background-size: 4px 4px;
-  background-repeat: no-repeat;
   outline: none;
 }
 
-.sessionName {
-  padding-right: 8px;
-  background-image: none;
-}
-
-.sessionSelect:focus-visible,
 .sessionName:focus {
   border-color: var(--hc-border-accent);
   box-shadow: 0 0 0 1px var(--hc-focus-ring);
@@ -788,7 +786,7 @@
 :global(html[data-hc-touch]) .notice button {
   min-height: 40px;
 }
-:global(html[data-hc-touch]) .sessionSelect,
+:global(html[data-hc-touch]) .sessionSelectWrap .sessionSelect,
 :global(html[data-hc-touch]) .sessionName,
 :global(html[data-hc-touch]) .search {
   height: 40px;
