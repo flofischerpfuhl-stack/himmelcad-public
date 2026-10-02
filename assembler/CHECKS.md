@@ -229,6 +229,10 @@ See the Block 9 bench rows (`bench:interactive` "f checks",
   references (stable across edits, `error` when the face is gone); selectors
   (`{bodyId, select: ">Z"}`) re-resolve on every run.
 - Check kinds do not run on reference meshes.
+- A `distance` between parallel planar faces is Measure's plane-to-plane
+  distance: unsigned, and blind to what happens at the faces' ends (A7: the
+  side gap reads 0.05 mm while the corners already collide). Collisions are
+  what `clearance` is for.
 
 ## Evidence
 
@@ -247,9 +251,11 @@ See the Block 9 bench rows (`bench:interactive` "f checks",
   two-body clearance and "Add as check".
 - `test/acceptance/parts.acceptance.test.ts` A7 — the enclosure template's
   lid seated on the box with two checks ("Lid does not collide": clearance
-  ≥ 0, "Lip gap": 0.15–0.3 mm); a wrong `clearance` parameter (−0.2) makes
-  both fail (overlap, also a Printability finding), the fix (0.2) passes, the
-  checks survive save → reopen (agent API end to end).
+  ≥ 0, "Lip gap": 0.15–0.3 mm). With the `clearance` parameter at 0.05 both
+  fail — the gap is 0.05 mm, and the lip's fixed R1.8 corners cut into the
+  opening's R2 corners (0.12 mm³ overlap, also a Printability finding), a
+  collision no side-gap measurement shows; at 0.2 both pass; the checks
+  survive save → reopen (agent API end to end).
 - `sdk/python/tests/test_checks.py` — the Python helpers, and the same
   fail → fix → pass loop against the real headless process.
 - Fuzzer ops `checkAdd`, `checkEdit`, `checkRemove`, `checkRun`

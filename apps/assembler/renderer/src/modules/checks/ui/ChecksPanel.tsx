@@ -18,6 +18,7 @@ import {
   Pencil,
   Plus,
   RefreshCw,
+  Square,
   Trash2,
   TriangleAlert,
   X,
@@ -47,7 +48,7 @@ import panelStyles from '../../../platform/widgets/Panel.module.css';
 import type { PanelProps } from '../../../platform/widgets/moduleUi.js';
 import { useCheckResults } from '../checksStore.js';
 import { focusCheck } from '../locate.js';
-import { bodyNamer, resultsStale, runChecksNow } from '../runner.js';
+import { bodyNamer, cancelChecks, resultsStale, runChecksNow } from '../runner.js';
 import styles from './ChecksPanel.module.css';
 
 type RowState = CheckResult['state'] | 'pending';
@@ -435,17 +436,30 @@ export function ChecksPanel({ state }: PanelProps): JSX.Element {
             <Plus size={14} />
           </button>
         </Tooltip>
-        <Tooltip content="Run checks now">
-          <button
-            type="button"
-            className={panelStyles.headerButton}
-            aria-label="Run checks now"
-            disabled={checks.length === 0 || running}
-            onClick={() => void runChecksNow()}
-          >
-            <RefreshCw size={13} />
-          </button>
-        </Tooltip>
+        {running ? (
+          <Tooltip content="Stop checking (results stay out of date)">
+            <button
+              type="button"
+              className={panelStyles.headerButton}
+              aria-label="Stop checking"
+              onClick={() => cancelChecks()}
+            >
+              <Square size={11} />
+            </button>
+          </Tooltip>
+        ) : (
+          <Tooltip content="Run checks now">
+            <button
+              type="button"
+              className={panelStyles.headerButton}
+              aria-label="Run checks now"
+              disabled={checks.length === 0}
+              onClick={() => void runChecksNow()}
+            >
+              <RefreshCw size={13} />
+            </button>
+          </Tooltip>
+        )}
         <Tooltip content="Close Checks">
           <button
             type="button"

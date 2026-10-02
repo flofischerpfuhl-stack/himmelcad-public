@@ -172,7 +172,7 @@ void test('A5 static multi-body assembly: the lid aligned onto the enclosure sea
   });
 });
 
-void test('A7 lid fit as stored checks: a too-large lip fails the clearance check, the fix passes', async (t) => {
+void test('A7 lid fit as stored checks: a too-tight lip fails both checks, the fix passes', async (t) => {
   await reset('Lid fit');
   await projectTemplate('enclosure').build(apiCall);
   const enclosure = (await bodyNamed('Enclosure')).id;
@@ -220,15 +220,19 @@ void test('A7 lid fit as stored checks: a too-large lip fails the clearance chec
   });
   assert.equal(noOverlap.result.status, 'pass', String(noOverlap.result.message));
 
-  // A wrong clearance parameter makes the lip larger than the opening: both checks fail.
-  await call('parameter.edit', { parameterId: 'clearance', value: -0.2 });
+  // Too little printing clearance (0.05 mm): the lip gap check fails — and the clearance check
+  // finds what the side gap cannot show: the lip's fixed R1.8 corners now cut into the
+  // opening's R2 corners (the corner gap is the side gap minus 0.2 · (√2 − 1) ≈ 0.083 mm).
+  await call('parameter.edit', { parameterId: 'clearance', value: 0.05 });
   const failing = await call<{ passed: boolean; results: Json[] }>('checks.run');
   assert.equal(failing.passed, false);
   const [collide, gap] = failing.results;
-  assert.equal(collide!.status, 'fail');
+  assert.equal(gap!.status, 'fail', String(gap!.message));
+  near(gap!.value as number, 0.05, 1e-6, 'tight lip gap');
+  assert.equal(collide!.status, 'fail', String(collide!.message));
   assert.match(String(collide!.message), /overlap/);
   assert.deepEqual((collide!.locations as Json[])[0]!.bodyIds, [lid, enclosure]);
-  assert.equal(gap!.status, 'fail', String(gap!.message));
+  assert.ok((collide!.locations as Json[])[0]!.point, 'where the corners collide');
   const findings = (await call<{ findings: Json[] }>('print.analyze')).findings;
   assert.ok(
     findings.some((f) => f.kind === 'overlap'),

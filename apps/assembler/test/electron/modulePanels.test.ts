@@ -67,6 +67,28 @@ void test('built app: panels, mode buttons and dialogs come from the modules', a
   await printButton.click();
   await page.getByRole('region', { name: 'Printability' }).waitFor({ state: 'detached' });
 
+  // The checks module (Block 9): opt-in — no checks until one is added; adding one is one
+  // undo step, its result arrives in the background and shows as a passive badge.
+  const checksButton = page.getByRole('button', { name: /^Checks/ }).first();
+  assert.match((await checksButton.textContent()) ?? '', /Off$/, 'no badge without checks');
+  await checksButton.click();
+  const checks = page.getByRole('region', { name: 'Checks' });
+  await checks.getByText('No checks.', { exact: false }).waitFor();
+  await checks.getByRole('button', { name: 'Add a check' }).click();
+  await checks.getByRole('listitem').filter({ hasText: 'Body count' }).click();
+  await checks.getByLabel('Min', { exact: true }).fill('1');
+  await checks.getByRole('button', { name: 'Add check' }).click();
+  await checks.getByRole('button', { name: /^Body count ≥ 1/ }).waitFor();
+  await page.waitForFunction(
+    () => document.querySelector('[aria-label^="Checks, Checks: all 1 met"]') !== null,
+    null,
+    { timeout: 30_000 },
+  );
+  await page.keyboard.press('Control+Z');
+  await checks.getByText('No checks.', { exact: false }).waitFor();
+  await checksButton.click();
+  await checks.waitFor({ state: 'detached' });
+
   // The printers module's Slicers… dialog, reached through command search.
   await page.keyboard.press('Control+F');
   await page.keyboard.type('Slicers');
