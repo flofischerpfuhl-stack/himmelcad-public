@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { useProjectStore } from '../../../renderer/src/interface/shell-ui/project/projectStore.js';
+import {
+  startWithBlankDocument,
+  useProjectStore,
+} from '../../../renderer/src/interface/shell-ui/project/projectStore.js';
 import { useAssemblerStore } from '../../../renderer/src/foundation/commands/store.js';
 import { addRectangle } from '../../../renderer/src/foundation/sketch-solver/builders.js';
 import { EMPTY_SKETCH } from '../../../renderer/src/foundation/sketch-solver/types.js';
@@ -17,6 +20,14 @@ import { EMPTY_SKETCH } from '../../../renderer/src/foundation/sketch-solver/typ
 // `openProject()`/`save()` call precedes the assertions below.
 
 void test('a freshly loaded document is not dirty', () => {
+  assert.equal(useProjectStore.getState().dirty, false);
+});
+
+void test('the products start blank (Block 9): not dirty, no sample, nothing to save', () => {
+  startWithBlankDocument();
+  const state = useAssemblerStore.getState();
+  assert.deepEqual(state.features, []);
+  assert.equal(state.projectName, 'Untitled');
   assert.equal(useProjectStore.getState().dirty, false);
 });
 

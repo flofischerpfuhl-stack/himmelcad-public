@@ -159,8 +159,14 @@ function loadWithoutDirty(load: () => void): void {
  * and, unlike New, it keeps the crash-recovery copy the Home screen offers.
  */
 export function startWithBlankDocument(): void {
-  useAssemblerStore.getState().loadDocument([], { projectName: 'Untitled' });
-  if (subscribed) baselineFeatures = useAssemblerStore.getState().features;
+  loadWithoutDirty(() =>
+    useAssemblerStore.getState().loadDocument([], { projectName: 'Untitled' }),
+  );
+  // The new baseline (a subscription made earlier saw the replaced document as an edit).
+  baselineFeatures = useAssemblerStore.getState().features;
+  extrasDirty = false;
+  cancelRecoveryWrite();
+  useProjectStore.setState({ dirty: false });
 }
 
 function restoreExtras(project: ProjectFileV1 | null): void {
