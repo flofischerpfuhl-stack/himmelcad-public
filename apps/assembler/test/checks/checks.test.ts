@@ -83,6 +83,18 @@ void test('every module registers its check kinds', () => {
   assert.equal(checkKind('bodyCount')!.module, 'checks');
 });
 
+void test('opt-in: new documents and templates have no checks, so nothing runs', async () => {
+  await reset();
+  assert.deepEqual(store.getState().checks, []);
+  await enclosureWithLid(19); // overlapping bodies: still no check, no warning
+  await settle();
+  assert.deepEqual(store.getState().checks, []);
+  startChecksRunner(kernel);
+  await runChecksNow();
+  assert.deepEqual(useCheckResults.getState().results, {});
+  assert.deepEqual(notices, []);
+});
+
 void test('parameters: strict for new checks, lenient (extra keys kept) for stored ones', () => {
   const clearance = checkKind('clearance')!;
   assert.deepEqual(checkParamsProblems(clearance, { min: 0.3 }), []);

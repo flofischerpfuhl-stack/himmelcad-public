@@ -55,7 +55,7 @@ export function checkForValue(
       !value.secondary
     ) {
       // Two bodies: a clearance requirement (at least the gap they have now; overlap: none).
-      const min = value.label === 'Overlap volume' ? 0 : Math.floor(value.value * 100) / 100;
+      const min = value.label === 'Overlap volume' ? 0 : Math.floor(value.value * 100 + 1e-6) / 100;
       return { kind: 'clearance', params: { a: bodies[0], b: bodies[1], min } };
     }
     const ta = targetOfRef(a);
