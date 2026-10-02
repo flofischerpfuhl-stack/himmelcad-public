@@ -37,6 +37,7 @@
   },
   "dependencies": {
     "@fontsource/inter": "5.3.0",
+    "@himmelcad/agent": "workspace:*",
     "@himmelcad/hardware-profile": "workspace:*",
     "@himmelcad/theme": "workspace:*",
     "@himmelcad/ui": "workspace:*",

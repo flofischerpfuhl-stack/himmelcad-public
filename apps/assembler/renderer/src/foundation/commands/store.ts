@@ -76,6 +76,14 @@ import {
 import { setParameterValuesProvider } from '../sketch-solver/solverProvider.js';
 
 /** One selectable/hoverable thing in the viewport or a panel. */
+/** A position in the undo stack (`markHistory`); opaque to callers. */
+export interface HistoryMark {
+  readonly depth: number;
+  /** The newest snapshot at the mark (identity), `null` for an empty stack. */
+  readonly top: unknown;
+  readonly generation: number;
+}
+
 export type SelectionItem =
   | { kind: 'body'; bodyId: string }
   | { kind: 'face'; bodyId: string; faceKey: string }
@@ -362,6 +370,20 @@ export interface AssemblerState extends AssemblerStateExtensions {
   documentGeneration: number;
   undo: () => void;
   redo: () => void;
+  /**
+   * Undo groups (an assistant turn): a mark of the undo stack now. Every
+   * step committed after it can later be merged into one with
+   * {@link AssemblerState.squashHistory}.
+   */
+  markHistory: () => HistoryMark;
+  /**
+   * Merges the undo steps committed since `mark` into one (one Ctrl+Z
+   * returns to the state at the mark). Refused — `false`, nothing changes —
+   * when the stack below the mark changed (an undo past it, another
+   * document), inside a nested undo scope (a sketch) or with fewer than two
+   * steps to merge.
+   */
+  squashHistory: (mark: HistoryMark) => boolean;
 
   selection: SelectionItem[];
   hover: SelectionItem | null;
@@ -1334,6 +1356,21 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
         parameters: next.parameters,
         history: { canUndo: past.length > 0, canRedo: future.length > 0 },
       });
+    },
+    markHistory: () => ({
+      depth: past.length,
+      top: past[past.length - 1] ?? null,
+      generation: get().documentGeneration,
+    }),
+    squashHistory: (mark) => {
+      if (historyDelegate || mark.generation !== get().documentGeneration) return false;
+      // The stack below the mark must be the one the mark saw (no undo past it).
+      if (past.length < mark.depth + 2) return false;
+      if ((past[mark.depth - 1] ?? null) !== mark.top) return false;
+      // Keep the snapshot taken before the first merged step; drop the ones in between.
+      past = past.slice(0, mark.depth + 1);
+      set({ history: { canUndo: true, canRedo: future.length > 0 } });
+      return true;
     },
 
     selection: [],

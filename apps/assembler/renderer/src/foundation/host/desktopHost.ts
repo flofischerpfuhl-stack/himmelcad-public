@@ -56,6 +56,11 @@ export function createDesktopHost(bridge: Bridge): AssemblerHost {
     recentFiles: bridge.recentFiles,
     slicers: bridge.slicers,
     automation: bridge.automation,
-    unavailableReason: () => '',
+    // The embedded assistant: local agent CLIs run by the main process (`electron/assistantHost.ts`).
+    assistant: bridge.assistant ?? null,
+    unavailableReason: (capability) =>
+      capability === 'assistant' && !bridge.assistant
+        ? 'This build of the app has no assistant host.'
+        : '',
   };
 }

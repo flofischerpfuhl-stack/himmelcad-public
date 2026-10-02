@@ -142,6 +142,28 @@ export interface AssemblerSlicersApi {
   ): Promise<{ ok: true; path: string; slicer: string } | { ok: false; error: string }>;
 }
 
+/** A tool call of a running agent CLI, forwarded to the renderer (`assistantHost.ts`). */
+export interface AssemblerAssistantToolRequest {
+  threadId: string;
+  name: string;
+  arguments: unknown;
+}
+
+/**
+ * The embedded assistant (`electron/assistantHost.ts`): the main process
+ * discovers and runs the user's agent CLIs (the `@himmelcad/agent` harness
+ * transport) and forwards their tool calls; the renderer answers them
+ * through the canonical command layer.
+ */
+export interface AssemblerAssistantApi {
+  readonly harness: {
+    request(request: unknown): Promise<unknown>;
+    subscribe(sessionId: string, onPayload: (payload: unknown) => void): () => void;
+  };
+  onToolRequest(listener: (id: string, request: AssemblerAssistantToolRequest) => void): () => void;
+  respondTool(id: string, result: unknown): Promise<void>;
+}
+
 export interface AssemblerApi {
   readonly platform: AssemblerPlatform;
   readonly versions: {
@@ -153,4 +175,6 @@ export interface AssemblerApi {
   readonly automation: AssemblerAutomationApi;
   readonly recentFiles: AssemblerRecentFilesApi;
   readonly slicers: AssemblerSlicersApi;
+  /** Optional: absent in builds without the assistant host. */
+  readonly assistant?: AssemblerAssistantApi;
 }

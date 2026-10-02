@@ -150,6 +150,38 @@ export interface HostAutomation {
   respond(id: string, body: string): Promise<void>;
 }
 
+/** A tool call a running agent CLI made (`electron/assistantHost.ts` → the assistant island). */
+export interface HostAssistantToolRequest {
+  /** The host's thread id of the session that made the call. */
+  threadId: string;
+  /** MCP tool name (`hcasm_call`, `view_render`, …). */
+  name: string;
+  arguments: unknown;
+}
+
+/**
+ * The embedded assistant's host (assembler/AGENT-ASSISTANT.md): runs the
+ * user's own Claude, Codex or OpenCode CLI as a child process and forwards
+ * the tool calls it makes back to the renderer, which answers them through
+ * the canonical command layer. Desktop only — a browser cannot start
+ * programs.
+ */
+export interface HostAssistant {
+  /**
+   * The harness transport of `@himmelcad/agent` (`AgentHarnessHostTransport`:
+   * discover, openSession, sendTurn, interrupt, closeSession, subscribe);
+   * typed structurally so foundation code does not depend on the package.
+   */
+  readonly harness: {
+    request(request: unknown): Promise<unknown>;
+    subscribe(sessionId: string, onPayload: (payload: unknown) => void): () => void;
+  };
+  /** Tool calls of running turns; returns an unsubscribe function. */
+  onToolRequest(listener: (id: string, request: HostAssistantToolRequest) => void): () => void;
+  /** Answers a tool call with an MCP tool result (`{content, isError?}`). */
+  respondTool(id: string, result: unknown): Promise<void>;
+}
+
 export type HostKind = 'desktop' | 'web' | 'browser';
 
 export interface AssemblerHost {
@@ -163,6 +195,8 @@ export interface AssemblerHost {
   readonly slicers: HostSlicers | null;
   /** `null`: no agent transport. */
   readonly automation: HostAutomation | null;
+  /** `null`: no embedded assistant (it needs to start local agent CLIs). Optional for older hosts. */
+  readonly assistant?: HostAssistant | null;
   /** Why a `null` capability is missing, for disabled entries and empty states. */
-  unavailableReason(capability: 'recentFiles' | 'slicers' | 'automation'): string;
+  unavailableReason(capability: 'recentFiles' | 'slicers' | 'automation' | 'assistant'): string;
 }

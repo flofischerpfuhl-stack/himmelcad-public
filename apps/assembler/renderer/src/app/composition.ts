@@ -10,6 +10,7 @@ import '../foundation/sketch-solver/sketchFeature.js';
 import '../foundation/commands/projectFields.js';
 import { installModules, type AssemblerModule } from '../foundation/commands/module.js';
 import { agentApiModule } from '../interface/agent-api/module.js';
+import { assistantModule } from '../interface/assistant/module.js';
 import { shellUiModule } from '../interface/shell-ui/module.js';
 import { canvasModule } from '../modules/canvas/module.js';
 import { constructionModule } from '../modules/construction/module.js';
@@ -39,6 +40,7 @@ export const ASSEMBLER_MODULES: readonly AssemblerModule[] = [
   printModule,
   printersModule,
   agentApiModule,
+  assistantModule,
   shellUiModule,
 ];
 

@@ -7,6 +7,7 @@
 import { create } from 'zustand';
 
 import { publishLiveGridStep } from './liveGrid.js';
+import type { SceneInput } from './scene.js';
 
 export interface ImageRenderRequest {
   width: number;
@@ -15,6 +16,12 @@ export interface ImageRenderRequest {
   grid: boolean;
   /** Body edge lines; absent = as in the view. */
   edges?: boolean;
+  /**
+   * Overrides of the scene drawn instead of the current view (agent renders,
+   * `display/viewApi.ts`): another camera, bodies, section, highlights.
+   * The user's view is never changed.
+   */
+  scene?: Partial<SceneInput>;
 }
 
 export interface RenderedImage {

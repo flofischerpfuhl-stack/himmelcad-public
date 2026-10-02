@@ -1,6 +1,10 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
-import type { AssemblerApi, ProjectExportFilter } from './assemblerApi';
+import type {
+  AssemblerApi,
+  AssemblerAssistantToolRequest,
+  ProjectExportFilter,
+} from './assemblerApi';
 
 const api: AssemblerApi = {
   platform: process.platform,
@@ -66,6 +70,30 @@ const api: AssemblerApi = {
     },
     respond: (id: string, body: string) =>
       ipcRenderer.invoke('assembler:automation:respond', id, body),
+  },
+  assistant: {
+    harness: {
+      request: (request: unknown) => ipcRenderer.invoke('assembler:assistant:request', request),
+      subscribe: (sessionId: string, onPayload: (payload: unknown) => void) => {
+        const handler = (_event: unknown, id: string, payload: unknown) => {
+          if (id === sessionId) onPayload(payload);
+        };
+        ipcRenderer.on('assembler:assistant:event', handler);
+        void ipcRenderer.invoke('assembler:assistant:subscribe', sessionId);
+        return () => {
+          ipcRenderer.removeListener('assembler:assistant:event', handler);
+          void ipcRenderer.invoke('assembler:assistant:unsubscribe', sessionId);
+        };
+      },
+    },
+    onToolRequest: (listener: (id: string, request: AssemblerAssistantToolRequest) => void) => {
+      const handler = (_event: unknown, id: string, request: AssemblerAssistantToolRequest) =>
+        listener(id, request);
+      ipcRenderer.on('assembler:assistant:tool', handler);
+      return () => ipcRenderer.removeListener('assembler:assistant:tool', handler);
+    },
+    respondTool: (id: string, result: unknown) =>
+      ipcRenderer.invoke('assembler:assistant:toolResult', id, result),
   },
 };
 

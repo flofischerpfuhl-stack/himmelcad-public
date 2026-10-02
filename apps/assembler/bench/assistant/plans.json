@@ -1,0 +1,414 @@
+{
+  "$comment": "Scripted provider plans for scriptedHarness.mjs: what a model would call for each plain-language task. Used by the Electron e2e test and the assistant benchmark in CI; never a real provider.",
+  "tasks": [
+    {
+      "id": "e2e-plate",
+      "match": "scripted test plate",
+      "steps": [
+        {
+          "say": "I will check the skills first, then build a 60 x 40 x 6 mm plate with rounded corners."
+        },
+        { "tool": "skills_list", "args": {} },
+        {
+          "tool": "hcasm_call",
+          "save": "sketch",
+          "args": {
+            "method": "feature.create",
+            "params": {
+              "kind": "sketch",
+              "name": "Plate sketch",
+              "params": {
+                "plane": { "kind": "plane", "plane": "XY", "offset": 0 },
+                "profiles": [{ "kind": "rectangle", "x": -30, "y": -20, "width": 60, "height": 40 }]
+              }
+            }
+          }
+        },
+        {
+          "tool": "hcasm_call",
+          "save": "plate",
+          "args": {
+            "method": "feature.create",
+            "params": {
+              "kind": "extrude",
+              "name": "Plate",
+              "params": {
+                "profile": { "kind": "sketch", "featureId": "{{sketch.featureId}}" },
+                "distance": 6,
+                "operation": "new",
+                "resultBodyName": "Plate"
+              }
+            }
+          }
+        },
+        {
+          "tool": "hcasm_call",
+          "args": {
+            "method": "feature.create",
+            "params": {
+              "kind": "fillet",
+              "params": {
+                "edges": [{ "bodyId": "body:{{plate.featureId}}", "select": "|Z" }],
+                "radius": 3
+              }
+            }
+          }
+        },
+        { "tool": "view_render", "args": { "view": "iso" } },
+        { "tool": "hcasm_call", "args": { "method": "print.analyze", "params": {} } },
+        { "say": "Rendered and checked." }
+      ],
+      "final": "Built Plate: 60 x 40 x 6 mm with R3 corners, one body, no printability errors."
+    },
+    {
+      "id": "e2e-delete",
+      "match": "scripted delete test",
+      "steps": [
+        { "say": "Deleting the first step needs your approval." },
+        {
+          "tool": "hcasm_call",
+          "save": "features",
+          "args": { "method": "features.list", "params": {} }
+        },
+        {
+          "tool": "hcasm_call",
+          "allowError": true,
+          "args": { "method": "feature.delete", "params": { "featureId": "{{features.0.id}}" } }
+        }
+      ],
+      "final": "Asked to delete the first step."
+    },
+    {
+      "id": "rpi5-enclosure",
+      "match": "raspberry pi 5",
+      "steps": [
+        {
+          "say": "Following the printable-part skill. Assumptions: Raspberry Pi 5 board 85 x 56 mm, M2.5 holes 58 x 49 mm apart and 3.5 mm from the edges, 1 mm clearance, 2 mm walls, 30 mm inner height."
+        },
+        { "tool": "skills_read", "args": { "id": "printable-part" } },
+        {
+          "tool": "hcasm_call",
+          "args": {
+            "method": "parameter.create",
+            "params": { "name": "board_l", "value": 85, "unit": "mm" }
+          }
+        },
+        {
+          "tool": "hcasm_call",
+          "args": {
+            "method": "parameter.create",
+            "params": { "name": "board_w", "value": 56, "unit": "mm" }
+          }
+        },
+        {
+          "tool": "hcasm_call",
+          "args": {
+            "method": "parameter.create",
+            "params": { "name": "clearance", "value": 1, "unit": "mm" }
+          }
+        },
+        {
+          "tool": "hcasm_call",
+          "args": {
+            "method": "parameter.create",
+            "params": { "name": "wall", "value": 2, "unit": "mm" }
+          }
+        },
+        {
+          "tool": "hcasm_call",
+          "args": {
+            "method": "parameter.create",
+            "params": { "name": "height", "value": 30, "unit": "mm" }
+          }
+        },
+        {
+          "tool": "hcasm_call",
+          "save": "base",
+          "args": {
+            "method": "feature.create",
+            "params": {
+              "kind": "sketch",
+              "name": "Case outline",
+              "params": {
+                "plane": { "kind": "plane", "plane": "XY", "offset": 0 },
+                "profiles": [{ "kind": "rectangle", "x": 0, "y": 0, "width": 91, "height": 62 }]
+              }
+            }
+          }
+        },
+        {
+          "tool": "hcasm_call",
+          "args": {
+            "method": "sketch.setDimension",
+            "params": {
+              "featureId": "{{base.featureId}}",
+              "dimension": "{{base.shapes.0.dimensions.width}}",
+              "expression": "board_l + 2 * (clearance + wall)"
+            }
+          }
+        },
+        {
+          "tool": "hcasm_call",
+          "args": {
+            "method": "sketch.setDimension",
+            "params": {
+              "featureId": "{{base.featureId}}",
+              "dimension": "{{base.shapes.0.dimensions.height}}",
+              "expression": "board_w + 2 * (clearance + wall)"
+            }
+          }
+        },
+        {
+          "tool": "hcasm_call",
+          "save": "case",
+          "args": {
+            "method": "feature.create",
+            "params": {
+              "kind": "extrude",
+              "name": "Case",
+              "params": {
+                "profile": { "kind": "sketch", "featureId": "{{base.featureId}}" },
+                "distanceExpression": "height",
+                "operation": "new",
+                "resultBodyName": "Pi 5 case"
+              }
+            }
+          }
+        },
+        {
+          "tool": "hcasm_call",
+          "args": {
+            "method": "feature.create",
+            "params": {
+              "kind": "fillet",
+              "name": "Corner rounds",
+              "params": {
+                "edges": [{ "bodyId": "body:{{case.featureId}}", "select": "|Z" }],
+                "radius": 4
+              }
+            }
+          }
+        },
+        {
+          "tool": "hcasm_call",
+          "args": {
+            "method": "feature.create",
+            "params": {
+              "kind": "shell",
+              "name": "Hollow, open top",
+              "params": {
+                "bodyId": "body:{{case.featureId}}",
+                "faces": [{ "bodyId": "body:{{case.featureId}}", "select": ">Z" }],
+                "thicknessExpression": "wall"
+              }
+            }
+          }
+        },
+        {
+          "tool": "hcasm_call",
+          "save": "posts",
+          "args": {
+            "method": "feature.create",
+            "params": {
+              "kind": "sketch",
+              "name": "Standoffs",
+              "params": {
+                "plane": {
+                  "kind": "face",
+                  "face": { "bodyId": "body:{{case.featureId}}", "select": "+Z and <Z" }
+                },
+                "profiles": [
+                  { "kind": "circle", "cx": 6.5, "cy": 6.5, "radius": 3 },
+                  { "kind": "circle", "cx": 64.5, "cy": 6.5, "radius": 3 },
+                  { "kind": "circle", "cx": 6.5, "cy": 55.5, "radius": 3 },
+                  { "kind": "circle", "cx": 64.5, "cy": 55.5, "radius": 3 }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "tool": "hcasm_call",
+          "args": {
+            "method": "feature.create",
+            "params": {
+              "kind": "extrude",
+              "name": "Standoffs",
+              "params": {
+                "profile": { "kind": "sketch", "featureId": "{{posts.featureId}}" },
+                "distance": 5,
+                "operation": "join",
+                "targetBodyId": "body:{{case.featureId}}"
+              }
+            }
+          }
+        },
+        {
+          "tool": "hcasm_call",
+          "save": "screws",
+          "args": {
+            "method": "feature.create",
+            "params": {
+              "kind": "sketch",
+              "name": "Screw holes",
+              "params": {
+                "plane": { "kind": "plane", "plane": "XY", "offset": 7 },
+                "profiles": [
+                  { "kind": "circle", "cx": 6.5, "cy": 6.5, "radius": 1.25 },
+                  { "kind": "circle", "cx": 64.5, "cy": 6.5, "radius": 1.25 },
+                  { "kind": "circle", "cx": 6.5, "cy": 55.5, "radius": 1.25 },
+                  { "kind": "circle", "cx": 64.5, "cy": 55.5, "radius": 1.25 }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "tool": "hcasm_call",
+          "args": {
+            "method": "feature.create",
+            "params": {
+              "kind": "extrude",
+              "name": "Screw holes",
+              "params": {
+                "profile": { "kind": "sketch", "featureId": "{{screws.featureId}}" },
+                "distance": -4,
+                "operation": "cut",
+                "targetBodyId": "body:{{case.featureId}}"
+              }
+            }
+          }
+        },
+        {
+          "tool": "hcasm_call",
+          "save": "vents",
+          "args": {
+            "method": "feature.create",
+            "params": {
+              "kind": "sketch",
+              "name": "Vent slots",
+              "params": {
+                "plane": {
+                  "kind": "face",
+                  "face": { "bodyId": "body:{{case.featureId}}", "select": "-Y and <Y" }
+                },
+                "profiles": [
+                  { "kind": "rectangle", "x": 22, "y": 10, "width": 3, "height": 14 },
+                  { "kind": "rectangle", "x": 29, "y": 10, "width": 3, "height": 14 },
+                  { "kind": "rectangle", "x": 36, "y": 10, "width": 3, "height": 14 },
+                  { "kind": "rectangle", "x": 43, "y": 10, "width": 3, "height": 14 },
+                  { "kind": "rectangle", "x": 50, "y": 10, "width": 3, "height": 14 },
+                  { "kind": "rectangle", "x": 57, "y": 10, "width": 3, "height": 14 },
+                  { "kind": "rectangle", "x": 64, "y": 10, "width": 3, "height": 14 }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "tool": "hcasm_call",
+          "args": {
+            "method": "feature.create",
+            "params": {
+              "kind": "extrude",
+              "name": "Vents",
+              "params": {
+                "profile": { "kind": "sketch", "featureId": "{{vents.featureId}}" },
+                "distance": -3,
+                "operation": "cut",
+                "targetBodyId": "body:{{case.featureId}}"
+              }
+            }
+          }
+        },
+        { "tool": "view_render", "args": { "view": { "azimuth": -60, "elevation": 30 } } },
+        { "tool": "view_render", "args": { "view": "iso", "overlay": ["printFindings"] } },
+        { "tool": "hcasm_call", "args": { "method": "print.analyze", "params": {} } },
+        { "tool": "hcasm_call", "args": { "method": "bodies.list", "params": {} } }
+      ],
+      "final": "Built a Raspberry Pi 5 case: 91 x 62 x 30 mm outside, 2 mm walls, open top, four M2.5 standoffs (5 mm, 2.5 mm pilot holes) and seven 3 x 14 mm vent slots in the front wall. Change board_l, board_w, clearance, wall or height in Parameters to resize it."
+    },
+    {
+      "id": "wall-hook",
+      "match": "wall hook",
+      "steps": [
+        {
+          "say": "A J-shaped hook for a 20 mm towel bar: 4 mm thick, 20 mm wide, two 4.5 mm screw holes."
+        },
+        {
+          "tool": "hcasm_call",
+          "save": "profile",
+          "args": {
+            "method": "feature.create",
+            "params": {
+              "kind": "sketch",
+              "name": "Hook profile",
+              "params": {
+                "plane": { "kind": "plane", "plane": "XZ", "offset": 0 },
+                "profiles": [
+                  { "kind": "rectangle", "x": 0, "y": 0, "width": 4, "height": 60 },
+                  { "kind": "rectangle", "x": 0, "y": 0, "width": 30, "height": 4 },
+                  { "kind": "rectangle", "x": 26, "y": 0, "width": 4, "height": 18 }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "tool": "hcasm_call",
+          "save": "hook",
+          "args": {
+            "method": "feature.create",
+            "params": {
+              "kind": "extrude",
+              "name": "Hook",
+              "params": {
+                "profile": { "kind": "sketch", "featureId": "{{profile.featureId}}" },
+                "distance": 20,
+                "operation": "new",
+                "resultBodyName": "Wall hook"
+              }
+            }
+          }
+        },
+        {
+          "tool": "hcasm_call",
+          "save": "holes",
+          "args": {
+            "method": "feature.create",
+            "params": {
+              "kind": "sketch",
+              "name": "Screw holes",
+              "params": {
+                "plane": { "kind": "plane", "plane": "YZ", "offset": 0 },
+                "profiles": [
+                  { "kind": "circle", "cx": 10, "cy": 30, "radius": 2.25 },
+                  { "kind": "circle", "cx": 10, "cy": 50, "radius": 2.25 }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "tool": "hcasm_call",
+          "args": {
+            "method": "feature.create",
+            "params": {
+              "kind": "extrude",
+              "name": "Screw holes",
+              "params": {
+                "profile": { "kind": "sketch", "featureId": "{{holes.featureId}}" },
+                "distance": 4,
+                "operation": "cut",
+                "targetBodyId": "body:{{hook.featureId}}"
+              }
+            }
+          }
+        },
+        { "tool": "view_inspect", "args": { "size": 256 } },
+        { "tool": "hcasm_call", "args": { "method": "print.analyze", "params": {} } }
+      ],
+      "final": "Built a wall hook: 30 x 20 x 60 mm, 4 mm thick, two 4.5 mm screw holes in the back plate."
+    }
+  ]
+}

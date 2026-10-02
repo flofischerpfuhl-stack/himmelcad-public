@@ -6,7 +6,8 @@
   "externalOnly": {
     "replicad": ["geometry-kernel"],
     "replicad-opencascadejs": ["geometry-kernel"],
-    "@salusoft89/planegcs": ["sketch-solver"]
+    "@salusoft89/planegcs": ["sketch-solver"],
+    "@himmelcad/agent": ["assistant"]
   },
   "desktopProcessPaths": ["electron/"],
   "externalForbidden": {
@@ -158,6 +159,12 @@
       "paths": ["renderer/src/interface/agent-api/"]
     },
     {
+      "id": "assistant",
+      "layer": "interface",
+      "summary": "Embedded AI assistant: the island (chat on the shared @himmelcad/agent package, sessions saved with the project, reference chips, approvals), the MCP tools on hcasm.agent-api@1, skills (built-in and project) with skills.* methods.",
+      "paths": ["renderer/src/interface/assistant/"]
+    },
+    {
       "id": "shell-ui",
       "layer": "interface",
       "summary": "The application shell: layout, docks, panels host, History and Items panels, command search, menus, dialogs, project lifecycle UI.",
@@ -189,7 +196,7 @@
     {
       "id": "desktop-host",
       "layer": "product",
-      "summary": "Electron main/preload process: windows, files, recent files, automation endpoint.",
+      "summary": "Electron main/preload process: windows, files, recent files, automation endpoint, the assistant's harness host and MCP tool endpoint.",
       "paths": ["electron/"]
     }
   ]

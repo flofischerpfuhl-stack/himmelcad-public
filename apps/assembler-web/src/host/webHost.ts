@@ -11,7 +11,9 @@
  *   Handling API when installed;
  * - slicers: none (a page cannot start programs; Open in Slicer downloads
  *   the 3MF);
- * - agent: the in-page API (`inPageAgent.ts`).
+ * - agent: the in-page API (`inPageAgent.ts`);
+ * - assistant: none (it starts the user's agent CLI, which a page cannot;
+ *   the island explains this and points to the desktop app).
  */
 import type {
   AssemblerHost,
@@ -20,6 +22,7 @@ import type {
   HostWindow,
 } from '../../../assembler/renderer/src/foundation/host/index.js';
 import {
+  ASSISTANT_NEEDS_DESKTOP,
   browserFiles,
   localStorageRecovery,
 } from '../../../assembler/renderer/src/foundation/host/index.js';
@@ -82,7 +85,9 @@ export function createWebHost(): AssemblerHost {
     recentFiles: fileAccess && idb ? fileSystemAccessRecents : null,
     slicers: null,
     automation: createInPageAgent(),
+    assistant: null,
     unavailableReason: (capability) => {
+      if (capability === 'assistant') return ASSISTANT_NEEDS_DESKTOP;
       if (capability === 'recentFiles')
         return 'This browser cannot reopen files on its own: use Open… (Chrome and Edge list recent projects here).';
       if (capability === 'slicers')

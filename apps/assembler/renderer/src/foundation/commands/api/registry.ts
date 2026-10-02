@@ -66,6 +66,10 @@ export const API_ORDER = {
     print: 400,
     interop: 500,
     canvas: 600,
+    /** `view.render`, `view.inspect` (display). */
+    view: 650,
+    /** `skills.list`, `skills.read` (assistant). */
+    skills: 700,
   },
 } as const;
 
