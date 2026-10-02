@@ -126,6 +126,101 @@ void test('the modelling kinds declare their Block 8 geometry fields', () => {
   }
 });
 
+/** Block 9 parity steps on the demo bracket, each using one of its new geometry fields. */
+function parityDocument(): Feature[] {
+  const body = 'body:feature-extrude-1';
+  const base = { suppressed: false } as const;
+  const steps: Record<string, unknown>[] = [
+    {
+      ...base,
+      id: 'b9-pattern',
+      name: 'Pattern 1',
+      kind: 'pattern',
+      bodyIds: [body],
+      sketchIds: ['feature-sketch-4'],
+      pattern: {
+        kind: 'linear',
+        direction: { kind: 'world', axis: 'X' },
+        count: 2,
+        spacing: 80,
+        second: { direction: { kind: 'world', axis: 'Y' }, count: 2, spacing: 80 },
+        third: { direction: { kind: 'world', axis: 'Z' }, count: 2, spacing: 80 },
+      },
+    },
+    {
+      ...base,
+      id: 'b9-split',
+      name: 'Split 1',
+      kind: 'split',
+      bodyId: body,
+      bodyIds: [body, 'body:b9-pattern:1'],
+      plane: { kind: 'plane', plane: 'XY', offset: 3 },
+    },
+    {
+      ...base,
+      id: 'b9-align',
+      name: 'Align 1',
+      kind: 'align',
+      bodyId: 'body:b9-pattern:1',
+      from: { kind: 'axis', axis: { kind: 'world', axis: 'Y' } },
+      to: { kind: 'axis', axis: { kind: 'world', axis: 'Z' } },
+      flip: false,
+      center: true,
+      offset: 0,
+      turn: 15,
+    },
+  ];
+  return [...createDemoDocument(), ...(steps as unknown as Feature[])];
+}
+
+void test('the Block 9 parity fields are capabilities: written, read back, refused when unknown', () => {
+  const text = save(parityDocument());
+  const raw = JSON.parse(text) as Record<string, unknown>;
+  assert.deepEqual(raw.requires, [
+    { id: 'align.from', label: 'Align from an edge, axis or curved face' },
+    { id: 'align.to', label: 'Align to an edge, axis, datum or curved face' },
+    { id: 'align.turn', label: 'Align with a turn' },
+    { id: 'pattern.sketchIds', label: 'Pattern of sketches' },
+    { id: 'pattern.third', label: 'Three-direction pattern' },
+    { id: 'pattern.twoDirections', label: 'Two-direction pattern' },
+    { id: 'split.bodyIds', label: 'Split of several bodies' },
+  ]);
+  const loaded = loadProjectFile(text);
+  assert.deepEqual(loaded.features, parityDocument());
+  assert.equal(save(loaded.features), text, 'saved again byte-identical');
+
+  // Plain forms of the same steps need nothing: two planar faces, one body, no turn.
+  const base = { name: 'x', suppressed: false } as const;
+  const used = (feature: Record<string, unknown>) =>
+    [...featureFormatCapabilities([{ ...base, id: 'f', ...feature } as unknown as Feature])].sort();
+  assert.deepEqual(used({ kind: 'split', bodyId: 'a', bodyIds: ['a'] }), []);
+  assert.deepEqual(used({ kind: 'align', bodyId: 'a', turn: 0 }), []);
+  assert.deepEqual(used({ kind: 'pattern', bodyIds: ['a'], sketchIds: [] }), []);
+
+  // A reader without them (simulated: ids it has not registered) names them by label.
+  raw.requires = (raw.requires as { id: string; label: string }[]).map((r) => ({
+    id: `${r.id}X`,
+    label: r.label,
+  }));
+  assert.throws(
+    () => loadProjectFile(JSON.stringify(raw)),
+    /needs a newer HimmelCAD Assembler: it uses Align from an edge, axis or curved face, .* and Split of several bodies\./,
+  );
+});
+
+void test('document data that does not change geometry is no capability', () => {
+  // Checks, ignored print findings, assistant sessions/skills, Pattern folders, parameter ranges:
+  // an older reader ignores them and builds the same bodies.
+  const ids = knownFormatCapabilities().map((c) => c.id);
+  for (const field of ['checks', 'printIgnored', 'assistantSessions', 'assistantSkills', 'items']) {
+    assert.ok(!ids.some((id) => id.startsWith(`${field}.`)), field);
+  }
+  for (const id of ['align.from', 'align.to', 'align.turn', 'split.bodyIds', 'pattern.third']) {
+    assert.ok(ids.includes(id), id);
+  }
+  assert.ok(ids.includes('pattern.sketchIds'));
+});
+
 void test('capability ids are owned once', () => {
   registerFormatCapability({ id: 'test.thing', label: 'Test thing', module: 'test' });
   registerFormatCapability({ id: 'test.thing', label: 'Test thing', module: 'test' });

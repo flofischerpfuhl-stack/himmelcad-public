@@ -168,9 +168,12 @@ chips take arithmetic only (`2 * 3`), no names, so they have no list.
 - **Checks per sample.** `checks` are the document's stored checks run by
   the checks module through `foundation/commands/documentChecks.ts`
   (`registerDocumentCheckRunner`; contract in MODULES.md §3 "Document
-  checks"): `[{checkId, name, status: pass|fail|error, message?, measured?}]`,
-  `null` when no checks module is installed (never an empty pass). A sample
-  with a failing check is not `ok`.
+  checks"; `modules/checks/documentRunner.ts`): the enabled stored checks on
+  the sample, `[{checkId, name, status: pass|fail|error, message?, measured?,
+unit?}]` — `[]` without stored checks, `null` when no checks module is
+  installed (never an empty pass). A sample with a failing check is not
+  `ok` (e.g. a lid clearance check that passes at a wall's min and fails at
+  its max).
 - **UI.** Test range (flask button in the panel header): parameters with a
   range, values (Min · nominal · max / Samples), One at a time / All
   combinations, Run with progress and Cancel (stops at the running sample;
@@ -224,8 +227,8 @@ FaceInput}`, `{kind: "edge", edge: EdgeInput}`, `{kind: "point", point:
   revision bumped, the new/changed check evaluated at once — and
   `checks.run {ids?, scope?}` → `{passed, summary, results: [{id, kind,
 name, status, value, unit, expected, message, locations, details}]}`.
-  `scope: "staged"` evaluates against an open transaction (the parameter
-  sweep's contract). Python: `doc.add_check(kind, name=, **params)` →
+  `scope: "staged"` evaluates against an open transaction (`parameters.sweep`
+  runs the same checks per sample itself). Python: `doc.add_check(kind, name=, **params)` →
   `Check` (`update`, `remove`, `passed`), `doc.checks()`,
   `doc.run_checks()` → `CheckReport` (`bool(report)`, `failed`,
   `by_name`). Tests: `test/checks/checksApi.test.ts`,

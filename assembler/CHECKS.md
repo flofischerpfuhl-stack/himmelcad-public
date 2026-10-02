@@ -191,12 +191,19 @@ unchanged, an older app ignores them (and drops them on its next save).
 `checks.*` edits bump the document revision (`expectedRevision` works) and
 are undone by `history.undo` like any other edit.
 
-**Contract for the parameter sweep** (stream "params"): `checks.run` with
-`scope: "staged"` evaluates the checks against an open transaction's state
-(set parameters, run, cancel); in-process code calls
-`runChecks(state.checks, env)` with the variant's evaluation and active
-features — results have the same shape as `checks.run`'s (`resultJson` in
-`modules/checks/api.ts`).
+**Parameter sweep** (wired in the Block 9 integration): the checks module
+registers its runner in the document-checks hook
+(`foundation/commands/documentChecks.ts`; `modules/checks/documentRunner.ts`,
+in `onInstall`, so the app, the headless CLI and the tests have it).
+`parameters.sweep` and Test range call only the hook: on each sample the
+enabled stored checks run with `runChecks` against the sample's evaluation,
+active features and kernel — fresh, cancellable with the sweep, never
+touching the document or the Checks panel's results — and come back as
+`{checkId, name, status: pass|fail|error, message?, measured?, unit?}`; a
+failing check makes the sample not `ok`. Without stored checks a sample
+reports `checks: []`, without a checks module `checks: null`. Agents can
+still evaluate a transaction's staged state with `checks.run`,
+`scope: "staged"`.
 
 Python (`sdk/python`, `himmelcad.assembler`): `doc.add_check(kind, name=…,
 **params)` → `Check`, `doc.checks()`, `doc.run_checks(scope=)` →

@@ -373,7 +373,9 @@ Added in Block 9 (params stream, branch `asm/b9-params-20261002`):
   an optional field that changes what a feature builds is declared with
   its kind — `registerFeatureKind({ …, formatCapabilities: [{ id, label,
 usedBy(feature) }] })` (extrude taper in `coreKinds.ts`; helix, pattern
-  modes, profile split in `modules/modeling/kinds.ts`) — or, for data that
+  modes, profile split and — integration — the parity stream's pattern
+  third direction/sketches, split of several bodies and Align `from`/`to`/
+  `turn` in `modules/modeling/kinds.ts`) — or, for data that
   is not a feature, with `registerFormatCapability({ id, label, module })`.
   `saveProjectFile` writes the used ones as `requires: [{id, label}]`
   (sorted, only when non-empty); `loadProjectFile` refuses a file that lists
@@ -381,19 +383,25 @@ usedBy(feature) }] })` (extrude taper in `coreKinds.ts`; helix, pattern
   HimmelCAD Assembler: it uses …"). Ids are `area.field` and never reused.
   Data that does not change geometry (parameter ranges, view settings)
   needs no capability.
-- **Document checks hook** (`commands/documentChecks.ts`, for the checks
-  stream): the checks module registers one runner with
-  `registerDocumentCheckRunner({ module, run })` in its `onInstall`. `run({
-features, parameters, evaluation, kernel, signal })` evaluates the
-  document's **stored** checks against the given state (a sweep sample, not
-  the committed document; never read the store's evaluation for it), never
-  changes the document, selection or stored results, uses `kernel` only for
-  one-off queries (`measureDistance`) of `features`, stops early on
-  `signal.aborted`, and returns `[{ checkId, name, status: 'pass' | 'fail' |
-'error', message?, measured? }]`. `checks.run` stays the checks module's
-  own API method; the parameters module calls only this hook
-  (`parameters.sweep`, Test range). Without a runner a sweep reports
-  `checks: null`.
+- **Document checks** (`commands/documentChecks.ts`; the one contract
+  between the stored checks and every other module, wired in the Block 9
+  integration): the checks module registers one runner with
+  `registerDocumentCheckRunner({ module, run })` in its `onInstall`
+  (`modules/checks/documentRunner.ts`, so app, headless and tests have
+  it). `run({ features, parameters, evaluation, kernel, signal })`
+  evaluates the document's **enabled stored** checks with `runChecks`
+  against the given state (a sweep sample, not the committed document;
+  never the store's evaluation), fresh (no reuse of the background
+  results), never changes the document, selection or the Checks panel's
+  results, uses `kernel` only for one-off queries (`measureDistance`,
+  `measureClearance`) of `features`, stops before the next check on
+  `signal.aborted`, and returns `[{ checkId, name, status: 'pass' | 'fail'
+  | 'error', message?, measured?, unit? }]` (`disabled` checks are left
+  out, an unknown kind is `error`). The parameters module calls only this
+  hook (`parameters.sweep`, Test range); a sweep reports `checks: []`
+  without stored checks and `checks: null` without a checks module.
+  `checks.run` stays the checks module's own API method (with `scope:
+"staged"` for transactions).
 - **Store core** (`commands/store.ts`): `StoreCore.kernel()`,
   `StoreCore.evaluateDetached(features, { channel })` (an evaluation that
   never touches the document: `background` for sweeps, `preview` with
@@ -433,11 +441,8 @@ fromSelection?, evaluate(params, env)`); a second registration of a kind
 - **Running checks** — `runChecks(checks, env, { previous, onResult,
 beforeBackgroundCheck })` (same file): incremental by fingerprint (kind,
   params, the `meshId`s of the bodies a check depends on), cheapest first,
-  cancellable between checks, never throwing. **Contract for the parameter
-  sweep (stream "params")**: call `checks.run` with `scope: "staged"` inside a
-  transaction, or `runChecks(state.checks, env)` in-process with the
-  variant's evaluation and active features; results have `checks.run`'s
-  shape (`resultJson`, `modules/checks/api.ts`).
+  cancellable between checks, never throwing. The parameter sweep reaches it only through the document-checks
+  hook above.
 - **Stored checks are core document state** (`document/checks.ts`
   `StoredCheck`, `AssemblerState.checks`, part of every undo snapshot like
   `parameters`); `commitChecks(next)` is one undo step (refused while a tool

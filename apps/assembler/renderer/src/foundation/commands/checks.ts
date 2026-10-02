@@ -8,8 +8,9 @@
  * one evaluation: incrementally (a check whose bodies did not change keeps
  * its result), cheapest first, cancellable between checks, each kernel or
  * worker check within a time budget. The checks module runs it in the
- * background after rebuilds and for `checks.run`; other modules (the
- * parameter sweep) may call it directly with any evaluation.
+ * background after rebuilds, for `checks.run` and, through the
+ * document-checks hook (`documentChecks.ts`), on each sample of a
+ * parameter sweep.
  */
 import type { Feature, Vec3 } from '../document/document.js';
 import { newCheckId, normalizeStoredCheck, type StoredCheck } from '../document/checks.js';

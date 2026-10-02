@@ -90,10 +90,31 @@ class HeadlessBlock9Tests(unittest.TestCase):
             failing = report["samples"][2]
             self.assertEqual(failing["outcome"], "rebuilt")
             self.assertTrue(failing["errors"][0]["featureName"].startswith("Fillet"))
-            self.assertIsNone(failing["checks"], "no checks module: null")
+            self.assertEqual(failing["checks"], [], "the checks module is installed; no stored checks")
             grid = doc.sweep(h, r, mode="samples", samples=2, combine="all")
             self.assertEqual(grid["total"], 4)
             self.assertEqual(doc.param("r").value, 2, "a sweep never changes the document")
+
+    def test_sweep_runs_stored_checks(self) -> None:
+        """A lid 20 mm up; the box below grows with ``h``: its clearance check fails at max, passes at min."""
+        with Document(AssemblerClient(StdioTransport())) as doc:
+            doc.param("h", 10, min=2, max=30)
+            s = doc.sketch("XY")
+            s.rect(40, 30)
+            box = doc.extrude(s, expression="h")
+            lid_sketch = doc.sketch("XY", offset=20)
+            lid_sketch.rect(40, 30)
+            lid = doc.extrude(lid_sketch, 3, op="new")
+            self.assertEqual(doc.errors(), {})
+            check = doc.add_check("clearance", a=box, b=lid, min=1, name="Lid gap")
+            self.assertTrue(check.passed)
+            report = doc.param("h").sweep()
+            self.assertTrue(report["checksAvailable"])
+            rows = [(s["values"]["h"], s["ok"], s["checks"][0]["status"]) for s in report["samples"]]
+            self.assertEqual(rows, [(10, True, "pass"), (2, True, "pass"), (30, False, "fail")])
+            self.assertAlmostEqual(report["samples"][1]["checks"][0]["measured"], 18, places=6)
+            self.assertEqual(report["samples"][2]["checks"][0]["name"], "Lid gap")
+            self.assertEqual(doc.param("h").value, 10, "a sweep never changes the document")
 
 
 if __name__ == "__main__":

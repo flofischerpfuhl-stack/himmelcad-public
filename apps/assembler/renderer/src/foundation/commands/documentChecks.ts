@@ -4,16 +4,19 @@
  * a parameter sweep (`modules/parameters/sweep.ts`) runs the stored checks
  * on each sample. The checks module owns the checks, their storage and
  * `checks.run`; it registers one runner here (`onInstall` of its
- * `defineAssemblerModule`). Without a checks module a sweep reports
- * `checks: null` ("not available"), never an empty pass.
+ * `defineAssemblerModule`: `modules/checks/documentRunner.ts`, which runs
+ * the enabled stored checks with `runChecks` from `checks.ts`). Without a
+ * checks module a sweep reports `checks: null` ("not available"), never an
+ * empty pass; with it but without stored checks, `checks: []`.
  *
  * Contract for the runner (assembler/MODULES.md §3 "Document checks"):
  * - evaluate the checks stored in the **current** document against the
  *   given sample (`features`, `parameters` and their `evaluation`), which is
  *   not the committed document — never read the store's evaluation for it;
  * - never change the document, the selection or the stored results;
- * - use `kernel` only for one-off queries (`measureDistance`, exports) of
- *   `features`; a missing kernel is a check `error`, not a crash;
+ * - use `kernel` only for one-off queries (`measureDistance`,
+ *   `measureClearance`, exports) of `features`; a missing kernel is a check
+ *   `error`, not a crash;
  * - return within bounded time and stop early when `signal.aborted`.
  */
 import type { Feature } from '../document/document.js';
@@ -33,6 +36,8 @@ export interface DocumentCheckResult {
   message?: string;
   /** The measured value, when the check measures one (mm, mm³, degrees). */
   measured?: number;
+  /** Unit of `measured` (`mm`, `deg`, `mm³`, `g`, `''` for counts). */
+  unit?: string;
 }
 
 export interface DocumentCheckInput {

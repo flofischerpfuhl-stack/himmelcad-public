@@ -8,10 +8,10 @@
  * range, message, locations with body/face/edge ids). Agents always get
  * full results, whatever the user's workspace settings.
  *
- * Contract for other modules (the parameter sweep): `checks.run` with
- * `scope: "staged"` evaluates against an open transaction's state; code in
- * the same process calls `runChecks` (`foundation/commands/checks.ts`) with
- * its own evaluation instead.
+ * Other modules (the parameter sweep) run the stored checks on their own
+ * states through the document-checks hook (`documentRunner.ts`,
+ * `foundation/commands/documentChecks.ts`); agents can also evaluate an
+ * open transaction's state with `checks.run` `scope: "staged"`.
  */
 import {
   checkDisplayName,

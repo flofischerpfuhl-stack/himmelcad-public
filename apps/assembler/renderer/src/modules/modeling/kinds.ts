@@ -15,6 +15,7 @@ import {
   MODELING_FEATURE_KINDS,
   MODELING_FEATURE_LABEL,
   sketchIdsUsedBy,
+  splitBodyIds,
   type ModelingFeature,
 } from './features.js';
 import { validateModelingFeature } from './featureFormat.js';
@@ -45,8 +46,12 @@ const circular = (f: Feature) => {
 };
 
 /**
- * Block 8 optional fields that change the geometry: an older reader would
- * build the plain feature, so it must refuse the file (`formatCapabilities.ts`).
+ * Optional fields (Block 8, Block 9) that change the geometry: an older
+ * reader would build the plain feature, so it must refuse the file
+ * (`formatCapabilities.ts`). Not listed: the extrude taper on Through All /
+ * To Object (Block 9) — a Block 8 reader reports that step as an error
+ * instead of building it differently, and every reader of `requires`
+ * supports it.
  */
 const FORMAT_CAPABILITIES: Partial<Record<ModelingFeature['kind'], readonly Capability[]>> = {
   revolve: [
@@ -73,6 +78,17 @@ const FORMAT_CAPABILITIES: Partial<Record<ModelingFeature['kind'], readonly Capa
       label: 'Circular pattern keeping orientation',
       usedBy: (f) => circular(f)?.uniform === true,
     },
+    // Block 9: a third direction and whole sketches.
+    {
+      id: 'pattern.third',
+      label: 'Three-direction pattern',
+      usedBy: (f) => !!linear(f)?.third,
+    },
+    {
+      id: 'pattern.sketchIds',
+      label: 'Pattern of sketches',
+      usedBy: (f) => (as('pattern', f)?.sketchIds?.length ?? 0) > 0,
+    },
   ],
   split: [
     { id: 'split.profile', label: 'Split by profile', usedBy: (f) => !!as('split', f)?.profile },
@@ -80,6 +96,33 @@ const FORMAT_CAPABILITIES: Partial<Record<ModelingFeature['kind'], readonly Capa
       id: 'split.keepOriginal',
       label: 'Split keeping the original',
       usedBy: (f) => as('split', f)?.keepOriginal === true,
+    },
+    // Block 9: several bodies split in one step.
+    {
+      id: 'split.bodyIds',
+      label: 'Split of several bodies',
+      usedBy: (f) => {
+        const split = as('split', f);
+        return !!split && splitBodyIds(split).length > 1;
+      },
+    },
+  ],
+  // Block 9: Align on axes, edges, centres and datums (`from`/`to`) and the turn after it.
+  align: [
+    {
+      id: 'align.from',
+      label: 'Align from an edge, axis or curved face',
+      usedBy: (f) => as('align', f)?.from !== undefined,
+    },
+    {
+      id: 'align.to',
+      label: 'Align to an edge, axis, datum or curved face',
+      usedBy: (f) => as('align', f)?.to !== undefined,
+    },
+    {
+      id: 'align.turn',
+      label: 'Align with a turn',
+      usedBy: (f) => (as('align', f)?.turn ?? 0) !== 0,
     },
   ],
 };

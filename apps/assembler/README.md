@@ -359,7 +359,11 @@ edit. Code in `renderer/src/modules/checks/` and
   newer HimmelCAD Assembler: it uses Extrude taper. Update the app to open
   it." Today's capabilities: `extrude.taper`, `revolve.helix`,
   `pattern.twoDirections`, `pattern.totalLength`, `pattern.angleSpacing`,
-  `pattern.uniform`, `split.profile`, `split.keepOriginal`. The list is
+  `pattern.uniform`, `split.profile`, `split.keepOriginal` and (Block 9)
+  `pattern.third`, `pattern.sketchIds`, `split.bodyIds`, `align.from`,
+  `align.to`, `align.turn`; `checks`, `printIgnored`,
+  `assistantSessions`/`assistantSkills` and Pattern folders change no
+  geometry and need none. The list is
   written only when a capability is used (other files are byte-identical),
   is derived from the features at every save, and leaves the schema at 3.
   Rules for new fields: geometry-changing optional field → declare a

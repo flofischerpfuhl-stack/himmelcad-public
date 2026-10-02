@@ -11,6 +11,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { ApiError } from '../../renderer/src/foundation/commands/api/errors.js';
+import { newStoredCheck } from '../../renderer/src/foundation/commands/checks.js';
 import {
   clearDocumentCheckRunner,
   registerDocumentCheckRunner,
@@ -41,6 +42,7 @@ import {
 import { planParameterChange } from '../../renderer/src/modules/parameters/parameterEdits.js';
 import { MAX_SWEEP_SAMPLES, planSweep } from '../../renderer/src/modules/parameters/sweep.js';
 import { setSketchDimension } from '../../renderer/src/modules/sketching/featureOps.js';
+import { CHECKS_DOCUMENT_RUNNER } from '../../renderer/src/modules/checks/documentRunner.js';
 import { createNodeKernelAdapter } from '../kernel/nodeKernel.js';
 import { loadNodeSolver } from '../sketch/nodeSolver.js';
 
@@ -364,30 +366,36 @@ void test('sweep: per-sample rebuild results with the failing feature, checks, c
   assert.equal(failing.outcome, 'rebuilt');
   assert.equal(failing.errors[0]?.featureName, 'Fillet 1', 'the failing step is named');
   assert.ok(failing.errors[0]!.message.length > 0, 'with the kernel reason');
-  assert.equal(report.checksAvailable, false);
-  assert.equal(failing.checks, null, 'no checks module: null, not an empty pass');
+  // The checks module is installed (test setup) but the document has no stored checks.
+  assert.equal(report.checksAvailable, true);
+  assert.deepEqual(failing.checks, [], 'checks module, no stored checks: an empty list');
   assert.equal(store.getState().parameterSweep?.report, report);
   const after = await settled();
   assert.strictEqual(after.features, before.features, 'features untouched');
   assert.strictEqual(after.parameters, before.parameters, 'parameters untouched');
   assert.equal(after.history.canUndo, before.history.canUndo);
 
-  // Width 10..60 sampled; with a check runner registered its results ride along.
-  registerDocumentCheckRunner({
-    module: 'test',
-    run: async ({ evaluation }) => {
-      const b = evaluation.bodies[0]!;
-      const width = b.max[0]! - b.min[0]!;
-      return [
-        {
-          checkId: 'c1',
-          name: 'Width ≤ 50 mm',
-          status: width <= 50 + 1e-6 ? 'pass' : 'fail',
-          measured: width,
-        },
-      ];
-    },
-  });
+  // Without a checks module (runner removed): `null`, never an empty pass.
+  clearDocumentCheckRunner();
+  try {
+    const bare = await store.getState().runParameterSweep({ parameters: [{ parameter: 'r' }] });
+    assert.equal(bare?.checksAvailable, false);
+    assert.equal(bare?.samples[0]?.checks, null);
+  } finally {
+    registerDocumentCheckRunner(CHECKS_DOCUMENT_RUNNER);
+  }
+
+  // Width 10..60 sampled with a stored check "width ≤ 50 mm": its result rides along per sample.
+  store
+    .getState()
+    .commitChecks([
+      newStoredCheck(
+        'length',
+        { target: { kind: 'body', bodyId: 'body:e1' }, quantity: 'width', max: 50 },
+        [],
+        { name: 'Width ≤ 50 mm' },
+      ),
+    ]);
   try {
     const sampled = await store.getState().runParameterSweep({
       parameters: [{ parameter: 'width' }],
@@ -404,10 +412,13 @@ void test('sweep: per-sample rebuild results with the failing feature, checks, c
         [60, false, 'fail'],
       ],
     );
+    const wide = sampled.samples[3]!.checks![0]!;
+    assert.equal(wide.name, 'Width ≤ 50 mm');
+    assert.ok(Math.abs(wide.measured! - 60) < 1e-6 && wide.unit === 'mm', 'measured 60 mm');
+    assert.match(wide.message ?? '', /needs ≤ 50 mm/);
   } finally {
-    clearDocumentCheckRunner();
+    store.getState().commitChecks([]);
   }
-
   // Cancel (here: once two samples are done) stops at the running sample; what finished is kept.
   const unsubscribe = store.subscribe((state) => {
     if ((state.parameterSweep?.done ?? 0) >= 2 && state.parameterSweep?.running) {
@@ -475,6 +486,87 @@ void test('parameters.sweep over the API: refused samples, combinations, errors 
   );
   assert.strictEqual(store.getState().features, afterRange.features);
   assert.strictEqual(store.getState().parameters, afterRange.parameters);
+});
+
+void test('sweep with the checks module: a clearance check passes at min and fails at max (UI and API)', async () => {
+  await plate();
+  // A block 8 mm to the right of the plate's nominal 40 mm width (x 48..58): the plate's
+  // width grows towards it, so the gap is 48 - width.
+  const sketch: SketchFeature = {
+    id: 's2',
+    name: 'Sketch 2',
+    suppressed: false,
+    kind: 'sketch',
+    plane: { kind: 'plane', plane: 'XY', offset: 0 },
+    ...rememberRegions(addRectangle(EMPTY_SKETCH, [48, 0], [58, 30]).sketch),
+  };
+  store.getState().addFeature(sketch);
+  store.getState().addFeature({
+    id: 'e2',
+    name: 'Extrude 2',
+    suppressed: false,
+    kind: 'extrude',
+    profile: { kind: 'sketch', featureId: 's2' },
+    distance: 10,
+    symmetric: false,
+    operation: 'new',
+  } as Feature);
+  await settled();
+  assert.deepEqual(store.getState().evaluation.errors, {});
+  assert.ok(store.getState().evaluation.bodies.some((b) => b.id === 'body:e2'));
+  await call('checks.add', {
+    kind: 'clearance',
+    params: { a: 'body:e1', b: 'body:e2', min: 2 },
+    name: 'Plate ↔ block ≥ 2 mm',
+  });
+  const before = store.getState();
+
+  // Test range in the app (store action): min 10 → gap 38, nominal 40 → 8, max 60 → overlap.
+  const report = await store.getState().runParameterSweep({ parameters: [{ parameter: 'width' }] });
+  assert.ok(report?.checksAvailable);
+  const rows = report.samples.map((s) => ({
+    width: s.values.width,
+    ok: s.ok,
+    status: s.checks?.[0]?.status,
+    measured: s.checks?.[0]?.measured,
+  }));
+  assert.deepEqual(
+    rows.map((r) => [r.width, r.ok, r.status]),
+    [
+      [40, true, 'pass'],
+      [10, true, 'pass'],
+      [60, false, 'fail'],
+    ],
+  );
+  assert.ok(Math.abs(rows[0]!.measured! - 8) < 1e-6, 'nominal gap 8 mm');
+  assert.ok(Math.abs(rows[1]!.measured! - 38) < 1e-6, 'gap at min 38 mm');
+  assert.equal(rows[2]!.measured, 0, 'overlap at max');
+  assert.equal(report.passed, 2);
+
+  // The same over the agent API (headless path, `parameters.sweep`).
+  const api = await call<Json>('parameters.sweep', {
+    parameters: [{ parameterId: 'width', values: [10, 47, 60] }],
+  });
+  assert.equal(api.checksAvailable, true);
+  assert.deepEqual(
+    (api.samples as Json[]).map((s) => [
+      (s.values as Json).width,
+      ((s.checks as Json[])[0] as Json).status,
+    ]),
+    [
+      [40, 'pass'],
+      [10, 'pass'],
+      [47, 'fail'],
+      [60, 'fail'],
+    ],
+  );
+
+  // The document, its checks and the Checks panel's background results are untouched.
+  const after = store.getState();
+  assert.strictEqual(after.features, before.features);
+  assert.strictEqual(after.parameters, before.parameters);
+  assert.strictEqual(after.checks, before.checks);
+  store.getState().commitChecks([]);
 });
 
 void test('.hcasm: parameter ranges round-trip; malformed ranges are refused', () => {
