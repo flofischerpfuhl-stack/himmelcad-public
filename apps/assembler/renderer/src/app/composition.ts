@@ -12,6 +12,7 @@ import { installModules, type AssemblerModule } from '../foundation/commands/mod
 import { agentApiModule } from '../interface/agent-api/module.js';
 import { shellUiModule } from '../interface/shell-ui/module.js';
 import { canvasModule } from '../modules/canvas/module.js';
+import { checksModule } from '../modules/checks/module.js';
 import { constructionModule } from '../modules/construction/module.js';
 import { directEditModule } from '../modules/direct-edit/module.js';
 import { displayModule } from '../modules/display/module.js';
@@ -38,6 +39,7 @@ export const ASSEMBLER_MODULES: readonly AssemblerModule[] = [
   templatesModule,
   printModule,
   printersModule,
+  checksModule,
   agentApiModule,
   shellUiModule,
 ];

@@ -64,6 +64,7 @@ export const API_ORDER = {
     importStep: 330,
     coreProject: 340,
     print: 400,
+    checks: 450,
     interop: 500,
     canvas: 600,
   },

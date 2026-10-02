@@ -6,10 +6,13 @@
  * the top three candidates previewed as ghosts) and the thresholds.
  */
 import {
+  Check as CheckIcon,
   ChevronDown,
   ChevronRight,
   CircleAlert,
+  EyeOff,
   Info,
+  ListX,
   RefreshCw,
   TriangleAlert,
   X,
@@ -21,16 +24,24 @@ import { Button, Checkbox, ProgressBar, Select, Tooltip } from '@himmelcad/ui';
 import { ExpressionField } from '../../../platform/widgets/ExpressionField.js';
 import { findCommand } from '../../../foundation/commands/registry.js';
 import { useAssemblerStore } from '../../../foundation/commands/store.js';
-import type { FindingSeverity, PrintFinding } from '../analysis.js';
+import { usePreferences } from '../../../platform/input/preferences.js';
+import {
+  FINDING_KIND_LABELS,
+  type FindingKind,
+  type FindingSeverity,
+  type PrintFinding,
+} from '../analysis.js';
 import {
   BUILD_VOLUME_COLOR,
+  CLEARANCE_COLOR,
   OVERHANG_COLOR_HIGH,
   OVERHANG_COLOR_LOW,
   ORIENT_PREVIEW_COLOR,
+  OVERLAP_COLOR,
   THIN_WALL_COLOR,
   rgbCss,
 } from '../overlay.js';
-import { reportStale, usePrintStore } from '../printStore.js';
+import { reportStale, usePrintStore, visibleFindings } from '../printStore.js';
 import {
   BUILD_VOLUME_PRESETS,
   MATERIAL_PRESETS,
@@ -72,19 +83,124 @@ function FindingRow({
   finding: PrintFinding;
   focused: boolean;
 }): JSX.Element {
+  const print = usePrintStore.getState();
+  // An overlap is often intended (bodies that will be combined): say so in the action.
+  const ignoreLabel = finding.kind === 'overlap' ? 'Mark as intended' : 'Ignore here';
+  const typeLabel = FINDING_KIND_LABELS[finding.kind];
   return (
-    <button
-      type="button"
-      className={`${styles.finding} ${focused ? styles.findingFocused : ''}`}
-      aria-pressed={focused}
-      onClick={() => usePrintStore.getState().focusFinding(finding)}
-    >
-      <SeverityIcon severity={finding.severity} />
-      <span className={styles.findingText}>
-        <span>{finding.message}</span>
-        <span className={styles.findingBody}>{finding.bodyName}</span>
+    <div className={styles.findingRow}>
+      <button
+        type="button"
+        className={`${styles.finding} ${focused ? styles.findingFocused : ''}`}
+        aria-pressed={focused}
+        onClick={() => print.focusFinding(finding)}
+      >
+        <SeverityIcon severity={finding.severity} />
+        <span className={styles.findingText}>
+          <span>{finding.message}</span>
+          <span className={styles.findingBody}>
+            {finding.otherBodyName
+              ? `${finding.bodyName} ↔ ${finding.otherBodyName}`
+              : finding.bodyName}
+          </span>
+        </span>
+      </button>
+      <span className={styles.findingActions}>
+        <Tooltip content={`${ignoreLabel}: not listed in this document any more`}>
+          <button
+            type="button"
+            className={styles.findingAction}
+            aria-label={`${ignoreLabel}: ${finding.message}`}
+            onClick={() => {
+              print.ignoreFinding(finding.id);
+              if (focused) print.focusFinding(null);
+            }}
+          >
+            {finding.kind === 'overlap' ? <CheckIcon size={12} /> : <EyeOff size={12} />}
+          </button>
+        </Tooltip>
+        <Tooltip content={`Don’t show “${typeLabel}” findings (undo in Settings or below)`}>
+          <button
+            type="button"
+            className={styles.findingAction}
+            aria-label={`Don’t show ${typeLabel} findings`}
+            onClick={() => print.hideFindingKind(finding.kind)}
+          >
+            <ListX size={12} />
+          </button>
+        </Tooltip>
       </span>
-    </button>
+    </div>
+  );
+}
+
+/** What the list leaves out: findings ignored here and finding types the user hid. */
+function SuppressedFindings({
+  findings,
+  ignored,
+  hidden,
+}: {
+  findings: readonly PrintFinding[];
+  ignored: readonly string[];
+  hidden: readonly string[];
+}): JSX.Element | null {
+  const [open, setOpen] = useState(false);
+  const print = usePrintStore.getState();
+  const ignoredHere = findings.filter((f) => ignored.includes(f.id));
+  if (ignored.length === 0 && hidden.length === 0) return null;
+  return (
+    <div className={styles.suppressed}>
+      {ignored.length > 0 ? (
+        <div className={styles.suppressedRow}>
+          <span className={styles.suppressedText}>
+            {ignored.length} ignored in this document
+            {ignoredHere.length < ignored.length
+              ? ` (${ignored.length - ignoredHere.length} not present now)`
+              : ''}
+          </span>
+          <button type="button" className={styles.linkButton} onClick={() => setOpen(!open)}>
+            {open ? 'Hide' : 'Show'}
+          </button>
+          <button
+            type="button"
+            className={styles.linkButton}
+            onClick={() => print.restoreAllFindings()}
+          >
+            Restore all
+          </button>
+        </div>
+      ) : null}
+      {open
+        ? ignoredHere.map((f) => (
+            <div key={f.id} className={styles.suppressedRow}>
+              <span className={styles.suppressedText} title={f.message}>
+                {f.message}
+              </span>
+              <button
+                type="button"
+                className={styles.linkButton}
+                onClick={() => print.restoreFinding(f.id)}
+              >
+                Restore
+              </button>
+            </div>
+          ))
+        : null}
+      {hidden.map((kind) => (
+        <div key={kind} className={styles.suppressedRow}>
+          <span className={styles.suppressedText}>
+            {FINDING_KIND_LABELS[kind as FindingKind] ?? kind} hidden (all documents)
+          </span>
+          <button
+            type="button"
+            className={styles.linkButton}
+            onClick={() => print.showFindingKind(kind as FindingKind)}
+          >
+            Show again
+          </button>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -206,6 +322,13 @@ function SettingsSection(): JSX.Element {
                 precision={2}
                 onCommit={(v) => update({ minPinMm: v })}
               />
+              <ExpressionField
+                label="Min. clearance"
+                value={settings.minClearanceMm}
+                unit="mm"
+                precision={2}
+                onCommit={(v) => update({ minClearanceMm: Math.max(0, v) })}
+              />
             </div>
           </div>
           <span className={styles.settingLabel}>Material</span>
@@ -301,6 +424,11 @@ function SettingsSection(): JSX.Element {
               checked={settings.showBuildVolume}
               onChange={(e) => update({ showBuildVolume: e.currentTarget.checked })}
             />
+            <Checkbox
+              label="Check clearance between bodies"
+              checked={settings.checkClearance}
+              onChange={(e) => update({ checkClearance: e.currentTarget.checked })}
+            />
           </div>
         </div>
       ) : null}
@@ -313,6 +441,7 @@ export function PrintPanel(): JSX.Element | null {
   const itemsOpen = useAssemblerStore((s) => s.panels.items);
   const doc = useAssemblerStore();
   const [showAll, setShowAll] = useState(false);
+  const hiddenKinds = usePreferences((s) => s.hiddenPrintFindings);
   useEffect(() => setShowAll(false), [print.report]);
   if (!print.enabled) return null;
   const report = print.report;
@@ -332,7 +461,8 @@ export function PrintPanel(): JSX.Element | null {
               : report
                 ? `Up to date · ${report.ms} ms`
                 : '';
-  const findings = report?.findings ?? [];
+  const allFindings = report?.findings ?? [];
+  const findings = visibleFindings(allFindings, print.ignored, hiddenKinds);
   const listed = showAll ? findings : findings.slice(0, MAX_LISTED);
   const settings = print.settings;
   const volume = buildVolumeSize(settings);
@@ -490,7 +620,11 @@ export function PrintPanel(): JSX.Element | null {
         <section aria-label="Findings">
           <div className={styles.sectionTitle}>Findings{report ? ` (${findings.length})` : ''}</div>
           {report && findings.length === 0 ? (
-            <div className={styles.empty}>No issues found at the current thresholds.</div>
+            <div className={styles.empty}>
+              {allFindings.length === 0
+                ? 'No issues found at the current thresholds.'
+                : 'Nothing left to show: the remaining findings are ignored or hidden.'}
+            </div>
           ) : null}
           <div className={styles.findings}>
             {listed.map((f) => (
@@ -502,6 +636,7 @@ export function PrintPanel(): JSX.Element | null {
               </button>
             ) : null}
           </div>
+          <SuppressedFindings findings={allFindings} ignored={print.ignored} hidden={hiddenKinds} />
         </section>
 
         <section aria-label="Legend">
@@ -519,6 +654,18 @@ export function PrintPanel(): JSX.Element | null {
               <span className={styles.swatch} style={{ background: rgbCss(THIN_WALL_COLOR) }} />
               Wall &lt; {fmt(settings.minWallMm, 2)} mm
             </span>
+            {settings.checkClearance ? (
+              <>
+                <span className={styles.legendItem}>
+                  <span className={styles.swatch} style={{ background: rgbCss(CLEARANCE_COLOR) }} />
+                  Gap &lt; {fmt(settings.minClearanceMm, 2)} mm
+                </span>
+                <span className={styles.legendItem}>
+                  <span className={styles.swatch} style={{ background: rgbCss(OVERLAP_COLOR) }} />
+                  Overlap
+                </span>
+              </>
+            ) : null}
             {volume ? (
               <span className={styles.legendItem}>
                 <span

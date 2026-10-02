@@ -19,6 +19,7 @@
 import { registerProjectSection, type ProjectSection } from '../document/projectSections.js';
 import type { KernelAdapter } from '../geometry-kernel/adapter.js';
 import { registerApiContribution, type ApiContribution } from './api/registry.js';
+import { registerCheckKind, type CheckKindDefinition } from './checks.js';
 import { registerDraftTool, type DraftTool, type RegisteredDraft } from './draftTools.js';
 import { registerProjectTemplates, type ProjectTemplate } from './projectTemplates.js';
 import { registerCommands, type Command } from './registry.js';
@@ -58,6 +59,11 @@ export interface AssemblerModule {
    */
   fileFormatFields?: readonly ProjectSection[];
   /**
+   * Check kinds the module evaluates (`checks.ts`): stored checks of these
+   * kinds run after every rebuild (the checks module) and in `checks.run`.
+   */
+  checkKinds?: readonly CheckKindDefinition[];
+  /**
    * Registration-time hooks into the gate (a modal-session probe, the notice
    * toast): run once by {@link installModules}, in every program that
    * installs the module (app, headless, tests).
@@ -90,6 +96,7 @@ export function installModules(modules: readonly AssemblerModule[]): void {
     if (module.projectTemplates) registerProjectTemplates(module.id, module.projectTemplates);
     if (module.storeSlice) installStoreSlice(module.id, module.storeSlice);
     for (const section of module.fileFormatFields ?? []) registerProjectSection(section);
+    for (const kind of module.checkKinds ?? []) registerCheckKind(kind);
     module.onInstall?.();
   }
 }

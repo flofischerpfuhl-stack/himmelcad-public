@@ -34,6 +34,8 @@ import type { WireBody, WorkerRequest, WorkerResponse } from './workerProtocol.j
 import type {
   Body,
   BodyMesh,
+  ClearanceRequest,
+  ClearanceResult,
   DistanceMeasurement,
   DistanceTarget,
   EvaluationRequest,
@@ -76,6 +78,10 @@ export class WorkerKernelAdapter extends QueuedKernelAdapter {
   private readonly measurePending = new Map<
     number,
     { resolve: (result: DistanceMeasurement) => void; reject: (error: Error) => void }
+  >();
+  private readonly clearancePending = new Map<
+    number,
+    { resolve: (result: ClearanceResult) => void; reject: (error: Error) => void }
   >();
   /** Meshes of the last result the worker posted, by `meshId`. */
   private meshes = new Map<string, MeshRecord>();
@@ -153,6 +159,7 @@ export class WorkerKernelAdapter extends QueuedKernelAdapter {
         this.exportPending,
         this.meshPending,
         this.measurePending,
+        this.clearancePending,
         this.queryPending,
       ]) {
         const job = table.get(jobId);
@@ -234,6 +241,7 @@ export class WorkerKernelAdapter extends QueuedKernelAdapter {
     if (this.status.status !== 'ready') return;
     // Exports, distance and host queries bypass the queue: never recycle under them.
     if (this.exportPending.size + this.meshPending.size + this.measurePending.size > 0) return;
+    if (this.clearancePending.size > 0) return;
     if (this.queryPending.size > 0) return;
     this.recycleRequested = false;
     this.worker.terminate();
@@ -291,6 +299,21 @@ export class WorkerKernelAdapter extends QueuedKernelAdapter {
       this.queryPending.delete(message.jobId);
       if (message.type === 'queryResult') pending.resolve(message.value);
       else pending.reject(new Error(message.message));
+      return;
+    }
+    if (message.type === 'clearanceResult') {
+      this.disarm(`x${message.jobId}`);
+      const pending = this.clearancePending.get(message.jobId);
+      if (!pending) return;
+      this.clearancePending.delete(message.jobId);
+      pending.resolve(message.result);
+      return;
+    }
+    if (message.type === 'measureFailed' && this.clearancePending.has(message.jobId)) {
+      this.disarm(`x${message.jobId}`);
+      const pending = this.clearancePending.get(message.jobId)!;
+      this.clearancePending.delete(message.jobId);
+      pending.reject(new Error(message.message));
       return;
     }
     if (message.type === 'measureResult' || message.type === 'measureFailed') {
@@ -525,6 +548,33 @@ export class WorkerKernelAdapter extends QueuedKernelAdapter {
     });
   }
 
+  override measureClearance(
+    features: readonly Feature[],
+    request: ClearanceRequest,
+  ): Promise<ClearanceResult> {
+    return new Promise((resolve, reject) => {
+      const worker = this.worker;
+      if (!worker) {
+        reject(new Error('CAD kernel worker is not running'));
+        return;
+      }
+      const jobId = this.nextExportJobId++;
+      this.clearancePending.set(jobId, { resolve, reject });
+      const message: WorkerRequest = {
+        type: 'measureClearance',
+        jobId,
+        features: [...features],
+        request: {
+          pairs: request.pairs.map((p) => ({ a: p.a, b: p.b })),
+          ...(request.overlap !== undefined ? { overlap: request.overlap } : {}),
+          ...(request.budgetMs !== undefined ? { budgetMs: request.budgetMs } : {}),
+        },
+      };
+      worker.postMessage(message);
+      this.arm(`x${jobId}`, 'the clearance query');
+    });
+  }
+
   /** Fails every outstanding export (the worker that would answer is gone). */
   private failExports(message: string): void {
     for (const pending of this.exportPending.values()) pending.reject(new Error(message));
@@ -538,6 +588,8 @@ export class WorkerKernelAdapter extends QueuedKernelAdapter {
   private rejectMeasurements(reason: string): void {
     for (const pending of this.measurePending.values()) pending.reject(new Error(reason));
     this.measurePending.clear();
+    for (const pending of this.clearancePending.values()) pending.reject(new Error(reason));
+    this.clearancePending.clear();
   }
 
   protected run(request: EvaluationRequest, context: RunContext): Promise<EvaluationResult> {

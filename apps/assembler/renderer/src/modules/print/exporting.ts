@@ -23,6 +23,11 @@ export function setPrintKernel(adapter: KernelAdapter): void {
   kernel = adapter;
 }
 
+/** The kernel adapter of the print module (`null` until installed): exports and the clearance pass. */
+export function printKernel(): KernelAdapter | null {
+  return kernel;
+}
+
 export type StlScope = 'all' | 'visible' | 'selected' | 'each';
 
 export interface StlExportOptions {

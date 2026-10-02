@@ -141,7 +141,7 @@ function request(
   if (requested.has(key)) return 'pending';
   requested.add(key);
   const adapter = kernel!;
-  void adapter.measureDistance!(features, toTarget(a)!, toTarget(b)!).then(
+  void exactDistance(adapter, features, a, b).then(
     (result) => {
       if (distancesFor !== evaluation) return;
       useMeasureStore.setState((s) => ({
@@ -154,6 +154,40 @@ function request(
     },
   );
   return 'pending';
+}
+
+/** Time two bodies' clearance may take in the kernel when Measure asks for it, ms. */
+export const MEASURE_CLEARANCE_BUDGET_MS = 5000;
+
+/**
+ * The exact distance of two references: for two bodies their clearance
+ * (distance, and contact or overlap with the shared volume), else the
+ * minimum distance.
+ */
+export async function exactDistance(
+  adapter: KernelAdapter,
+  features: readonly Feature[],
+  a: MeasureRef,
+  b: MeasureRef,
+): Promise<DistanceResult> {
+  if (a.kind === 'body' && b.kind === 'body' && adapter.measureClearance) {
+    const { pairs } = await adapter.measureClearance(features, {
+      pairs: [{ a: a.bodyId, b: b.bodyId }],
+      budgetMs: MEASURE_CLEARANCE_BUDGET_MS,
+    });
+    const pair = pairs[0]!;
+    return {
+      distance: pair.distance,
+      pointA: pair.pointA,
+      pointB: pair.pointB,
+      approx: false,
+      relation: pair.relation,
+      overlapVolume: pair.overlapVolume,
+      ...(pair.overlapCenter ? { overlapCenter: pair.overlapCenter } : {}),
+    };
+  }
+  const result = await adapter.measureDistance!(features, toTarget(a)!, toTarget(b)!);
+  return { ...result, approx: false };
 }
 
 /** The kernel's form of a reference; `null` for reference meshes (never a kernel input). */

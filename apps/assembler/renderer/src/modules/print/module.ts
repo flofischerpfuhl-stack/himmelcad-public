@@ -13,6 +13,8 @@
 import { COMMAND_ORDER } from '../../foundation/commands/registry.js';
 import { defineAssemblerModule } from '../../foundation/commands/module.js';
 import { PRINT_API } from './api.js';
+import { PRINT_CHECK_KINDS, setCheckPrintRunner } from './checkKinds.js';
+import { PRINT_PROJECT_SECTION } from './projectFile.js';
 import { setPrintKernel } from './exporting.js';
 import { PRINT_COMMANDS } from './printCommands.js';
 import { setAgentPrintRunner, setPrintRunner } from './printStore.js';
@@ -22,14 +24,19 @@ export const printModule = defineAssemblerModule({
   id: 'print',
   commands: [{ order: COMMAND_ORDER.print, commands: PRINT_COMMANDS }],
   api: PRINT_API,
+  // Findings ignored in this document ("Ignore here", `printIgnored`).
+  fileFormatFields: [PRINT_PROJECT_SECTION],
+  // Stored checks: printable, minimum wall, fits the build volume (assembler/CHECKS.md).
+  checkKinds: PRINT_CHECK_KINDS,
   install: (host) => {
-    // Analysis and orientation in their own worker (one for the UI, one for agent queries);
-    // export re-tessellation on the kernel.
+    // Analysis and orientation in their own worker (one for the UI, one for agent queries,
+    // one for stored checks); export re-tessellation and the clearance pass on the kernel.
     if (host.workers) {
       const printWorker = () =>
         new Worker(new URL('./printability.worker.ts', import.meta.url), { type: 'module' });
       setPrintRunner(new PrintabilityRunner(printWorker));
       setAgentPrintRunner(new PrintabilityRunner(printWorker));
+      setCheckPrintRunner(new PrintabilityRunner(printWorker));
     }
     setPrintKernel(host.kernel);
   },

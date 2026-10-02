@@ -169,6 +169,7 @@ export const COMMAND_ORDER = {
   measureTools: 1150,
   section: 1200,
   measure: 1250,
+  checks: 1260,
   history: 1300,
   visibility: 1400,
   file: 1500,

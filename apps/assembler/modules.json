@@ -118,6 +118,12 @@
       "paths": ["renderer/src/modules/measure/"]
     },
     {
+      "id": "checks",
+      "layer": "domain",
+      "summary": "Stored checks (requirements) evaluated after every rebuild: Checks panel and status badge, background runner, checks API, the checks file field; the kinds come from the modules that own the measurement.",
+      "paths": ["renderer/src/modules/checks/"]
+    },
+    {
       "id": "display",
       "layer": "domain",
       "summary": "Display features: appearance/colour, display-mode and section commands and menus, analysis legend, image export, persisted view display.",

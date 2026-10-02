@@ -107,8 +107,12 @@ import {
   type Topology,
 } from './occt.js';
 import { closeArena, inArena, isPinned, openArena, pin, release, unpin } from './occtArena.js';
+import { clearanceOfShapes } from './clearance.js';
 import type {
   Body,
+  ClearancePairResult,
+  ClearanceRequest,
+  ClearanceResult,
   DistanceMeasurement,
   DistanceTarget,
   EdgeInfo,
@@ -287,6 +291,15 @@ export interface KernelEvaluator {
     a: DistanceTarget,
     b: DistanceTarget,
   ): Promise<DistanceMeasurement>;
+  /**
+   * Replays `features` (from the cache) and measures the clearance of body
+   * pairs: exact minimum distance, closest points, contact or overlap with
+   * the shared volume (`clearance.ts`), within the request's time budget.
+   */
+  measureClearance?(
+    features: readonly Feature[],
+    request: ClearanceRequest,
+  ): Promise<ClearanceResult>;
   /** Sizes of the incremental-evaluation caches and of the wasm heap. */
   cacheInfo(): KernelCacheInfo;
   /** Exchange formats the loaded OCCT build supports. Optional for test doubles. */
@@ -2303,6 +2316,42 @@ export function createEvaluator(oc: OpenCascade, options: EvaluatorOptions = {})
         } finally {
           for (const object of made) object.delete();
           closeArena(arena);
+          releaseTransient(replay);
+        }
+      });
+    },
+
+    measureClearance(features, request) {
+      return serialized(async () => {
+        const started = now();
+        const replay = await replayFeatures(features, { cacheTail: true });
+        try {
+          const pairs: ClearancePairResult[] = [];
+          const skipped: { a: string; b: string }[] = [];
+          for (const pair of request.pairs) {
+            // The budget is checked between pairs: one BRepExtrema/Common call cannot be interrupted.
+            if (
+              request.budgetMs !== undefined &&
+              pairs.length > 0 &&
+              now() - started > request.budgetMs
+            ) {
+              skipped.push({ a: pair.a, b: pair.b });
+              continue;
+            }
+            const a = replay.ctx.bodies.get(pair.a);
+            const b = replay.ctx.bodies.get(pair.b);
+            if (!a) throw new Error(`Missing body "${pair.a}"`);
+            if (!b) throw new Error(`Missing body "${pair.b}"`);
+            const t = now();
+            const result = inArena(() =>
+              clearanceOfShapes(oc, a.shape.wrapped as RawShape, b.shape.wrapped as RawShape, {
+                overlap: request.overlap !== false,
+              }),
+            );
+            pairs.push({ a: pair.a, b: pair.b, ...result, ms: now() - t });
+          }
+          return { pairs, skipped, ms: now() - started };
+        } finally {
           releaseTransient(replay);
         }
       });

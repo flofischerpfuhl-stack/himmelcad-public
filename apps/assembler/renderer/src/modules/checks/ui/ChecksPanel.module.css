@@ -1,0 +1,306 @@
+/* The Checks panel in the right column (between Parameters and History). */
+.placement {
+  flex: 0 1 auto;
+  max-height: 42%;
+}
+
+.status {
+  font-size: 11px;
+  color: var(--hc-fg-subtle);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.row {
+  display: flex;
+  align-items: flex-start;
+  gap: 2px;
+  border-radius: var(--hc-radius-sm);
+}
+
+.row:hover,
+.rowFocused {
+  background: var(--hc-hover-bg);
+}
+
+.rowMain {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  padding: 5px 6px;
+  border: none;
+  border-radius: var(--hc-radius-sm);
+  background: transparent;
+  color: var(--hc-fg-default);
+  font-family: var(--hc-font-ui);
+  font-size: 11px;
+  line-height: 1.35;
+  text-align: left;
+  cursor: pointer;
+}
+
+.rowMain:focus-visible,
+.action:focus-visible,
+.fieldInput:focus-visible,
+.kindButton:focus-visible {
+  outline: 2px solid var(--hc-focus-ring);
+  outline-offset: 1px;
+}
+
+.icon {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.pass {
+  color: var(--hc-success);
+}
+
+.fail {
+  color: var(--hc-error);
+}
+
+.error {
+  color: var(--hc-warning);
+}
+
+.muted {
+  color: var(--hc-fg-subtle);
+}
+
+.text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.name {
+  color: var(--hc-fg-strong);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.message {
+  font-size: 10px;
+  color: var(--hc-fg-subtle);
+  overflow-wrap: anywhere;
+}
+
+.disabledName {
+  color: var(--hc-fg-subtle);
+  text-decoration: line-through;
+}
+
+.actions {
+  display: flex;
+  gap: 1px;
+  padding-top: 3px;
+  opacity: 0;
+}
+
+.row:hover .actions,
+.row:focus-within .actions,
+.rowFocused .actions {
+  opacity: 1;
+}
+
+.action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: var(--hc-radius-sm);
+  background: transparent;
+  color: var(--hc-fg-muted);
+  cursor: pointer;
+}
+
+.action:hover {
+  background: var(--hc-hover-bg);
+  color: var(--hc-fg-strong);
+}
+
+.danger:hover {
+  color: var(--hc-error);
+}
+
+.editor {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 4px 2px;
+  padding: 8px;
+  border: 1px solid var(--hc-border-subtle);
+  border-radius: var(--hc-radius-md);
+  background: var(--hc-bg-inset);
+  font-size: 11px;
+}
+
+.editorTitle {
+  font-weight: 600;
+  color: var(--hc-fg-strong);
+}
+
+.hint {
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--hc-fg-subtle);
+}
+
+.problem {
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--hc-warning);
+}
+
+.fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.fieldLabel {
+  font-size: 10px;
+  color: var(--hc-fg-muted);
+}
+
+.fieldWrap {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 6px;
+  border: 1px solid var(--hc-border-subtle);
+  border-radius: var(--hc-radius-sm);
+  background: var(--hc-bg-island);
+}
+
+.fieldInput {
+  flex: 1;
+  min-width: 0;
+  height: 24px;
+  border: none;
+  background: transparent;
+  color: var(--hc-fg-default);
+  font-family: var(--hc-font-mono);
+  font-size: 11px;
+}
+
+.fieldUnit {
+  font-size: 10px;
+  color: var(--hc-fg-subtle);
+}
+
+.nameInput {
+  height: 24px;
+  padding: 0 6px;
+  border: 1px solid var(--hc-border-subtle);
+  border-radius: var(--hc-radius-sm);
+  background: var(--hc-bg-island);
+  color: var(--hc-fg-default);
+  font-family: var(--hc-font-ui);
+  font-size: 11px;
+}
+
+.buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.kinds {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.kindButton {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 5px 6px;
+  border: 1px solid transparent;
+  border-radius: var(--hc-radius-sm);
+  background: transparent;
+  color: var(--hc-fg-default);
+  font-family: var(--hc-font-ui);
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.kindButton:hover {
+  background: var(--hc-hover-bg);
+}
+
+.kindLabel {
+  font-weight: 600;
+}
+
+.kindReason {
+  font-size: 10px;
+  color: var(--hc-fg-subtle);
+}
+
+.progress {
+  padding: 2px 6px 4px;
+  font-size: 10px;
+  color: var(--hc-fg-subtle);
+}
+
+/* The mode button's passive status: a dot and the passed/total count. */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.dotPass {
+  background: var(--hc-success);
+}
+
+.dotFail {
+  background: var(--hc-error);
+}
+
+.dotStale {
+  background: var(--hc-fg-subtle);
+}
+
+@media (pointer: coarse) {
+  .actions {
+    opacity: 1;
+  }
+  .action {
+    width: 36px;
+    height: 36px;
+  }
+  .rowMain,
+  .kindButton {
+    min-height: 40px;
+  }
+  .fieldInput,
+  .nameInput {
+    height: 36px;
+  }
+}

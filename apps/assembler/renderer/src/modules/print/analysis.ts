@@ -141,12 +141,37 @@ export type FindingKind =
   | 'overhang'
   | 'thinWall'
   | 'smallHole'
-  | 'smallPin';
+  | 'smallPin'
+  /** Two bodies share volume (print-in-place parts fuse; intended overlaps can be ignored). */
+  | 'overlap'
+  /** Two bodies closer than the minimum clearance (or touching). */
+  | 'clearance'
+  /** Body pairs the clearance pass did not reach (time budget, cancelled). */
+  | 'clearanceSkipped';
 
 export type FindingSeverity = 'error' | 'warning' | 'info';
 
+/** Labels of the finding kinds ("Don't show this type", Settings). */
+export const FINDING_KIND_LABELS: Record<FindingKind, string> = {
+  invalidBrep: 'Invalid B-rep',
+  notWatertight: 'Not watertight',
+  buildVolume: 'Build volume',
+  notOnPlate: 'Not on the plate',
+  overhang: 'Overhangs',
+  thinWall: 'Thin walls',
+  smallHole: 'Small holes',
+  smallPin: 'Small pins',
+  overlap: 'Bodies overlap',
+  clearance: 'Clearance below minimum',
+  clearanceSkipped: 'Clearance not checked',
+};
+
 export interface PrintFinding {
-  /** Stable within one report: `<kind>:<bodyId>[:<faceKey>]`. */
+  /**
+   * Stable across rebuilds while the bodies/faces keep their names:
+   * `<kind>:<bodyId>[:<faceKey>]`, for body pairs `<kind>:<bodyA>|<bodyB>`
+   * (sorted). "Ignore here" stores it in the document.
+   */
   id: string;
   kind: FindingKind;
   severity: FindingSeverity;
@@ -155,8 +180,15 @@ export interface PrintFinding {
   /** Faces to select/highlight when the finding is focused (may be empty: whole body). */
   faceKeys: string[];
   message: string;
-  /** Primary number (angle in deg, thickness/diameter in mm, area in mm²), if any. */
+  /** Primary number (angle in deg, thickness/diameter/clearance in mm, area in mm², overlap in mm³), if any. */
   value?: number;
+  /** The second body of a pair finding (`overlap`, `clearance`). */
+  otherBodyId?: string;
+  otherBodyName?: string;
+  /** Closest points of a clearance finding (drawn while Print mode is on). */
+  segment?: [Vec3, Vec3];
+  /** Where to look: the centre of an overlap. */
+  point?: Vec3;
 }
 
 export interface PrintReport {

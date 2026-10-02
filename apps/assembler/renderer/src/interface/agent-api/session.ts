@@ -154,7 +154,12 @@ export class AgentSession {
     this.kernel = options.kernel;
     this.host = options.host;
     this.unsubscribe = this.store.subscribe((state, previous) => {
-      if (state.features !== previous.features || state.parameters !== previous.parameters) {
+      // Stored checks are document state too (`checks.*`, undo-tracked).
+      if (
+        state.features !== previous.features ||
+        state.parameters !== previous.parameters ||
+        state.checks !== previous.checks
+      ) {
         this.revision += 1;
       }
     });

@@ -16,7 +16,17 @@ import { withDisplayNames, useItemsStore } from '../../foundation/commands/items
 import { useAssemblerStore, type SelectionItem } from '../../foundation/commands/store.js';
 import { notify } from '../../foundation/commands/notices.js';
 import { sendCamera } from '../../platform/viewport/cameraChannel.js';
-import { bodyToPrintInput, type PrintFinding, type PrintReport } from './analysis.js';
+import type { Feature } from '../../foundation/document/document.js';
+import { usePreferences } from '../../platform/input/preferences.js';
+import {
+  bodyToPrintInput,
+  type FindingKind,
+  type FindingSeverity,
+  type PrintFinding,
+  type PrintReport,
+} from './analysis.js';
+import { runClearancePass } from './clearance.js';
+import { printKernel } from './exporting.js';
 import type { OrientationCandidate } from './orientation.js';
 import {
   isIdentityPlacement,
@@ -86,8 +96,22 @@ export interface PrintState {
   cancelAnalysis: () => void;
 
   focusedFindingId: string | null;
-  /** Selects and frames a finding's faces (or its body). */
+  /** Selects and frames a finding's faces (or its body, or both bodies of a pair). */
   focusFinding: (finding: PrintFinding | null) => void;
+
+  /**
+   * Finding ids the user ignored here ("Ignore here" / "Mark as intended"),
+   * saved in the project (`printIgnored`, `projectFile.ts`); not undo-tracked.
+   * Agents still get every finding (`print.analyze` marks these `ignored`).
+   */
+  ignored: string[];
+  ignoreFinding: (id: string) => void;
+  restoreFinding: (id: string) => void;
+  restoreAllFindings: () => void;
+  setIgnored: (ids: string[]) => void;
+  /** "Don't show this type": a user preference (`hiddenPrintFindings`), reversible in the panel and Settings. */
+  hideFindingKind: (kind: FindingKind) => void;
+  showFindingKind: (kind: FindingKind) => void;
 
   /** "Place on plate" pick state: waiting for a flat face of this body. */
   placePicking: string | null;
@@ -111,6 +135,43 @@ let job: PrintJob<unknown> | null = null;
 let orientJob: PrintJob<unknown> | null = null;
 let debounce: ReturnType<typeof setTimeout> | null = null;
 let installed = false;
+/** Cancel was pressed while the kernel's clearance pass runs (it stops before its next chunk). */
+let clearanceCancelled = false;
+
+const SEVERITY_RANK: Record<FindingSeverity, number> = { error: 0, warning: 1, info: 2 };
+
+/** Findings of both passes, most severe first (stable within a severity). */
+export function mergeFindings(
+  mesh: readonly PrintFinding[],
+  clearance: readonly PrintFinding[],
+): PrintFinding[] {
+  return [...mesh, ...clearance]
+    .map((f, i) => ({ f, i }))
+    .sort((a, b) => SEVERITY_RANK[a.f.severity] - SEVERITY_RANK[b.f.severity] || a.i - b.i)
+    .map(({ f }) => f);
+}
+
+/** The steps the shown evaluation comes from (above the History rollback bar). */
+function activeFeaturesOf(doc: { features: Feature[]; rollbackBefore: string | null }): Feature[] {
+  if (!doc.rollbackBefore) return doc.features;
+  const index = doc.features.findIndex((f) => f.id === doc.rollbackBefore);
+  return index < 0 ? doc.features : doc.features.slice(0, index);
+}
+
+/**
+ * The findings the panel lists: without the ones ignored here and the
+ * types the user hid. Agents get every finding (`print.analyze`).
+ */
+export function visibleFindings(
+  findings: readonly PrintFinding[],
+  ignored: readonly string[],
+  hiddenKinds: readonly string[],
+): PrintFinding[] {
+  if (ignored.length === 0 && hiddenKinds.length === 0) return [...findings];
+  const skip = new Set(ignored);
+  const hidden = new Set(hiddenKinds);
+  return findings.filter((f) => !skip.has(f.id) && !hidden.has(f.kind));
+}
 
 /** Installs the worker-backed runner (app). Without it jobs run inline (tests, headless). */
 export function setPrintRunner(next: PrintabilityRunner): void {
@@ -180,18 +241,52 @@ export const usePrintStore = create<PrintState>((set, get) => {
       });
       return;
     }
-    const current = runner.analyze(bodies, get().settings, (fraction, label) =>
-      set({ progress: { fraction, label } }),
+    const settings = get().settings;
+    const kernel = printKernel();
+    const clearance = settings.checkClearance && bodies.length >= 2 && kernel?.measureClearance;
+    // The mesh analysis takes the first part of the bar, the kernel's clearance pass the rest.
+    const share = clearance ? 0.8 : 1;
+    const current = runner.analyze(bodies, settings, (fraction, label) =>
+      set({ progress: { fraction: fraction * share, label } }),
     );
     job = current;
+    clearanceCancelled = false;
     set({ status: 'running', progress: { fraction: 0, label: 'Starting…' }, error: null });
-    current.promise.then(
-      (report) => {
+    current.promise
+      .then(async (report) => {
+        if (job !== current || !clearance) return report;
+        set({ progress: { fraction: share, label: 'Clearance between bodies' } });
+        const pass = await runClearancePass(
+          kernel,
+          activeFeaturesOf(doc),
+          bodies.map((b) => ({ id: b.id, name: b.name, min: b.min, max: b.max })),
+          settings,
+          {
+            cancelled: () => job !== current || clearanceCancelled,
+            onProgress: (done, total) => {
+              if (job !== current || total === 0) return;
+              set({
+                progress: {
+                  fraction: share + (1 - share) * (done / total),
+                  label: `Clearance between bodies (${done}/${total} pairs)`,
+                },
+              });
+            },
+          },
+        );
+        return { ...report, findings: mergeFindings(report.findings, pass.findings) };
+      })
+      .then((report) => {
         if (job !== current) return;
         job = null;
-        set({ status: 'done', progress: null, report, reportEvaluation: evaluation });
-      },
-      (error: unknown) => {
+        set({
+          status: clearanceCancelled ? 'cancelled' : 'done',
+          progress: null,
+          report,
+          reportEvaluation: evaluation,
+        });
+      })
+      .catch((error: unknown) => {
         if (job !== current) return;
         job = null;
         if (error instanceof PrintJobCancelled) {
@@ -203,8 +298,7 @@ export const usePrintStore = create<PrintState>((set, get) => {
           progress: null,
           error: error instanceof Error ? error.message : String(error),
         });
-      },
-    );
+      });
   }
 
   function persist(settings: PrintSettings): void {
@@ -270,6 +364,8 @@ export const usePrintStore = create<PrintState>((set, get) => {
     cancelAnalysis: () => {
       if (debounce) clearTimeout(debounce);
       debounce = null;
+      // The kernel's clearance pass stops before its next chunk (the mesh analysis at once).
+      clearanceCancelled = true;
       job?.cancel();
     },
 
@@ -285,9 +381,37 @@ export const usePrintStore = create<PrintState>((set, get) => {
       const items: SelectionItem[] =
         finding.faceKeys.length > 0
           ? finding.faceKeys.map((faceKey) => ({ kind: 'face', bodyId: finding.bodyId, faceKey }))
-          : [{ kind: 'body', bodyId: finding.bodyId }];
+          : [
+              { kind: 'body', bodyId: finding.bodyId },
+              // Pair findings (overlap, clearance): both bodies.
+              ...(finding.otherBodyId &&
+              doc.evaluation.bodies.some((b) => b.id === finding.otherBodyId)
+                ? [{ kind: 'body' as const, bodyId: finding.otherBodyId }]
+                : []),
+            ];
       doc.setSelection(items);
       sendCamera({ kind: 'fitSelection' });
+    },
+
+    ignored: [],
+    ignoreFinding: (id) => {
+      if (get().ignored.includes(id)) return;
+      set({ ignored: [...get().ignored, id] });
+    },
+    restoreFinding: (id) => set({ ignored: get().ignored.filter((x) => x !== id) }),
+    restoreAllFindings: () => set({ ignored: [] }),
+    setIgnored: (ids) => set({ ignored: [...new Set(ids)] }),
+    hideFindingKind: (kind) => {
+      const prefs = usePreferences.getState();
+      if (prefs.hiddenPrintFindings.includes(kind)) return;
+      prefs.setPreference('hiddenPrintFindings', [...prefs.hiddenPrintFindings, kind]);
+    },
+    showFindingKind: (kind) => {
+      const prefs = usePreferences.getState();
+      prefs.setPreference(
+        'hiddenPrintFindings',
+        prefs.hiddenPrintFindings.filter((k) => k !== kind),
+      );
     },
 
     placePicking: null,

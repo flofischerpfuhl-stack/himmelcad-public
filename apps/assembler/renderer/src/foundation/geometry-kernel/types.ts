@@ -260,6 +260,50 @@ export interface DistanceMeasurement {
   pointB: Vec3;
 }
 
+/**
+ * Clearance between bodies (`measureClearance`): which body pairs to test.
+ * Pairs are answered in order until `budgetMs` of kernel time is used up
+ * (the pair running then finishes; later pairs come back as `skipped`).
+ */
+export interface ClearanceRequest {
+  pairs: readonly { a: string; b: string }[];
+  /** Compute the overlap volume (`BRepAlgoAPI_Common`) of pairs that touch or intersect. Default `true`. */
+  overlap?: boolean;
+  /** Kernel time for the whole request, ms (default: none). */
+  budgetMs?: number;
+}
+
+/**
+ * How two bodies relate: `clear` (a gap, `distance` > 0), `contact`
+ * (touching, no shared volume) or `overlap` (they share volume).
+ */
+export type ClearanceRelation = 'clear' | 'contact' | 'overlap';
+
+export interface ClearancePairResult {
+  a: string;
+  b: string;
+  /** Exact minimum distance (`BRepExtrema_DistShapeShape`), mm; 0 when touching or overlapping. */
+  distance: number;
+  /** Closest points on `a` and `b` (any shared point when the distance is 0). */
+  pointA: Vec3;
+  pointB: Vec3;
+  relation: ClearanceRelation;
+  /** Shared volume (`BRepAlgoAPI_Common`), mm³: 0 for `clear`/`contact`, `null` when not computed. */
+  overlapVolume: number | null;
+  /** Centre of the shared volume (where to look), for `overlap`. */
+  overlapCenter?: Vec3;
+  /** Kernel time of this pair, ms. */
+  ms: number;
+}
+
+export interface ClearanceResult {
+  pairs: ClearancePairResult[];
+  /** Pairs not computed because the time budget ran out (in request order). */
+  skipped: { a: string; b: string }[];
+  /** Kernel time of the request, ms. */
+  ms: number;
+}
+
 /** Evaluation channels: a newer request supersedes an older queued one on the same channel. */
 export type EvaluationChannel = 'document' | 'preview';
 

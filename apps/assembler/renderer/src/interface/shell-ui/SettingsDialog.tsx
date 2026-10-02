@@ -6,6 +6,7 @@ import { Button, Checkbox, Dialog, Select, Slider } from '@himmelcad/ui';
 
 import {
   usePreferences,
+  type CheckStatusDisplay,
   type Handedness,
   type LengthUnit,
   type OrbitAround,
@@ -347,6 +348,40 @@ export function SettingsDialog(): JSX.Element {
           />
         </Row>
         <ShortcutSettings />
+
+        <h3 className={styles.section}>Checks and analysis</h3>
+        <Row
+          label="Check status in the workspace"
+          hint="A small badge on the Checks toggle when the document has checks; agents always get full results"
+        >
+          <Select
+            aria-label="Check status in the workspace"
+            value={prefs.checkStatus}
+            options={[
+              { value: 'badge', label: 'Badge' },
+              { value: 'off', label: 'Off' },
+            ]}
+            onChange={(e) => set('checkStatus', e.currentTarget.value as CheckStatusDisplay)}
+          />
+        </Row>
+        <Row
+          label="Hidden Printability findings"
+          hint={
+            prefs.hiddenPrintFindings.length === 0
+              ? 'No finding type is hidden'
+              : `${prefs.hiddenPrintFindings.length} ${
+                  prefs.hiddenPrintFindings.length === 1 ? 'type' : 'types'
+                } hidden with “Don’t show this type”`
+          }
+        >
+          <Button
+            size="small"
+            disabled={prefs.hiddenPrintFindings.length === 0}
+            onClick={() => set('hiddenPrintFindings', [])}
+          >
+            Show all again
+          </Button>
+        </Row>
 
         <h3 className={styles.section}>Selection</h3>
         <Row
