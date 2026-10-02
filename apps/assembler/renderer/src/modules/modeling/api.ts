@@ -144,10 +144,12 @@ const ALIGN_REFERENCE: JsonSchema = {
 const BODY_KIND_SCHEMAS: Record<string, FeatureKindSpec> = {
   pattern: {
     label: 'Pattern',
-    summary: 'Copies bodies in a linear or circular pattern (independent copies).',
+    summary:
+      "Copies bodies in a linear or circular pattern (independent copies). `sketchIds` patterns whole sketches too: every further instance is a derived sketch `<step>:sketch:<n>` (n = sketch index × 1000 + instance index) whose profiles later steps extrude like a sketch's (sketches.list lists them); `bodyIds` may then be empty.",
     params: schemaObject(
       {
-        bodyIds: { type: 'array', items: schemaString, minItems: 1 },
+        bodyIds: { type: 'array', items: schemaString },
+        sketchIds: { type: 'array', items: schemaString, minItems: 1 },
         pattern: schemaRef('PatternDefinition'),
       },
       ['bodyIds', 'pattern'],

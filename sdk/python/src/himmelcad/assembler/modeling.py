@@ -1046,11 +1046,12 @@ class Document(PrintToolsMixin, InteropMixin):
         params = {"bodyIds": [b.id for b in items], "from": [float(v) for v in start], "to": [float(v) for v in end], "copy": copy}
         return self._feature(self.client.create_feature("translate", params, name=name))
 
-    def pattern_linear(self, bodies: Body | Iterable[Body], direction: str | Edge | SketchLine | Datum, count: int, spacing: float, *, total: bool = False, direction2: str | Edge | SketchLine | Datum | None = None, count2: int = 1, spacing2: float | None = None, direction3: str | Edge | SketchLine | Datum | None = None, count3: int = 1, spacing3: float | None = None, name: str | None = None) -> Feature:
+    def pattern_linear(self, bodies: Body | Iterable[Body], direction: str | Edge | SketchLine | Datum, count: int, spacing: float, *, total: bool = False, direction2: str | Edge | SketchLine | Datum | None = None, count2: int = 1, spacing2: float | None = None, direction3: str | Edge | SketchLine | Datum | None = None, count3: int = 1, spacing3: float | None = None, sketches: Sketch | Iterable[Sketch] | None = None, name: str | None = None) -> Feature:
         """Copies bodies ``count`` times along ``direction`` (``"X"``/``"Y"``/``"Z"``, an edge, …),
         ``spacing`` apart — or ``total=True``: ``spacing`` from the first to the last. ``direction2``
         with ``count2``/``spacing2`` makes a grid, ``direction3`` with ``count3``/``spacing3`` a
-        block of layers (Shapr3D Pattern 3D: 1–3 directions, at most 1000 instances)."""
+        block of layers (Shapr3D Pattern 3D: 1–3 directions, at most 1000 instances). ``sketches``
+        patterns whole sketches too (derived sketches ``<step>:sketch:<n>``; ``bodies`` may be empty)."""
         items = [bodies] if isinstance(bodies, Body) else list(bodies)
         pattern: dict[str, Any] = {"kind": "linear", "direction": self._axis_ref(direction), "count": count, "spacing": spacing}
         if total:
@@ -1061,9 +1062,17 @@ class Document(PrintToolsMixin, InteropMixin):
             if direction2 is None:
                 raise ValueError("a third direction needs direction2")
             pattern["third"] = {"direction": self._axis_ref(direction3), "count": count3, "spacing": spacing if spacing3 is None else spacing3}
-        return self._feature(self.client.create_feature("pattern", {"bodyIds": [b.id for b in items], "pattern": pattern}, name=name))
+        return self._feature(self.client.create_feature("pattern", self._pattern_params(items, sketches, pattern), name=name))
 
-    def pattern_circular(self, bodies: Body | Iterable[Body], axis: str | Edge | SketchLine | Datum, count: int, angle: float = 360.0, *, between: bool = False, uniform: bool = False, name: str | None = None) -> Feature:
+    @staticmethod
+    def _pattern_params(items: Sequence[Body], sketches: Sketch | Iterable[Sketch] | None, pattern: dict[str, Any]) -> dict[str, Any]:
+        params: dict[str, Any] = {"bodyIds": [b.id for b in items], "pattern": pattern}
+        if sketches is not None:
+            sketch_items = [sketches] if isinstance(sketches, Sketch) else list(sketches)
+            params["sketchIds"] = [s.id for s in sketch_items]
+        return params
+
+    def pattern_circular(self, bodies: Body | Iterable[Body], axis: str | Edge | SketchLine | Datum, count: int, angle: float = 360.0, *, between: bool = False, uniform: bool = False, sketches: Sketch | Iterable[Sketch] | None = None, name: str | None = None) -> Feature:
         """Copies bodies ``count`` times about ``axis``: ``angle`` is the total (360 spreads them
         evenly) or with ``between=True`` the angle between neighbours; ``uniform=True`` keeps the
         copies' orientation (moved along the circle, not turned)."""
@@ -1073,7 +1082,7 @@ class Document(PrintToolsMixin, InteropMixin):
             pattern["angleMode"] = "spacing"
         if uniform:
             pattern["uniform"] = True
-        return self._feature(self.client.create_feature("pattern", {"bodyIds": [b.id for b in items], "pattern": pattern}, name=name))
+        return self._feature(self.client.create_feature("pattern", self._pattern_params(items, sketches, pattern), name=name))
 
     def split(self, body: Body | Iterable[Body], plane: str | Face | Datum | tuple[str, float] = "XY", *, profile: Sketch | MirroredSketch | Face | None = None, regions: Sequence[str] | None = None, keep: bool = False, name: str | None = None) -> Feature:
         """Splits ``body`` into two bodies by ``plane`` (the positive side becomes ``body:<feature id>``)

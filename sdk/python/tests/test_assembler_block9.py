@@ -88,6 +88,11 @@ class HelperTests(unittest.TestCase):
         self.assertEqual(self.params()["pattern"]["third"], {"direction": {"kind": "world", "axis": "Z"}, "count": 2, "spacing": 8})
         with self.assertRaises(ValueError):
             self.doc.pattern_linear(a, "X", 3, 10, direction3="Z")
+        s = self.doc.sketch("XY")
+        s.rect(4, 4)
+        self.doc.pattern_circular([], "Z", 4, sketches=s)
+        self.assertEqual(self.params()["bodyIds"], [])
+        self.assertEqual(self.params()["sketchIds"], [s.id])
 
     def test_copy_unlinked(self) -> None:
         copy = self.doc.copy_unlinked(Body(self.doc, "body:a"), 20, rz=90, pivot=(0, 0, 0))

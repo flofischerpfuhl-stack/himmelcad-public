@@ -205,27 +205,8 @@ function mirrorSketches(
     v: mulDir(affine.m, frame.v),
     normal: mulDir(affine.m, frame.normal),
   });
-  const register = (index: number, source: SketchFeature, frame: SketchFrame): void => {
-    const id = mirroredSketchId(feature.id, index);
-    const mirrored: SketchFeature = {
-      ...source,
-      id,
-      name: `${source.name} (mirror)`,
-      plane: { kind: 'construction', featureId: feature.id, frame },
-    };
-    delete (mirrored as { projections?: unknown }).projections;
-    let result: ReturnType<typeof evaluateSketchGeometry>;
-    try {
-      result = evaluateSketchGeometry(mirrored, frame);
-    } catch (error) {
-      if (kit.isFailure(error)) throw error;
-      kit.fail(`Mirror of "${source.name}" failed: ${kit.describeError(error)}`);
-    }
-    for (const message of result.warnings) ctx.warn(message);
-    ctx.sketches.set(id, result.evaluated);
-    ctx.sketchFeatures.set(id, mirrored);
-    ctx.sketchRegions.set(id, result.regions);
-  };
+  const register = (index: number, source: SketchFeature, frame: SketchFrame): void =>
+    registerDerivedSketch(kit, ctx, feature.id, index, source, frame, 'mirror');
   const sketchIds = feature.sketchIds ?? [];
   if (new Set(sketchIds).size !== sketchIds.length) kit.fail('A sketch is listed twice');
   sketchIds.forEach((sketchId, i) => {
@@ -263,6 +244,43 @@ function mirrorSketches(
   });
 }
 
+/**
+ * Registers a sketch a step derives from `source` (Mirror, Pattern): the
+ * source's sketch data in `frame`, under `<step>:sketch:<index>`, so later
+ * steps extrude/revolve its profiles like a sketch's.
+ */
+function registerDerivedSketch(
+  kit: FeatureKit,
+  ctx: ReplayContextLike,
+  featureId: string,
+  index: number,
+  source: SketchFeature,
+  frame: SketchFrame,
+  what: string,
+): void {
+  const id = mirroredSketchId(featureId, index);
+  const derived: SketchFeature = {
+    ...source,
+    id,
+    name: `${source.name} (${what})`,
+    plane: { kind: 'construction', featureId, frame },
+  };
+  delete (derived as { projections?: unknown }).projections;
+  let result: ReturnType<typeof evaluateSketchGeometry>;
+  try {
+    result = evaluateSketchGeometry(derived, frame);
+  } catch (error) {
+    if (kit.isFailure(error)) throw error;
+    kit.fail(
+      `${what === 'mirror' ? 'Mirror' : 'Pattern'} of "${source.name}" failed: ${kit.describeError(error)}`,
+    );
+  }
+  for (const message of result.warnings) ctx.warn(message);
+  ctx.sketches.set(id, result.evaluated);
+  ctx.sketchFeatures.set(id, derived);
+  ctx.sketchRegions.set(id, result.regions);
+}
+
 function mulDir(m: readonly number[], v: Vec3): Vec3 {
   return [
     m[0]! * v[0] + m[1]! * v[1] + m[2]! * v[2],
@@ -286,7 +304,11 @@ export function applyPattern(
   if (!Number.isInteger(pattern.count) || pattern.count < 2 || pattern.count > MAX_PATTERN_COUNT) {
     kit.fail(`Pattern count must be a whole number from 2 to ${MAX_PATTERN_COUNT}`);
   }
-  const bodies = bodiesOf(kit, ctx, feature.bodyIds);
+  const sketchIds = feature.sketchIds ?? [];
+  if (feature.bodyIds.length === 0 && sketchIds.length === 0) {
+    kit.fail('Select the bodies or sketches to pattern');
+  }
+  const bodies = feature.bodyIds.length > 0 ? bodiesOf(kit, ctx, feature.bodyIds) : [];
   /** The motion of instance `k` of a body whose box centre is `centre`. */
   let opsFor: (k: number, centre: Vec3) => RigidOp[];
   /** Second direction of a linear grid: its count and the move of its `j`-th row. */
@@ -404,6 +426,68 @@ export function applyPattern(
               : j === 0
                 ? `${body.name} (${k + 1})`
                 : `${body.name} (${k + 1}, ${j + 1})`,
+          );
+        }
+      }
+    }
+  });
+  patternSketches(kit, ctx, feature, sketchIds, opsFor, rows, layers);
+}
+
+/**
+ * Pattern of whole sketches (Shapr3D Pattern 3D: bodies, sketch profiles or
+ * sketches): every instance but the first is a derived sketch
+ * `<step>:sketch:<n>` (n = sketch × 1000 + instance), its frame moved like
+ * a body copy (uniform circular copies keep their orientation).
+ */
+function patternSketches(
+  kit: FeatureKit,
+  ctx: ReplayContextLike,
+  feature: PatternFeature,
+  sketchIds: readonly string[],
+  opsFor: (k: number, centre: Vec3) => RigidOp[],
+  rows: { count: number; vector: (j: number) => Vec3 } | null,
+  layers: { count: number; vector: (l: number) => Vec3 } | null,
+): void {
+  if (new Set(sketchIds).size !== sketchIds.length) kit.fail('A sketch is listed twice');
+  const count = feature.pattern.count;
+  sketchIds.forEach((sketchId, s) => {
+    const source = ctx.sketchFeatures.get(sketchId);
+    const evaluated = ctx.sketches.get(sketchId);
+    if (!source || !evaluated) kit.fail(`Missing reference: sketch "${sketchId}"`);
+    const outline = evaluated.profiles.flatMap((p) => p.outline);
+    const centre: Vec3 =
+      outline.length > 0
+        ? scale(
+            outline.reduce((sum, p) => add(sum, p), [0, 0, 0] as Vec3),
+            1 / outline.length,
+          )
+        : evaluated.frame.origin;
+    let instance = 0;
+    for (let l = 0; l < (layers?.count ?? 1); l += 1) {
+      for (let j = 0; j < (rows?.count ?? 1); j += 1) {
+        for (let k = 0; k < count; k += 1, instance += 1) {
+          if (l === 0 && j === 0 && k === 0) continue;
+          const shift = add(
+            rows && j > 0 ? rows.vector(j) : [0, 0, 0],
+            layers && l > 0 ? layers.vector(l) : [0, 0, 0],
+          );
+          const ops = [...opsFor(k, centre), { kind: 'translate' as const, vector: shift }];
+          const affine = opsAffine(ops);
+          const frame = evaluated.frame;
+          registerDerivedSketch(
+            kit,
+            ctx,
+            feature.id,
+            s * MAX_PATTERN_INSTANCES + instance,
+            source,
+            {
+              origin: applyAffine(affine, frame.origin),
+              u: mulDir(affine.m, frame.u),
+              v: mulDir(affine.m, frame.v),
+              normal: mulDir(affine.m, frame.normal),
+            },
+            `${instance + 1}`,
           );
         }
       }

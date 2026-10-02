@@ -2249,11 +2249,18 @@
     },
     "pattern": {
       "label": "Pattern",
-      "summary": "Copies bodies in a linear or circular pattern (independent copies).",
+      "summary": "Copies bodies in a linear or circular pattern (independent copies). `sketchIds` patterns whole sketches too: every further instance is a derived sketch `<step>:sketch:<n>` (n = sketch index × 1000 + instance index) whose profiles later steps extrude like a sketch's (sketches.list lists them); `bodyIds` may then be empty.",
       "params": {
         "type": "object",
         "properties": {
           "bodyIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "sketchIds": {
             "type": "array",
             "items": {
               "type": "string",

@@ -307,12 +307,15 @@ const PLANS: Record<string, PickPlan> = {
     label: 'Pattern',
     steps: [
       {
-        role: 'Bodies',
-        prompt: 'Click the bodies to pattern, then Next.',
+        role: 'Objects',
+        prompt: 'Click the bodies or sketches to pattern, then Next.',
         min: 1,
         max: Infinity,
-        accept: anyBody,
-        normalize: asBody,
+        accept: (item) =>
+          item.kind === 'body' || item.kind === 'sketchProfile'
+            ? null
+            : 'Click a body (or a face of it) or a sketch.',
+        normalize: (item) => (item.kind === 'sketchProfile' ? item : asBody(item)),
       },
       {
         role: 'Direction',

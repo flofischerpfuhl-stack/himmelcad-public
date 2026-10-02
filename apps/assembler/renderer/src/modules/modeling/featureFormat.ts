@@ -181,7 +181,15 @@ export function validateModelingFeature(r: Rec, path: string, h: FormatHelpers):
       break;
     }
     case 'pattern': {
-      stringList('bodyIds');
+      // Bodies, or (Block 9) sketches only: then `bodyIds` may be empty.
+      if (r.sketchIds !== undefined) {
+        stringList('sketchIds');
+        if (!Array.isArray(r.bodyIds) || !r.bodyIds.every(isString)) {
+          h.fail(`${path}.bodyIds`, 'expected an array of strings');
+        }
+      } else {
+        stringList('bodyIds');
+      }
       const p = r.pattern;
       if (!isRecord(p)) h.fail(`${path}.pattern`, 'expected an object');
       if (!isNumber(p.count)) h.fail(`${path}.pattern.count`, 'expected a number');

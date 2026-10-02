@@ -153,7 +153,14 @@ export const MAX_PATTERN_INSTANCES = 1000;
 /** Copies bodies in a linear or circular pattern (independent copies, like Shapr3D's Pattern 3D). */
 export interface PatternFeature extends FeatureBase {
   kind: 'pattern';
+  /** The patterned bodies (may be empty when `sketchIds` are patterned). */
   bodyIds: string[];
+  /**
+   * Whole sketches patterned too (Block 9): every further instance is a
+   * derived sketch `<step>:sketch:<n>` (n = sketch index × 1000 + instance
+   * index) whose profiles later steps use like a sketch's.
+   */
+  sketchIds?: string[];
   pattern: PatternDefinition;
 }
 

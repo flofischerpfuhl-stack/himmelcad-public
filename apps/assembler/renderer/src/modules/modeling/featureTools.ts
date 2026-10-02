@@ -117,6 +117,8 @@ export interface MirrorDraft {
 export interface PatternDraft {
   kind: 'pattern';
   bodyIds: string[];
+  /** Whole sketches patterned too (derived sketches; Shapr3D patterns sketches and profiles). */
+  sketchIds?: string[];
   pattern: PatternDefinition;
 }
 
@@ -599,15 +601,22 @@ export function createModelingDraft(
     }
     case 'pattern': {
       const bodyIds = selected(ctx.selection, 'body').map((b) => b.bodyId);
-      if (bodyIds.length === 0) return { ok: false, reason: 'Select the bodies to pattern.' };
+      const sketchIds = [
+        ...new Set(selected(ctx.selection, 'sketchProfile').map((s) => s.featureId)),
+      ];
+      if (bodyIds.length === 0 && sketchIds.length === 0) {
+        return { ok: false, reason: 'Select the bodies or sketches to pattern.' };
+      }
+      const sketches = sketchIds.length > 0 ? { sketchIds } : {};
       const edge = selectedEdges(ctx)[0];
-      const bounds = unionBounds(ctx.evaluation.bodies.filter((b) => bodyIds.includes(b.id)));
+      const bounds = patternBounds(ctx.evaluation, bodyIds, sketchIds);
       if (edge?.signature.curve === 'circle') {
         return {
           ok: true,
           draft: {
             kind: 'pattern',
             bodyIds,
+            ...sketches,
             pattern: { kind: 'circular', axis: { kind: 'edge', edge }, count: 6, angle: 360 },
           },
         };
@@ -622,6 +631,7 @@ export function createModelingDraft(
         draft: {
           kind: 'pattern',
           bodyIds,
+          ...sketches,
           pattern: {
             kind: 'linear',
             direction,
@@ -869,8 +879,17 @@ export function acceptModelingPick(
           return { ...draft, pattern: { ...draft.pattern, axis } };
         return draft;
       }
-      if (pickedBody)
-        return { ...draft, bodyIds: toggle(draft.bodyIds, pickedBody, (a, b) => a === b) };
+      if (pick.kind === 'sketchProfile') {
+        // A sketch is patterned as a whole (click again to drop it).
+        const sketchIds = toggle(draft.sketchIds ?? [], pick.featureId, (a, b) => a === b, false);
+        if (sketchIds.length === 0 && draft.bodyIds.length === 0) return draft;
+        const { sketchIds: _old, ...rest } = draft;
+        return sketchIds.length > 0 ? { ...rest, sketchIds } : rest;
+      }
+      if (pickedBody) {
+        const bodyIds = toggle(draft.bodyIds, pickedBody, (a, b) => a === b, false);
+        return bodyIds.length === 0 && !draft.sketchIds?.length ? draft : { ...draft, bodyIds };
+      }
       return draft;
     case 'split': {
       if (pick.kind === 'sketchProfile') {
@@ -1063,8 +1082,14 @@ export function modelingDraftToFeature(
         ...(draft.axis ? { axis: draft.axis } : {}),
       };
     case 'pattern':
-      if (draft.bodyIds.length === 0) return null;
-      return { ...common, kind: 'pattern', bodyIds: draft.bodyIds, pattern: draft.pattern };
+      if (draft.bodyIds.length === 0 && !draft.sketchIds?.length) return null;
+      return {
+        ...common,
+        kind: 'pattern',
+        bodyIds: draft.bodyIds,
+        ...(draft.sketchIds?.length ? { sketchIds: draft.sketchIds } : {}),
+        pattern: draft.pattern,
+      };
     case 'split':
       return {
         ...common,
@@ -1156,10 +1181,11 @@ export function modelingDraftMeta(draft: ModelingDraft): DraftMeta {
       return {
         label: 'Pattern',
         shortcut: '',
-        prompt:
+        prompt: `${
           draft.pattern.kind === 'linear'
-            ? 'Drag the arrow or type count and spacing. Click an edge for the direction.'
-            : 'Drag the arc or type count and angle. Click an edge for the axis.',
+            ? 'Drag the arrow or type count and spacing. Click an edge for the direction'
+            : 'Drag the arc or type count and angle. Click an edge for the axis'
+        }, a sketch to pattern it too.`,
       };
     case 'split':
       return {
@@ -1739,6 +1765,32 @@ function alignRefOfItem(evaluation: EvaluationResult, item: SelectionItem): Alig
   return null;
 }
 
+/** Box of a pattern's bodies and sketches (their profile outlines). */
+function patternBounds(
+  evaluation: EvaluationResult,
+  bodyIds: readonly string[],
+  sketchIds: readonly string[],
+): { min: Vec3; max: Vec3 } | null {
+  const points: Vec3[] = [];
+  for (const body of evaluation.bodies) {
+    if (bodyIds.includes(body.id)) points.push(body.min as Vec3, body.max as Vec3);
+  }
+  for (const sketch of evaluation.sketches) {
+    if (!sketchIds.includes(sketch.featureId)) continue;
+    for (const profile of sketch.profiles) points.push(...profile.outline);
+  }
+  if (points.length === 0) return null;
+  const min: Vec3 = [Infinity, Infinity, Infinity];
+  const max: Vec3 = [-Infinity, -Infinity, -Infinity];
+  for (const p of points) {
+    for (let i = 0; i < 3; i += 1) {
+      min[i] = Math.min(min[i]!, p[i]!);
+      max[i] = Math.max(max[i]!, p[i]!);
+    }
+  }
+  return { min, max };
+}
+
 function bodyCentre(evaluation: EvaluationResult, ids: readonly string[]): Vec3 | null {
   const bounds = unionBounds(evaluation.bodies.filter((b) => ids.includes(b.id)));
   return bounds ? scale(add(bounds.min, bounds.max), 0.5) : null;
@@ -1834,7 +1886,8 @@ export function modelingDraftHandles(
       ];
     }
     case 'pattern': {
-      const centre = bodyCentre(evaluation, draft.bodyIds);
+      const bounds = patternBounds(evaluation, draft.bodyIds, draft.sketchIds ?? []);
+      const centre = bounds ? scale(add(bounds.min, bounds.max), 0.5) : null;
       if (!centre) return [];
       const p = draft.pattern;
       const count: HandleBase = {
@@ -2153,8 +2206,8 @@ export function modelingDraftGuides(
       : 40;
     axisSegment(draft.axis, samples?.center ?? null, reach);
   } else if (draft.kind === 'pattern' && draft.pattern.kind === 'circular') {
-    const centre = bodyCentre(evaluation, draft.bodyIds);
-    axisSegment(draft.pattern.axis, centre, 40);
+    const bounds = patternBounds(evaluation, draft.bodyIds, draft.sketchIds ?? []);
+    axisSegment(draft.pattern.axis, bounds ? scale(add(bounds.min, bounds.max), 0.5) : null, 40);
   } else if (draft.kind === 'rotateAxis') {
     const centre = bodyCentre(evaluation, draft.bodyIds);
     axisSegment(draft.axis, centre, 40);

@@ -465,3 +465,32 @@ void test('Pattern: a third direction makes a block of layers; it must leave the
   ]);
   assert.match(flat.errors['p'] ?? '', /leave the plane/);
 });
+
+void test('Pattern of a sketch: derived sketches whose profiles later steps extrude', async () => {
+  const features: Feature[] = [
+    sketch('s', 'XY', 0, rect(0, 0, 4, 4)),
+    {
+      ...base('p'),
+      kind: 'pattern',
+      bodyIds: [],
+      sketchIds: ['s'],
+      pattern: { kind: 'linear', direction: { kind: 'world', axis: 'X' }, count: 3, spacing: 10 },
+    } as unknown as Feature,
+    extrude('e', 'p:sketch:2', 5),
+  ];
+  const result = await evaluate(features);
+  noErrors(result);
+  const body = only(result, 'body:e');
+  near(body.min[0], 20, 1e-6, 'the third instance');
+  near(body.volume, 80, 1e-6, '4 × 4 × 5');
+  assert.ok(result.sketches.some((s) => s.featureId === 'p:sketch:1'));
+  const text = saveProjectFile({
+    projectName: 'pattern sketch',
+    features,
+    appVersion: 'test',
+    createdAt: new Date(0).toISOString(),
+  });
+  assert.deepEqual((loadProjectFile(text).features[1] as { sketchIds?: string[] }).sketchIds, [
+    's',
+  ]);
+});
