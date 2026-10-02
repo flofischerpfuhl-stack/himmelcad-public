@@ -286,7 +286,7 @@ function KindPicker({
               <span className={`${styles.kindLabel} ${reason ? styles.muted : ''}`}>
                 {kind.label}
               </span>
-              <span className={styles.kindReason}>{reason ?? kind.summary}</span>
+              <span className={styles.kindReason}>{reason ?? kind.hint}</span>
             </button>
           );
         })}

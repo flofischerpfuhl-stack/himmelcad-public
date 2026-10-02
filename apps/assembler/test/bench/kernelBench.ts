@@ -15,9 +15,20 @@ import {
   createEvaluator,
   type KernelEvaluator,
 } from '../../renderer/src/foundation/geometry-kernel/evaluator.js';
-import type { EvaluationResult } from '../../renderer/src/foundation/geometry-kernel/types.js';
+import type {
+  ClearanceRequest,
+  EvaluationResult,
+} from '../../renderer/src/foundation/geometry-kernel/types.js';
+import { clearanceCandidates } from '../../renderer/src/foundation/geometry-kernel/clearancePairs.js';
 import type { Feature } from '../../renderer/src/foundation/document/document.js';
-import { BENCH_PARTS, demoBracket, type BenchPart } from './parts.js';
+import {
+  BENCH_PARTS,
+  demoBracket,
+  extrude,
+  ninePartBench,
+  sketch,
+  type BenchPart,
+} from './parts.js';
 
 type OpenCascade = OpenCascadeModule;
 
@@ -170,6 +181,60 @@ function fmt(ms: number): string {
   return ms >= 100 ? ms.toFixed(0) : ms.toFixed(1);
 }
 
+/**
+ * A print plate of `columns × rows` 10 × 10 × 8 mm blocks with 0.25 mm gaps
+ * (print-in-place spacing): the clearance pass's typical many-body case.
+ */
+function blockPlate(columns: number, rows: number): Feature[] {
+  const out: Feature[] = [];
+  for (let i = 0; i < columns * rows; i += 1) {
+    const x = (i % columns) * 10.25;
+    const y = Math.floor(i / columns) * 10.25;
+    out.push(
+      sketch(`cs${i}`, 'XY', 0, { kind: 'rectangle', x, y, width: 10, height: 10 }),
+      extrude(`cb${i}`, `cs${i}`, 8),
+    );
+  }
+  return out;
+}
+
+interface ClearanceRow {
+  label: string;
+  pairs: number;
+  ms: number;
+}
+
+/** Clearance queries (Block 9): one pair, all pairs with/without overlap volumes, a block plate. */
+async function benchClearance(oc: OpenCascade, repeats: number): Promise<ClearanceRow[]> {
+  const evaluator = createEvaluator(oc);
+  const rows: ClearanceRow[] = [];
+  const measure = async (label: string, features: Feature[], request: ClearanceRequest) => {
+    await evaluator.evaluate(features);
+    await evaluator.measureClearance!(features, request); // warm-up
+    const times: number[] = [];
+    for (let i = 0; i < repeats; i += 1) {
+      const t0 = performance.now();
+      await evaluator.measureClearance!(features, request);
+      times.push(performance.now() - t0);
+    }
+    rows.push({ label, pairs: request.pairs.length, ms: median(times) });
+  };
+  const nine = ninePartBench.document();
+  const nineBodies = (await evaluator.evaluate(nine)).bodies;
+  const allPairs = clearanceCandidates(nineBodies, Infinity).map(({ a, b }) => ({ a, b }));
+  await measure('features-branch part: one body pair', nine, { pairs: allPairs.slice(0, 1) });
+  await measure('features-branch part: every pair, overlap volumes', nine, { pairs: allPairs });
+  await measure('features-branch part: every pair, distance only', nine, {
+    pairs: allPairs,
+    overlap: false,
+  });
+  const plate = blockPlate(8, 4);
+  const plateBodies = (await evaluator.evaluate(plate)).bodies;
+  const near = clearanceCandidates(plateBodies, 0.3).map(({ a, b }) => ({ a, b }));
+  await measure('32-block plate (0.25 mm gaps): pairs closer than 0.3 mm', plate, { pairs: near });
+  return rows;
+}
+
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
   const json = args.includes('--json');
@@ -189,9 +254,12 @@ async function main(): Promise<void> {
 
     const rows: Row[] = [];
     for (const part of BENCH_PARTS) rows.push(await benchPart(oc, part, repeats));
+    const clearance = await benchClearance(oc, repeats);
 
     if (json) {
-      process.stdout.write(`${JSON.stringify({ loadMs, rows, heapMb: heapMb(oc) }, null, 2)}\n`);
+      process.stdout.write(
+        `${JSON.stringify({ loadMs, rows, clearance, heapMb: heapMb(oc) }, null, 2)}\n`,
+      );
     } else {
       const lines = [
         `Kernel bench — Node ${process.version}, OCCT module ${selectedOcctModule()}, wasm load ${fmt(loadMs)} ms, medians of ${repeats} (full: 3)`,
@@ -209,6 +277,10 @@ async function main(): Promise<void> {
           (r) =>
             `| ${r.part} | ${fmt(r.fullTessMs)} | ${fmt(r.lastTessMs)} | ${r.triangles} | ${r.previewTriangles} |`,
         ),
+        '',
+        '| Clearance (measureClearance, cached document) | Pairs | Median (ms) |',
+        '| --- | ---: | ---: |',
+        ...clearance.map((c) => `| ${c.label} | ${c.pairs} | ${fmt(c.ms)} |`),
         '',
         `wasm heap after the table: ${heapMb(oc).toFixed(1)} MB`,
       ];

@@ -16,6 +16,7 @@ export const BODY_COUNT_CHECK: CheckKindDefinition = {
   kind: 'bodyCount',
   module: 'checks',
   label: 'Body count',
+  hint: 'Number of bodies within a range.',
   summary:
     'Number of bodies within a range (catches parts that fused or split unexpectedly; reference meshes are not counted).',
   paramsSchema: schemaObject({

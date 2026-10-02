@@ -245,7 +245,12 @@ See the Block 9 bench rows (`bench:interactive` "f checks",
 - `test/checks/printClearance.test.ts` — Printability overlap finding,
   ignore/hide reversible and passive, clearance pass budget/cancel, Measure
   two-body clearance and "Add as check".
-- `test/acceptance/negative.acceptance.test.ts` — enclosure + lid with a
-  clearance check that fails, is fixed, passes (agent API end to end).
+- `test/acceptance/parts.acceptance.test.ts` A7 — the enclosure template's
+  lid seated on the box with two checks ("Lid does not collide": clearance
+  ≥ 0, "Lip gap": 0.15–0.3 mm); a wrong `clearance` parameter (−0.2) makes
+  both fail (overlap, also a Printability finding), the fix (0.2) passes, the
+  checks survive save → reopen (agent API end to end).
+- `sdk/python/tests/test_checks.py` — the Python helpers, and the same
+  fail → fix → pass loop against the real headless process.
 - Fuzzer ops `checkAdd`, `checkEdit`, `checkRemove`, `checkRun`
   (undo/redo, save/reopen and result invariants).

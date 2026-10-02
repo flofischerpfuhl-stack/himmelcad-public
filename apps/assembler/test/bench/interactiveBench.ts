@@ -13,7 +13,9 @@
  * (e) the orbit/zoom pivot's CPU part (`orbitPivot.ts` rules on a 64 × 64
  *     depth window around a bore, plus the ray math), once per gesture — the
  *     GPU read of that window is measured in the app (DEV probe `pivotAt`,
- *     assembler/SELECTION-NAVIGATION.md).
+ *     assembler/SELECTION-NAVIGATION.md);
+ * (f) stored checks: their evaluation, and the fillet drag of (c) with
+ *     checks and the background runner on (assembler/CHECKS.md).
  *
  * Stages per step: wall time until the stores settle; `ui` = the synchronous
  * main-thread work a React render of the adaptive toolbar and the command
@@ -68,6 +70,14 @@ import {
   type CameraPose,
 } from '../../renderer/src/platform/viewport/camera.js';
 import { unprojectRay } from '../../renderer/src/platform/viewport/math.js';
+import { newStoredCheck } from '../../renderer/src/foundation/commands/checks.js';
+import type { StoredCheck } from '../../renderer/src/foundation/document/checks.js';
+import {
+  runChecksNow,
+  setChecksKernel,
+  startChecksRunner,
+  useCheckResults,
+} from '../../renderer/src/modules/checks/index.js';
 import {
   pivotDepth,
   type DepthProjection,
@@ -450,6 +460,83 @@ async function scenarioFillet(steps: number): Promise<StepRow[]> {
   return rows;
 }
 
+/**
+ * (f) stored checks (Block 9): what evaluating them costs (background, off
+ * the edit path) and that an edit with checks and the background runner on
+ * is as fast as (c) without them — the runner never runs while a tool or a
+ * drag is active and starts debounced after the rebuild.
+ */
+async function scenarioChecks(steps: number): Promise<StepRow[]> {
+  const s = 'f checks';
+  const rows: StepRow[] = [];
+  setChecksKernel(kernel);
+  startChecksRunner(kernel);
+  // The enclosure template with six checks: one of each cost class and both clearance forms.
+  await loadEnclosure();
+  const ev = store.getState().evaluation;
+  const enclosure = ev.bodies.find((b) => b.name === 'Enclosure')!;
+  const lid = ev.bodies.find((b) => b.name === 'Lid')!;
+  const top = (id: string) => ({ kind: 'face', face: { bodyId: id, select: '>Z' } });
+  const list: StoredCheck[] = [];
+  const add = (kind: string, params: Record<string, unknown>) =>
+    list.push(newStoredCheck(kind, params, list));
+  add('clearance', { a: enclosure.id, b: lid.id, min: 0.2 });
+  add('clearance', { min: 0.3 });
+  add('distance', { a: top(enclosure.id), b: top(lid.id), min: 20, max: 30 });
+  add('volume', { bodies: [enclosure.id], min: 1 });
+  add('bodyCount', { min: 2, max: 2 });
+  add('length', { target: { kind: 'body', bodyId: lid.id }, quantity: 'height', max: 10 });
+  store.getState().commitChecks(list);
+  rows.push(await step(s, `evaluate ${list.length} checks (first run)`, () => runChecksNow()));
+  rows.push(await step(s, 'evaluate again, nothing changed (reused)', () => runChecksNow()));
+
+  // The demo bracket with four checks and the runner on: the fillet drag of (c), then Done.
+  store.getState().cancel();
+  store.getState().loadDocument(createDemoDocument());
+  await settle();
+  const body = store.getState().evaluation.bodies[0]!;
+  const demoChecks: StoredCheck[] = [];
+  const addDemo = (kind: string, params: Record<string, unknown>) =>
+    demoChecks.push(newStoredCheck(kind, params, demoChecks));
+  addDemo('volume', { min: 1 });
+  addDemo('bodyCount', { min: 1, max: 1 });
+  addDemo('length', { target: { kind: 'body', bodyId: body.id }, quantity: 'height', max: 100 });
+  addDemo('distance', {
+    a: { kind: 'face', face: { bodyId: body.id, select: '>Z' } },
+    b: { kind: 'face', face: { bodyId: body.id, select: '<Z' } },
+    min: 1,
+  });
+  store.getState().commitChecks(demoChecks);
+  await runChecksNow();
+  const edge = body.edges.find(
+    (e) =>
+      e.curve === 'line' && Math.abs(e.midpoint[2] - 6) < 1e-6 && Math.abs(e.midpoint[1]) < 1e-6,
+  );
+  if (!edge) throw new Error('no plate edge on the demo bracket');
+  store.getState().select({ kind: 'edge', bodyId: body.id, edgeKey: edge.key });
+  rows.push(
+    await step(s, 'Fillet tool (first preview), runner on', () =>
+      store.getState().beginEdgeBlend('fillet'),
+    ),
+  );
+  for (let i = 0; i < steps; i += 1) {
+    const r = 1 + i * 0.137;
+    rows.push(
+      await step(s, 'drag step (preview), runner on', () => store.getState().setBlendSize(r)),
+    );
+  }
+  rows.push(await step(s, 'Fillet commit (Done), runner on', () => store.getState().commit()));
+  rows.push(
+    await step(s, 'background re-run after the commit (incremental)', () => runChecksNow()),
+  );
+  const results = Object.values(useCheckResults.getState().results);
+  if (results.length !== demoChecks.length || results.some((r) => r.state !== 'pass')) {
+    throw new Error(`checks after the fillet: ${JSON.stringify(results.map((r) => r.state))}`);
+  }
+  store.getState().commitChecks([]);
+  return rows;
+}
+
 /** (d) a 60-entity sketch (5 rectangles, 10 circles), dragging one rectangle corner. */
 async function scenarioSketchDrag(steps: number): Promise<StepRow[]> {
   const s = 'd 60-entity drag';
@@ -642,6 +729,7 @@ async function main(): Promise<void> {
       ...medianRows([await scenarioFillet(10)]),
       ...medianRows([await scenarioSketchDrag(30)]),
       ...medianRows([scenarioPivot(200)]),
+      ...medianRows([await scenarioChecks(10)]),
     ];
   }
 

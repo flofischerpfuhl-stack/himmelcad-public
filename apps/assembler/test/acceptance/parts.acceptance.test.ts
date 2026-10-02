@@ -172,6 +172,89 @@ void test('A5 static multi-body assembly: the lid aligned onto the enclosure sea
   });
 });
 
+void test('A7 lid fit as stored checks: a too-large lip fails the clearance check, the fix passes', async (t) => {
+  await reset('Lid fit');
+  await projectTemplate('enclosure').build(apiCall);
+  const enclosure = (await bodyNamed('Enclosure')).id;
+  const lid = (await bodyNamed('Lid')).id;
+  await call('feature.create', {
+    kind: 'transform',
+    params: { bodyId: lid, rx: 180, pivot: [130, 30, 2.5] },
+  });
+  const plateFace = await call<{ key: string }[]>('faces.list', {
+    bodyId: lid,
+    select: '-Z and >Z',
+  });
+  await call('feature.create', {
+    kind: 'align',
+    params: {
+      bodyId: lid,
+      face: { bodyId: lid, key: plateFace[0]!.key },
+      target: { bodyId: enclosure, select: '>Z' },
+    },
+  });
+  const innerLeft = (
+    await call<{ key: string; centroid: number[] }[]>('faces.list', {
+      bodyId: enclosure,
+      select: '+X',
+    })
+  ).find((f) => Math.abs(f.centroid[0]! - 2) < 1e-6)!;
+  const lipLeft = (
+    await call<{ key: string; centroid: number[] }[]>('faces.list', { bodyId: lid, select: '-X' })
+  ).find((f) => f.centroid[2]! < 30)!;
+  // The requirements: no overlap (resting on the rim is fine), and the lip's side gap 0.15–0.3 mm.
+  const noOverlap = await call<{ check: Json; result: Json }>('checks.add', {
+    kind: 'clearance',
+    params: { a: lid, b: enclosure, min: 0 },
+    name: 'Lid does not collide',
+  });
+  await call('checks.add', {
+    kind: 'distance',
+    params: {
+      a: { kind: 'face', face: { bodyId: lid, key: lipLeft.key } },
+      b: { kind: 'face', face: { bodyId: enclosure, key: innerLeft.key } },
+      min: 0.15,
+      max: 0.3,
+    },
+    name: 'Lip gap',
+  });
+  assert.equal(noOverlap.result.status, 'pass', String(noOverlap.result.message));
+
+  // A wrong clearance parameter makes the lip larger than the opening: both checks fail.
+  await call('parameter.edit', { parameterId: 'clearance', value: -0.2 });
+  const failing = await call<{ passed: boolean; results: Json[] }>('checks.run');
+  assert.equal(failing.passed, false);
+  const [collide, gap] = failing.results;
+  assert.equal(collide!.status, 'fail');
+  assert.match(String(collide!.message), /overlap/);
+  assert.deepEqual((collide!.locations as Json[])[0]!.bodyIds, [lid, enclosure]);
+  assert.equal(gap!.status, 'fail', String(gap!.message));
+  const findings = (await call<{ findings: Json[] }>('print.analyze')).findings;
+  assert.ok(
+    findings.some((f) => f.kind === 'overlap'),
+    'Printability reports the overlap too',
+  );
+
+  // The fix: back to a 0.2 mm printing clearance — every check passes again.
+  await call('parameter.edit', { parameterId: 'clearance', value: 0.2 });
+  const fixed = await call<{ passed: boolean; results: Json[] }>('checks.run');
+  assert.equal(fixed.passed, true, JSON.stringify(fixed.results));
+  near(fixed.results[1]!.value as number, 0.2, 1e-6, 'lip gap');
+  // The checks are part of the document: saved and reopened with it.
+  const saved = await call<{ text: string }>('project.save');
+  await call('project.open', { text: saved.text });
+  const reopened = await call<{ checks: Json[] }>('checks.list');
+  assert.deepEqual(
+    reopened.checks.map((c) => c.name),
+    ['Lid does not collide', 'Lip gap'],
+  );
+  evidence(t, 'A7-lid-fit-checks', {
+    failing: failing.results.map((r) => [r.name, r.status, r.message]),
+    fixed: fixed.results.map((r) => [r.name, r.status, r.message]),
+    overlapFinding: findings.find((f) => f.kind === 'overlap')?.message,
+  });
+});
+
 void test('A2 holder with slot: L-bracket, slot entity, screw holes, rounds — volume by hand', async (t) => {
   await reset('Bracket');
   await projectTemplate('bracket').build(apiCall);

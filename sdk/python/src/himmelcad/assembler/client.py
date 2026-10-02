@@ -22,7 +22,7 @@ METHODS = (
     "document.get", "features.list", "feature.get", "bodies.list", "body.get",
     "faces.list", "edges.list", "sketches.list", "sketch.fonts", "datums.list", "selection.get", "selection.set",
     "parameters.list", "parameter.create", "parameter.edit", "parameter.delete",
-    "measure.get", "measure.distance", "measure.angle", "measure.area", "measure.volume",
+    "measure.get", "measure.distance", "measure.angle", "measure.area", "measure.clearance", "measure.volume",
     "feature.create", "feature.edit", "feature.delete", "feature.suppress", "feature.rename",
     "sketch.addProfile", "sketch.addPolyline", "sketch.addArc", "sketch.addConstraint",
     "sketch.addDimension", "sketch.setDimension", "sketch.deleteItems",
@@ -34,6 +34,7 @@ METHODS = (
     "export.stl", "export.3mf", "export.obj", "export.step", "import.step",
     "project.new", "project.open", "project.save",
     "export.meshStats", "print.analyze", "print.orientations", "print.placeOnPlate", "print.orient",
+    "checks.kinds", "checks.list", "checks.add", "checks.update", "checks.remove", "checks.run",
     "interop.formats", "import.mesh", "import.dxf", "export.dxf", "mesh.toSolid",
     "import.iges", "export.iges",
     "image.insert", "image.calibrate",
@@ -149,6 +150,37 @@ class AssemblerClient:
 
     def measure_volume(self, body_ids: Sequence[str] | None = None, *, scope: str | None = None) -> Mapping[str, Any]:
         return self.call("measure.volume", {"bodyIds": None if body_ids is None else list(body_ids), "scope": scope})
+
+    def measure_clearance(self, a: str | None = None, b: str | None = None, *, body_ids: Sequence[str] | None = None, below: float | None = None, overlap: bool | None = None, budget_ms: int | None = None, scope: str | None = None) -> Mapping[str, Any]:
+        """Clearance of one body pair (``a``, ``b``), of every pair of ``body_ids`` or of all bodies:
+        relation (clear/contact/overlap), exact distance, closest points, overlap volume and centre."""
+        return self.call("measure.clearance", {"a": a, "b": b, "bodyIds": None if body_ids is None else list(body_ids), "below": below, "overlap": overlap, "budgetMs": budget_ms, "scope": scope})
+
+    # ---- checks (stored requirements, CHECKS.md) ------------------------------------------
+    def checks_kinds(self) -> list[Mapping[str, Any]]:
+        return self.call("checks.kinds")
+
+    def checks_list(self) -> Mapping[str, Any]:
+        return self.call("checks.list")
+
+    def check_add(self, kind: str, params: Mapping[str, Any], *, name: str | None = None, enabled: bool | None = None, expected_revision: int | None = None) -> Mapping[str, Any]:
+        return self.call("checks.add", {"kind": kind, "params": dict(params), "name": name, "enabled": enabled, "expectedRevision": expected_revision})
+
+    def check_update(self, check_id: str, *, params: Mapping[str, Any] | None = None, name: str | None = None, enabled: bool | None = None, clear_name: bool = False, expected_revision: int | None = None) -> Mapping[str, Any]:
+        """``params`` replace the check's parameters as a whole; ``clear_name=True`` removes the label."""
+        payload = _drop_none({"checkId": check_id, "params": None if params is None else dict(params), "name": name, "enabled": enabled, "expectedRevision": expected_revision})
+        if clear_name:
+            payload["name"] = None
+        result = self.transport.request("checks.update", payload)
+        if self.on_call is not None:
+            self.on_call("checks.update", payload, result)
+        return result
+
+    def check_remove(self, check_id: str, *, expected_revision: int | None = None) -> Mapping[str, Any]:
+        return self.call("checks.remove", {"checkId": check_id, "expectedRevision": expected_revision})
+
+    def checks_run(self, ids: Sequence[str] | None = None, *, scope: str | None = None, budget_ms: int | None = None) -> Mapping[str, Any]:
+        return self.call("checks.run", {"ids": None if ids is None else list(ids), "scope": scope, "budgetMs": budget_ms})
 
     # ---- commands ------------------------------------------------------------------------
 

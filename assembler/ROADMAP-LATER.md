@@ -124,6 +124,16 @@ Skills, `view.screenshot`) bereits angelegt und werden mit `@himmelcad/agent`
 4. Kollision und Spiel zwischen Körpern (Messung, Print-Befund, Check) – aus §4 vorgezogen.
 5. Installierbare Agent-Skills (eingebaute und Projekt-Skills wie in Builder) mit Druckteil-Workflow.
 
+Stand 2026-10-02 (Block 9, Stream „checks“): **Punkte 2 und 4 umgesetzt**, siehe
+[CHECKS.md](CHECKS.md). Kollision und Spiel: exakter Mindestabstand, Berührung und
+Überlappungsvolumen im Kernel-Adapter (`measureClearance`), in Measure, als
+Printability-Befund (mit „Ignore here“/„Don't show this type“) und als Check-Art.
+Checks: eigenes Domänenmodul `checks`, Registry in `foundation/commands`, Arten von
+`measure`, `print` und `checks`, Panel mit passivem Badge, Undo/Redo, optionales
+`.hcasm`-Feld `checks` (kein Format v4: additiv wie Block 8), `checks.*` und Python.
+Offen: Sweep-Anbindung durch Stream „params“ (Vertrag in MODULES.md), Spiel über
+Bewegungen/Posen (§4, Gelenke).
+
 ## 3. Maker-Werkzeuge für Druckteile (≈ 1 Block)
 
 - Echte, druckbare Gewinde (metrisch, Rohr, Schraubverschlüsse) mit
@@ -140,6 +150,8 @@ Skills, `view.screenshot`) bereits angelegt und werden mit `@himmelcad/agent`
 - Gezielt für Druckanwendungen: Print-in-Place-Mechanismen mit Spielprüfung,
   Gelenke (Drehen, Schieben), Bewegung testen, Kollisionsprüfung, einfache
   Stückliste. Keine Großbaugruppen-/PDM-Ambitionen.
+- Statische Spiel- und Kollisionsprüfung ist seit Block 9 vorhanden (§2b Punkt 4,
+  [CHECKS.md](CHECKS.md)); hier bleibt sie über Gelenkposen und Bewegungen.
 
 ## Später bzw. nur bei konkretem Bedarf
 

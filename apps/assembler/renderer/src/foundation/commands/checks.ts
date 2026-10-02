@@ -95,8 +95,10 @@ export interface CheckKindDefinition {
   module: string;
   /** Short label ("Clearance"). */
   label: string;
-  /** One sentence for agents and the Add menu. */
+  /** One sentence for agents (`checks.kinds`). */
   summary: string;
+  /** Short line for the Checks panel's Add list. */
+  hint: string;
   /** JSON schema of `params` (closed; `$ref`s resolve against the agent-API `$defs`). */
   paramsSchema: JsonSchema;
   /** Semantic problems beyond the schema (min > max, …), or `null`. */
@@ -231,7 +233,7 @@ export function rangeOutcome(
     unit,
     expected: range,
     message: pass
-      ? `${formatCheckValue(value, unit)} (${formatRange(range, unit)})`
+      ? `${formatCheckValue(value, unit)} (required ${formatRange(range, unit)})`
       : `${formatCheckValue(value, unit)} — needs ${formatRange(range, unit)}`,
     ...(locations && locations.length > 0 ? { locations } : {}),
     ...(details ? { details } : {}),
@@ -268,7 +270,8 @@ export function checkDisplayName(check: StoredCheck, bodyName: (id: string) => s
   const definition = kinds.get(check.kind);
   if (!definition) return check.kind;
   try {
-    return definition.describe(check.params, bodyName);
+    const text = definition.describe(check.params, bodyName);
+    return text.charAt(0).toUpperCase() + text.slice(1);
   } catch {
     return definition.label;
   }

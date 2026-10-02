@@ -25,6 +25,7 @@ import {
   checkBuildVolume,
   type PrintReport,
 } from './analysis.js';
+import { usePrintStore } from './printStore.js';
 import type { PrintabilityRunner } from './runner.js';
 import { BUILD_VOLUME_PRESETS, DEFAULT_PRINT_SETTINGS, type PrintSettings } from './settings.js';
 
@@ -73,6 +74,7 @@ export const PRINTABLE_CHECK: CheckKindDefinition = {
   kind: 'printable',
   module: MODULE,
   label: 'Printable',
+  hint: 'Valid, watertight bodies (no Printability errors).',
   summary:
     'The bodies (default: all) print without errors: valid B-rep (BRepCheck) and a watertight, manifold mesh. Overhangs, walls and fit are their own checks.',
   paramsSchema: schemaObject({ bodies: BODIES_PARAM }),
@@ -110,6 +112,7 @@ export const WALL_THICKNESS_CHECK: CheckKindDefinition = {
   kind: 'wallThickness',
   module: MODULE,
   label: 'Minimum wall',
+  hint: 'No wall thinner than a minimum.',
   summary:
     'No wall of the bodies (default: all) thinner than `min` mm, as the Printability analysis samples it (rays along the inward normal from ~12 000 points per body; features between samples can be missed).',
   paramsSchema: schemaObject(
@@ -163,7 +166,7 @@ export const WALL_THICKNESS_CHECK: CheckKindDefinition = {
       message:
         thinnest === null
           ? `No wall measured below ${formatCheckValue(min, 'mm')}`
-          : `Thinnest sampled wall ${formatCheckValue(thinnest, 'mm')} (≥ ${formatCheckValue(min, 'mm')})`,
+          : `Thinnest sampled wall ${formatCheckValue(thinnest, 'mm')} (required ≥ ${formatCheckValue(min, 'mm')})`,
     };
   },
 };
@@ -174,6 +177,7 @@ export const BUILD_VOLUME_CHECK: CheckKindDefinition = {
   kind: 'buildVolume',
   module: MODULE,
   label: 'Fits build volume',
+  hint: 'Every body fits the printer chosen in Printability.',
   summary:
     'Every body (default: all) fits a printer’s build volume by its bounding box: a `printer` preset or a custom `size` [x, y, z] mm; `allowRotated` also accepts a body that fits turned 90° about Z.',
   paramsSchema: schemaObject({
@@ -199,7 +203,17 @@ export const BUILD_VOLUME_CHECK: CheckKindDefinition = {
   dependsOn: bodiesDependsOn,
   cost: 'instant',
   fields: [],
-  fromSelection: (selection) => ({ ...bodiesParamFromSelection(selection), printer: 'bambuX1' }),
+  // The printer of the Printability settings (a custom size stays a size).
+  fromSelection: (selection) => {
+    const settings = usePrintStore.getState().settings;
+    const base = bodiesParamFromSelection(selection);
+    if (settings.buildVolume === 'none') {
+      return 'Choose a printer in Printability › Thresholds, material and printer.';
+    }
+    return settings.buildVolume === 'custom'
+      ? { ...base, size: [...settings.customVolume] }
+      : { ...base, printer: settings.buildVolume };
+  },
   evaluate: (params, env) => {
     const size = Array.isArray(params.size)
       ? (params.size as [number, number, number])

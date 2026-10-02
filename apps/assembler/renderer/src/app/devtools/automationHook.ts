@@ -34,6 +34,7 @@ import {
 } from '../../platform/viewport/automation.js';
 import { useFixStore } from '../../interface/shell-ui/fixReference.js';
 import { useMeasureStore } from '../../modules/measure/measureStore.js';
+import { runChecksNow, useCheckResults } from '../../modules/checks/index.js';
 import { useProjectStore } from '../../interface/shell-ui/project/projectStore.js';
 import { useInteropStore } from '../../modules/interop/interopStore.js';
 import type { ToolHandleKind } from '../../platform/viewport/picking.js';
@@ -132,6 +133,8 @@ export interface AssemblerAutomation {
   datumAnchor(featureId: string): ScreenPoint | null;
   /** History `Fix…` session (`model/fixReference.ts`): `session`, `end`. */
   fixStore: typeof useFixStore;
+  /** Checks: latest results, focused/edited check, and an immediate run (`modules/checks`). */
+  checks: { results: typeof useCheckResults; runNow: () => Promise<void> };
 }
 
 declare global {
@@ -276,6 +279,7 @@ export function installAutomationHook(store: typeof useAssemblerStore): void {
     datumAnchor: (featureId) =>
       getViewportProbe()?.anchor((t) => t.kind === 'datum' && t.featureId === featureId) ?? null,
     fixStore: useFixStore,
+    checks: { results: useCheckResults, runNow: runChecksNow },
     commands: {
       list: () =>
         COMMANDS.map((c) => ({

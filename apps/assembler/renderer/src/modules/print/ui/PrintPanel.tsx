@@ -106,7 +106,7 @@ function FindingRow({
         </span>
       </button>
       <span className={styles.findingActions}>
-        <Tooltip content={`${ignoreLabel}: not listed in this document any more`}>
+        <Tooltip content={ignoreLabel}>
           <button
             type="button"
             className={styles.findingAction}
@@ -119,7 +119,7 @@ function FindingRow({
             {finding.kind === 'overlap' ? <CheckIcon size={12} /> : <EyeOff size={12} />}
           </button>
         </Tooltip>
-        <Tooltip content={`Don’t show “${typeLabel}” findings (undo in Settings or below)`}>
+        <Tooltip content="Don’t show this type">
           <button
             type="button"
             className={styles.findingAction}

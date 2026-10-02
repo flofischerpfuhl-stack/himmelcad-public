@@ -138,6 +138,7 @@ export const DISTANCE_CHECK: CheckKindDefinition = {
   kind: 'distance',
   module: MODULE,
   label: 'Distance',
+  hint: 'Distance between two items within a range.',
   summary:
     'Distance between two items within a range (mm): the exact minimum distance, or the distance of parallel faces/edges, as Measure shows it.',
   paramsSchema: schemaObject({ a: TARGET, b: TARGET, ...rangeProperties('mm') }, ['a', 'b']),
@@ -166,6 +167,7 @@ export const ANGLE_CHECK: CheckKindDefinition = {
   kind: 'angle',
   module: MODULE,
   label: 'Angle',
+  hint: 'Angle between two faces or edges within a range.',
   summary:
     'Angle between two planar faces, two straight edges, or an edge and a face within a range (degrees; parallel items are 0°).',
   paramsSchema: schemaObject({ a: TARGET, b: TARGET, ...rangeProperties('deg') }, ['a', 'b']),
@@ -212,6 +214,7 @@ export const LENGTH_CHECK: CheckKindDefinition = {
   kind: 'length',
   module: MODULE,
   label: 'Length',
+  hint: 'A length, diameter, area or size of one item.',
   summary:
     'A size of one item within a range: edge length, circle/cylinder diameter or radius, body width/depth/height (box), or face/body area (`quantity`; mm or mm²).',
   paramsSchema: schemaObject(
@@ -273,6 +276,7 @@ export const CLEARANCE_CHECK: CheckKindDefinition = {
   kind: 'clearance',
   module: MODULE,
   label: 'Clearance',
+  hint: 'Smallest gap between two bodies (or every pair); overlaps fail.',
   summary:
     'Minimum clearance between bodies (print-in-place, lid/enclosure fit): fails when two bodies overlap or come closer than `min` mm (`min` 0: only overlaps fail, touching passes). One pair (`a`, `b`), the pairs of `bodies`, or every pair of bodies; pairs whose bounding boxes are farther apart than `min` cannot fail and are not measured.',
   paramsSchema: schemaObject(
@@ -404,7 +408,7 @@ async function evaluateClearance(params: Json, env: CheckEnv): Promise<CheckOutc
     unit: 'mm',
     expected: { min },
     message: closest
-      ? `${formatCheckValue(closest.distance, 'mm')} (≥ ${formatCheckValue(min, 'mm')})`
+      ? `${formatCheckValue(closest.distance, 'mm')} (required ≥ ${formatCheckValue(min, 'mm')})`
       : 'No bodies to compare',
     ...(closest
       ? {
@@ -443,6 +447,7 @@ export const VOLUME_CHECK: CheckKindDefinition = {
   kind: 'volume',
   module: MODULE,
   label: 'Volume',
+  hint: 'Volume of the selected bodies (or all) within a range.',
   summary: 'Exact B-rep volume of the bodies (default: all) within a range, mm³.',
   paramsSchema: schemaObject({ bodies: BODIES_PARAM, ...rangeProperties('mm³') }),
   problem: rangeProblem,
@@ -464,6 +469,7 @@ export const MASS_CHECK: CheckKindDefinition = {
   kind: 'mass',
   module: MODULE,
   label: 'Mass',
+  hint: 'Mass of the selected bodies (or all), by their materials.',
   summary:
     'Mass of the bodies (default: all) within a range, g: exact volume × the density of the material set with each body’s appearance (PLA otherwise), solid.',
   paramsSchema: schemaObject({ bodies: BODIES_PARAM, ...rangeProperties('g') }),

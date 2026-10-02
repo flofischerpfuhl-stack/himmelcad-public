@@ -75,6 +75,11 @@ export const OP_KINDS = [
   'image',
   'sketchPattern',
   'sketchOffset',
+  // Block 9: stored checks (add/edit/remove, undo-tracked) and their evaluation.
+  'checkAdd',
+  'checkEdit',
+  'checkRemove',
+  'checkRun',
 ] as const;
 
 export type OpKind = (typeof OP_KINDS)[number];
@@ -150,6 +155,10 @@ const WEIGHTS: Record<OpKind, number> = {
   image: 1,
   sketchPattern: 2,
   sketchOffset: 2,
+  checkAdd: 2,
+  checkEdit: 1,
+  checkRemove: 1,
+  checkRun: 2,
 };
 
 /** mulberry32: small, fast, seedable. */
