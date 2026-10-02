@@ -1140,6 +1140,18 @@ class Document(PrintToolsMixin, InteropMixin):
             params["rotation"] = {"point": [float(v) for v in point], "axis": [float(v) for v in turn_axis], "angle": float(turn)}
         return self._feature(self.client.create_feature("moveFace", params, name=name))
 
+    def copy_unlinked(self, body: Body, dx: float = 0.0, dy: float = 0.0, dz: float = 0.0, *, rx: float = 0.0, ry: float = 0.0, rz: float = 0.0, pivot: Sequence[float] | None = None, name: str | None = None) -> Body:
+        """An unlinked copy of ``body`` (Shapr3D Move/Rotate copy with Link off): moved by
+        ``dx/dy/dz`` and turned ``rx/ry/rz`` degrees about world X, Y, Z through ``pivot``
+        (default its box centre). The copy keeps its exact geometry; later edits of the
+        original's earlier steps do not change it."""
+        params: dict[str, Any] = {"bodyId": body.id, "dx": dx, "dy": dy, "dz": dz, "rx": rx, "ry": ry, "rz": rz, "name": name}
+        if pivot is not None:
+            params["pivot"] = [float(v) for v in pivot]
+        result = self.client.call("body.copyUnlinked", params)
+        feature = Feature(self, str(result["featureId"]), "importStep", name or str(result["featureId"]))
+        return Body(self, str(result["bodyId"]), feature)
+
     def _align_ref(self, ref: Face | Edge | SketchLine | Datum | str) -> dict[str, Any]:
         if isinstance(ref, Face):
             return {"kind": "face", "face": ref.ref}

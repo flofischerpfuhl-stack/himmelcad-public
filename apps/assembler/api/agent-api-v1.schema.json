@@ -5328,6 +5328,54 @@
         "additionalProperties": false
       },
       "result": "{featureId, center, width, revision, committed}"
+    },
+    "body.copyUnlinked": {
+      "kind": "command",
+      "capability": "document.write",
+      "transactional": true,
+      "summary": "An unlinked copy of a body (Shapr3D Move/Rotate copy with Link off): moved by dx/dy/dz and turned rx/ry/rz degrees about world X, Y, Z through `pivot` (default its box centre), kept as its exact geometry in an `importStep` step, so later edits of the original's earlier steps do not change it. Result: the new step and body.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "bodyId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "dx": {
+            "type": "number"
+          },
+          "dy": {
+            "type": "number"
+          },
+          "dz": {
+            "type": "number"
+          },
+          "rx": {
+            "type": "number"
+          },
+          "ry": {
+            "type": "number"
+          },
+          "rz": {
+            "type": "number"
+          },
+          "pivot": {
+            "$ref": "#/$defs/Vec3"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Optimistic concurrency: the command fails with `conflict` unless the document revision still equals this value."
+          }
+        },
+        "required": ["bodyId"],
+        "additionalProperties": false
+      },
+      "result": "{featureId, bodyId, revision, committed}"
     }
   },
   "limits": {

@@ -75,9 +75,10 @@ export const OP_KINDS = [
   'image',
   'sketchPattern',
   'sketchOffset',
-  // Block 9 parity: Replace Face, Align on axes.
+  // Block 9 parity: Replace Face, Align on axes, unlinked copies.
   'replaceFace',
   'alignAxis',
+  'copyUnlinked',
 ] as const;
 
 export type OpKind = (typeof OP_KINDS)[number];
@@ -155,6 +156,7 @@ const WEIGHTS: Record<OpKind, number> = {
   sketchOffset: 2,
   replaceFace: 2,
   alignAxis: 2,
+  copyUnlinked: 1,
 };
 
 /** mulberry32: small, fast, seedable. */

@@ -8,9 +8,17 @@ import {
   schemaNumber,
   schemaObject,
   schemaRef,
+  schemaRevision,
   schemaString,
+  type ApiContext,
   type FeatureKindSpec,
+  type Json,
+  type MethodSpec,
+  type WriteOutcome,
 } from '../../foundation/commands/api/contract.js';
+import { ApiError } from '../../foundation/commands/api/errors.js';
+import { bodyIdFor, type Vec3 } from '../../foundation/document/document.js';
+import { unlinkedCopyFeature } from './unlinkedCopy.js';
 import { API_ORDER, type ApiContribution } from '../../foundation/commands/api/registry.js';
 import type { JsonSchema } from '../../foundation/commands/api/validate.js';
 import {
@@ -285,7 +293,101 @@ const BODY_KIND_SCHEMAS: Record<string, FeatureKindSpec> = {
   },
 };
 
+// ---- body.copyUnlinked (MOD-16) -------------------------------------------------------------
+
+const isVec3 = (v: unknown): v is Vec3 =>
+  Array.isArray(v) && v.length === 3 && v.every((x) => typeof x === 'number' && Number.isFinite(x));
+
+const copyUnlinked = (ctx: ApiContext, p: Json): Promise<Json> =>
+  ctx.write('body.copyUnlinked', async (features, evaluation): Promise<WriteOutcome> => {
+    const bodyId = String(p.bodyId);
+    const body = evaluation.bodies.find((b) => b.id === bodyId);
+    if (!body) {
+      throw new ApiError('notFound', `No body "${bodyId}"`, {
+        hint: 'bodies.list lists the bodies.',
+      });
+    }
+    const value = (key: string) => (typeof p[key] === 'number' ? (p[key] as number) : 0);
+    const pivot: Vec3 = isVec3(p.pivot)
+      ? p.pivot
+      : [
+          (body.min[0] + body.max[0]) / 2,
+          (body.min[1] + body.max[1]) / 2,
+          (body.min[2] + body.max[2]) / 2,
+        ];
+    const id = ctx.allocateFeatureId('importStep');
+    let feature;
+    try {
+      feature = await unlinkedCopyFeature(
+        ctx.kernel,
+        features,
+        {
+          bodyId,
+          dx: value('dx'),
+          dy: value('dy'),
+          dz: value('dz'),
+          rx: value('rx'),
+          ry: value('ry'),
+          rz: value('rz'),
+          pivot,
+        },
+        {
+          id,
+          name:
+            typeof p.name === 'string' ? p.name : ctx.nextFeatureName('Unlinked copy', features),
+          bodyName: `${body.name} (copy)`,
+        },
+      );
+    } catch (error) {
+      throw new ApiError(
+        'featureFailed',
+        `The unlinked copy failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    const copyId = bodyIdFor(id);
+    return {
+      features: [...features, feature],
+      touched: [id],
+      selection: [{ kind: 'body', bodyId: copyId }],
+      result: { featureId: id, bodyId: copyId },
+    };
+  });
+
+const METHODS: Record<string, MethodSpec> = {
+  'body.copyUnlinked': {
+    kind: 'command',
+    capability: 'document.write',
+    transactional: true,
+    summary:
+      "An unlinked copy of a body (Shapr3D Move/Rotate copy with Link off): moved by dx/dy/dz and turned rx/ry/rz degrees about world X, Y, Z through `pivot` (default its box centre), kept as its exact geometry in an `importStep` step, so later edits of the original's earlier steps do not change it. Result: the new step and body.",
+    params: schemaObject(
+      {
+        bodyId: schemaString,
+        dx: schemaNumber,
+        dy: schemaNumber,
+        dz: schemaNumber,
+        rx: schemaNumber,
+        ry: schemaNumber,
+        rz: schemaNumber,
+        pivot: schemaRef('Vec3'),
+        name: schemaString,
+        expectedRevision: schemaRevision,
+      },
+      ['bodyId'],
+    ),
+    result: '{featureId, bodyId, revision, committed}',
+  },
+};
+
 export const MODELING_API: ApiContribution = {
+  methods: [
+    {
+      order: API_ORDER.methods.modeling,
+      methods: {
+        'body.copyUnlinked': { spec: METHODS['body.copyUnlinked']!, handler: copyUnlinked },
+      },
+    },
+  ],
   defs: [{ order: API_ORDER.defs.printFeatures, defs: PRINT_DEFS }],
   featureKinds: [
     { order: API_ORDER.featureKinds.modeling, kinds: PROFILE_KIND_SCHEMAS },

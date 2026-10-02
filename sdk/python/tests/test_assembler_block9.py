@@ -14,7 +14,7 @@ HEADLESS = REPOSITORY_ROOT / "apps/assembler/dist/headless/headless/cli.js"
 
 sys.path.insert(0, str(SDK_ROOT / "src"))
 
-from himmelcad.assembler import AssemblerClient, Document, Edge, Face, StdioTransport  # noqa: E402
+from himmelcad.assembler import AssemblerClient, Body, Document, Edge, Face, StdioTransport  # noqa: E402
 
 
 class RecordingTransport:
@@ -28,6 +28,8 @@ class RecordingTransport:
         self.requests.append((method, dict(params)))
         if method == "api.hello":
             return {"api": "hcasm.agent-api", "version": 1}
+        if method == "body.copyUnlinked":
+            return {"featureId": "feature-importStep-9", "bodyId": "body:feature-importStep-9"}
         if method == "feature.create":
             feature_id = f"feature-{params['kind']}-{self.next_id}"
             self.next_id += 1
@@ -72,6 +74,12 @@ class HelperTests(unittest.TestCase):
         self.doc.align(rim, "Z", center=False)
         self.assertEqual(self.params()["to"], {"kind": "axis", "axis": {"kind": "world", "axis": "Z"}})
 
+    def test_copy_unlinked(self) -> None:
+        copy = self.doc.copy_unlinked(Body(self.doc, "body:a"), 20, rz=90, pivot=(0, 0, 0))
+        self.assertEqual(self.transport.requests[-1][0], "body.copyUnlinked")
+        self.assertEqual(self.request(), {"bodyId": "body:a", "dx": 20, "dy": 0.0, "dz": 0.0, "rx": 0.0, "ry": 0.0, "rz": 90, "pivot": [0.0, 0.0, 0.0]})
+        self.assertEqual(copy.id, "body:feature-importStep-9")
+
 
 @unittest.skipUnless(shutil.which("node") and HEADLESS.is_file(), "needs node and a built assembler-headless (pnpm --filter @himmelcad/assembler build:headless)")
 class HeadlessBlock9Tests(unittest.TestCase):
@@ -93,6 +101,16 @@ class HeadlessBlock9Tests(unittest.TestCase):
             doc.align(rim, top)
             self.assertAlmostEqual(pin.bbox.min[2], 20, places=6)
             self.assertAlmostEqual((pin.bbox.min[0] + pin.bbox.max[0]) / 2, 0, places=6)
+            self.assertEqual(doc.errors(), {})
+
+    def test_unlinked_copy_keeps_its_geometry(self) -> None:
+        with Document(AssemblerClient(StdioTransport())) as doc:
+            s = doc.sketch("XY")
+            s.rect(10, 10)
+            block = doc.extrude(s, 10)
+            copy = doc.copy_unlinked(block, 30)
+            self.assertAlmostEqual(copy.volume, 1000, places=3)
+            self.assertAlmostEqual(copy.bbox.min[0], 25, places=6)
             self.assertEqual(doc.errors(), {})
 
 

@@ -66,6 +66,7 @@ export const API_ORDER = {
     print: 400,
     interop: 500,
     canvas: 600,
+    modeling: 650,
   },
 } as const;
 

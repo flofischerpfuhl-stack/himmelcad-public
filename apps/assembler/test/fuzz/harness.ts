@@ -904,6 +904,16 @@ export class FuzzHarness {
           },
         });
       }
+      case 'copyUnlinked': {
+        const body = await bodyId(r[0]);
+        if (!body) return null;
+        return this.api('body.copyUnlinked', {
+          bodyId: body,
+          dx: between(r[1], -30, 30),
+          dy: between(r[2], -30, 30),
+          rz: (r[3] ?? 0) < 0.5 ? 0 : between(r[4], -90, 90, 15),
+        });
+      }
       case 'replaceFace': {
         const body = await bodyId(r[0]);
         const other = await bodyId(r[2]);

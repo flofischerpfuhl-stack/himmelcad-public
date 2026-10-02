@@ -22,6 +22,7 @@ import {
   type ShellDirection,
 } from '../../foundation/document/blendOptions.js';
 import {
+  bodyIdFor,
   frameForPlane,
   MIN_FEATURE_SIZE_MM,
   type BooleanFeature,
@@ -53,9 +54,11 @@ import {
   type AssemblerState,
   type KernelPreviewFields,
   type SelectionItem,
+  type StoreCore,
   type StoreSliceCreator,
   type ToolCommit,
   type ToolSessionBase,
+  useAssemblerStore,
 } from '../../foundation/commands/store.js';
 import type { TransformFeature } from './features.js';
 import {
@@ -65,6 +68,7 @@ import {
   type SketchContact,
 } from './modeling.js';
 import { gizmoTransformFields } from './moveGizmo.js';
+import { unlinkedCopyFeature } from './unlinkedCopy.js';
 
 // ---- sessions -------------------------------------------------------------------------------
 
@@ -161,6 +165,14 @@ export interface MoveTool extends ToolSessionBase {
   pivot: Vec3;
   /** Creates a copy instead of moving the body. */
   copy: boolean;
+  /**
+   * Link badge of a copy (Shapr3D): `false` detaches the copy from the
+   * history — it is kept as its exact geometry (`unlinkedCopy.ts`) and no
+   * longer follows edits of the original's earlier steps. Absent: linked.
+   */
+  linked?: boolean;
+  /** Done is writing an unlinked copy (the kernel exports it); the pill shows activity. */
+  unlinking?: boolean;
   /**
    * Gizmo orientation (unit axes; absent = world X, Y, Z). Set when the
    * centre snaps to geometry with auto-orientation on (Shapr3D, int §4).
@@ -432,6 +444,11 @@ registerToolKind({
       );
       return;
     }
+    if (tool.unlinking) return; // already writing the copy
+    if (tool.copy && tool.linked === false) {
+      commitUnlinkedCopy(tool, done);
+      return;
+    }
     if (tool.copy || rotation.rx !== 0 || rotation.ry !== 0 || rotation.rz !== 0) {
       const transform: TransformFeature = {
         id: createFeatureId('transform'),
@@ -459,6 +476,55 @@ registerToolKind({
     done.commitFeatures([...done.features, feature]);
   },
 });
+
+/**
+ * Done with an unlinked copy: the kernel writes the copy (asynchronously;
+ * the pill shows activity, Cancel still works), then one undo step adds it
+ * as a stored-geometry step selecting the new body.
+ */
+function commitUnlinkedCopy(tool: MoveTool, done: ToolCommit): void {
+  const kernel = sliceCore?.kernel() ?? null;
+  if (!kernel) {
+    done.update({ ...tool, problem: 'The CAD kernel is still loading.' });
+    return;
+  }
+  const state = useAssemblerStore.getState();
+  const source = state.evaluation.bodies.find((b) => b.id === tool.bodyId);
+  const busy: MoveTool = { ...tool, unlinking: true };
+  delete busy.problem;
+  done.update(busy);
+  const id = createFeatureId('importStep');
+  const stillUnlinking = () => {
+    const now = useAssemblerStore.getState().activeTool;
+    return now?.kind === 'move' && now.unlinking === true;
+  };
+  void unlinkedCopyFeature(
+    kernel,
+    state.features,
+    { bodyId: tool.bodyId, ...gizmoTransformFields(tool) },
+    {
+      id,
+      name: nextFeatureName('Unlinked copy', state.features),
+      bodyName: `${source?.name ?? 'Body'} (copy)`,
+    },
+  ).then(
+    (feature) => {
+      // Cancelled (or another tool started) meanwhile: nothing to add.
+      if (!stillUnlinking()) return;
+      done.commitFeatures(
+        [...useAssemblerStore.getState().features, feature],
+        [{ kind: 'body', bodyId: bodyIdFor(feature.id) }],
+      );
+    },
+    (error: unknown) => {
+      if (!stillUnlinking()) return;
+      done.update({
+        ...tool,
+        problem: `The unlinked copy failed: ${error instanceof Error ? error.message : String(error)}`,
+      });
+    },
+  );
+}
 
 // ---- store slice --------------------------------------------------------------------------------
 
@@ -508,6 +574,8 @@ export interface ModelingToolsSlice {
   setPivot: (pivot: Vec3) => void;
   /** Copy badge of the Move/Rotate tool. */
   setMoveCopy: (copy: boolean) => void;
+  /** Link badge of a Move/Rotate copy: `false` makes an unlinked copy (MOD-16). */
+  setMoveLinked: (linked: boolean) => void;
   /** Gizmo orientation: unit axes, or `null` for world X/Y/Z. Keeps the move so far. */
   setMoveAxes: (axes: [Vec3, Vec3, Vec3] | null) => void;
   setMoveAutoOrient: (on: boolean) => void;
@@ -560,7 +628,11 @@ declare module '../../foundation/commands/store.js' {
   interface AssemblerStateExtensions extends ModelingToolsSlice {}
 }
 
+/** The store core the slice was created with (the Move tool's unlinked copy needs its kernel). */
+let sliceCore: StoreCore | null = null;
+
 export const modelingToolsSlice: StoreSliceCreator<ModelingToolsSlice> = (set, get, core) => {
+  sliceCore = core;
   const { endPreview, updatePreviewTool } = core.tools;
   /** One undo step appending `feature`, selecting it. */
   const appendFeature = (feature: Feature) =>
@@ -848,24 +920,29 @@ export const modelingToolsSlice: StoreSliceCreator<ModelingToolsSlice> = (set, g
     },
     setDelta: (dx, dy, dz) => {
       const tool = get().activeTool;
-      if (!tool || tool.kind !== 'move') return;
+      if (!tool || tool.kind !== 'move' || tool.unlinking) return;
       const { problem: _problem, ...rest } = tool;
       set({ activeTool: { ...rest, phase: 'preview', delta: { dx, dy, dz } } });
     },
     setRotation: (rx, ry, rz) => {
       const tool = get().activeTool;
-      if (tool?.kind !== 'move' || ![rx, ry, rz].every(Number.isFinite)) return;
+      if (tool?.kind !== 'move' || tool.unlinking || ![rx, ry, rz].every(Number.isFinite)) return;
       set({ activeTool: { ...tool, phase: 'preview', rotation: { rx, ry, rz } } });
     },
     setPivot: (pivot) => {
       const tool = get().activeTool;
-      if (tool?.kind !== 'move' || !pivot.every(Number.isFinite)) return;
+      if (tool?.kind !== 'move' || tool.unlinking || !pivot.every(Number.isFinite)) return;
       set({ activeTool: { ...tool, pivot: [...pivot] } });
     },
     setMoveCopy: (copy) => {
       const tool = get().activeTool;
-      if (tool?.kind !== 'move' || tool.sketch) return;
+      if (tool?.kind !== 'move' || tool.sketch || tool.unlinking) return;
       set({ activeTool: { ...tool, copy } });
+    },
+    setMoveLinked: (linked) => {
+      const tool = get().activeTool;
+      if (tool?.kind !== 'move' || tool.sketch || tool.unlinking) return;
+      set({ activeTool: { ...tool, linked } });
     },
     setMoveAxes: (axes) => {
       const tool = get().activeTool;

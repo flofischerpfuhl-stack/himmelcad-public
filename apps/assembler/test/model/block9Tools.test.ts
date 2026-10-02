@@ -253,3 +253,55 @@ void test('Align: two round edges of two bodies suggest Align; the axes line up;
   const planes = store.getState().features.at(-1)! as Feature & { from?: unknown; face?: unknown };
   assert.ok(planes.face && !planes.from, 'planar faces keep face/target');
 });
+
+// ---- Move/Rotate copy with Link off (MOD-16) ----------------------------------------------------
+
+async function until(condition: () => boolean, what: string): Promise<void> {
+  for (let i = 0; i < 400; i += 1) {
+    if (condition()) return;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  assert.fail(`timed out waiting for ${what}`);
+}
+
+void test('Move/Rotate: an unlinked copy keeps its geometry when the original changes; one undo step', async () => {
+  await load([cube('a', [0, 0, 0], 10)]);
+  store.getState().beginMove('body:a');
+  store.getState().setDelta(20, 0, 0);
+  store.getState().setMoveCopy(true);
+  store.getState().setMoveLinked(false);
+  const before = store.getState().features.length;
+  store.getState().commit();
+  const pending = tool('move');
+  assert.equal(pending.unlinking, true, 'the pill shows the copy being written');
+  await until(() => store.getState().activeTool === null, 'the unlinked copy');
+  await store.getState().whenSettled();
+  assert.deepEqual(store.getState().evaluation.errors, {});
+  const added = store.getState().features.at(-1)!;
+  assert.equal(added.kind, 'importStep');
+  assert.equal(added.name, 'Unlinked copy 1');
+  assert.equal(store.getState().features.length, before + 1);
+  const copy = body(`body:${added.id}`);
+  assert.ok(Math.abs(copy.volume - 1000) < 1e-3);
+  assert.ok(Math.abs(copy.min[0] - 15) < 1e-6, `moved by 20 (min x ${copy.min[0]})`);
+  // The original grows; the unlinked copy does not follow.
+  store.getState().editFeatureParams('a', { width: 14 } as never);
+  await store.getState().whenSettled();
+  assert.ok(Math.abs(body('body:a').volume - 1400) < 1e-3, 'the original changed');
+  assert.ok(Math.abs(body(`body:${added.id}`).volume - 1000) < 1e-3, 'the copy kept its geometry');
+  // A linked copy follows (the default).
+  store.getState().undo();
+  store.getState().undo();
+  await store.getState().whenSettled();
+  assert.equal(store.getState().features.length, before, 'one undo step for the copy');
+  // Cancel while writing: nothing is added.
+  store.getState().beginMove('body:a');
+  store.getState().setDelta(0, 20, 0);
+  store.getState().setMoveCopy(true);
+  store.getState().setMoveLinked(false);
+  store.getState().commit();
+  store.getState().cancel();
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  await store.getState().whenSettled();
+  assert.equal(store.getState().features.length, before, 'a cancelled unlinked copy adds nothing');
+});

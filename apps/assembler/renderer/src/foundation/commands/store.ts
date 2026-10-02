@@ -731,6 +731,8 @@ export interface StoreCore {
   getState: () => AssemblerState;
   /** Whether a kernel is attached. */
   hasKernel(): boolean;
+  /** The attached kernel (one-off exports outside the evaluation queue), or `null`. */
+  kernel(): KernelAdapter | null;
   /**
    * Commits a complete next document (features, and parameters when given)
    * as exactly one undo step, through the path every tool's Done uses.
@@ -1178,6 +1180,7 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
   storeCore = {
     getState: get,
     hasKernel: () => kernel !== null,
+    kernel: () => kernel,
     commitDocument: (next) => commitFeatures(next.features, next.selection, next.parameters),
     seedEvaluation: (features, evaluation) => resultCache.set(features, evaluation),
     evaluateCheck: async (features) => {
