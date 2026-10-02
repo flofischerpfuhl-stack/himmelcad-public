@@ -70,9 +70,14 @@ function kernelIdle(adapter: KernelAdapter): Promise<void> {
   });
 }
 
-/** Whether the document is being edited right now (results would be for an older state). */
+/**
+ * Whether the document is being edited right now (results would be for an older state):
+ * a tool, a pending rebuild, or a live preview of an uncommitted change (a parameter
+ * slider drag shows `documentPreview`; the stored checks still describe the committed
+ * document, so the panel shows them as out of date until the release commits or Esc).
+ */
 function busy(state: AssemblerState): boolean {
-  return state.activeTool !== null || state.evaluationPending;
+  return state.activeTool !== null || state.evaluationPending || state.documentPreview !== null;
 }
 
 /** Runs `checks` against the current document; results land in `useCheckResults`. */
@@ -187,6 +192,7 @@ export function startChecksRunner(adapter: KernelAdapter | null): void {
       state.checks !== prev.checks ||
       (prev.activeTool !== null && state.activeTool === null) ||
       (prev.evaluationPending && !state.evaluationPending) ||
+      state.documentPreview !== prev.documentPreview ||
       (prev.kernelStatus !== 'ready' && state.kernelStatus === 'ready');
     if (!changed) return;
     if (state.checks.length === 0) {

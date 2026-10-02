@@ -32,10 +32,12 @@
   pointer-events: none;
 }
 
-.rightStack > .root {
+/* Low specificity (:where), so each panel's placement class (Parameters ≤ 45 %, Checks
+   ≤ 42 %) can cap its height; every panel keeps at least its header visible. */
+.rightStack > :where(.root) {
   position: relative;
   max-height: none;
-  min-height: 0;
+  min-height: calc(24px + 2 * var(--hc-space-2) + 2px);
 }
 
 .historyPlacement {
@@ -128,6 +130,9 @@
    clears the wider tool column. */
 :global(html[data-hc-touch]) .rightStack {
   top: 412px;
+}
+:global(html[data-hc-touch]) .rightStack > :where(.root) {
+  min-height: calc(36px + 2 * var(--hc-space-2) + 2px);
 }
 :global(html[data-hc-touch]) .itemsPlacement {
   left: 82px;

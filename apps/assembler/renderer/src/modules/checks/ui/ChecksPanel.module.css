@@ -1,6 +1,7 @@
 /* The Checks panel in the right column (between Parameters and History). */
 .placement {
-  flex: 0 1 auto;
+  /* Like Parameters: its own height up to 42 % of the right column; History shrinks first. */
+  flex: 0 0 auto;
   max-height: 42%;
 }
 

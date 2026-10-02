@@ -31,6 +31,7 @@ import {
 import {
   activeFeaturesOf,
   bodyNamer,
+  resultsStale,
   runChecksNow,
   setChecksKernel,
   startChecksRunner,
@@ -283,6 +284,18 @@ void test('background runner: results arrive after a rebuild, stay passive and w
   await runChecksNow();
   assert.equal(useCheckResults.getState().results[c.id]?.state, 'fail');
   assert.deepEqual(notices, []);
+  // A parameter slider's live preview (an uncommitted state on screen): the results describe
+  // the committed document, so they are out of date and nothing runs until it ends.
+  assert.equal(resultsStale(), false);
+  store.setState({ documentPreview: store.getState().evaluation });
+  assert.equal(resultsStale(), true, 'stale while a preview is shown');
+  useCheckResults.setState({ results: {} });
+  await runChecksNow();
+  assert.deepEqual(useCheckResults.getState().results, {}, 'no run during the preview');
+  store.setState({ documentPreview: null });
+  await runChecksNow();
+  assert.equal(useCheckResults.getState().results[c.id]?.state, 'fail');
+  assert.equal(resultsStale(), false);
 });
 
 void test('.hcasm: checks and ignored findings round-trip; unknown kinds are kept; malformed entries reject', async () => {
