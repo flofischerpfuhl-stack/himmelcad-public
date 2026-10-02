@@ -111,6 +111,19 @@ Ellipsen/Splines aus Strichen.
 - Vorlage/Benchmark: die fünf Druckteile aus `apps/assembler/bench/` plus
   Aufgaben in Alltagssprache („Gehäuse für Raspberry Pi 5 mit Lüftung“).
 
+### 2b. Übernahmen aus der ForgeCAD-Analyse (Florian 2026-10-02: Empfehlungen 1–5 freigegeben)
+
+Siehe [research/2026-10-01-forgecad/Report.md](research/2026-10-01-forgecad/Report.md) §6.
+Punkte 1 und 5 sind im Builder-Agentenplan (`docs/builder-program/specs/agent/agent.md`:
+Skills, `view.screenshot`) bereits angelegt und werden mit `@himmelcad/agent`
+übernommen; 2–4 sind CAD-/druckspezifisch und neu.
+
+1. Render-Sicht für Agenten (`view.render`/Screenshot, Inspektionsbündel), auch headless.
+2. Gespeicherte Prüfungen im Dokument („Checks“) als eigenes Modul, mit Panel und API.
+3. Parameterbereiche (min/max/step), Slider, `parameters.sweep`.
+4. Kollision und Spiel zwischen Körpern (Messung, Print-Befund, Check) – aus §4 vorgezogen.
+5. Installierbare Agent-Skills (eingebaute und Projekt-Skills wie in Builder) mit Druckteil-Workflow.
+
 ## 3. Maker-Werkzeuge für Druckteile (≈ 1 Block)
 
 - Echte, druckbare Gewinde (metrisch, Rohr, Schraubverschlüsse) mit
