@@ -396,7 +396,7 @@ assistant` (`electron/assistantIpc.ts`), `null` in the web and plain
   `assistant.sessions` (400/410).
 - **Shared package** `@himmelcad/agent` (additive): `expand.ts`, host turn
   lifecycle for Claude/OpenCode, `startThread({resumeThreadId})`, optional
-  `AgentChatPanel` props. Builder's and PhotoLab's usage is unchanged
+  `AgentChatPanel` props (incl. `prepareRows`, `renderRow`, `scopeBar`). Builder's and PhotoLab's usage is unchanged
   (their tests pass).
 
 Compositions (`renderer/src/app`):

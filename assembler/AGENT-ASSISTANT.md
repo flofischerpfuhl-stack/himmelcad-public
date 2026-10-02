@@ -28,17 +28,25 @@ works through is [AGENT-API.md](AGENT-API.md) (`hcasm.agent-api@1`).
    **Mention in Assistant**) turns the selected bodies, faces, edges and
    steps into chips; on Send they resolve to their current ids (a deleted
    one is sent as "no longer exists", never rebound by name).
-5. **A turn** — the timeline shows the agent's messages and each tool call
-   as it runs (`hcasm_call · feature.create`, `view_render · iso`, with the
-   result), render thumbnails under their call, and the model changes live
-   in the viewport and History. Interrupt stops the CLI at once; Continue
-   (or Retry) resumes an interrupted session.
+5. **A turn** — the timeline shows the agent's messages; each tool call is
+   one line in plain words with a status mark ("Added “Plate sketch”",
+   "Checked printability ✓", "Rendering the iso view…"), consecutive calls
+   fold into one "6 steps · Checked printability" line, render thumbnails
+   stay visible under it, failures show their message even when folded, and
+   the chevron opens the steps and each step's JSON
+   (`interface/assistant/timelineRows.ts`, `ui/TimelineRows.tsx`). Usage
+   counters and running/completed turn states are left out. The model
+   changes live in the viewport and History. Interrupt stops the CLI at
+   once; Continue (or Retry) resumes an interrupted session. The
+   permission line under the header is one sentence; its info button
+   (click or tap) lists what the assistant may do.
 6. **Approval** — before the agent deletes a step or parameter that existed
    before the turn, replaces the project (`project.new`/`open`) or undoes a
-   change it did not make in this turn, the island shows "Destructive
-   approval" with Approve / Deny (the island opens if hidden). Deny, or no
-   answer within 5 minutes, refuses the call; the agent is told to continue
-   without it.
+   change it did not make in this turn, the bar above the composer shows
+   "Destructive approval" with Approve / Deny (the island opens if hidden;
+   44 px buttons in the tablet layout); the timeline only notes "Waiting
+   for your answer below" and later the outcome. Deny, or no answer within
+   5 minutes, refuses the call; the agent is told to continue without it.
 7. **One undo step** — when the turn ends the transcript says
    "3 model changes · one undo step (Ctrl+Z)": one Ctrl+Z returns the model
    to the state before the turn, Redo brings it back. If the user edited the
@@ -46,13 +54,17 @@ works through is [AGENT-API.md](AGENT-API.md) (`hcasm.agent-api@1`).
 8. **Skills tab** — built-in workflows (read-only) and the project's own
    skills, searchable; New skill opens a SKILL.md editor with live
    validation (Save stays disabled until the file is valid).
-9. **Web** — the browser cannot start programs, so the Assistant button is
-   hidden and the command explains why (use the desktop app, or connect an
-   external agent through Agent Access). Skills, `view.render` and the rest
-   of the contract work in the web build too.
+9. **Tablet and left-handed** — in the tablet layout the island moves right
+   of the wider tool column and Items, every control is finger-sized; with
+   the tools on the right (left-handed) it mirrors to their left
+   (`test/electron/assistant.test.ts`, 1180 × 820 with touch emulation).
+10. **Web** — the browser cannot start programs, so the Assistant button is
+    hidden and the command explains why (use the desktop app, or connect an
+    external agent through Agent Access). Skills, `view.render` and the rest
+    of the contract work in the web build too.
 
 Screens: `D:\AgentWork\HimmelCAD-Assembler\shots\block9-agent\`
-(`island-empty`, `island-session`, `island-approval`, `island-skills`,
+(`island-empty`, `island-session`, `island-approval`, `island-skills`, `island-tablet`, `island-tablet-expanded`, `island-tablet-approval`, `island-left-handed`,
 `render-gpu`, `render-software`), produced by `test/electron/assistant.test.ts`.
 
 ## Architecture

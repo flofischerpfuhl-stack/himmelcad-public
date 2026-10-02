@@ -167,3 +167,102 @@ void test('assistant: scripted harness builds a part through the API, one undo s
   );
   assert.equal(software.renderer, 'software');
 });
+
+void test('assistant island: tablet layout (1180 × 820, coarse pointer) and left-handed mirroring', async (t) => {
+  const userDataDir = mkdtempSync(join(tmpdir(), 'assembler-assistant-tablet-'));
+  mkdirSync(SHOTS_DIR, { recursive: true });
+  const app = await electron.launch({
+    args: [APP_DIR, `--user-data-dir=${userDataDir}`],
+    env: {
+      ...process.env,
+      ASSEMBLER_FORCE_PRODUCTION: '1',
+      ASSEMBLER_ASSISTANT_TEST_HARNESS: HARNESS,
+    },
+    timeout: 60_000,
+  });
+  t.after(async () => {
+    await closeApp(app);
+    rmSync(userDataDir, { recursive: true, force: true });
+  });
+  const window = await app.firstWindow();
+  await app.evaluate(({ BrowserWindow }) =>
+    BrowserWindow.getAllWindows()[0]?.setContentSize(1180, 820),
+  );
+  await window.setViewportSize({ width: 1180, height: 820 }).catch(() => undefined);
+  await window.waitForLoadState('domcontentloaded');
+  await window.waitForFunction(() => !document.body.innerText.includes('No items yet'), {
+    timeout: 60_000,
+  });
+  await dismissHome(window);
+  const cdp = await window.context().newCDPSession(window);
+  await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
+  await window.waitForFunction(() => document.documentElement.hasAttribute('data-hc-touch'), null, {
+    timeout: 10_000,
+  });
+
+  await window.getByRole('button', { name: 'Assistant', exact: true }).click();
+  const island = window.getByTestId('assistant-island');
+  await island.getByRole('button', { name: /^claude, available/ }).waitFor({ timeout: 30_000 });
+  await send(window, 'Please build the scripted test plate.');
+  await island.getByText(/Built Plate: 60 x 40 x 6 mm/).waitFor({ timeout: 120_000 });
+  await island.locator('img[alt="view.render result"]').first().waitFor({ timeout: 30_000 });
+  // Tool calls are one "N steps" line, not JSON cards; the permission line fits.
+  await island
+    .getByRole('button', { name: /^\d+ steps/ })
+    .first()
+    .waitFor();
+  assert.equal(await island.getByText('"overhangAngleDeg"').count(), 0, 'no raw JSON by default');
+  const scope = island.locator('[aria-label="Agent permissions"]');
+  assert.ok(
+    await scope.evaluate((element) => element.scrollWidth <= element.clientWidth + 1),
+    'the permission line is not cut off',
+  );
+  const dock = (await window.getByRole('button', { name: 'Open command search' }).boundingBox())!;
+  let box = (await island.boundingBox())!;
+  assert.ok(box.x > dock.x + dock.width, 'right-handed: island right of the tool column');
+  assert.ok(box.x + box.width <= 1180, 'inside the window');
+  await window.screenshot({ path: join(SHOTS_DIR, 'island-tablet.png') });
+
+  // Expanding the group shows the steps; a step shows its JSON on demand.
+  await island
+    .getByRole('button', { name: /^\d+ steps/ })
+    .first()
+    .click();
+  await island.getByRole('button', { name: /^Checked printability/ }).click();
+  await island.getByText('"overhangAngleDeg"').first().waitFor();
+  await window.screenshot({ path: join(SHOTS_DIR, 'island-tablet-expanded.png') });
+
+  // One approval, at the bottom, with finger-sized buttons; the timeline only refers to it.
+  await send(window, 'Run the scripted delete test.');
+  const approval = window.getByRole('region', { name: 'Pending agent approval' });
+  await approval.waitFor({ timeout: 60_000 });
+  assert.equal(
+    await island.getByRole('button', { name: 'Approve' }).count(),
+    1,
+    'one Approve button',
+  );
+  const deny = (await approval.getByRole('button', { name: 'Deny' }).boundingBox())!;
+  assert.ok(deny.height >= 40, `finger-sized Deny (${deny.height} px)`);
+  await island.getByText(/Waiting for your answer below/).waitFor();
+  await window.screenshot({ path: join(SHOTS_DIR, 'island-tablet-approval.png') });
+  await approval.getByRole('button', { name: 'Deny' }).click();
+  await island.getByText(/Asked to delete the first step/).waitFor({ timeout: 60_000 });
+
+  // Left-handed: tools and Items on the right, the island mirrors to their left.
+  await window.keyboard.press('Control+,');
+  const settings = window.getByRole('dialog', { name: 'Settings' });
+  await settings.waitFor();
+  await settings.getByRole('button', { name: 'Tool side' }).click();
+  await window.getByRole('option', { name: 'Right (left-handed)' }).click();
+  await window.waitForFunction(
+    () => document.documentElement.getAttribute('data-hc-hand') === 'left',
+  );
+  await settings.getByRole('button', { name: 'Done' }).click();
+  const mirroredDock = (await window
+    .getByRole('button', { name: 'Open command search' })
+    .boundingBox())!;
+  box = (await island.boundingBox())!;
+  assert.ok(box.x + box.width < mirroredDock.x, 'left-handed: island left of the tool column');
+  assert.ok(box.x >= 0, 'inside the window');
+  await window.screenshot({ path: join(SHOTS_DIR, 'island-left-handed.png') });
+});

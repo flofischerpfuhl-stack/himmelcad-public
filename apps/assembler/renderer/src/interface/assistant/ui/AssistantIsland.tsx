@@ -5,22 +5,55 @@
  * (built-in and project skills). Hiding it never stops a running turn; the
  * left-dock button shows that one is running.
  */
-import { useMemo, useState } from 'react';
-import { BookOpen, MessageSquare, Plus, RefreshCw, Trash2, X } from 'lucide-react';
+import { useCallback, useMemo, useRef, useState } from 'react';
+import { BookOpen, Info, Lock, MessageSquare, Plus, RefreshCw, Trash2, X } from 'lucide-react';
 
 import { AgentChatPanel, type AgentTimelineRow } from '@himmelcad/agent';
 
 import { eventsFromStored, useAssistant } from '../controller.js';
 import { useAssistantSessions } from '../sessions.js';
+import { foldToolRows, type CommandRow } from '../timelineRows.js';
 import { SkillsTab } from './SkillsTab.js';
+import { renderAssistantRow } from './TimelineRows.js';
 import styles from './AssistantIsland.module.css';
 
-const SCOPE = [
-  'Open project · hcasm tools only',
-  'No file or shell access',
-  'Network: your CLI’s own provider',
-  'Deleting your work asks first',
+/** What the agent may do, in full (the scope line's details). */
+const SCOPE_DETAILS = [
+  'Works only on the open project, through the app’s modeling tools.',
+  'No access to your files or a command shell.',
+  'Network: only your agent CLI’s own connection to its provider.',
+  'Asks you before deleting your steps, undoing your changes or replacing the project.',
 ];
+
+/** The permission line: one sentence, the details behind an info button (tap or click). */
+function ScopeLine(): JSX.Element {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className={styles.scopeLine}>
+      <div className={styles.scopeSummary}>
+        <Lock size={12} aria-hidden />
+        <p>This project only · asks before deleting your work</p>
+        <button
+          type="button"
+          className={styles.scopeInfo}
+          aria-expanded={open}
+          aria-label="What the assistant may do"
+          title="What the assistant may do"
+          onClick={() => setOpen(!open)}
+        >
+          <Info size={13} />
+        </button>
+      </div>
+      {open ? (
+        <ul className={styles.scopeDetails}>
+          {SCOPE_DETAILS.map((line) => (
+            <li key={line}>{line}</li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
 
 export function AssistantIsland(): JSX.Element | null {
   const open = useAssistant((s) => s.open);
@@ -163,6 +196,23 @@ function ChatTab(): JSX.Element {
   const events = useMemo(() => [...stored, ...live], [stored, live]);
   const interrupted = !busy && active?.state === 'interrupted' && live.length === 0;
   const assistant = useAssistant.getState();
+  // Tool calls fold into compact lines and "N steps" groups (`timelineRows.ts`).
+  const groupsRef = useRef(new Map<string, CommandRow[]>());
+  const prepareRows = useCallback(
+    (rows: readonly AgentTimelineRow[]) => foldToolRows(rows, groupsRef.current),
+    [],
+  );
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
+  const toggle = useCallback(
+    (id: string) =>
+      setExpanded((current) => {
+        const next = new Set(current);
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+        return next;
+      }),
+    [],
+  );
 
   return (
     <div className={styles.chatHost}>
@@ -178,7 +228,7 @@ function ChatTab(): JSX.Element {
           network: 'providerOnly',
           workspaceScopeLabel: 'Open project',
         }}
-        scopeItems={SCOPE}
+        scopeBar={<ScopeLine />}
         emptyMessage="Describe the part you need — for example “an enclosure for a Raspberry Pi 5 with ventilation slots”. The assistant builds it as normal History steps you can edit."
         placeholder="Describe a part or a change… (Ctrl+Enter sends)"
         notConfiguredMessage="No agent CLI found. Install Claude Code, Codex or OpenCode and sign in with your own account, then refresh."
@@ -228,24 +278,15 @@ function ChatTab(): JSX.Element {
             ))}
           </div>
         }
-        renderRowExtra={(row: AgentTimelineRow) => {
-          const list = images[row.id];
-          if (!list || list.length === 0) return null;
-          return (
-            <div className={styles.thumbs}>
-              {list.map((image, index) => (
-                <img
-                  key={index}
-                  src={image.data}
-                  alt={`${image.label} result`}
-                  className={styles.thumb}
-                  width={160}
-                  height={120}
-                />
-              ))}
-            </div>
-          );
-        }}
+        prepareRows={prepareRows}
+        renderRow={(row, fallback) =>
+          renderAssistantRow(row, fallback, {
+            groups: groupsRef.current,
+            images,
+            expanded,
+            toggle,
+          })
+        }
         onSelectProvider={(next) => assistant.selectProvider(next)}
         onSend={(prompt) => void assistant.send(prompt)}
         onInterrupt={() => void assistant.interrupt()}

@@ -33,6 +33,30 @@
   }
 }
 
+/* Tablet layout: the wider tool column and Items (82 px + 272 px) push it right. */
+:global(html[data-hc-touch]) .island {
+  left: 366px;
+  width: min(440px, calc(100vw - 660px));
+}
+
+/* Left-handed: tools and Items sit on the right, so the island mirrors to their left. */
+:global(html[data-hc-hand='left']) .island {
+  left: auto;
+  right: 352px;
+}
+:global(html[data-hc-touch][data-hc-hand='left']) .island {
+  right: 366px;
+}
+@media (max-width: 1100px) {
+  :global(html[data-hc-hand='left']) .island,
+  :global(html[data-hc-touch][data-hc-hand='left']) .island {
+    right: 68px;
+  }
+  :global(html[data-hc-touch]) .island {
+    width: min(440px, calc(100vw - 110px));
+  }
+}
+
 .header {
   display: flex;
   align-items: center;
@@ -507,4 +531,288 @@
   .running {
     animation: none;
   }
+}
+
+/* ---- compact timeline rows (TimelineRows.tsx) ------------------------------ */
+
+.step,
+.group {
+  box-sizing: border-box;
+  max-width: 760px;
+  margin: 0 auto;
+}
+
+.stepNested {
+  padding-left: 18px;
+}
+
+.stepLine {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 26px;
+  padding: 2px 6px;
+  font: inherit;
+  text-align: left;
+  color: var(--hc-fg-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--hc-radius-sm);
+  cursor: pointer;
+}
+
+.stepLine:hover:not(:disabled) {
+  color: var(--hc-fg-default);
+  background: var(--hc-bg-island-hi);
+}
+
+.stepLine:disabled {
+  cursor: default;
+}
+
+.stepLine:focus-visible {
+  outline: 2px solid var(--hc-focus-ring);
+  outline-offset: 1px;
+}
+
+.chevron,
+.chevronOpen {
+  flex-shrink: 0;
+  color: var(--hc-fg-subtle);
+  transition: transform 120ms ease;
+}
+
+.chevronOpen {
+  transform: rotate(90deg);
+}
+
+.stepLine:disabled .chevron {
+  visibility: hidden;
+}
+
+.stepIcon {
+  flex-shrink: 0;
+  color: var(--hc-fg-subtle);
+}
+
+.stepText {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.group > .stepLine .stepText {
+  color: var(--hc-fg-default);
+}
+
+.stepSummary {
+  color: var(--hc-fg-muted);
+}
+
+.doneMark {
+  flex-shrink: 0;
+  color: var(--hc-success);
+}
+
+.failMark {
+  flex-shrink: 0;
+  color: var(--hc-error);
+}
+
+.spin {
+  flex-shrink: 0;
+  color: var(--hc-accent-base);
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.stepError {
+  margin: 2px 0 2px 25px;
+  color: var(--hc-error-fg);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.stepDetail {
+  max-height: 220px;
+  margin: 4px 0 4px 25px;
+  padding: 6px 8px;
+  overflow: auto;
+  color: var(--hc-fg-default);
+  background: var(--hc-bg-island-lo);
+  border: 1px solid var(--hc-border-subtle);
+  border-radius: var(--hc-radius-sm);
+  font: 10px/1.4 var(--hc-font-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.groupSteps {
+  margin-top: 2px;
+}
+
+.step .thumbs,
+.group .thumbs {
+  margin: 4px 0 2px 25px;
+}
+
+.approvalLine,
+.noteLine {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 4px 6px;
+  color: var(--hc-fg-muted);
+  line-height: 1.4;
+}
+
+.approvalLine svg,
+.noteLine svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.approvalLine[data-state='pending'] {
+  color: var(--hc-warning-fg);
+}
+
+.approvalLine[data-state='pending'] svg {
+  color: var(--hc-warning);
+}
+
+.approvalLine strong {
+  font-weight: 600;
+}
+
+.noteLine[data-tone='warning'] svg {
+  color: var(--hc-warning);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spin {
+    animation: none;
+  }
+  .chevron,
+  .chevronOpen {
+    transition: none;
+  }
+}
+
+/* ---- the permission line (replaces the shared chip row) -------------------- */
+
+.chatHost [aria-label='Agent permissions'] {
+  display: block;
+  padding: 4px 8px 4px 10px;
+  overflow: visible;
+  font: 11px/1.4 var(--hc-font-ui);
+  color: var(--hc-fg-muted);
+}
+
+.scopeSummary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.scopeSummary p {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scopeInfo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  color: var(--hc-fg-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--hc-radius-sm);
+  cursor: pointer;
+}
+
+.scopeInfo:hover,
+.scopeInfo[aria-expanded='true'] {
+  color: var(--hc-fg-strong);
+  background: var(--hc-bg-island-hi);
+  border-color: var(--hc-border-default);
+}
+
+.scopeInfo:focus-visible {
+  outline: 2px solid var(--hc-focus-ring);
+  outline-offset: 1px;
+}
+
+.scopeDetails {
+  margin: 4px 0 2px;
+  padding-left: 22px;
+  color: var(--hc-fg-default);
+}
+
+/* ---- approval bar of the shared panel: clear buttons ------------------------ */
+
+.chatHost [aria-label='Pending agent approval'] button {
+  min-height: 30px;
+  padding: 0 14px;
+}
+
+/* ---- tablet layout: finger-sized targets ----------------------------------- */
+
+:global(html[data-hc-touch]) .iconButton {
+  width: 40px;
+  height: 40px;
+}
+:global(html[data-hc-touch]) .tab,
+:global(html[data-hc-touch]) .tabActive,
+:global(html[data-hc-touch]) .textButton,
+:global(html[data-hc-touch]) .primaryButton,
+:global(html[data-hc-touch]) .addReference,
+:global(html[data-hc-touch]) .notice button {
+  min-height: 40px;
+}
+:global(html[data-hc-touch]) .sessionSelect,
+:global(html[data-hc-touch]) .sessionName,
+:global(html[data-hc-touch]) .search {
+  height: 40px;
+}
+:global(html[data-hc-touch]) .stepLine {
+  min-height: 40px;
+}
+:global(html[data-hc-touch]) .scopeInfo {
+  width: 36px;
+  height: 36px;
+}
+:global(html[data-hc-touch]) .chip {
+  height: 32px;
+}
+:global(html[data-hc-touch]) .chip button {
+  padding: 8px;
+}
+:global(html[data-hc-touch]) .chatHost [aria-label='Pending agent approval'] button,
+:global(html[data-hc-touch]) .chatHost form button,
+:global(html[data-hc-touch]) .chatHost [aria-label='Local agent harnesses'] button {
+  min-height: 44px;
+  min-width: 44px;
+}
+:global(html[data-hc-touch]) .skillItem,
+:global(html[data-hc-touch]) .skillItemActive {
+  min-height: 44px;
 }
