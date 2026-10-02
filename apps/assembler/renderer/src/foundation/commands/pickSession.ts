@@ -327,10 +327,10 @@ const PLANS: Record<string, PickPlan> = {
     label: 'Split Body',
     steps: [
       {
-        role: 'Body',
-        prompt: 'Click the body to split.',
+        role: 'Bodies',
+        prompt: 'Click the bodies to split, then Next.',
         min: 1,
-        max: 1,
+        max: Infinity,
         accept: anyBody,
         normalize: asBody,
       },

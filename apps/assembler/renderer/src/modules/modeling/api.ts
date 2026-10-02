@@ -156,10 +156,11 @@ const BODY_KIND_SCHEMAS: Record<string, FeatureKindSpec> = {
   split: {
     label: 'Split',
     summary:
-      'Splits a body into two bodies: by a plane (the positive side becomes new) or, with `profile`, by a closed sketch profile/planar face projected through the body (the inside becomes new); `keepOriginal` keeps the body and makes both parts new bodies.',
+      "Splits a body into two bodies: by a plane (the positive side becomes new) or, with `profile`, by a closed sketch profile/planar face projected through the body (the inside becomes new); `keepOriginal` keeps the body and makes both parts new bodies. `bodyIds` splits more bodies with the same element in one step (each must be cut; their new parts are `body:<step>:<100 + 2k>`, kept originals' parts `…:<101 + 2k>`).",
     params: schemaObject(
       {
         bodyId: schemaString,
+        bodyIds: { type: 'array', items: schemaString, minItems: 1 },
         plane: schemaRef('SketchPlane'),
         profile: schemaRef('ExtrudeProfile'),
         keepOriginal: { type: 'boolean', default: false },

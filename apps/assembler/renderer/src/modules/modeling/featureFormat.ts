@@ -218,6 +218,7 @@ export function validateModelingFeature(r: Rec, path: string, h: FormatHelpers):
     }
     case 'split':
       str('bodyId');
+      if (r.bodyIds !== undefined) stringList('bodyIds');
       plane(r.plane, `${path}.plane`);
       if (r.profile !== undefined) profile(r.profile, `${path}.profile`);
       if (r.keepOriginal !== undefined) bool('keepOriginal');

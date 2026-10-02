@@ -36,6 +36,7 @@ import {
   type RotateAxisFeature,
   type ScaleFeature,
   type SplitFeature,
+  splitBodyIds,
   type TransformFeature,
   type TranslateFeature,
 } from '../features.js';
@@ -378,7 +379,22 @@ const GRID_ID_BASE = 1_000_000;
 // ---- Split -------------------------------------------------------------------------
 
 export function applySplit(feature: SplitFeature, ctx: ReplayContextLike, kit: FeatureKit): void {
-  const body = bodyOrFail(kit, ctx, feature.bodyId);
+  const ids = splitBodyIds(feature);
+  ids.forEach((bodyId, k) => splitOne(feature, ctx, kit, bodyOrFail(kit, ctx, bodyId), k));
+}
+
+/**
+ * Splits one body of the step (index `k`): the first keeps the ids it always
+ * had (`body:<step>` for the positive part, `…:0` for the kept-original
+ * negative part); further bodies get `…:<100 + 2k>` and `…:<101 + 2k>`.
+ */
+function splitOne(
+  feature: SplitFeature,
+  ctx: ReplayContextLike,
+  kit: FeatureKit,
+  body: BodyStateLike,
+  k: number,
+): void {
   const [min, max] = body.shape.boundingBox.bounds as [Vec3, Vec3];
   const centre: Vec3 = scale(add(min, max), 0.5);
   const what = feature.profile ? 'profile' : 'plane';
@@ -405,7 +421,7 @@ export function applySplit(feature: SplitFeature, ctx: ReplayContextLike, kit: F
         part.history,
         [{ shape: body.shape, faces: body.faces }],
         ctx.featureOrder,
-        () => `${feature.id}:cut`,
+        () => `${feature.id}:cut${k === 0 ? '' : `:${k}`}`,
       );
     const positiveFaces = keyed(positive);
     const negativeFaces = keyed(negative);
@@ -414,7 +430,7 @@ export function applySplit(feature: SplitFeature, ctx: ReplayContextLike, kit: F
       kit.addBody(
         ctx,
         {
-          id: extraBodyId(feature.id, 0),
+          id: extraBodyId(feature.id, k === 0 ? 0 : 101 + 2 * k),
           name: `${body.name} (split 1)`,
           createdBy: feature.id,
           shape: negative.shape,
@@ -430,7 +446,7 @@ export function applySplit(feature: SplitFeature, ctx: ReplayContextLike, kit: F
     kit.addBody(
       ctx,
       {
-        id: bodyIdFor(feature.id),
+        id: k === 0 ? bodyIdFor(feature.id) : extraBodyId(feature.id, 100 + 2 * k),
         name: feature.keepOriginal ? `${body.name} (split 2)` : `${body.name} (split)`,
         createdBy: feature.id,
         shape: positive.shape,
@@ -443,7 +459,6 @@ export function applySplit(feature: SplitFeature, ctx: ReplayContextLike, kit: F
     negative.history.delete();
   }
 }
-
 /** The half-space on the plane's positive side: a large prism standing on the plane. */
 function halfSpace(
   kit: FeatureKit,

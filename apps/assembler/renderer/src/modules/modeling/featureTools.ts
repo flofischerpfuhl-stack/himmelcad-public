@@ -123,6 +123,8 @@ export interface PatternDraft {
 export interface SplitDraft {
   kind: 'split';
   bodyId: string;
+  /** More bodies split by the same element (a click on another body adds or removes it). */
+  bodyIds?: string[];
   plane: PlaneRef;
   /** Split with a sketch profile (projected through the body) instead of the plane. */
   profile?: ProfileRef;
@@ -631,12 +633,22 @@ export function createModelingDraft(
     }
     case 'split': {
       const bodies = selected(ctx.selection, 'body');
-      if (bodies.length !== 1)
-        return { ok: false, reason: 'Select one body to split (and optionally a planar face).' };
+      if (bodies.length === 0)
+        return { ok: false, reason: 'Select the bodies to split (and optionally a planar face).' };
       const bodyId = bodies[0]!.bodyId;
+      const more = bodies.slice(1).map((b) => b.bodyId);
       const face = selectedFaceRefs(ctx).find(isPlanar);
-      if (face)
-        return { ok: true, draft: { kind: 'split', bodyId, plane: { kind: 'face', face } } };
+      if (face) {
+        return {
+          ok: true,
+          draft: {
+            kind: 'split',
+            bodyId,
+            ...(more.length > 0 ? { bodyIds: more } : {}),
+            plane: { kind: 'face', face },
+          },
+        };
+      }
       // A selected sketch profile is the split element (projected through the body).
       const sketchItem = selected(ctx.selection, 'sketchProfile')[0];
       const profile = sketchItem
@@ -654,6 +666,7 @@ export function createModelingDraft(
         draft: {
           kind: 'split',
           bodyId,
+          ...(more.length > 0 ? { bodyIds: more } : {}),
           plane: {
             kind: 'plane',
             plane: PLANE_OF_AXIS[largest],
@@ -863,6 +876,12 @@ export function acceptModelingPick(
       if (pick.kind === 'sketchProfile') {
         return { ...draft, profile: sketchProfileRef(pick.featureId, pick.regionKey) };
       }
+      // A whole body (double click): split it too, or not any more (the first stays).
+      if (pick.kind === 'body' && pick.bodyId !== draft.bodyId) {
+        const bodyIds = toggle(draft.bodyIds ?? [], pick.bodyId, (a, b) => a === b, false);
+        const { bodyIds: _old, ...rest } = draft;
+        return bodyIds.length > 0 ? { ...rest, bodyIds } : rest;
+      }
       if (faceRef && isPlanar(faceRef)) {
         const { profile: _profile, ...rest } = draft;
         return { ...rest, plane: { kind: 'face', face: faceRef } };
@@ -1051,6 +1070,7 @@ export function modelingDraftToFeature(
         ...common,
         kind: 'split',
         bodyId: draft.bodyId,
+        ...(draft.bodyIds?.length ? { bodyIds: draft.bodyIds } : {}),
         plane: draft.plane,
         ...(draft.profile ? { profile: draft.profile } : {}),
         ...(draft.keepOriginal ? { keepOriginal: true } : {}),
@@ -1145,9 +1165,11 @@ export function modelingDraftMeta(draft: ModelingDraft): DraftMeta {
       return {
         label: 'Split Body',
         shortcut: '',
-        prompt: draft.profile
-          ? 'Split with the sketch profile (through the body). Click a planar face to split along its plane instead.'
-          : 'Drag the plane or type its offset; click a planar face or a sketch profile to split with it.',
+        prompt: `${draft.bodyIds?.length ? `${plural(draft.bodyIds.length + 1, 'body', 'bodies')}. ` : ''}${
+          draft.profile
+            ? 'Split with the sketch profile (through the body). Click a planar face to split along its plane instead.'
+            : 'Drag the plane or type its offset; click a planar face or a sketch profile to split with it.'
+        } Double-click a body to split it too.`,
       };
     case 'rotateAxis':
       return {
@@ -1768,7 +1790,7 @@ export function modelingDraftHandles(
       const plane = planeOf(evaluation, draft.plane);
       const centre = bodyCentre(
         evaluation,
-        draft.kind === 'mirror' ? draft.bodyIds : [draft.bodyId],
+        draft.kind === 'mirror' ? draft.bodyIds : [draft.bodyId, ...(draft.bodyIds ?? [])],
       );
       if (!plane || !centre || draft.plane.kind !== 'plane') return [];
       // A profile split has no plane to drag.
@@ -2091,7 +2113,10 @@ export function modelingDraftGuides(
     const plane = planeOf(evaluation, draft.plane);
     const bounds = unionBounds(
       evaluation.bodies.filter((b) =>
-        (draft.kind === 'mirror' ? draft.bodyIds : [draft.bodyId]).includes(b.id),
+        (draft.kind === 'mirror'
+          ? draft.bodyIds
+          : [draft.bodyId, ...(draft.bodyIds ?? [])]
+        ).includes(b.id),
       ),
     );
     if (plane && bounds) {
@@ -2119,6 +2144,7 @@ export function modelingDraftModifiedBodyIds(draft: ModelingDraft): string[] {
     case 'rotateAxis':
       return draft.copy ? [] : draft.bodyIds;
     case 'split':
+      return [draft.bodyId, ...(draft.bodyIds ?? [])];
     case 'align':
       return [draft.bodyId];
     default:

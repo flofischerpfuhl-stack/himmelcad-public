@@ -305,3 +305,30 @@ void test('Move/Rotate: an unlinked copy keeps its geometry when the original ch
   await store.getState().whenSettled();
   assert.equal(store.getState().features.length, before, 'a cancelled unlinked copy adds nothing');
 });
+
+// ---- Split Body with several bodies (MOD-12) ------------------------------------------------------
+
+void test('Split Body: two selected bodies are split in one step; a double-clicked body joins', async () => {
+  // In a row along Y: the default plane (YZ through the first body's centre) cuts them all.
+  await load([cube('a', [0, 0, 0], 10), cube('b', [0, 20, 0], 10), cube('c', [0, 40, 0], 10)]);
+  store.getState().setSelection([
+    { kind: 'body', bodyId: 'body:a' },
+    { kind: 'body', bodyId: 'body:b' },
+  ]);
+  findCommand('tools.split')!.run(store.getState());
+  const d = draft('split');
+  assert.deepEqual(d.bodyIds, ['body:b']);
+  store
+    .getState()
+    .updateFeatureDraft((current, evaluation) =>
+      acceptPick(current, { kind: 'body', bodyId: 'body:c' }, evaluation),
+    );
+  assert.deepEqual(draft('split').bodyIds, ['body:b', 'body:c']);
+  store.getState().commit();
+  await store.getState().whenSettled();
+  assert.deepEqual(store.getState().evaluation.errors, {});
+  assert.equal(store.getState().evaluation.bodies.length, 6, 'a, b and c split');
+  store.getState().undo();
+  await store.getState().whenSettled();
+  assert.equal(store.getState().evaluation.bodies.length, 3, 'one undo step');
+});

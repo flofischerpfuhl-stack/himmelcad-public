@@ -74,6 +74,14 @@ class HelperTests(unittest.TestCase):
         self.doc.align(rim, "Z", center=False)
         self.assertEqual(self.params()["to"], {"kind": "axis", "axis": {"kind": "world", "axis": "Z"}})
 
+    def test_split_several_bodies(self) -> None:
+        a, b = Body(self.doc, "body:a"), Body(self.doc, "body:b")
+        self.doc.split([a, b], ("XY", 4))
+        self.assertEqual(self.params()["bodyId"], "body:a")
+        self.assertEqual(self.params()["bodyIds"], ["body:b"])
+        self.doc.split(a)
+        self.assertNotIn("bodyIds", self.params())
+
     def test_copy_unlinked(self) -> None:
         copy = self.doc.copy_unlinked(Body(self.doc, "body:a"), 20, rz=90, pivot=(0, 0, 0))
         self.assertEqual(self.transport.requests[-1][0], "body.copyUnlinked")

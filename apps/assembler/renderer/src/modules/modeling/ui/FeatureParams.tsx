@@ -474,6 +474,9 @@ export function ModelingFeatureParams({
           ) : (
             planeOffset(feature.plane)
           )}
+          {feature.bodyIds?.length ? (
+            <span className={styles.paramNote}>{feature.bodyIds.length + 1} bodies split</span>
+          ) : null}
           <div>
             <span className={styles.paramLabel}>Original</span>
             <Select

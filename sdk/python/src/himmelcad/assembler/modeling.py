@@ -1070,11 +1070,15 @@ class Document(PrintToolsMixin, InteropMixin):
             pattern["uniform"] = True
         return self._feature(self.client.create_feature("pattern", {"bodyIds": [b.id for b in items], "pattern": pattern}, name=name))
 
-    def split(self, body: Body, plane: str | Face | Datum | tuple[str, float] = "XY", *, profile: Sketch | MirroredSketch | Face | None = None, regions: Sequence[str] | None = None, keep: bool = False, name: str | None = None) -> Feature:
+    def split(self, body: Body | Iterable[Body], plane: str | Face | Datum | tuple[str, float] = "XY", *, profile: Sketch | MirroredSketch | Face | None = None, regions: Sequence[str] | None = None, keep: bool = False, name: str | None = None) -> Feature:
         """Splits ``body`` into two bodies by ``plane`` (the positive side becomes ``body:<feature id>``)
         or by a sketch ``profile`` projected through the body (the inside becomes new); ``keep=True``
-        keeps the original and makes both parts new bodies."""
-        params: dict[str, Any] = {"bodyId": body.id, "plane": self._plane_ref(plane)}
+        keeps the original and makes both parts new bodies. Several bodies split with the same
+        element in one step (each must be cut)."""
+        items = [body] if isinstance(body, Body) else list(body)
+        params: dict[str, Any] = {"bodyId": items[0].id, "plane": self._plane_ref(plane)}
+        if len(items) > 1:
+            params["bodyIds"] = [b.id for b in items[1:]]
         if profile is not None:
             if isinstance(profile, Face):
                 params["profile"] = {"kind": "face", "face": profile.ref}

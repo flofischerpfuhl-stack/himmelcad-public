@@ -368,3 +368,34 @@ void test('Align: a ball centre onto an axis and onto a centre, a cone axis onto
   near((c.min[0] + c.max[0]) / 2, 0, 1e-5, 'cone axis on Z (x)');
   near((c.min[1] + c.max[1]) / 2, 0, 1e-5, 'cone axis on Z (y)');
 });
+
+// ---- Split several bodies in one step (MOD-12) -------------------------------------------------
+
+void test('Split: one plane cuts several bodies in one step; ids per body; every body must be cut', async () => {
+  const bodies = [...box('a', 0, 0, 10, 10, 10), ...box('b', 20, 0, 10, 10, 10)];
+  const split = (extra: object) =>
+    ({
+      ...base('s'),
+      kind: 'split',
+      bodyId: 'body:a',
+      bodyIds: ['body:b'],
+      plane: { kind: 'plane', plane: 'XY', offset: 4 },
+      ...extra,
+    }) as unknown as Feature;
+  const result = await evaluate([...bodies, split({})]);
+  noErrors(result);
+  near(only(result, 'body:a').volume, 400, 1e-6, 'a below');
+  near(only(result, 'body:s').volume, 600, 1e-6, 'a above');
+  near(only(result, 'body:b').volume, 400, 1e-6, 'b below');
+  near(only(result, 'body:s:102').volume, 600, 1e-6, 'b above');
+  const kept = await evaluate([...bodies, split({ keepOriginal: true })]);
+  noErrors(kept);
+  assert.equal(kept.bodies.length, 6, 'both originals kept, four parts');
+  near(only(kept, 'body:s:103').volume, 400, 1e-6, "b's kept-original part");
+  const miss = await evaluate([
+    ...bodies,
+    ...box('c', 40, 0, 10, 10, 3),
+    split({ bodyIds: ['body:b', 'body:c'] }),
+  ]);
+  assert.match(miss.errors['s'] ?? '', /does not cut "Body 3"/);
+});

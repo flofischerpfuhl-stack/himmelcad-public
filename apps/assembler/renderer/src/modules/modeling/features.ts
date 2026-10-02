@@ -165,10 +165,20 @@ export interface PatternFeature extends FeatureBase {
 export interface SplitFeature extends FeatureBase {
   kind: 'split';
   bodyId: string;
+  /**
+   * More bodies split by the same element in this step (Shapr3D: "one or
+   * several bodies"); each must be cut. Absent: `bodyId` only.
+   */
+  bodyIds?: string[];
   plane: PlaneRef;
   /** Split with this profile instead of `plane`. */
   profile?: ProfileRef;
   keepOriginal?: boolean;
+}
+
+/** Every body a Split step cuts, `bodyId` first. */
+export function splitBodyIds(feature: Pick<SplitFeature, 'bodyId' | 'bodyIds'>): string[] {
+  return [...new Set([feature.bodyId, ...(feature.bodyIds ?? [])])];
 }
 
 /**
