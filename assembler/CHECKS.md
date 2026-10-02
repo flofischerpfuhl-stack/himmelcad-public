@@ -27,7 +27,7 @@ in the way of a user who models by hand and knows what they are doing.
 
 | Principle                 | What the app does                                                                                                                                                                                                                                                                                                                                                                                                                             | Evidence                                                                                                                                                        |
 | ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Opt-in only**           | A document has no checks until the user or an agent adds one; there are no default checks and no default thresholds on checks. Clearance and overlap findings appear only inside the Printability analysis (an opt-in mode, `P`) and in Measure when the user measures two bodies — never while modelling.                                                                                                                                    | `test/checks/checks.test.ts` "opt-in" (a new document with overlapping bodies has no checks and no warning; a file without checks writes no field)                                                          |
+| **Opt-in only**           | A document has no checks until the user or an agent adds one; there are no default checks and no default thresholds on checks. Clearance and overlap findings appear only inside the Printability analysis (an opt-in mode, `P`) and in Measure when the user measures two bodies — never while modelling.                                                                                                                                    | `test/checks/checks.test.ts` "opt-in" (a new document with overlapping bodies has no checks and no warning; a file without checks writes no field)              |
 | **Never blocking**        | A failing check never refuses a commit, never opens a toast or dialog and never takes the focus. Results only update the Checks panel and the badge. The background run stops for edits (tools, drags, evaluations) and resumes afterwards.                                                                                                                                                                                                   | `checks.test.ts` "background runner … passive" (no notice, panel stays closed, no run while a tool is active); `printClearance.test.ts` (findings never notify) |
 | **Dismissable**           | Every Printability finding has **Ignore here** (overlaps: **Mark as intended**) — stored in the document (`printIgnored`) per finding, i.e. per body pair or face — and **Don't show this type** — a user preference (`hiddenPrintFindings`). Both are reversible: the panel lists what it leaves out ("n ignored in this document · Show · Restore all", "Overlaps hidden · Show again"), Settings › Checks and analysis › "Show all again". | `printClearance.test.ts` (ignore → restore, hide → show, preference parsing), `checks.test.ts` (`printIgnored` round trip)                                      |
 | **Unobtrusive status**    | Settings › Checks and analysis › "Check status in the workspace: Badge / Off". Badge (default): the Checks toggle in the left dock shows a dot and passed/total when the document has checks — grey while out of date, red when one fails, green when all pass. Off: a plain toggle.                                                                                                                                                          | UI (screenshots), `ChecksModeButton.tsx`                                                                                                                        |
@@ -215,10 +215,33 @@ the list through `addStoredCheck` / `commitStoredChecks`
 
 ## Performance
 
-See the Block 9 bench rows (`bench:interactive` "f checks",
-`bench:kernel` clearance rows) in the stream report and
-[ROBUSTNESS.md](ROBUSTNESS.md); measured on DESKTOP-BNB2PBA (Ryzen 3 PRO
-3200G).
+Measured 2026-10-02 on DESKTOP-BNB2PBA (Ryzen 3 PRO 3200G; the machine was
+shared with another stream's builds, CPU load 47–88 %), medians of five
+interleaved A/B rounds against `1454170f`
+(`D:\AgentWork\HimmelCAD-Assembler\bench\b9-checks\ab-result.md`):
+
+| `bench:interactive` "f checks"                                                               |   ms |
+| -------------------------------------------------------------------------------------------- | ---: |
+| evaluate 6 checks on the enclosure (2 clearance, distance, volume, count, length), first run | 43.4 |
+| the same again, nothing changed (all reused)                                                 |  1.0 |
+| fillet drag step with 4 checks and the runner on (c without: 24.5)                           | 21.7 |
+| Fillet Done with the runner on                                                               | 26.5 |
+| background re-run after the commit (incremental)                                             |  2.7 |
+
+| `bench:kernel` clearance (cached document)             | Pairs |  ms |
+| ------------------------------------------------------ | ----: | --: |
+| features-branch part: one body pair                    |     1 | 9.2 |
+| every pair, with overlap volumes                       |    21 | 177 |
+| every pair, distance only                              |    21 | 129 |
+| 32-block plate, 0.25 mm gaps, pairs closer than 0.3 mm |    52 | 662 |
+
+The editing rows (previews, drags, Done) are within the gate. Five
+full-evaluation rows of `bench:kernel` and one engrave commit came out
+11–16 % slower in the medians although this stream does not touch the
+evaluation path (only an added `measureClearance` method); per round the
+sign alternates (e.g. synthetic plate full 3152 vs 3515 ms in round 4,
+3895 vs 3135 ms in round 5) and one side's spread exceeds 2×, i.e. load
+noise — to be re-measured on a quiet machine.
 
 ## Limits
 
