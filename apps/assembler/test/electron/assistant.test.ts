@@ -46,6 +46,10 @@ async function featureCount(status: Status): Promise<number> {
 }
 
 async function send(window: Page, prompt: string): Promise<void> {
+  // The previous turn must have ended (Send is refused while one runs).
+  await window
+    .getByRole('button', { name: 'Interrupt' })
+    .waitFor({ state: 'detached', timeout: 60_000 });
   const field = window.getByLabel('Agent prompt');
   await field.fill(prompt);
   await field.press('Control+Enter');
