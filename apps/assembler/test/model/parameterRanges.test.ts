@@ -40,7 +40,11 @@ import {
   HEADLESS_CAPABILITIES,
 } from '../../renderer/src/interface/agent-api/session.js';
 import { planParameterChange } from '../../renderer/src/modules/parameters/parameterEdits.js';
-import { MAX_SWEEP_SAMPLES, planSweep } from '../../renderer/src/modules/parameters/sweep.js';
+import {
+  MAX_SWEEP_SAMPLES,
+  planSweep,
+  runSweep,
+} from '../../renderer/src/modules/parameters/sweep.js';
 import { setSketchDimension } from '../../renderer/src/modules/sketching/featureOps.js';
 import { CHECKS_DOCUMENT_RUNNER } from '../../renderer/src/modules/checks/documentRunner.js';
 import { createNodeKernelAdapter } from '../kernel/nodeKernel.js';
@@ -569,6 +573,47 @@ void test('sweep with the checks module: a clearance check passes at min and fai
   store.getState().commitChecks([]);
 });
 
+void test('concurrent sweeps (Test range and an agent) take turns on the background channel', async () => {
+  // The kernel's background channel keeps one waiting request (a newer one supersedes it), so
+  // two sweeps must never have samples outstanding at the same time.
+  const parameters: Parameter[] = [{ id: 'w', name: 'w', unit: 'mm', value: 2, min: 1, max: 3 }];
+  const plan = planSweep(parameters, {
+    parameters: [{ parameter: 'w' }],
+    mode: 'samples',
+    samples: 4,
+  });
+  assert.ok(plan.ok);
+  let outstanding = 0;
+  let overlaps = 0;
+  const order: string[] = [];
+  const services = (name: string) => ({
+    evaluate: async () => {
+      outstanding += 1;
+      if (outstanding > 1) overlaps += 1;
+      order.push(name);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      outstanding -= 1;
+      return { kind: 'done' as const, result: { bodies: [], errors: {} } as never };
+    },
+  });
+  const doc = { features: [], parameters };
+  const [a, b] = await Promise.all([
+    runSweep(doc, plan, services('ui')),
+    runSweep(doc, plan, services('agent')),
+  ]);
+  assert.equal(overlaps, 0, 'never two samples on the kernel at once');
+  assert.ok(!a.cancelled && !b.cancelled);
+  assert.equal(a.samples.length, plan.samples.length);
+  assert.equal(b.samples.length, plan.samples.length);
+  assert.ok(order.includes('ui') && order.includes('agent'));
+  // A sweep cancelled while it waits for its turn does not start the sample.
+  const signal = { aborted: false };
+  const waiting = runSweep(doc, plan, { ...services('late'), signal });
+  signal.aborted = true;
+  const late = await waiting;
+  assert.ok(late.cancelled);
+  assert.ok(!order.includes('late'));
+});
 void test('.hcasm: parameter ranges round-trip; malformed ranges are refused', () => {
   const parameters: Parameter[] = [
     { id: 'p1', name: 'wall', unit: 'mm', value: 2, min: 1, max: 4, step: 0.2 },

@@ -259,6 +259,25 @@ function clock(): number {
   return typeof performance !== 'undefined' ? performance.now() : Date.now();
 }
 
+/**
+ * One sweep sample on the kernel at a time, across every sweep of the
+ * process. The kernel's `background` channel keeps one waiting request and a
+ * newer one supersedes it, so two sweeps at once (Test range in the app and
+ * `parameters.sweep` from an agent) would cancel each other's samples
+ * whenever both wait behind a document evaluation. Samples of concurrent
+ * sweeps take turns instead (first come, first served).
+ */
+let backgroundSlot: Promise<void> = Promise.resolve();
+
+function inBackgroundSlot<T>(run: () => Promise<T>): Promise<T> {
+  const result = backgroundSlot.then(run);
+  backgroundSlot = result.then(
+    () => undefined,
+    () => undefined,
+  );
+  return result;
+}
+
 function activeSteps(features: Feature[], rollbackBefore: string | null | undefined): Feature[] {
   if (!rollbackBefore) return features;
   const index = features.findIndex((f) => f.id === rollbackBefore);
@@ -333,7 +352,12 @@ export async function runSweep(
       continue;
     }
     const features = activeSteps([...current.features], services.rollbackBefore);
-    const outcome = await services.evaluate(features);
+    // Cancelled while waiting for the slot: do not start the sample.
+    const outcome = await inBackgroundSlot(() =>
+      services.signal?.aborted
+        ? Promise.resolve({ kind: 'cancelled' as const })
+        : services.evaluate(features),
+    );
     if (outcome.kind === 'cancelled') {
       cancelled = true;
       break;
