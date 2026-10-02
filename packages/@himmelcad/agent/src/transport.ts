@@ -40,6 +40,8 @@ export type HostHarnessRequest =
       systemPrompt: string;
       experimentalApi: boolean;
       initialization?: readonly HostProtocolMessage[];
+      /** Continue a provider thread this host opened before (optional; hosts may ignore it). */
+      resumeThreadId?: string;
     }
   | { kind: 'sendTurn'; sessionId: string; turnId: string; prompt: string }
   | { kind: 'interrupt'; sessionId: string; turnId?: string }

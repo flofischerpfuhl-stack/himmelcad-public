@@ -270,6 +270,10 @@
   border-top: 1px solid var(--hc-border-default);
   background: var(--hc-bg-island-lo);
 }
+.composerAccessory {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
 .composer textarea {
   min-height: 44px;
   max-height: 150px;

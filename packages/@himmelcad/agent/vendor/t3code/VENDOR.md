@@ -24,3 +24,8 @@ updates, telemetry, remotes, persistence, terminal manager or application UI.
 | `apps/web/src/components/chat/MessagesTimeline.tsx` | `src/VirtualAgentTimeline.tsx`, `src/virtualization.ts` | List-owner anchoring contract rewritten without Tailwind, repository UI or upstream state. |
 
 No other upstream file is incorporated.
+
+Himmel:CAD additions after the import (own code, not upstream): `startThread`
+accepts an optional `resumeThreadId` (2026-10-02, for hosts that continue a
+persisted provider thread); `src/expand.ts` splits Claude `stream-json` and
+Codex `exec --json` lines into normalizer payloads.

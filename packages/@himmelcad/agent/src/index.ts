@@ -2,6 +2,7 @@ export * from './events.js';
 export * from './queue.js';
 export * from './transport.js';
 export * from './normalize.js';
+export * from './expand.js';
 export * from './drivers.js';
 export * from './systemPrompt.js';
 export * from './timeline.js';

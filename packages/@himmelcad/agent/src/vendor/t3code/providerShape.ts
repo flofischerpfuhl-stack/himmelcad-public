@@ -37,7 +37,15 @@ export interface AgentHarnessAdapter {
   readonly mode: string;
   readonly diagnostics: BoundedDiagnosticLog;
   readonly events: BoundedQueue<NormalizedAgentEvent>;
-  startThread(input: { systemPrompt: string }): Promise<{ threadId: string }>;
+  /**
+   * `resumeThreadId`: a provider thread id this host returned earlier (a
+   * persisted session); the host continues it if it still holds the binding,
+   * else it opens a fresh thread. Hosts without resume ignore it.
+   */
+  startThread(input: {
+    systemPrompt: string;
+    resumeThreadId?: string;
+  }): Promise<{ threadId: string }>;
   sendTurn(input: { threadId: string; turnId: string; prompt: string }): Promise<void>;
   interrupt(input: { threadId: string; turnId?: string }): Promise<void>;
   resume(input: { threadId: string; turnId?: string }): Promise<void>;
