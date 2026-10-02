@@ -75,6 +75,18 @@ Bytes. Details und offene Punkte: [WEB.md](WEB.md); Hosting-Anforderungen:
 deployt), Test auf einem echten iPad, Linux- und macOS-Desktop-Builds (nur
 Schritte dokumentiert, WEB.md §9).
 
+Stand 2026-10-02 (Block 10, Strang „release“, `asm/b10-release-20261002`):
+Vorschau deployt als eigenes Cloudflare-Workers-Projekt `himmelcad-assembler`
+(<https://himmelcad-assembler.flofischer-pfuhl.workers.dev>, `noindex`,
+„Preview“-Abzeichen); das OCCT-Modul liegt wegen der 25-MiB-Grenze pro Asset
+nur brotli/gzip-komprimiert dort und wird von einem kleinen Worker mit
+`Content-Encoding` ausgeliefert. App-Icon: Low-Poly-Schraube (vom Eigentümer
+gewählt), PWA-Manifest vollständig (Screenshots, Shortcuts, Datei-Handler für
+`.hcasm`/STEP/STL/3MF, Share-Target, `launch_handler`). **Offen:** Domain
+`assembler.himmelcad.com` anhängen (Eigentümer), Workers-Builds-Anbindung samt
+veröffentlichtem OCCT-Release-Asset (deploy/README.md „Automatic deployment“),
+`noindex` aufheben bei der Ankündigung, echtes iPad.
+
 ## 1b. Touch und Stift auf Shapr3D-Niveau (≈ 1 Block, nach der Web-Version)
 
 Shapr3D kommt vom iPad; unsere Touch-Unterstützung ist bisher Grundausstattung.
