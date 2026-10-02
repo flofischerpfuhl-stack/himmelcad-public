@@ -338,7 +338,10 @@ edit. Code in `renderer/src/modules/checks/` and
   `stepExpression`; strictly typed, `step > 0`, `min ≤ max`; a value
   outside its range still loads and is flagged in the panel), `checks`
   (stored checks, `assembler/CHECKS.md`) and `printIgnored` (Printability
-  findings ignored in the document). An older build ignores `checks` and
+  findings ignored in the document); the kind `replaceFace`, the optional
+  fields `align.from`/`to`/`turn`, `split.bodyIds`, `pattern.third`/
+  `sketchIds` (format capabilities, see below) and
+  `items.folders[].featureId` (display only). An older build ignores `checks` and
   `printIgnored` and drops them when it saves; a newer build's check kinds
   or check parameters this build does not know are kept unchanged and
   round-trip (reported as unsupported, never a reason to refuse the file).

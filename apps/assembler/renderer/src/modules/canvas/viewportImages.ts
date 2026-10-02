@@ -13,10 +13,13 @@ import type {
   ViewportOverlayProvider,
 } from '../../platform/viewport/overlays.js';
 import { readViewportColors } from '../../platform/viewport/theme.js';
+import type { ViewportClickHandler } from '../../platform/viewport/viewportHooks.js';
 import { useImageStore, type StoredImage } from './imageStore.js';
 import {
   imageCornersWorld,
   imagePlaneFrame,
+  onImage,
+  planeCoordinates,
   type ReferenceImageFeature,
 } from './referenceImage.js';
 import { useCanvasStore } from './canvasStore.js';
@@ -127,5 +130,73 @@ export const IMAGE_OVERLAY: ViewportOverlayProvider = {
       offImages();
       offCanvas();
     };
+  },
+};
+
+type Vec3 = readonly [number, number, number];
+
+/**
+ * The shown reference image the ray meets first (`t`: distance along the
+ * unit ray), or `null`. Later steps lie on top of earlier ones.
+ */
+export function imageAtRay(
+  state: Pick<AssemblerState, 'features' | 'rollbackBefore' | 'sketchVisibility' | 'evaluation'>,
+  ray: { origin: Vec3; direction: Vec3 },
+): { featureId: string; t: number } | null {
+  const d = ray.direction;
+  const length = Math.hypot(d[0], d[1], d[2]) || 1;
+  const dir: Vec3 = [d[0] / length, d[1] / length, d[2] / length];
+  let best: { featureId: string; t: number } | null = null;
+  for (const feature of shownImages(state)) {
+    const frame = imagePlaneFrame(feature.plane, state.evaluation);
+    if (!frame) continue;
+    const n = frame.normal;
+    const along = dir[0] * n[0] + dir[1] * n[1] + dir[2] * n[2];
+    if (Math.abs(along) < 1e-9) continue;
+    const o = ray.origin;
+    const t =
+      ((frame.origin[0] - o[0]) * n[0] +
+        (frame.origin[1] - o[1]) * n[1] +
+        (frame.origin[2] - o[2]) * n[2]) /
+      along;
+    if (!(t > 0)) continue;
+    const hit: [number, number, number] = [o[0] + dir[0] * t, o[1] + dir[1] * t, o[2] + dir[2] * t];
+    if (!onImage(feature, planeCoordinates(frame, hit))) continue;
+    // Ties (images on one plane): the later step wins, as it is drawn on top.
+    if (!best || t <= best.t + 1e-6) best = { featureId: feature.id, t };
+  }
+  return best;
+}
+
+/**
+ * Reference images are pickable in the viewport (HIS-15): a click with no
+ * tool running selects the image under the pointer unless a body surface
+ * lies in front of it; Shift adds it to the selection.
+ */
+export const IMAGE_CLICK: ViewportClickHandler = {
+  id: 'canvas.imagePick',
+  // After Measure, Section › Face and Fix… (they own their clicks).
+  order: 900,
+  click: (click) => {
+    const ray = click.ray?.();
+    if (!ray) return false;
+    const hit = imageAtRay(click.state, ray);
+    if (!hit) return false;
+    if (click.pick) {
+      // A body in front of the picture keeps the click.
+      const surface = click.surfacePoint();
+      if (surface) {
+        const o = ray.origin;
+        const toSurface = Math.hypot(surface[0] - o[0], surface[1] - o[1], surface[2] - o[2]);
+        if (toSurface < hit.t - 1e-6) return false;
+      } else if (click.pick.kind !== 'sketchCurve' && click.pick.kind !== 'sketchProfile') {
+        return false;
+      }
+    }
+    click.state.select(
+      { kind: 'feature', featureId: hit.featureId },
+      { additive: click.additive === true },
+    );
+    return true;
   },
 };

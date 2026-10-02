@@ -9,7 +9,7 @@ import { defineModuleUi } from '../../platform/widgets/moduleUi.js';
 import type { ReferenceImageFeature } from './referenceImage.js';
 import { CalibrationOverlay } from './ui/CalibrationOverlay.js';
 import { ImageParams } from './ui/ImageParams.js';
-import { IMAGE_OVERLAY } from './viewportImages.js';
+import { IMAGE_CLICK, IMAGE_OVERLAY } from './viewportImages.js';
 
 export const canvasUi = defineModuleUi({
   id: 'canvas',
@@ -22,6 +22,7 @@ export const canvasUi = defineModuleUi({
     },
   ],
   viewportOverlays: [IMAGE_OVERLAY],
+  viewportClicks: [IMAGE_CLICK],
   viewportDomOverlays: [{ id: 'canvas.calibration', order: 60, component: CalibrationOverlay }],
   featureIcons: { referenceImage: Image },
   commandIcons: { 'add.image': Image, 'canvas.calibrate': Ruler },

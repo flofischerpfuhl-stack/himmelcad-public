@@ -877,6 +877,63 @@ export class FuzzHarness {
           },
         });
       }
+      case 'alignAxis': {
+        const bodies = await this.bodies();
+        const moving = pick(bodies, r[0])?.id;
+        const target = pick(
+          bodies.filter((b) => b.id !== moving),
+          r[1],
+        )?.id;
+        if (!moving || !target) return null;
+        const axisEdges = async (id: string) =>
+          (await this.call<{ key: string; curve: string }[]>('edges.list', { bodyId: id })).filter(
+            (e) => e.curve === 'line' || e.curve === 'circle',
+          );
+        const from = pick(await axisEdges(moving), r[2]);
+        const to = pick(await axisEdges(target), r[3]);
+        if (!from || !to) return null;
+        return this.api('feature.create', {
+          kind: 'align',
+          params: {
+            bodyId: moving,
+            from: { kind: 'axis', axis: { kind: 'edge', edge: { bodyId: moving, key: from.key } } },
+            to: { kind: 'axis', axis: { kind: 'edge', edge: { bodyId: target, key: to.key } } },
+            flip: (r[4] ?? 0) < 0.3,
+            center: (r[5] ?? 0) < 0.7,
+            offset: between(r[6], -5, 5),
+          },
+        });
+      }
+      case 'copyUnlinked': {
+        const body = await bodyId(r[0]);
+        if (!body) return null;
+        return this.api('body.copyUnlinked', {
+          bodyId: body,
+          dx: between(r[1], -30, 30),
+          dy: between(r[2], -30, 30),
+          rz: (r[3] ?? 0) < 0.5 ? 0 : between(r[4], -90, 90, 15),
+        });
+      }
+      case 'replaceFace': {
+        const body = await bodyId(r[0]);
+        const other = await bodyId(r[2]);
+        if (!body || !other) return null;
+        const face = pick(await this.planarFaces(body), r[1]);
+        const targets = (await this.call<FaceSummary[]>('faces.list', { bodyId: other })).filter(
+          (f) =>
+            (f.surface === 'plane' || f.surface === 'cylinder') &&
+            !(other === body && f.key === face?.key),
+        );
+        const target = pick(targets, r[3]);
+        if (!face || !target) return null;
+        return this.api('feature.create', {
+          kind: 'replaceFace',
+          params: {
+            faces: [{ bodyId: body, key: face.key }],
+            target: { bodyId: other, key: target.key },
+          },
+        });
+      }
       case 'helix': {
         const sketch = pick(await sketches(), r[0]);
         if (!sketch) return null;
@@ -943,6 +1000,16 @@ export class FuzzHarness {
                       count: 1 + Math.floor((r[6] ?? 0) * 3),
                       spacing: between(r[7], 5, 30, 2.5),
                     },
+                    // Block 9: sometimes a third direction (layers).
+                    ...((r[1] ?? 0) < 0.2
+                      ? {
+                          third: {
+                            direction: { kind: 'world', axis: axes[(axes.indexOf(axis) + 2) % 3]! },
+                            count: 2,
+                            spacing: between(r[7], 5, 30, 2.5),
+                          },
+                        }
+                      : {}),
                   }
                 : {
                     kind: 'circular',

@@ -28,6 +28,18 @@ export function DirectEditParams({
       </div>
     );
   }
+  if (feature.kind === 'replaceFace') {
+    // No values: the references are re-picked with Fix… when they go missing.
+    return (
+      <div className={styles.params}>
+        <span className={styles.paramNote}>
+          {plural(feature.faces.length, 'face')} extended or trimmed to the{' '}
+          {feature.target.signature.surface === 'cylinder' ? 'cylindrical' : 'planar'} replacing
+          face
+        </span>
+      </div>
+    );
+  }
   if (feature.kind === 'moveEdge' || feature.kind === 'moveFace') {
     const vector = feature.vector;
     return (

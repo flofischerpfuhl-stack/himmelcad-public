@@ -181,7 +181,7 @@ chips take arithmetic only (`2 * 3`), no names, so they have no list.
   `Parameter.min/.max/.step`, `Parameter.sweep(mode=…, samples=…)`,
   `doc.sweep("wall", "height", mode="samples", samples=4, combine="all")`;
   client `sweep_parameters`. Tests: `test/model/parameterRanges.test.ts`,
-  `sdk/python/tests/test_assembler_block9.py` (headless).
+  `sdk/python/tests/test_assembler_block9_params.py` (headless).
 
 ## Measurement and display
 
@@ -684,6 +684,24 @@ height=, left_handed=)`, `doc.scale`, `doc.translate`, `doc.box`/
   `cylinder`/`sphere`/`cone`/`torus` (a cut on a face goes into it unless
   `flip=False`), `doc.move_edge`, `doc.move_face`
   (`tests/test_assembler_block8.py`).
+- **Block 9 kinds, fields and method** (`GAP-INVENTORY.md` MOD-03/12/16/20/22/23):
+  `replaceFace` (planar `faces` of one body onto the surface of `target`, a
+  planar or cylindrical face of any body; replaced faces keep their keys);
+  `align.from`/`to` (an `AlignReference`: `{kind: "face", face}`,
+  `{kind: "axis", axis: AxisRef}` or `{kind: "plane", plane}`; axis onto axis,
+  centre onto centre or axis; two planar faces still use `face`/`target`) and
+  `align.turn` (degrees about the target normal/axis); `split.bodyIds` (more
+  bodies cut by the same element; their parts `body:<step>:<100+2k>`,
+  kept-original parts `:<101+2k>`); `pattern.third` (a third direction) and
+  `pattern.sketchIds` (whole sketches patterned as derived sketches
+  `<step>:sketch:<n>`, `bodyIds` may then be empty); `extrude.taper` now with
+  every extent; `moveFace` on a full round face moves the hole or boss across
+  its axis. Method `body.copyUnlinked` (`bodyId`, `dx…rz`, `pivot`, `name`): an
+  unlinked copy kept as its exact geometry in an `importStep` step. Python:
+  `doc.replace_face`, `doc.align(moving, target, flip=, center=, offset=, turn=)`,
+  `doc.copy_unlinked`, `doc.split([a, b], …)`, `pattern_linear(direction3=,
+count3=, spacing3=, sketches=)`, `pattern_circular(sketches=)`
+  (`tests/test_assembler_block9_parity.py`).
 - **Print-part kinds** (hole, emboss, draft, rib, thicken) and the optional
   fillet/chamfer/shell/boolean params (`radius2`, `rules`, `mode`/`distance2`/
   `angle`/`flip`, `direction`/`clearance`/`faceThickness`, `keepTools`) have closed

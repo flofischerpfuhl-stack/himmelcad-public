@@ -21,6 +21,13 @@ export interface ItemFolder {
   id: string;
   name: string;
   collapsed: boolean;
+  /**
+   * The History step whose bodies this folder was made for (Pattern 3D
+   * copies, `stepFolders.ts`). While that step is not in the document
+   * (undone, deleted) the folder is not shown and its rows sit one level up;
+   * a redo shows it again. Absent: a folder the user made.
+   */
+  featureId?: string;
 }
 
 export interface ItemsMeta {
@@ -90,19 +97,45 @@ export function isInsideFolder(meta: ItemsMeta, folderId: string, ancestorId: st
   return false;
 }
 
+/** Folders made for a step that is not in the document (`ItemFolder.featureId`). */
+export function absentStepFolderIds(
+  meta: Pick<ItemsMeta, 'folders'>,
+  liveFeatureIds: ReadonlySet<string>,
+): Set<string> {
+  return new Set(
+    meta.folders
+      .filter((f) => f.featureId !== undefined && !liveFeatureIds.has(f.featureId))
+      .map((f) => f.id),
+  );
+}
+
 /**
  * Nested tree of folders and rows. Rows keep their given order; a row whose
  * folder no longer exists is shown at the top level. Folders come first
- * within each level, in creation order.
+ * within each level, in creation order. With `liveFeatureIds`, a folder made
+ * for a step that is not in the document is left out and its contents move
+ * one level up (`ItemFolder.featureId`).
  */
-export function buildItemTree(rows: readonly LeafRow[], meta: ItemsMeta): ItemNode[] {
-  const folderIds = new Set(meta.folders.map((f) => f.id));
+export function buildItemTree(
+  rows: readonly LeafRow[],
+  meta: ItemsMeta,
+  liveFeatureIds?: ReadonlySet<string>,
+): ItemNode[] {
+  const absent = liveFeatureIds ? absentStepFolderIds(meta, liveFeatureIds) : new Set<string>();
+  const folderIds = new Set(meta.folders.filter((f) => !absent.has(f.id)).map((f) => f.id));
   const parentOf = (key: string): string | null => {
-    const p = meta.parent[key];
+    let p: string | undefined = meta.parent[key];
+    const seen = new Set<string>();
+    // An absent step folder passes its rows to its own parent.
+    while (p && absent.has(p) && !seen.has(p)) {
+      seen.add(p);
+      p = meta.parent[folderRowKey(p)];
+    }
     return p && folderIds.has(p) ? p : null;
   };
   const build = (parent: string | null): ItemNode[] => {
     const folders: ItemNode[] = meta.folders
+      .filter((f) => !absent.has(f.id))
       .filter((f) => parentOf(folderRowKey(f.id)) === parent && f.id !== parent)
       .map((folder) => ({
         type: 'folder' as const,
@@ -157,8 +190,13 @@ export function nextFolderName(folders: readonly ItemFolder[]): string {
 
 export interface ItemsState extends ItemsMeta {
   renameBody: (bodyId: string, name: string | null) => void;
-  /** Creates a folder (optionally inside `parentId`, holding `keys`); returns its id. */
-  createFolder: (options?: { name?: string; keys?: string[]; parentId?: string | null }) => string;
+  /** Creates a folder (optionally inside `parentId`, holding `keys`, made for step `featureId`); returns its id. */
+  createFolder: (options?: {
+    name?: string;
+    keys?: string[];
+    parentId?: string | null;
+    featureId?: string;
+  }) => string;
   renameFolder: (folderId: string, name: string) => void;
   /** Deletes a folder; its contents move to the folder's parent. */
   deleteFolder: (folderId: string) => void;
@@ -186,6 +224,7 @@ export const useItemsStore = create<ItemsState>((set, get) => ({
       id,
       name: options?.name?.trim() || nextFolderName(state.folders),
       collapsed: false,
+      ...(options?.featureId ? { featureId: options.featureId } : {}),
     };
     const parent = { ...state.parent };
     if (options?.parentId) parent[folderRowKey(id)] = options.parentId;
@@ -243,6 +282,35 @@ export const useItemsStore = create<ItemsState>((set, get) => ({
 
 export function itemsMetaSnapshot(state: ItemsMeta): ItemsMeta {
   return { names: state.names, folders: state.folders, parent: state.parent };
+}
+
+/**
+ * `meta` without the folders made for steps that are no longer in the
+ * document (their rows move up to the folder's parent): what Save writes, as
+ * no undo can bring those steps back after the project is reopened.
+ */
+export function withoutAbsentStepFolders(
+  meta: ItemsMeta,
+  liveFeatureIds: ReadonlySet<string>,
+): ItemsMeta {
+  const absent = absentStepFolderIds(meta, liveFeatureIds);
+  if (absent.size === 0) return meta;
+  const up = (folderId: string): string | undefined => {
+    let p: string | undefined = folderId;
+    const seen = new Set<string>();
+    while (p && absent.has(p) && !seen.has(p)) {
+      seen.add(p);
+      p = meta.parent[folderRowKey(p)];
+    }
+    return p;
+  };
+  const parent: Record<string, string> = {};
+  for (const [key, value] of Object.entries(meta.parent)) {
+    if (key.startsWith('folder:') && absent.has(key.slice('folder:'.length))) continue;
+    const target = up(value);
+    if (target) parent[key] = target;
+  }
+  return { names: meta.names, folders: meta.folders.filter((f) => !absent.has(f.id)), parent };
 }
 
 export function isEmptyItemsMeta(meta: ItemsMeta): boolean {

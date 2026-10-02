@@ -18,8 +18,10 @@ import {
   isEmptyItemsMeta,
   itemsMetaSnapshot,
   useItemsStore,
+  withoutAbsentStepFolders,
   type ItemsMeta,
 } from './items.js';
+import { useAssemblerStore } from './store.js';
 import type { ReferenceMesh } from './referenceMesh.js';
 
 /**
@@ -134,7 +136,16 @@ function validateItems(v: unknown, h: FileFieldHelpers): ProjectItems {
     if (f.collapsed !== undefined && !h.isBoolean(f.collapsed)) {
       h.fail(`${path}.collapsed`, 'expected a boolean');
     }
-    return { id: f.id, name: f.name, collapsed: f.collapsed === true };
+    // Optional, additive (Block 9): the step a folder was made for (Pattern copies).
+    if (f.featureId !== undefined && (!h.isString(f.featureId) || f.featureId === '')) {
+      h.fail(`${path}.featureId`, 'expected a non-empty string');
+    }
+    return {
+      id: f.id,
+      name: f.name,
+      collapsed: f.collapsed === true,
+      ...(f.featureId !== undefined ? { featureId: f.featureId as string } : {}),
+    };
   });
   return { names, folders: checked, parent };
 }
@@ -223,7 +234,9 @@ registerProjectSection({
   id: 'commands.items',
   order: 150,
   save: () => {
-    const items = itemsMetaSnapshot(useItemsStore.getState());
+    // Folders of steps that are gone (undone/deleted) are not written: no undo brings them back.
+    const live = new Set(useAssemblerStore.getState().features.map((f) => f.id));
+    const items = withoutAbsentStepFolders(itemsMetaSnapshot(useItemsStore.getState()), live);
     return isEmptyItemsMeta(items) ? {} : { fields: { items } };
   },
   load: (project) => useItemsStore.getState().setItemsMeta(project?.items ?? EMPTY_ITEMS_META),

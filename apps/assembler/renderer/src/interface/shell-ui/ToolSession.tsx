@@ -321,19 +321,18 @@ function ExtrudeControls({
         unit="mm"
         onCommit={(v) => state.setExtrudeOptions({ startOffset: v === 0 ? undefined : v })}
       />
-      {(tool.extent ?? 'distance') === 'distance' ? (
-        <PillNumber
-          label="Taper"
-          value={tool.taper ?? 0}
-          unit="°"
-          onCommit={(v) =>
-            state.setExtrudeOptions({
-              taper:
-                v === 0 ? undefined : Math.max(-MAX_EXTRUDE_TAPER, Math.min(MAX_EXTRUDE_TAPER, v)),
-            })
-          }
-        />
-      ) : null}
+      {/* Every extent tapers (Through All and To Object trim the tapered prism, Block 9). */}
+      <PillNumber
+        label="Taper"
+        value={tool.taper ?? 0}
+        unit="°"
+        onCommit={(v) =>
+          state.setExtrudeOptions({
+            taper:
+              v === 0 ? undefined : Math.max(-MAX_EXTRUDE_TAPER, Math.min(MAX_EXTRUDE_TAPER, v)),
+          })
+        }
+      />
     </>
   );
 }
@@ -613,6 +612,23 @@ function ToolBadge({
               onChange={(value) => state.setMoveCopy(value === 'copy')}
             />
           )}
+          {!tool.sketch && tool.copy ? (
+            // Shapr3D's Link badge: an unlinked copy no longer follows the history (MOD-16).
+            <Badge
+              ariaLabel="Link to history"
+              value={tool.linked === false ? 'unlinked' : 'linked'}
+              options={[
+                { value: 'linked', label: 'Linked' },
+                { value: 'unlinked', label: 'Unlinked' },
+              ]}
+              onChange={(value) => state.setMoveLinked(value === 'linked')}
+            />
+          ) : null}
+          {tool.unlinking ? (
+            <span className={styles.busy} aria-label="Writing the unlinked copy">
+              <LoaderCircle size={13} />
+            </span>
+          ) : null}
           {tool.sketch ? null : (
             <Badge
               ariaLabel="Auto-orientation"

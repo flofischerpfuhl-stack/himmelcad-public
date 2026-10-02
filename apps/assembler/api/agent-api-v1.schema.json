@@ -1203,6 +1203,25 @@
               "required": ["direction", "count", "spacing"],
               "additionalProperties": false,
               "description": "A second direction: a grid of count × second.count instances (at most 1000)."
+            },
+            "third": {
+              "type": "object",
+              "properties": {
+                "direction": {
+                  "$ref": "#/$defs/AxisRef"
+                },
+                "count": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 200
+                },
+                "spacing": {
+                  "type": "number"
+                }
+              },
+              "required": ["direction", "count", "spacing"],
+              "additionalProperties": false,
+              "description": "A third direction (with `second`): count × second.count × third.count instances (at most 1000)."
             }
           },
           "required": ["kind", "direction", "count", "spacing"],
@@ -1626,7 +1645,7 @@
             "type": "number",
             "minimum": -80,
             "maximum": 80,
-            "description": "Taper (draft) angle of the side walls in degrees: positive narrows the solid away from the start plane (holes widen), negative widens it; both sides of a symmetric/two-sided extrude narrow away from the start. Distance extent only; sides of lines, arcs and circles."
+            "description": "Taper (draft) angle of the side walls in degrees: positive narrows the solid away from the start plane (holes widen), negative widens it; both sides of a symmetric/two-sided extrude narrow away from the start. Any extent (Through All and To Object trim the tapered prism); sides of lines, arcs and circles."
           }
         },
         "required": ["profile"],
@@ -2261,11 +2280,18 @@
     },
     "pattern": {
       "label": "Pattern",
-      "summary": "Copies bodies in a linear or circular pattern (independent copies).",
+      "summary": "Copies bodies in a linear or circular pattern (independent copies). `sketchIds` patterns whole sketches too: every further instance is a derived sketch `<step>:sketch:<n>` (n = sketch index × 1000 + instance index) whose profiles later steps extrude like a sketch's (sketches.list lists them); `bodyIds` may then be empty.",
       "params": {
         "type": "object",
         "properties": {
           "bodyIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "sketchIds": {
             "type": "array",
             "items": {
               "type": "string",
@@ -2283,13 +2309,21 @@
     },
     "split": {
       "label": "Split",
-      "summary": "Splits a body into two bodies: by a plane (the positive side becomes new) or, with `profile`, by a closed sketch profile/planar face projected through the body (the inside becomes new); `keepOriginal` keeps the body and makes both parts new bodies.",
+      "summary": "Splits a body into two bodies: by a plane (the positive side becomes new) or, with `profile`, by a closed sketch profile/planar face projected through the body (the inside becomes new); `keepOriginal` keeps the body and makes both parts new bodies. `bodyIds` splits more bodies with the same element in one step (each must be cut; their new parts are `body:<step>:<100 + 2k>`, kept originals' parts `…:<101 + 2k>`).",
       "params": {
         "type": "object",
         "properties": {
           "bodyId": {
             "type": "string",
             "minLength": 1
+          },
+          "bodyIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
           },
           "plane": {
             "$ref": "#/$defs/SketchPlane"
@@ -2379,7 +2413,7 @@
     },
     "align": {
       "label": "Align",
-      "summary": "Moves a body so its planar `face` lies on the plane of `target` (a planar face of another body): face to face by default, same direction with flip; `offset` leaves a gap; `center` slides the face centres together.",
+      "summary": "Moves a body so a reference of it lands on a target. Two planar faces (`face` on the moved body, `target` on another): face to face by default, same direction with flip; `offset` leaves a gap; `center` slides the face centres together. Any other pair as `from`/`to` (which win over face/target): a face (planar = plane, cylindrical/conical = axis, spherical = centre), an `axis` (a straight or circular edge, sketch line, construction or world axis) or a `plane`; an axis onto an axis (coaxial; flip turns it end for end; offset slides along the target axis), a centre onto a centre or an axis, an axis through a centre.",
       "params": {
         "type": "object",
         "properties": {
@@ -2393,6 +2427,92 @@
           "target": {
             "$ref": "#/$defs/FaceInput"
           },
+          "from": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "const": "face"
+                  },
+                  "face": {
+                    "$ref": "#/$defs/FaceInput"
+                  }
+                },
+                "required": ["kind", "face"],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "const": "axis"
+                  },
+                  "axis": {
+                    "$ref": "#/$defs/AxisRef"
+                  }
+                },
+                "required": ["kind", "axis"],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "const": "plane"
+                  },
+                  "plane": {
+                    "$ref": "#/$defs/SketchPlane"
+                  }
+                },
+                "required": ["kind", "plane"],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "to": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "const": "face"
+                  },
+                  "face": {
+                    "$ref": "#/$defs/FaceInput"
+                  }
+                },
+                "required": ["kind", "face"],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "const": "axis"
+                  },
+                  "axis": {
+                    "$ref": "#/$defs/AxisRef"
+                  }
+                },
+                "required": ["kind", "axis"],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "const": "plane"
+                  },
+                  "plane": {
+                    "$ref": "#/$defs/SketchPlane"
+                  }
+                },
+                "required": ["kind", "plane"],
+                "additionalProperties": false
+              }
+            ]
+          },
           "flip": {
             "type": "boolean",
             "default": false
@@ -2404,10 +2524,18 @@
           "offset": {
             "type": "number",
             "default": 0
+          },
+          "turn": {
+            "type": "number",
+            "minimum": -360,
+            "maximum": 360,
+            "default": 0,
+            "description": "Then turns the body (degrees, right-hand) about the target plane normal through the aligned centre, or about the target axis."
           }
         },
-        "required": ["face", "target"],
-        "additionalProperties": false
+        "required": [],
+        "additionalProperties": false,
+        "description": "Either `face` or `from` (on the moved body), and either `target` or `to`."
       }
     },
     "scale": {
@@ -2606,7 +2734,7 @@
     },
     "moveFace": {
       "label": "Move Face",
-      "summary": "Moves a planar face by `vector` (world, mm) in any direction: the part along its normal offsets it (like Offset Face), the part in its plane slides it — every planar neighbour sharing a straight edge tilts about its far side to follow. A face with a curved edge can only move along its normal. `rotation` then turns the face about a line in its plane (the neighbours follow).",
+      "summary": "Moves a planar face by `vector` (world, mm) in any direction: the part along its normal offsets it (like Offset Face), the part in its plane slides it — every planar neighbour sharing a straight edge tilts about its far side to follow. A face with a curved edge can only move along its normal. `rotation` then turns the face about a line in its plane (the neighbours follow). A full round face (a hole wall or a boss) moves across its axis instead: the round is filled or removed and made again at the moved place (its wall and disc-shaped ends keep their keys; chamfers or fillets at its ends stay).",
       "params": {
         "type": "object",
         "properties": {
@@ -2638,6 +2766,27 @@
           }
         },
         "required": ["face", "vector"],
+        "additionalProperties": false
+      }
+    },
+    "replaceFace": {
+      "label": "Replace Face",
+      "summary": "Extends or trims planar `faces` of one body until they lie on the surface of the `target` face (planar or cylindrical; any body, not one of `faces`). A planar target within 80° of a face turns and offsets it (its neighbours follow, whatever their angle); a cylindrical target cuts the face prism along its normal at the nearest crossing (side walls run along the face normal). The replaced faces keep their keys.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "faces": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/FaceInput"
+            },
+            "minItems": 1
+          },
+          "target": {
+            "$ref": "#/$defs/FaceInput"
+          }
+        },
+        "required": ["faces", "target"],
         "additionalProperties": false
       }
     },
@@ -5600,6 +5749,54 @@
         "additionalProperties": false
       },
       "result": "{featureId, center, width, revision, committed}"
+    },
+    "body.copyUnlinked": {
+      "kind": "command",
+      "capability": "document.write",
+      "transactional": true,
+      "summary": "An unlinked copy of a body (Shapr3D Move/Rotate copy with Link off): moved by dx/dy/dz and turned rx/ry/rz degrees about world X, Y, Z through `pivot` (default its box centre), kept as its exact geometry in an `importStep` step, so later edits of the original's earlier steps do not change it. Result: the new step and body.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "bodyId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "dx": {
+            "type": "number"
+          },
+          "dy": {
+            "type": "number"
+          },
+          "dz": {
+            "type": "number"
+          },
+          "rx": {
+            "type": "number"
+          },
+          "ry": {
+            "type": "number"
+          },
+          "rz": {
+            "type": "number"
+          },
+          "pivot": {
+            "$ref": "#/$defs/Vec3"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Optimistic concurrency: the command fails with `conflict` unless the document revision still equals this value."
+          }
+        },
+        "required": ["bodyId"],
+        "additionalProperties": false
+      },
+      "result": "{featureId, bodyId, revision, committed}"
     }
   },
   "limits": {

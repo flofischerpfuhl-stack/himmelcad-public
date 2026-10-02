@@ -297,7 +297,27 @@ function normalise(
           })[0];
         }
       }
+      // Block 9: any references as `from`/`to` (faces, edges as axes, planes, datums).
+      for (const field of ['from', 'to'] as const) {
+        const ref = out[field];
+        if (!isRecord(ref)) continue;
+        if (ref.kind === 'face') {
+          out[field] = { kind: 'face', face: oneFace(ref.face, `params.${field}.face`) };
+        } else if (ref.kind === 'axis') {
+          out[field] = { kind: 'axis', axis: axisRef(ref.axis, `params.${field}.axis`) };
+        } else if (ref.kind === 'plane') {
+          out[field] = { kind: 'plane', plane: planeRef(ref.plane, `params.${field}.plane`) };
+        }
+      }
       if (out.bodyId === undefined && isRecord(out.face)) out.bodyId = out.face.bodyId;
+      if (out.bodyId === undefined && isRecord(out.from)) {
+        const from = out.from;
+        if (from.kind === 'face' && isRecord(from.face)) out.bodyId = from.face.bodyId;
+        const axis = from.axis;
+        if (from.kind === 'axis' && isRecord(axis) && isRecord(axis.edge)) {
+          out.bodyId = axis.edge.bodyId;
+        }
+      }
       return out;
     case 'offsetFace':
     case 'deleteFace':
@@ -384,6 +404,15 @@ function normalise(
       return out;
     case 'moveFace':
       if (out.face !== undefined) out.face = oneFace(out.face, 'params.face');
+      return out;
+    case 'replaceFace':
+      if (out.target !== undefined) out.target = oneFace(out.target, 'params.target');
+      if (Array.isArray(out.faces)) {
+        out.faces = out.faces.flatMap((face, i) =>
+          resolveFaceInput(face, evaluation, features, `params.faces[${i}]`, { single: false }),
+        );
+        dedupeByKey(out, 'faces');
+      }
       return out;
     case 'thicken': {
       const source = out.source as Json | undefined;

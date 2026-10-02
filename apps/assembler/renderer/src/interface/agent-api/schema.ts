@@ -455,6 +455,15 @@ const DEFS_TAIL: Record<string, JsonSchema> = {
             ['direction', 'count', 'spacing'],
             'A second direction: a grid of count × second.count instances (at most 1000).',
           ),
+          third: obj(
+            {
+              direction: ref('AxisRef'),
+              count: { type: 'integer', minimum: 1, maximum: 200 },
+              spacing: num,
+            },
+            ['direction', 'count', 'spacing'],
+            'A third direction (with `second`): count × second.count × third.count instances (at most 1000).',
+          ),
         },
         ['kind', 'direction', 'count', 'spacing'],
       ),
@@ -581,7 +590,7 @@ const CORE_FEATURE_KIND_SCHEMAS: Record<string, FeatureKindSpec> = {
           minimum: -80,
           maximum: 80,
           description:
-            'Taper (draft) angle of the side walls in degrees: positive narrows the solid away from the start plane (holes widen), negative widens it; both sides of a symmetric/two-sided extrude narrow away from the start. Distance extent only; sides of lines, arcs and circles.',
+            'Taper (draft) angle of the side walls in degrees: positive narrows the solid away from the start plane (holes widen), negative widens it; both sides of a symmetric/two-sided extrude narrow away from the start. Any extent (Through All and To Object trim the tapered prism); sides of lines, arcs and circles.',
         },
       },
       ['profile'],

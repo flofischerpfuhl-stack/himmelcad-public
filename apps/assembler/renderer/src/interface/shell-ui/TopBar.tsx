@@ -21,6 +21,7 @@ import {
 
 import { onCloseRequested, onOpenRequested } from '../../foundation/document/persistence.js';
 import { host } from '../../foundation/host/index.js';
+import { usePreferences } from '../../platform/input/preferences.js';
 import { MAX_SAVED_VIEWS, useWorkspaceStore } from './workspace.js';
 import { useProjectStore } from './project/projectStore.js';
 import { CommandGroupMenu } from './CommandGroupMenu.js';
@@ -38,6 +39,8 @@ const PENDING_ACTION_LABEL: Record<'new' | 'open' | 'openFile' | 'template' | 'c
 };
 
 export function TopBar({ state }: { state: AssemblerState }): JSX.Element {
+  // Settings may move Undo/Redo below the tools (Shapr3D on Windows, UI-18).
+  const undoInTitle = usePreferences((p) => p.undoRedoPlacement === 'titleBar');
   const [renaming, setRenaming] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const project = useProjectStore();
@@ -147,30 +150,32 @@ export function TopBar({ state }: { state: AssemblerState }): JSX.Element {
         <HelpMenu />
       </nav>
       <div className={styles.spacer} />
-      <div className={styles.historyButtons}>
-        <Tooltip content={state.history.canUndo ? 'Undo (Ctrl+Z)' : 'Nothing to undo'}>
-          <button
-            type="button"
-            className={styles.iconButton}
-            aria-label="Undo"
-            disabled={!state.history.canUndo}
-            onClick={() => state.undo()}
-          >
-            <Undo2 size={15} />
-          </button>
-        </Tooltip>
-        <Tooltip content={state.history.canRedo ? 'Redo (Ctrl+Shift+Z)' : 'Nothing to redo'}>
-          <button
-            type="button"
-            className={styles.iconButton}
-            aria-label="Redo"
-            disabled={!state.history.canRedo}
-            onClick={() => state.redo()}
-          >
-            <Redo2 size={15} />
-          </button>
-        </Tooltip>
-      </div>
+      {undoInTitle ? (
+        <div className={styles.historyButtons}>
+          <Tooltip content={state.history.canUndo ? 'Undo (Ctrl+Z)' : 'Nothing to undo'}>
+            <button
+              type="button"
+              className={styles.iconButton}
+              aria-label="Undo"
+              disabled={!state.history.canUndo}
+              onClick={() => state.undo()}
+            >
+              <Undo2 size={15} />
+            </button>
+          </Tooltip>
+          <Tooltip content={state.history.canRedo ? 'Redo (Ctrl+Shift+Z)' : 'Nothing to redo'}>
+            <button
+              type="button"
+              className={styles.iconButton}
+              aria-label="Redo"
+              disabled={!state.history.canRedo}
+              onClick={() => state.redo()}
+            >
+              <Redo2 size={15} />
+            </button>
+          </Tooltip>
+        </div>
+      ) : null}
 
       <Dialog
         open={project.pendingAction !== null}

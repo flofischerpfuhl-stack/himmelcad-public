@@ -62,9 +62,18 @@ import type {
 import {
   MAX_HELIX_TURNS,
   MAX_PATTERN_COUNT,
+  type AlignReference,
   type PatternDefinition,
   type RevolveHelix,
 } from './features.js';
+import {
+  alignEdgeRef,
+  alignFaceRef,
+  alignPairProblem,
+  alignRefBodyId,
+  alignShapeOf,
+  bothPlanarFaces,
+} from './alignRefs.js';
 import { findSketchContact, pointInsideBody } from './modeling.js';
 import type { SelectionItem } from '../../foundation/commands/store.js';
 
@@ -108,12 +117,16 @@ export interface MirrorDraft {
 export interface PatternDraft {
   kind: 'pattern';
   bodyIds: string[];
+  /** Whole sketches patterned too (derived sketches; Shapr3D patterns sketches and profiles). */
+  sketchIds?: string[];
   pattern: PatternDefinition;
 }
 
 export interface SplitDraft {
   kind: 'split';
   bodyId: string;
+  /** More bodies split by the same element (a click on another body adds or removes it). */
+  bodyIds?: string[];
   plane: PlaneRef;
   /** Split with a sketch profile (projected through the body) instead of the plane. */
   profile?: ProfileRef;
@@ -134,12 +147,16 @@ export interface RotateAxisDraft {
 export interface AlignDraft {
   kind: 'align';
   bodyId: string;
-  face: FaceRef;
-  target: FaceRef;
+  /** The moved reference: a face or an edge of `bodyId` (`alignRefs.ts`). */
+  from: AlignReference;
+  /** The target: a face or an edge of another body, or a construction plane/axis. */
+  to: AlignReference;
   flip: boolean;
   center: boolean;
   offset: number;
-  /** Input step (Next): 0 the moving face, 1 the target face. Absent: by body. */
+  /** Turn about the target normal/axis after aligning, degrees (absent: 0). */
+  turn?: number;
+  /** Input step (Next): 0 the moving reference, 1 the target. Absent: by body. */
   step?: 0 | 1;
 }
 
@@ -586,15 +603,22 @@ export function createModelingDraft(
     }
     case 'pattern': {
       const bodyIds = selected(ctx.selection, 'body').map((b) => b.bodyId);
-      if (bodyIds.length === 0) return { ok: false, reason: 'Select the bodies to pattern.' };
+      const sketchIds = [
+        ...new Set(selected(ctx.selection, 'sketchProfile').map((s) => s.featureId)),
+      ];
+      if (bodyIds.length === 0 && sketchIds.length === 0) {
+        return { ok: false, reason: 'Select the bodies or sketches to pattern.' };
+      }
+      const sketches = sketchIds.length > 0 ? { sketchIds } : {};
       const edge = selectedEdges(ctx)[0];
-      const bounds = unionBounds(ctx.evaluation.bodies.filter((b) => bodyIds.includes(b.id)));
+      const bounds = patternBounds(ctx.evaluation, bodyIds, sketchIds);
       if (edge?.signature.curve === 'circle') {
         return {
           ok: true,
           draft: {
             kind: 'pattern',
             bodyIds,
+            ...sketches,
             pattern: { kind: 'circular', axis: { kind: 'edge', edge }, count: 6, angle: 360 },
           },
         };
@@ -609,6 +633,7 @@ export function createModelingDraft(
         draft: {
           kind: 'pattern',
           bodyIds,
+          ...sketches,
           pattern: {
             kind: 'linear',
             direction,
@@ -620,12 +645,22 @@ export function createModelingDraft(
     }
     case 'split': {
       const bodies = selected(ctx.selection, 'body');
-      if (bodies.length !== 1)
-        return { ok: false, reason: 'Select one body to split (and optionally a planar face).' };
+      if (bodies.length === 0)
+        return { ok: false, reason: 'Select the bodies to split (and optionally a planar face).' };
       const bodyId = bodies[0]!.bodyId;
+      const more = bodies.slice(1).map((b) => b.bodyId);
       const face = selectedFaceRefs(ctx).find(isPlanar);
-      if (face)
-        return { ok: true, draft: { kind: 'split', bodyId, plane: { kind: 'face', face } } };
+      if (face) {
+        return {
+          ok: true,
+          draft: {
+            kind: 'split',
+            bodyId,
+            ...(more.length > 0 ? { bodyIds: more } : {}),
+            plane: { kind: 'face', face },
+          },
+        };
+      }
       // A selected sketch profile is the split element (projected through the body).
       const sketchItem = selected(ctx.selection, 'sketchProfile')[0];
       const profile = sketchItem
@@ -643,6 +678,7 @@ export function createModelingDraft(
         draft: {
           kind: 'split',
           bodyId,
+          ...(more.length > 0 ? { bodyIds: more } : {}),
           plane: {
             kind: 'plane',
             plane: PLANE_OF_AXIS[largest],
@@ -689,30 +725,26 @@ export function createModelingDraft(
       };
     }
     case 'align': {
-      const faces = selectedFaceRefs(ctx);
-      if (faces.length !== 2 || ctx.selection.length !== 2) {
+      // Shapr3D Align: the first pick moves onto the second (faces, edges, a datum as target).
+      const refs = ctx.selection.map((item) => alignRefOfItem(ctx.evaluation, item));
+      if (refs.length !== 2 || refs.some((r) => r === null)) {
         return {
           ok: false,
-          reason: 'Select a face on the body to move, then a face on the target body.',
+          reason:
+            'Select a face or edge on the body to move, then a face, edge or datum to align it to.',
         };
       }
-      const [face, target] = faces as [FaceRef, FaceRef];
-      if (face.bodyId === target.bodyId)
-        return { ok: false, reason: 'The two faces must be on different bodies.' };
-      if (!isPlanar(face) || !isPlanar(target))
-        return { ok: false, reason: 'Align needs two planar faces.' };
+      const [from, to] = refs as [AlignReference, AlignReference];
+      const bodyId = alignRefBodyId(from);
+      if (!bodyId) return { ok: false, reason: 'Select the moving face or edge first.' };
+      if (alignRefBodyId(to) === bodyId) {
+        return { ok: false, reason: 'The two references must be on different bodies.' };
+      }
+      const problem = alignPairProblem(from, to);
+      if (problem) return { ok: false, reason: problem };
       return {
         ok: true,
-        draft: {
-          kind: 'align',
-          bodyId: face.bodyId,
-          face,
-          target,
-          flip: false,
-          center: true,
-          offset: 0,
-          step: 1,
-        },
+        draft: { kind: 'align', bodyId, from, to, flip: false, center: true, offset: 0, step: 1 },
       };
     }
   }
@@ -849,12 +881,27 @@ export function acceptModelingPick(
           return { ...draft, pattern: { ...draft.pattern, axis } };
         return draft;
       }
-      if (pickedBody)
-        return { ...draft, bodyIds: toggle(draft.bodyIds, pickedBody, (a, b) => a === b) };
+      if (pick.kind === 'sketchProfile') {
+        // A sketch is patterned as a whole (click again to drop it).
+        const sketchIds = toggle(draft.sketchIds ?? [], pick.featureId, (a, b) => a === b, false);
+        if (sketchIds.length === 0 && draft.bodyIds.length === 0) return draft;
+        const { sketchIds: _old, ...rest } = draft;
+        return sketchIds.length > 0 ? { ...rest, sketchIds } : rest;
+      }
+      if (pickedBody) {
+        const bodyIds = toggle(draft.bodyIds, pickedBody, (a, b) => a === b, false);
+        return bodyIds.length === 0 && !draft.sketchIds?.length ? draft : { ...draft, bodyIds };
+      }
       return draft;
     case 'split': {
       if (pick.kind === 'sketchProfile') {
         return { ...draft, profile: sketchProfileRef(pick.featureId, pick.regionKey) };
+      }
+      // A whole body (double click): split it too, or not any more (the first stays).
+      if (pick.kind === 'body' && pick.bodyId !== draft.bodyId) {
+        const bodyIds = toggle(draft.bodyIds ?? [], pick.bodyId, (a, b) => a === b, false);
+        const { bodyIds: _old, ...rest } = draft;
+        return bodyIds.length > 0 ? { ...rest, bodyIds } : rest;
       }
       if (faceRef && isPlanar(faceRef)) {
         const { profile: _profile, ...rest } = draft;
@@ -878,18 +925,23 @@ export function acceptModelingPick(
         return { ...draft, bodyIds: toggle(draft.bodyIds, pickedBody, (a, b) => a === b) };
       }
       return draft;
-    case 'align':
-      if (faceRef && isPlanar(faceRef)) {
-        // With steps: the moving face (any body but the target's), then the target face.
-        if (draft.step === 0) {
-          if (faceRef.bodyId === draft.target.bodyId) return draft;
-          return { ...draft, face: faceRef, bodyId: faceRef.bodyId };
-        }
-        if (draft.step === 1 && faceRef.bodyId === draft.bodyId) return draft;
-        if (faceRef.bodyId === draft.bodyId) return { ...draft, face: faceRef };
-        return { ...draft, target: faceRef };
-      }
-      return draft;
+    case 'align': {
+      const ref = faceRef ? alignFaceRef(faceRef) : edgeRef ? alignEdgeRef(edgeRef) : null;
+      const refBody = ref ? alignRefBodyId(ref) : null;
+      if (!ref || !refBody) return draft;
+      // With steps: the moving reference (any body but the target's), then the target.
+      const asFrom = (): AlignDraft =>
+        refBody === alignRefBodyId(draft.to) || alignPairProblem(ref, draft.to)
+          ? draft
+          : { ...draft, from: ref, bodyId: refBody };
+      const asTo = (): AlignDraft =>
+        refBody === draft.bodyId || alignPairProblem(draft.from, ref)
+          ? draft
+          : { ...draft, to: ref };
+      if (draft.step === 0) return asFrom();
+      if (draft.step === 1) return asTo();
+      return refBody === draft.bodyId ? asFrom() : asTo();
+    }
   }
 }
 
@@ -917,6 +969,16 @@ function acceptDatumPick(
     }
     case 'split':
       return plane ? { ...draft, plane } : draft;
+    case 'align': {
+      // A construction plane or axis is a target.
+      if (draft.step === 0) return draft;
+      const to: AlignReference | null = plane
+        ? { kind: 'plane', plane }
+        : axis
+          ? { kind: 'axis', axis }
+          : null;
+      return to && !alignPairProblem(draft.from, to) ? { ...draft, to } : draft;
+    }
     case 'revolve':
       return axis ? { ...draft, axis } : draft;
     case 'rotateAxis':
@@ -1022,13 +1084,20 @@ export function modelingDraftToFeature(
         ...(draft.axis ? { axis: draft.axis } : {}),
       };
     case 'pattern':
-      if (draft.bodyIds.length === 0) return null;
-      return { ...common, kind: 'pattern', bodyIds: draft.bodyIds, pattern: draft.pattern };
+      if (draft.bodyIds.length === 0 && !draft.sketchIds?.length) return null;
+      return {
+        ...common,
+        kind: 'pattern',
+        bodyIds: draft.bodyIds,
+        ...(draft.sketchIds?.length ? { sketchIds: draft.sketchIds } : {}),
+        pattern: draft.pattern,
+      };
     case 'split':
       return {
         ...common,
         kind: 'split',
         bodyId: draft.bodyId,
+        ...(draft.bodyIds?.length ? { bodyIds: draft.bodyIds } : {}),
         plane: draft.plane,
         ...(draft.profile ? { profile: draft.profile } : {}),
         ...(draft.keepOriginal ? { keepOriginal: true } : {}),
@@ -1043,17 +1112,20 @@ export function modelingDraftToFeature(
         angle: draft.angle,
         copy: draft.copy,
       };
-    case 'align':
+    case 'align': {
+      // Two planar faces keep the original fields (any build reads them); the rest from/to.
+      const faces = bothPlanarFaces(draft.from, draft.to);
       return {
         ...common,
         kind: 'align',
         bodyId: draft.bodyId,
-        face: draft.face,
-        target: draft.target,
+        ...(faces ?? { from: draft.from, to: draft.to }),
         flip: draft.flip,
         center: draft.center,
         offset: draft.offset,
+        ...(draft.turn ? { turn: draft.turn } : {}),
       };
+    }
   }
 }
 
@@ -1112,18 +1184,21 @@ export function modelingDraftMeta(draft: ModelingDraft): DraftMeta {
       return {
         label: 'Pattern',
         shortcut: '',
-        prompt:
+        prompt: `${
           draft.pattern.kind === 'linear'
-            ? 'Drag the arrow or type count and spacing. Click an edge for the direction.'
-            : 'Drag the arc or type count and angle. Click an edge for the axis.',
+            ? 'Drag the arrow or type count and spacing. Click an edge for the direction'
+            : 'Drag the arc or type count and angle. Click an edge for the axis'
+        }, a sketch to pattern it too.`,
       };
     case 'split':
       return {
         label: 'Split Body',
         shortcut: '',
-        prompt: draft.profile
-          ? 'Split with the sketch profile (through the body). Click a planar face to split along its plane instead.'
-          : 'Drag the plane or type its offset; click a planar face or a sketch profile to split with it.',
+        prompt: `${draft.bodyIds?.length ? `${plural(draft.bodyIds.length + 1, 'body', 'bodies')}. ` : ''}${
+          draft.profile
+            ? 'Split with the sketch profile (through the body). Click a planar face to split along its plane instead.'
+            : 'Drag the plane or type its offset; click a planar face or a sketch profile to split with it.'
+        } Double-click a body to split it too.`,
       };
     case 'rotateAxis':
       return {
@@ -1136,7 +1211,9 @@ export function modelingDraftMeta(draft: ModelingDraft): DraftMeta {
         label: 'Align',
         shortcut: '',
         prompt:
-          'The first body moves onto the target face. Type a gap, or click faces to change them.',
+          alignShapeOf(draft.to) === 'plane'
+            ? 'The first body moves onto the target plane. Type a gap, or click faces or edges to change them.'
+            : 'The first body moves onto the target axis or centre. Type an offset along the axis, or click to change the references.',
       };
   }
 }
@@ -1413,9 +1490,12 @@ export function modelingDraftBadges(draft: ModelingDraft): DraftBadge[] {
           },
         },
       ];
-    case 'align':
-      return [
-        {
+    case 'align': {
+      const from = alignShapeOf(draft.from);
+      const to = alignShapeOf(draft.to);
+      const out: DraftBadge[] = [];
+      if (from === 'plane' && to === 'plane') {
+        out.push({
           ariaLabel: 'Face direction',
           value: draft.flip ? 'flush' : 'opposed',
           options: [
@@ -1423,8 +1503,21 @@ export function modelingDraftBadges(draft: ModelingDraft): DraftBadge[] {
             { value: 'flush', label: 'Same direction' },
           ],
           apply: (d, value) => (d.kind === 'align' ? { ...d, flip: value === 'flush' } : d),
-        },
-        {
+        });
+      } else if (from === 'line' && to === 'line') {
+        // Coaxial: the smaller turn, or end for end (Shapr3D's flip 180°).
+        out.push({
+          ariaLabel: 'Axis direction',
+          value: draft.flip ? 'flipped' : 'same',
+          options: [
+            { value: 'same', label: 'Along the axis' },
+            { value: 'flipped', label: 'Flipped 180°' },
+          ],
+          apply: (d, value) => (d.kind === 'align' ? { ...d, flip: value === 'flipped' } : d),
+        });
+      }
+      if (!(from === 'point' && to === 'point')) {
+        out.push({
           ariaLabel: 'Centre',
           value: draft.center ? 'center' : 'keep',
           options: [
@@ -1432,8 +1525,10 @@ export function modelingDraftBadges(draft: ModelingDraft): DraftBadge[] {
             { value: 'keep', label: 'Keep position' },
           ],
           apply: (d, value) => (d.kind === 'align' ? { ...d, center: value === 'center' } : d),
-        },
-      ];
+        });
+      }
+      return out;
+    }
   }
 }
 
@@ -1472,22 +1567,25 @@ function patternModeBadges(draft: PatternDraft): DraftBadge[] {
               ...(q.second
                 ? { second: { ...q.second, spacing: convert(q.second.spacing, q.second.count) } }
                 : {}),
+              ...(q.third
+                ? { third: { ...q.third, spacing: convert(q.third.spacing, q.third.count) } }
+                : {}),
             },
           };
         },
       },
       {
         ariaLabel: 'Pattern directions',
-        value: p.second ? 'two' : 'one',
+        value: p.third ? 'three' : p.second ? 'two' : 'one',
         options: [
           { value: 'one', label: 'One direction' },
           { value: 'two', label: 'Two directions' },
+          { value: 'three', label: 'Three directions' },
         ],
         apply: (d, value, evaluation) => {
           if (d.kind !== 'pattern' || d.pattern.kind !== 'linear') return d;
-          const { second, ...rest } = d.pattern;
+          const { second, third, ...rest } = d.pattern;
           if (value === 'one') return { ...d, pattern: rest };
-          if (second) return d;
           const first = axisLine(evaluation, d.pattern.direction, [])?.dir ?? [1, 0, 0];
           // The world axis most across the first direction.
           const axis =
@@ -1498,11 +1596,26 @@ function patternModeBadges(draft: PatternDraft): DraftBadge[] {
                   Math.abs(dot(worldAxisVector(a), first)) -
                   Math.abs(dot(worldAxisVector(b), first)),
               )[0] ?? 'Y';
+          const nextSecond = second ?? {
+            direction: { kind: 'world' as const, axis },
+            count: 2,
+            spacing: rest.spacing,
+          };
+          if (value === 'two') return { ...d, pattern: { ...rest, second: nextSecond } };
+          if (third) return d;
+          // Three directions: the world axis most along first × second.
+          const dir2 = axisLine(evaluation, nextSecond.direction, [])?.dir ?? [0, 1, 0];
+          const normal = cross(first, dir2);
+          const axis3 = (['X', 'Y', 'Z'] as WorldAxis[]).sort(
+            (a, b) =>
+              Math.abs(dot(worldAxisVector(b), normal)) - Math.abs(dot(worldAxisVector(a), normal)),
+          )[0]!;
           return {
             ...d,
             pattern: {
               ...rest,
-              second: { direction: { kind: 'world', axis }, count: 2, spacing: rest.spacing },
+              second: nextSecond,
+              third: { direction: { kind: 'world', axis: axis3 }, count: 2, spacing: rest.spacing },
             },
           };
         },
@@ -1626,6 +1739,61 @@ function planeOf(
   return { point: face?.centroid ?? plane.face.signature.centroid, normal };
 }
 
+/** The axis an Align reference stands for (edges, datums, cylindrical faces), when the UI knows it. */
+function alignLine(
+  evaluation: EvaluationResult,
+  ref: AlignReference,
+): { point: Vec3; dir: Vec3 } | null {
+  // A face's axis is only known to the kernel (no handle or guide for it here).
+  return ref.kind === 'axis' ? axisLine(evaluation, ref.axis, []) : null;
+}
+
+/** A selected face or edge (or a datum, as a target) as an Align reference. */
+function alignRefOfItem(evaluation: EvaluationResult, item: SelectionItem): AlignReference | null {
+  if (item.kind === 'face') {
+    const ref = faceRefOf(evaluation, item.bodyId, item.faceKey);
+    return ref ? alignFaceRef(ref) : null;
+  }
+  if (item.kind === 'edge') {
+    const ref = edgeRefOf(evaluation, item.bodyId, item.edgeKey);
+    return ref ? alignEdgeRef(ref) : null;
+  }
+  if (item.kind === 'datum') {
+    const ref = datumRef(evaluation, item.featureId);
+    if (!ref) return null;
+    return 'frame' in ref
+      ? { kind: 'plane', plane: ref as PlaneRef }
+      : { kind: 'axis', axis: ref as AxisRef };
+  }
+  return null;
+}
+
+/** Box of a pattern's bodies and sketches (their profile outlines). */
+function patternBounds(
+  evaluation: EvaluationResult,
+  bodyIds: readonly string[],
+  sketchIds: readonly string[],
+): { min: Vec3; max: Vec3 } | null {
+  const points: Vec3[] = [];
+  for (const body of evaluation.bodies) {
+    if (bodyIds.includes(body.id)) points.push(body.min as Vec3, body.max as Vec3);
+  }
+  for (const sketch of evaluation.sketches) {
+    if (!sketchIds.includes(sketch.featureId)) continue;
+    for (const profile of sketch.profiles) points.push(...profile.outline);
+  }
+  if (points.length === 0) return null;
+  const min: Vec3 = [Infinity, Infinity, Infinity];
+  const max: Vec3 = [-Infinity, -Infinity, -Infinity];
+  for (const p of points) {
+    for (let i = 0; i < 3; i += 1) {
+      min[i] = Math.min(min[i]!, p[i]!);
+      max[i] = Math.max(max[i]!, p[i]!);
+    }
+  }
+  return { min, max };
+}
+
 function bodyCentre(evaluation: EvaluationResult, ids: readonly string[]): Vec3 | null {
   const bounds = unionBounds(evaluation.bodies.filter((b) => ids.includes(b.id)));
   return bounds ? scale(add(bounds.min, bounds.max), 0.5) : null;
@@ -1695,7 +1863,7 @@ export function modelingDraftHandles(
       const plane = planeOf(evaluation, draft.plane);
       const centre = bodyCentre(
         evaluation,
-        draft.kind === 'mirror' ? draft.bodyIds : [draft.bodyId],
+        draft.kind === 'mirror' ? draft.bodyIds : [draft.bodyId, ...(draft.bodyIds ?? [])],
       );
       if (!plane || !centre || draft.plane.kind !== 'plane') return [];
       // A profile split has no plane to drag.
@@ -1721,7 +1889,8 @@ export function modelingDraftHandles(
       ];
     }
     case 'pattern': {
-      const centre = bodyCentre(evaluation, draft.bodyIds);
+      const bounds = patternBounds(evaluation, draft.bodyIds, draft.sketchIds ?? []);
+      const centre = bounds ? scale(add(bounds.min, bounds.max), 0.5) : null;
       if (!centre) return [];
       const p = draft.pattern;
       const count: HandleBase = {
@@ -1803,6 +1972,46 @@ export function modelingDraftHandles(
             },
           );
         }
+        const third = p.third;
+        const line3 = third ? axisLine(evaluation, third.direction, features) : null;
+        if (third && line3) {
+          const dir3 = line3.dir;
+          const step3 = total ? third.spacing / Math.max(1, third.count - 1) : third.spacing;
+          const lastLayer = add(centre, scale(dir3, step3 * (third.count - 1)));
+          const setThird = (d: FeatureDraft, patch: Partial<typeof third>): FeatureDraft =>
+            d.kind === 'pattern' && d.pattern.kind === 'linear' && d.pattern.third
+              ? { ...d, pattern: { ...d.pattern, third: { ...d.pattern.third, ...patch } } }
+              : d;
+          out.push(
+            {
+              kind: 'linear',
+              id: 'spacing3',
+              label: total ? 'Third direction length' : 'Third direction spacing',
+              unit: 'mm',
+              value: third.spacing,
+              base: centre,
+              dir: dir3,
+              length: Math.max(Math.abs(step3), STEM_MM),
+              apply: (d, value) =>
+                setThird(d, {
+                  spacing: Math.abs(value) < MIN_FEATURE_SIZE_MM ? MIN_FEATURE_SIZE_MM : value,
+                }),
+            },
+            {
+              kind: 'chip',
+              id: 'count3',
+              label: 'Third direction count',
+              prefix: '×',
+              unit: 'count',
+              value: third.count,
+              at: add(lastLayer, scale(dir3, 6)),
+              apply: (d, value) =>
+                setThird(d, {
+                  count: Math.max(1, Math.min(MAX_PATTERN_COUNT, Math.round(value))),
+                }),
+            },
+          );
+        }
         return out;
       }
       const line = axisLine(evaluation, p.axis, features);
@@ -1859,19 +2068,56 @@ export function modelingDraftHandles(
       ];
     }
     case 'align': {
-      const target = planeOf(evaluation, { kind: 'face', face: draft.target });
+      // A gap along the target plane's normal, or an offset along the target axis.
+      const to = alignShapeOf(draft.to);
+      const plane =
+        to === 'plane'
+          ? draft.to.kind === 'face'
+            ? planeOf(evaluation, { kind: 'face', face: draft.to.face })
+            : draft.to.kind === 'plane'
+              ? planeOf(evaluation, draft.to.plane)
+              : null
+          : null;
+      const line =
+        to === 'line' && alignShapeOf(draft.from) !== 'point'
+          ? alignLine(evaluation, draft.to)
+          : null;
+      const target = plane
+        ? { point: plane.point, dir: plane.normal, label: 'Align gap' }
+        : line
+          ? { point: line.point, dir: line.dir, label: 'Offset along the axis' }
+          : null;
       if (!target) return [];
+      // The turn about the target normal/axis (Shapr3D's rotation ring after aligning).
+      const ref = perpendicular(target.dir);
       return [
         {
           kind: 'linear',
           id: 'offset',
-          label: 'Align gap',
+          label: target.label,
           unit: 'mm',
           value: draft.offset,
           base: target.point,
-          dir: target.normal,
+          dir: target.dir,
           length: STEM_MM + Math.max(0, draft.offset),
           apply: (d, value) => (d.kind === 'align' ? { ...d, offset: value } : d),
+        },
+        {
+          kind: 'angle',
+          id: 'turn',
+          label: 'Turn',
+          unit: 'deg',
+          value: draft.turn ?? 0,
+          center: target.point,
+          axis: target.dir,
+          ref,
+          radius: STEM_MM * 2,
+          apply: (d, value) => {
+            if (d.kind !== 'align') return d;
+            const turn = Math.max(-360, Math.min(360, Number.isFinite(value) ? value : 0));
+            const { turn: _old, ...rest } = d;
+            return turn === 0 ? rest : { ...rest, turn };
+          },
         },
       ];
     }
@@ -1982,19 +2228,28 @@ export function modelingDraftGuides(
       : 40;
     axisSegment(draft.axis, samples?.center ?? null, reach);
   } else if (draft.kind === 'pattern' && draft.pattern.kind === 'circular') {
-    const centre = bodyCentre(evaluation, draft.bodyIds);
-    axisSegment(draft.pattern.axis, centre, 40);
+    const bounds = patternBounds(evaluation, draft.bodyIds, draft.sketchIds ?? []);
+    axisSegment(draft.pattern.axis, bounds ? scale(add(bounds.min, bounds.max), 0.5) : null, 40);
   } else if (draft.kind === 'rotateAxis') {
     const centre = bodyCentre(evaluation, draft.bodyIds);
     axisSegment(draft.axis, centre, 40);
   } else if (draft.kind === 'mirror' && draft.axis) {
     const centre = bodyCentre(evaluation, draft.bodyIds);
     axisSegment(draft.axis, centre, 40);
+  } else if (draft.kind === 'align' && alignShapeOf(draft.to) === 'line') {
+    // The target axis the moved reference lines up with.
+    const line = alignLine(evaluation, draft.to);
+    if (line) {
+      out.lines.push([add(line.point, scale(line.dir, -40)), add(line.point, scale(line.dir, 40))]);
+    }
   } else if (draft.kind === 'mirror' || (draft.kind === 'split' && !draft.profile)) {
     const plane = planeOf(evaluation, draft.plane);
     const bounds = unionBounds(
       evaluation.bodies.filter((b) =>
-        (draft.kind === 'mirror' ? draft.bodyIds : [draft.bodyId]).includes(b.id),
+        (draft.kind === 'mirror'
+          ? draft.bodyIds
+          : [draft.bodyId, ...(draft.bodyIds ?? [])]
+        ).includes(b.id),
       ),
     );
     if (plane && bounds) {
@@ -2022,6 +2277,7 @@ export function modelingDraftModifiedBodyIds(draft: ModelingDraft): string[] {
     case 'rotateAxis':
       return draft.copy ? [] : draft.bodyIds;
     case 'split':
+      return [draft.bodyId, ...(draft.bodyIds ?? [])];
     case 'align':
       return [draft.bodyId];
     default:

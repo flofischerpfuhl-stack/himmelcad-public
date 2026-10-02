@@ -26,6 +26,17 @@ function nonPlanarFaceSelected(ctx: AssemblerState): boolean {
     return face !== undefined && face.surface !== 'plane';
   });
 }
+/**
+ * An edge on each of two different bodies (Align's axis references). A face
+ * plus an edge stays Rotate Around Axis's suggestion (Shapr3D: line + face).
+ */
+function twoReferencesOfTwoBodies(ctx: AssemblerState): boolean {
+  const [a, b] = ctx.selection;
+  return (
+    ctx.selection.length === 2 && a?.kind === 'edge' && b?.kind === 'edge' && a.bodyId !== b.bodyId
+  );
+}
+
 /** Revolve, Sweep, Loft (before the direct-edit block). */
 const PROFILE_SPECS: readonly FeatureToolCommandSpec[] = [
   {
@@ -151,8 +162,9 @@ const SPECS: readonly FeatureToolCommandSpec[] = [
     group: 'transform',
     kind: 'align',
     keywords: ['mate', 'snap faces', 'place', 'coplanar'],
-    // Shapr3D: two faces of different bodies suggest Align (and Replace Face).
-    recommend: (ctx) => (twoFacesOfTwoBodies(ctx) ? 115 : null),
+    // Shapr3D: two faces of different bodies suggest Align (and Replace Face); Align also
+    // takes edges (MOD-22), so two edges of two bodies suggest it too.
+    recommend: (ctx) => (twoFacesOfTwoBodies(ctx) || twoReferencesOfTwoBodies(ctx) ? 115 : null),
   },
 ];
 

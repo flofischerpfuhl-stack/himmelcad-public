@@ -11,9 +11,11 @@ import {
   type LengthUnit,
   type OrbitAround,
   type Projection,
+  type AccentColor,
   type TabletLayoutSetting,
   type ThemeName,
   type ToolbarLabels,
+  type UndoRedoPlacement,
 } from '../../platform/input/preferences.js';
 import type { FingerDrawing } from '../../platform/input/pointer.js';
 import { useTabletLayout } from '../../platform/input/tabletLayout.js';
@@ -92,6 +94,20 @@ export function SettingsDialog(): JSX.Element {
             onChange={(e) => set('theme', e.currentTarget.value as ThemeName)}
           />
         </Row>
+        <Row label="Accent colour" hint="Buttons, focus rings and sketch outlines">
+          <Select
+            aria-label="Accent colour"
+            value={prefs.accent}
+            options={[
+              { value: 'blue', label: 'Blue' },
+              { value: 'teal', label: 'Teal' },
+              { value: 'violet', label: 'Violet' },
+              { value: 'green', label: 'Green' },
+              { value: 'pink', label: 'Pink' },
+            ]}
+            onChange={(e) => set('accent', e.currentTarget.value as AccentColor)}
+          />
+        </Row>
         <Row label="Toolbar labels" hint="Icon names in the side toolbars">
           <Select
             aria-label="Toolbar labels"
@@ -102,6 +118,17 @@ export function SettingsDialog(): JSX.Element {
               { value: 'always', label: 'Always' },
             ]}
             onChange={(e) => set('labels', e.currentTarget.value as ToolbarLabels)}
+          />
+        </Row>
+        <Row label="Undo and Redo" hint="Buttons in the title bar or below the tools">
+          <Select
+            aria-label="Undo and Redo buttons"
+            value={prefs.undoRedoPlacement}
+            options={[
+              { value: 'titleBar', label: 'Title bar' },
+              { value: 'bottomBar', label: 'Below the tools' },
+            ]}
+            onChange={(e) => set('undoRedoPlacement', e.currentTarget.value as UndoRedoPlacement)}
           />
         </Row>
         <Row label="Home at start" hint="Recent projects and templates when the app opens">

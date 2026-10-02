@@ -8,6 +8,7 @@
 import { defineKernelModule } from '../../foundation/geometry-kernel/features/registry.js';
 import { applyDeleteFace, applyOffsetFace } from './faceEdits.js';
 import { applyMoveEdge, applyMoveFace } from './moveEdits.js';
+import { applyReplaceFace } from './replaceFace.js';
 // The kinds' definitions, as in the main thread (modeling and construction do the same).
 import './kinds.js';
 
@@ -18,5 +19,6 @@ export const directEditKernel = defineKernelModule({
     deleteFace: applyDeleteFace,
     moveEdge: applyMoveEdge,
     moveFace: applyMoveFace,
+    replaceFace: applyReplaceFace,
   },
 });

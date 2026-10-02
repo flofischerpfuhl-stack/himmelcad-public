@@ -69,7 +69,8 @@ export interface MoveEdgeFeature extends FeatureBase {
  * Moves a planar face by `vector` in any direction (Shapr3D Move on a
  * face): the part along the normal offsets it (as Offset Face), the part in
  * its plane slides it — every planar neighbour sharing a straight edge with
- * it tilts about its far side to follow the moved edge.
+ * it tilts about its far side to follow the moved edge. A full round face
+ * (a hole wall, a boss) moves across its axis: the hole or boss moves.
  */
 export interface MoveFaceFeature extends FeatureBase {
   kind: 'moveFace';
@@ -83,11 +84,26 @@ export interface MoveFaceFeature extends FeatureBase {
   rotation?: { point: Vec3; axis: Vec3; angle: number };
 }
 
+/**
+ * Replaces planar faces of one body by the surface of another face
+ * (Shapr3D Replace Face, MOD-23): each face is extended or trimmed until it
+ * lies on the replacing face's surface (its plane, or its cylinder). The
+ * replaced faces keep their keys, so later steps that reference them hold.
+ */
+export interface ReplaceFaceFeature extends FeatureBase {
+  kind: 'replaceFace';
+  /** The faces to replace (planar, one body). */
+  faces: FaceRef[];
+  /** The replacing face (planar or cylindrical; any body, not one of `faces`). */
+  target: FaceRef;
+}
+
 export type DirectEditFeature =
   | OffsetFaceFeature
   | DeleteFaceFeature
   | MoveEdgeFeature
-  | MoveFaceFeature;
+  | MoveFaceFeature
+  | ReplaceFaceFeature;
 
 declare module '../../foundation/document/featureKinds.js' {
   interface FeatureKindMap {
@@ -95,6 +111,7 @@ declare module '../../foundation/document/featureKinds.js' {
     deleteFace: DeleteFaceFeature;
     moveEdge: MoveEdgeFeature;
     moveFace: MoveFaceFeature;
+    replaceFace: ReplaceFaceFeature;
   }
 }
 
@@ -155,5 +172,15 @@ registerFeatureKind({
       if (!isVec3(rot.axis)) h.fail(`${path}.rotation.axis`, 'expected a Vec3');
       if (!isNumber(rot.angle)) h.fail(`${path}.rotation.angle`, 'expected a number');
     }
+  },
+});
+
+registerFeatureKind({
+  kind: 'replaceFace',
+  module: 'direct-edit',
+  label: 'Replace Face',
+  validate: (r, path, h) => {
+    faceList(r, 'faces', path, h);
+    h.faceRef(r.target, `${path}.target`);
   },
 });

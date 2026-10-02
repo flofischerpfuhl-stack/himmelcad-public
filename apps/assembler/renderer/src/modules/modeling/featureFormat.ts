@@ -181,7 +181,15 @@ export function validateModelingFeature(r: Rec, path: string, h: FormatHelpers):
       break;
     }
     case 'pattern': {
-      stringList('bodyIds');
+      // Bodies, or (Block 9) sketches only: then `bodyIds` may be empty.
+      if (r.sketchIds !== undefined) {
+        stringList('sketchIds');
+        if (!Array.isArray(r.bodyIds) || !r.bodyIds.every(isString)) {
+          h.fail(`${path}.bodyIds`, 'expected an array of strings');
+        }
+      } else {
+        stringList('bodyIds');
+      }
       const p = r.pattern;
       if (!isRecord(p)) h.fail(`${path}.pattern`, 'expected an object');
       if (!isNumber(p.count)) h.fail(`${path}.pattern.count`, 'expected a number');
@@ -195,12 +203,17 @@ export function validateModelingFeature(r: Rec, path: string, h: FormatHelpers):
         ) {
           h.fail(`${path}.pattern.spacingMode`, 'expected "spacing" or "total"');
         }
-        if (p.second !== undefined) {
-          const s = p.second;
-          if (!isRecord(s)) h.fail(`${path}.pattern.second`, 'expected an object');
-          axis(s.direction, `${path}.pattern.second.direction`);
-          if (!isNumber(s.count)) h.fail(`${path}.pattern.second.count`, 'expected a number');
-          if (!isNumber(s.spacing)) h.fail(`${path}.pattern.second.spacing`, 'expected a number');
+        for (const field of ['second', 'third'] as const) {
+          if (p[field] === undefined) continue;
+          const s = p[field];
+          const at = `${path}.pattern.${field}`;
+          if (!isRecord(s)) h.fail(at, 'expected an object');
+          axis(s.direction, `${at}.direction`);
+          if (!isNumber(s.count)) h.fail(`${at}.count`, 'expected a number');
+          if (!isNumber(s.spacing)) h.fail(`${at}.spacing`, 'expected a number');
+        }
+        if (p.third !== undefined && p.second === undefined) {
+          h.fail(`${path}.pattern.third`, 'a third direction needs a second one');
         }
       } else if (p.kind === 'circular') {
         axis(p.axis, `${path}.pattern.axis`);
@@ -218,6 +231,7 @@ export function validateModelingFeature(r: Rec, path: string, h: FormatHelpers):
     }
     case 'split':
       str('bodyId');
+      if (r.bodyIds !== undefined) stringList('bodyIds');
       plane(r.plane, `${path}.plane`);
       if (r.profile !== undefined) profile(r.profile, `${path}.profile`);
       if (r.keepOriginal !== undefined) bool('keepOriginal');
@@ -234,14 +248,28 @@ export function validateModelingFeature(r: Rec, path: string, h: FormatHelpers):
       num('angle');
       bool('copy');
       break;
-    case 'align':
+    case 'align': {
       str('bodyId');
-      h.faceRef(r.face, `${path}.face`);
-      h.faceRef(r.target, `${path}.target`);
+      // Two planar faces: `face`/`target`; other references (Block 9): `from`/`to`, which win.
+      const alignRef = (v: unknown, at: string) => {
+        if (!isRecord(v)) h.fail(at, 'expected an object');
+        if (v.kind === 'face') h.faceRef(v.face, `${at}.face`);
+        else if (v.kind === 'axis') axis(v.axis, `${at}.axis`);
+        else if (v.kind === 'plane') plane(v.plane, `${at}.plane`);
+        else h.fail(`${at}.kind`, 'expected "face", "axis" or "plane"');
+      };
+      if (r.from !== undefined) alignRef(r.from, `${path}.from`);
+      else h.faceRef(r.face, `${path}.face`);
+      if (r.to !== undefined) alignRef(r.to, `${path}.to`);
+      else h.faceRef(r.target, `${path}.target`);
+      if (r.from !== undefined && r.face !== undefined) h.faceRef(r.face, `${path}.face`);
+      if (r.to !== undefined && r.target !== undefined) h.faceRef(r.target, `${path}.target`);
       bool('flip');
       bool('center');
       num('offset');
+      if (r.turn !== undefined) num('turn');
       break;
+    }
     default:
       if (isPrintFeatureKind(r.kind)) return validatePrintFeature(r, path, h);
       h.fail(`${path}.kind`, `unknown feature kind "${String(r.kind)}"`);

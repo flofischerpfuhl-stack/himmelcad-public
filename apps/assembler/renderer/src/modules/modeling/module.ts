@@ -5,6 +5,12 @@
  */
 import { COMMAND_ORDER } from '../../foundation/commands/registry.js';
 import { defineAssemblerModule } from '../../foundation/commands/module.js';
+import {
+  installStepFolderSync,
+  registerStepFolderKind,
+} from '../../foundation/commands/stepFolders.js';
+import { useAssemblerStore } from '../../foundation/commands/store.js';
+import type { FeatureOf } from '../../foundation/document/featureKinds.js';
 import { MODELING_API } from './api.js';
 import { BLEND_RULE_COMMANDS } from './blendCommands.js';
 import {
@@ -23,6 +29,9 @@ import {
 } from './modelingCommands.js';
 import './kinds.js';
 import { modelingToolsSlice } from './tools.js';
+
+// Pattern 3D: the instances (originals and copies) go into an Items folder named after the step.
+registerStepFolderKind('pattern', (feature) => (feature as FeatureOf<'pattern'>).bodyIds);
 
 export const modelingModule = defineAssemblerModule({
   id: 'modeling',
@@ -44,4 +53,7 @@ export const modelingModule = defineAssemblerModule({
     PRIMITIVE_DRAFT_TOOL,
   ],
   storeSlice: modelingToolsSlice,
+  install: () => {
+    installStepFolderSync(useAssemblerStore);
+  },
 });

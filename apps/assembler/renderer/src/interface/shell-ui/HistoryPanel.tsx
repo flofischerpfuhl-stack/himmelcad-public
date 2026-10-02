@@ -113,6 +113,8 @@ export function HistoryPanel({ state, onContextMenu }: HistoryPanelProps): JSX.E
   const [filterToSelection, setFilterToSelection] = useState(false);
   /** Insertion gap (0..n) highlighted while a step or the rollback marker is dragged. */
   const [dropGap, setDropGap] = useState<number | null>(null);
+  /** The step a Shift+click range starts from (the last plain or Ctrl click). */
+  const anchorRef = useRef<string | null>(null);
 
   const toggleExpanded = (id: string): void => {
     setExpandedIds((prev) => {
@@ -182,6 +184,19 @@ export function HistoryPanel({ state, onContextMenu }: HistoryPanelProps): JSX.E
     <div
       className={`${panelStyles.root} ${panelStyles.historyPlacement}`}
       aria-label="History panel"
+      onKeyDown={(event) => {
+        // Ctrl+A with the focus in History selects the shown steps (Shapr3D: the focused panel).
+        if (
+          (event.ctrlKey || event.metaKey) &&
+          !event.altKey &&
+          !event.shiftKey &&
+          event.key.toLowerCase() === 'a' &&
+          !(event.target instanceof HTMLInputElement)
+        ) {
+          event.preventDefault();
+          state.setSelection(shown.map((f) => ({ kind: 'feature', featureId: f.id })));
+        }
+      }}
     >
       <div className={panelStyles.header}>
         <span className={panelStyles.title}>History</span>
@@ -255,6 +270,28 @@ export function HistoryPanel({ state, onContextMenu }: HistoryPanelProps): JSX.E
                   feature={feature}
                   index={index}
                   state={state}
+                  onSelect={(mode) => {
+                    // SEL-11: Ctrl/Cmd adds or removes a step, Shift selects the range of shown steps.
+                    const item = { kind: 'feature' as const, featureId: feature.id };
+                    const anchor = anchorRef.current;
+                    if (mode === 'range' && anchor && shown.some((f) => f.id === anchor)) {
+                      const a = shown.findIndex((f) => f.id === anchor);
+                      const b = shown.findIndex((f) => f.id === feature.id);
+                      const [from, to] = a <= b ? [a, b] : [b, a];
+                      state.setSelection(
+                        shown
+                          .slice(from, to + 1)
+                          .map((f) => ({ kind: 'feature' as const, featureId: f.id })),
+                      );
+                      return;
+                    }
+                    anchorRef.current = feature.id;
+                    if (mode === 'toggle') state.toggle(item);
+                    else {
+                      state.select(item);
+                      toggleExpanded(feature.id);
+                    }
+                  }}
                   rolledBack={markerIndex >= 0 && index >= markerIndex}
                   breakpointAfter={markerIndex === index + 1}
                   expanded={expandedIds.has(feature.id)}
@@ -357,6 +394,16 @@ interface HistoryCardProps {
   renaming: boolean;
   onRenamingChange: (renaming: boolean) => void;
   onContextMenu: (x: number, y: number) => void;
+  /** A click on the card: plain (select and expand), Ctrl/Cmd (toggle), Shift (range). */
+  onSelect: (mode: 'single' | 'toggle' | 'range') => void;
+}
+
+/** The steps a key on a focused card acts on: the selected steps if it is one of them, else the card's. */
+function stepsForKey(state: AssemblerState, featureId: string): string[] {
+  const selected = state.selection
+    .filter((item): item is Extract<typeof item, { kind: 'feature' }> => item.kind === 'feature')
+    .map((item) => item.featureId);
+  return selected.includes(featureId) && selected.length > 1 ? selected : [featureId];
 }
 
 function HistoryCard({
@@ -365,6 +412,7 @@ function HistoryCard({
   rolledBack,
   breakpointAfter,
   state,
+  onSelect,
   expanded,
   onToggleExpanded,
   menuOpen,
@@ -409,8 +457,13 @@ function HistoryCard({
           // Shapr3D History: Delete/Backspace suppresses the step, Shift+Delete deletes it.
           if (event.key === 'Delete' || event.key === 'Backspace') {
             event.preventDefault();
-            if (event.shiftKey) state.deleteFeature(feature.id);
-            else state.setSuppressed(feature.id, !feature.suppressed);
+            // With several steps selected (SEL-11), the key acts on all of them: one undo step.
+            const ids = stepsForKey(state, feature.id);
+            if (event.shiftKey) state.deleteFeature(ids);
+            else {
+              const all = state.features.filter((f) => ids.includes(f.id));
+              state.setSuppressed(ids, !all.every((f) => f.suppressed));
+            }
           } else if (event.key === 'Enter' || event.key === ' ') {
             event.preventDefault();
             state.select({ kind: 'feature', featureId: feature.id });
@@ -425,10 +478,9 @@ function HistoryCard({
           event.dataTransfer.setData(DRAG_STEP, feature.id);
           event.dataTransfer.effectAllowed = 'move';
         }}
-        onClick={() => {
-          state.select({ kind: 'feature', featureId: feature.id });
-          onToggleExpanded();
-        }}
+        onClick={(event) =>
+          onSelect(event.ctrlKey || event.metaKey ? 'toggle' : event.shiftKey ? 'range' : 'single')
+        }
         onDoubleClick={() => {
           // Double-clicking a sketch step opens it in sketch mode (Shapr3D).
           if (feature.kind === 'sketch') useSketchStore.getState().begin({ featureId: feature.id });
@@ -680,14 +732,12 @@ function FeatureParams({
           unit="mm"
           onCommit={(v) => edit({ startOffset: v === 0 ? undefined : v })}
         />
-        {(feature.extent?.kind ?? 'distance') === 'distance' || feature.taper ? (
-          <ExpressionField
-            label="Taper"
-            value={feature.taper ?? 0}
-            unit="°"
-            onCommit={(v) => edit({ taper: v === 0 ? undefined : v })}
-          />
-        ) : null}
+        <ExpressionField
+          label="Taper"
+          value={feature.taper ?? 0}
+          unit="°"
+          onCommit={(v) => edit({ taper: v === 0 ? undefined : v })}
+        />
         {feature.extent?.kind === 'toObject' ? (
           <span className={styles.paramNote}>
             To{' '}

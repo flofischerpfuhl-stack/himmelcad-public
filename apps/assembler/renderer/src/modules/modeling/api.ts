@@ -8,9 +8,17 @@ import {
   schemaNumber,
   schemaObject,
   schemaRef,
+  schemaRevision,
   schemaString,
+  type ApiContext,
   type FeatureKindSpec,
+  type Json,
+  type MethodSpec,
+  type WriteOutcome,
 } from '../../foundation/commands/api/contract.js';
+import { ApiError } from '../../foundation/commands/api/errors.js';
+import { bodyIdFor, type Vec3 } from '../../foundation/document/document.js';
+import { unlinkedCopyFeature } from './unlinkedCopy.js';
 import { API_ORDER, type ApiContribution } from '../../foundation/commands/api/registry.js';
 import type { JsonSchema } from '../../foundation/commands/api/validate.js';
 import {
@@ -124,13 +132,24 @@ const PROFILE_KIND_SCHEMAS: Record<string, FeatureKindSpec> = {
 };
 
 /** Pattern, Split, Move/Rotate, Rotate, Align (after the construction kinds). */
+/** An Align reference (`features.ts` `AlignReference`). */
+const ALIGN_REFERENCE: JsonSchema = {
+  oneOf: [
+    schemaObject({ kind: { const: 'face' }, face: schemaRef('FaceInput') }, ['kind', 'face']),
+    schemaObject({ kind: { const: 'axis' }, axis: schemaRef('AxisRef') }, ['kind', 'axis']),
+    schemaObject({ kind: { const: 'plane' }, plane: schemaRef('SketchPlane') }, ['kind', 'plane']),
+  ],
+};
+
 const BODY_KIND_SCHEMAS: Record<string, FeatureKindSpec> = {
   pattern: {
     label: 'Pattern',
-    summary: 'Copies bodies in a linear or circular pattern (independent copies).',
+    summary:
+      "Copies bodies in a linear or circular pattern (independent copies). `sketchIds` patterns whole sketches too: every further instance is a derived sketch `<step>:sketch:<n>` (n = sketch index × 1000 + instance index) whose profiles later steps extrude like a sketch's (sketches.list lists them); `bodyIds` may then be empty.",
     params: schemaObject(
       {
-        bodyIds: { type: 'array', items: schemaString, minItems: 1 },
+        bodyIds: { type: 'array', items: schemaString },
+        sketchIds: { type: 'array', items: schemaString, minItems: 1 },
         pattern: schemaRef('PatternDefinition'),
       },
       ['bodyIds', 'pattern'],
@@ -139,10 +158,11 @@ const BODY_KIND_SCHEMAS: Record<string, FeatureKindSpec> = {
   split: {
     label: 'Split',
     summary:
-      'Splits a body into two bodies: by a plane (the positive side becomes new) or, with `profile`, by a closed sketch profile/planar face projected through the body (the inside becomes new); `keepOriginal` keeps the body and makes both parts new bodies.',
+      "Splits a body into two bodies: by a plane (the positive side becomes new) or, with `profile`, by a closed sketch profile/planar face projected through the body (the inside becomes new); `keepOriginal` keeps the body and makes both parts new bodies. `bodyIds` splits more bodies with the same element in one step (each must be cut; their new parts are `body:<step>:<100 + 2k>`, kept originals' parts `…:<101 + 2k>`).",
     params: schemaObject(
       {
         bodyId: schemaString,
+        bodyIds: { type: 'array', items: schemaString, minItems: 1 },
         plane: schemaRef('SketchPlane'),
         profile: schemaRef('ExtrudeProfile'),
         keepOriginal: { type: 'boolean', default: false },
@@ -188,17 +208,28 @@ const BODY_KIND_SCHEMAS: Record<string, FeatureKindSpec> = {
   align: {
     label: 'Align',
     summary:
-      'Moves a body so its planar `face` lies on the plane of `target` (a planar face of another body): face to face by default, same direction with flip; `offset` leaves a gap; `center` slides the face centres together.',
+      'Moves a body so a reference of it lands on a target. Two planar faces (`face` on the moved body, `target` on another): face to face by default, same direction with flip; `offset` leaves a gap; `center` slides the face centres together. Any other pair as `from`/`to` (which win over face/target): a face (planar = plane, cylindrical/conical = axis, spherical = centre), an `axis` (a straight or circular edge, sketch line, construction or world axis) or a `plane`; an axis onto an axis (coaxial; flip turns it end for end; offset slides along the target axis), a centre onto a centre or an axis, an axis through a centre.',
     params: schemaObject(
       {
         bodyId: schemaString,
         face: schemaRef('FaceInput'),
         target: schemaRef('FaceInput'),
+        from: ALIGN_REFERENCE,
+        to: ALIGN_REFERENCE,
         flip: { type: 'boolean', default: false },
         center: { type: 'boolean', default: true },
         offset: { type: 'number', default: 0 },
+        turn: {
+          type: 'number',
+          minimum: -360,
+          maximum: 360,
+          default: 0,
+          description:
+            'Then turns the body (degrees, right-hand) about the target plane normal through the aligned centre, or about the target axis.',
+        },
       },
-      ['face', 'target'],
+      [],
+      'Either `face` or `from` (on the moved body), and either `target` or `to`.',
     ),
   },
   scale: {
@@ -273,7 +304,101 @@ const BODY_KIND_SCHEMAS: Record<string, FeatureKindSpec> = {
   },
 };
 
+// ---- body.copyUnlinked (MOD-16) -------------------------------------------------------------
+
+const isVec3 = (v: unknown): v is Vec3 =>
+  Array.isArray(v) && v.length === 3 && v.every((x) => typeof x === 'number' && Number.isFinite(x));
+
+const copyUnlinked = (ctx: ApiContext, p: Json): Promise<Json> =>
+  ctx.write('body.copyUnlinked', async (features, evaluation): Promise<WriteOutcome> => {
+    const bodyId = String(p.bodyId);
+    const body = evaluation.bodies.find((b) => b.id === bodyId);
+    if (!body) {
+      throw new ApiError('notFound', `No body "${bodyId}"`, {
+        hint: 'bodies.list lists the bodies.',
+      });
+    }
+    const value = (key: string) => (typeof p[key] === 'number' ? (p[key] as number) : 0);
+    const pivot: Vec3 = isVec3(p.pivot)
+      ? p.pivot
+      : [
+          (body.min[0] + body.max[0]) / 2,
+          (body.min[1] + body.max[1]) / 2,
+          (body.min[2] + body.max[2]) / 2,
+        ];
+    const id = ctx.allocateFeatureId('importStep');
+    let feature;
+    try {
+      feature = await unlinkedCopyFeature(
+        ctx.kernel,
+        features,
+        {
+          bodyId,
+          dx: value('dx'),
+          dy: value('dy'),
+          dz: value('dz'),
+          rx: value('rx'),
+          ry: value('ry'),
+          rz: value('rz'),
+          pivot,
+        },
+        {
+          id,
+          name:
+            typeof p.name === 'string' ? p.name : ctx.nextFeatureName('Unlinked copy', features),
+          bodyName: `${body.name} (copy)`,
+        },
+      );
+    } catch (error) {
+      throw new ApiError(
+        'featureFailed',
+        `The unlinked copy failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    const copyId = bodyIdFor(id);
+    return {
+      features: [...features, feature],
+      touched: [id],
+      selection: [{ kind: 'body', bodyId: copyId }],
+      result: { featureId: id, bodyId: copyId },
+    };
+  });
+
+const METHODS: Record<string, MethodSpec> = {
+  'body.copyUnlinked': {
+    kind: 'command',
+    capability: 'document.write',
+    transactional: true,
+    summary:
+      "An unlinked copy of a body (Shapr3D Move/Rotate copy with Link off): moved by dx/dy/dz and turned rx/ry/rz degrees about world X, Y, Z through `pivot` (default its box centre), kept as its exact geometry in an `importStep` step, so later edits of the original's earlier steps do not change it. Result: the new step and body.",
+    params: schemaObject(
+      {
+        bodyId: schemaString,
+        dx: schemaNumber,
+        dy: schemaNumber,
+        dz: schemaNumber,
+        rx: schemaNumber,
+        ry: schemaNumber,
+        rz: schemaNumber,
+        pivot: schemaRef('Vec3'),
+        name: schemaString,
+        expectedRevision: schemaRevision,
+      },
+      ['bodyId'],
+    ),
+    result: '{featureId, bodyId, revision, committed}',
+  },
+};
+
 export const MODELING_API: ApiContribution = {
+  methods: [
+    {
+      order: API_ORDER.methods.modeling,
+      methods: {
+        'body.copyUnlinked': { spec: METHODS['body.copyUnlinked']!, handler: copyUnlinked },
+      },
+    },
+  ],
   defs: [{ order: API_ORDER.defs.printFeatures, defs: PRINT_DEFS }],
   featureKinds: [
     { order: API_ORDER.featureKinds.modeling, kinds: PROFILE_KIND_SCHEMAS },

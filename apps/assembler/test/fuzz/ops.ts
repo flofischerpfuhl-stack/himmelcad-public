@@ -80,6 +80,10 @@ export const OP_KINDS = [
   'checkEdit',
   'checkRemove',
   'checkRun',
+  // Block 9 parity: Replace Face, Align on axes, unlinked copies.
+  'replaceFace',
+  'alignAxis',
+  'copyUnlinked',
 ] as const;
 
 export type OpKind = (typeof OP_KINDS)[number];
@@ -159,6 +163,9 @@ const WEIGHTS: Record<OpKind, number> = {
   checkEdit: 1,
   checkRemove: 1,
   checkRun: 2,
+  replaceFace: 2,
+  alignAxis: 2,
+  copyUnlinked: 1,
 };
 
 /** mulberry32: small, fast, seedable. */

@@ -20,7 +20,7 @@ import {
 } from '../../../foundation/document/document.js';
 import type { SketchFeature } from '../../../foundation/sketch-solver/sketchFeature.js';
 import { addProjection, projectSource } from '../../../foundation/sketch-solver/projection.js';
-import { EMPTY_SKETCH } from '../../../foundation/sketch-solver/types.js';
+import { EMPTY_SKETCH, entityMap, pointPos } from '../../../foundation/sketch-solver/types.js';
 import { evaluateSketchGeometry } from '../../../foundation/geometry-kernel/sketchGeometry.js';
 import { sampleEdge } from '../../../foundation/geometry-kernel/sketchProjection.js';
 import {
@@ -30,15 +30,18 @@ import {
   MAX_SCALE_FACTOR,
   MIN_SCALE_FACTOR,
   type AlignFeature,
+  type AlignReference,
   type MirrorFeature,
   type PatternFeature,
   type RotateAxisFeature,
   type ScaleFeature,
   type SplitFeature,
+  splitBodyIds,
   type TransformFeature,
   type TranslateFeature,
 } from '../features.js';
 import { assignFaceKeys } from '../../../foundation/geometry-kernel/naming.js';
+import { alignRefBodyId } from '../alignRefs.js';
 import {
   booleanWithHistory,
   type HistoryResult,
@@ -202,27 +205,8 @@ function mirrorSketches(
     v: mulDir(affine.m, frame.v),
     normal: mulDir(affine.m, frame.normal),
   });
-  const register = (index: number, source: SketchFeature, frame: SketchFrame): void => {
-    const id = mirroredSketchId(feature.id, index);
-    const mirrored: SketchFeature = {
-      ...source,
-      id,
-      name: `${source.name} (mirror)`,
-      plane: { kind: 'construction', featureId: feature.id, frame },
-    };
-    delete (mirrored as { projections?: unknown }).projections;
-    let result: ReturnType<typeof evaluateSketchGeometry>;
-    try {
-      result = evaluateSketchGeometry(mirrored, frame);
-    } catch (error) {
-      if (kit.isFailure(error)) throw error;
-      kit.fail(`Mirror of "${source.name}" failed: ${kit.describeError(error)}`);
-    }
-    for (const message of result.warnings) ctx.warn(message);
-    ctx.sketches.set(id, result.evaluated);
-    ctx.sketchFeatures.set(id, mirrored);
-    ctx.sketchRegions.set(id, result.regions);
-  };
+  const register = (index: number, source: SketchFeature, frame: SketchFrame): void =>
+    registerDerivedSketch(kit, ctx, feature.id, index, source, frame, 'mirror');
   const sketchIds = feature.sketchIds ?? [];
   if (new Set(sketchIds).size !== sketchIds.length) kit.fail('A sketch is listed twice');
   sketchIds.forEach((sketchId, i) => {
@@ -260,6 +244,43 @@ function mirrorSketches(
   });
 }
 
+/**
+ * Registers a sketch a step derives from `source` (Mirror, Pattern): the
+ * source's sketch data in `frame`, under `<step>:sketch:<index>`, so later
+ * steps extrude/revolve its profiles like a sketch's.
+ */
+function registerDerivedSketch(
+  kit: FeatureKit,
+  ctx: ReplayContextLike,
+  featureId: string,
+  index: number,
+  source: SketchFeature,
+  frame: SketchFrame,
+  what: string,
+): void {
+  const id = mirroredSketchId(featureId, index);
+  const derived: SketchFeature = {
+    ...source,
+    id,
+    name: `${source.name} (${what})`,
+    plane: { kind: 'construction', featureId, frame },
+  };
+  delete (derived as { projections?: unknown }).projections;
+  let result: ReturnType<typeof evaluateSketchGeometry>;
+  try {
+    result = evaluateSketchGeometry(derived, frame);
+  } catch (error) {
+    if (kit.isFailure(error)) throw error;
+    kit.fail(
+      `${what === 'mirror' ? 'Mirror' : 'Pattern'} of "${source.name}" failed: ${kit.describeError(error)}`,
+    );
+  }
+  for (const message of result.warnings) ctx.warn(message);
+  ctx.sketches.set(id, result.evaluated);
+  ctx.sketchFeatures.set(id, derived);
+  ctx.sketchRegions.set(id, result.regions);
+}
+
 function mulDir(m: readonly number[], v: Vec3): Vec3 {
   return [
     m[0]! * v[0] + m[1]! * v[1] + m[2]! * v[2],
@@ -283,11 +304,17 @@ export function applyPattern(
   if (!Number.isInteger(pattern.count) || pattern.count < 2 || pattern.count > MAX_PATTERN_COUNT) {
     kit.fail(`Pattern count must be a whole number from 2 to ${MAX_PATTERN_COUNT}`);
   }
-  const bodies = bodiesOf(kit, ctx, feature.bodyIds);
+  const sketchIds = feature.sketchIds ?? [];
+  if (feature.bodyIds.length === 0 && sketchIds.length === 0) {
+    kit.fail('Select the bodies or sketches to pattern');
+  }
+  const bodies = feature.bodyIds.length > 0 ? bodiesOf(kit, ctx, feature.bodyIds) : [];
   /** The motion of instance `k` of a body whose box centre is `centre`. */
   let opsFor: (k: number, centre: Vec3) => RigidOp[];
   /** Second direction of a linear grid: its count and the move of its `j`-th row. */
   let rows: { count: number; vector: (j: number) => Vec3 } | null = null;
+  /** Third direction (Shapr3D: linear in 1–3 directions): its count and the move of layer `l`. */
+  let layers: { count: number; vector: (l: number) => Vec3 } | null = null;
   if (pattern.kind === 'linear') {
     const total = pattern.spacingMode === 'total';
     const spacing = total ? pattern.spacing / (pattern.count - 1) : pattern.spacing;
@@ -314,6 +341,29 @@ export function applyPattern(
       const dir2 = resolveAxis(kit, ctx, second.direction).dir;
       if (length(cross(dir, dir2)) < 1e-6) kit.fail('The two pattern directions must differ');
       rows = { count: second.count, vector: (j) => scale(dir2, spacing2 * j) };
+      const third = pattern.third;
+      if (third) {
+        if (!Number.isInteger(third.count) || third.count < 1 || third.count > MAX_PATTERN_COUNT) {
+          kit.fail(
+            `The third direction count must be a whole number from 1 to ${MAX_PATTERN_COUNT}`,
+          );
+        }
+        if (pattern.count * second.count * third.count > MAX_PATTERN_INSTANCES) {
+          kit.fail(`A pattern makes at most ${MAX_PATTERN_INSTANCES} instances`);
+        }
+        const spacing3 =
+          total && third.count > 1 ? third.spacing / (third.count - 1) : third.spacing;
+        if (third.count > 1 && !(Math.abs(spacing3) >= MIN_FEATURE_SIZE_MM)) {
+          kit.fail(`Pattern spacing must be at least ${MIN_FEATURE_SIZE_MM} mm`);
+        }
+        const dir3 = resolveAxis(kit, ctx, third.direction).dir;
+        if (Math.abs(dot(normalize(cross(dir, dir2)), dir3)) < 1e-6) {
+          kit.fail('The third pattern direction must leave the plane of the other two');
+        }
+        layers = { count: third.count, vector: (l) => scale(dir3, spacing3 * l) };
+      }
+    } else if (pattern.third) {
+      kit.fail('A third pattern direction needs a second one');
     }
   } else {
     if (!(Math.abs(pattern.angle) >= 0.1 && Math.abs(pattern.angle) <= 360)) {
@@ -346,25 +396,100 @@ export function applyPattern(
   bodies.forEach((body, b) => {
     const [min, max] = kit.boundsOf(body.shape);
     const centre = scale(add(min, max), 0.5);
-    for (let j = 0; j < (rows?.count ?? 1); j += 1) {
-      for (let k = 0; k < pattern.count; k += 1) {
-        if (j === 0 && k === 0) continue;
-        const ops = opsFor(k, centre);
-        const shift = rows && j > 0 ? rows.vector(j) : null;
-        // Row 0 keeps the one-direction ids; further rows get ids of their own.
-        const index =
-          j === 0
-            ? b * MAX_PATTERN_COUNT + k
-            : GRID_ID_BASE + (b * MAX_PATTERN_COUNT + j) * MAX_PATTERN_COUNT + k;
-        addCopy(
-          kit,
-          ctx,
-          feature.id,
-          body,
-          shift ? [...ops, { kind: 'translate', vector: shift }] : ops,
-          extraBodyId(feature.id, index),
-          j === 0 ? `${body.name} (${k + 1})` : `${body.name} (${k + 1}, ${j + 1})`,
-        );
+    for (let l = 0; l < (layers?.count ?? 1); l += 1) {
+      for (let j = 0; j < (rows?.count ?? 1); j += 1) {
+        for (let k = 0; k < pattern.count; k += 1) {
+          if (l === 0 && j === 0 && k === 0) continue;
+          const ops = opsFor(k, centre);
+          const shift = add(
+            rows && j > 0 ? rows.vector(j) : [0, 0, 0],
+            layers && l > 0 ? layers.vector(l) : [0, 0, 0],
+          );
+          // Row 0 keeps the one-direction ids; further rows and layers get ids of their own.
+          const index =
+            l > 0
+              ? LAYER_ID_BASE +
+                ((b * MAX_PATTERN_COUNT + l) * MAX_PATTERN_COUNT + j) * MAX_PATTERN_COUNT +
+                k
+              : j === 0
+                ? b * MAX_PATTERN_COUNT + k
+                : GRID_ID_BASE + (b * MAX_PATTERN_COUNT + j) * MAX_PATTERN_COUNT + k;
+          addCopy(
+            kit,
+            ctx,
+            feature.id,
+            body,
+            length(shift) > 0 ? [...ops, { kind: 'translate', vector: shift }] : ops,
+            extraBodyId(feature.id, index),
+            l > 0
+              ? `${body.name} (${k + 1}, ${j + 1}, ${l + 1})`
+              : j === 0
+                ? `${body.name} (${k + 1})`
+                : `${body.name} (${k + 1}, ${j + 1})`,
+          );
+        }
+      }
+    }
+  });
+  patternSketches(kit, ctx, feature, sketchIds, opsFor, rows, layers);
+}
+
+/**
+ * Pattern of whole sketches (Shapr3D Pattern 3D: bodies, sketch profiles or
+ * sketches): every instance but the first is a derived sketch
+ * `<step>:sketch:<n>` (n = sketch × 1000 + instance), its frame moved like
+ * a body copy (uniform circular copies keep their orientation).
+ */
+function patternSketches(
+  kit: FeatureKit,
+  ctx: ReplayContextLike,
+  feature: PatternFeature,
+  sketchIds: readonly string[],
+  opsFor: (k: number, centre: Vec3) => RigidOp[],
+  rows: { count: number; vector: (j: number) => Vec3 } | null,
+  layers: { count: number; vector: (l: number) => Vec3 } | null,
+): void {
+  if (new Set(sketchIds).size !== sketchIds.length) kit.fail('A sketch is listed twice');
+  const count = feature.pattern.count;
+  sketchIds.forEach((sketchId, s) => {
+    const source = ctx.sketchFeatures.get(sketchId);
+    const evaluated = ctx.sketches.get(sketchId);
+    if (!source || !evaluated) kit.fail(`Missing reference: sketch "${sketchId}"`);
+    const outline = evaluated.profiles.flatMap((p) => p.outline);
+    const centre: Vec3 =
+      outline.length > 0
+        ? scale(
+            outline.reduce((sum, p) => add(sum, p), [0, 0, 0] as Vec3),
+            1 / outline.length,
+          )
+        : evaluated.frame.origin;
+    let instance = 0;
+    for (let l = 0; l < (layers?.count ?? 1); l += 1) {
+      for (let j = 0; j < (rows?.count ?? 1); j += 1) {
+        for (let k = 0; k < count; k += 1, instance += 1) {
+          if (l === 0 && j === 0 && k === 0) continue;
+          const shift = add(
+            rows && j > 0 ? rows.vector(j) : [0, 0, 0],
+            layers && l > 0 ? layers.vector(l) : [0, 0, 0],
+          );
+          const ops = [...opsFor(k, centre), { kind: 'translate' as const, vector: shift }];
+          const affine = opsAffine(ops);
+          const frame = evaluated.frame;
+          registerDerivedSketch(
+            kit,
+            ctx,
+            feature.id,
+            s * MAX_PATTERN_INSTANCES + instance,
+            source,
+            {
+              origin: applyAffine(affine, frame.origin),
+              u: mulDir(affine.m, frame.u),
+              v: mulDir(affine.m, frame.v),
+              normal: mulDir(affine.m, frame.normal),
+            },
+            `${instance + 1}`,
+          );
+        }
       }
     }
   });
@@ -372,11 +497,28 @@ export function applyPattern(
 
 /** First body-id index of a pattern's second-direction rows (above every one-direction id). */
 const GRID_ID_BASE = 1_000_000;
+/** First body-id index of a pattern's third-direction layers (above every grid id). */
+const LAYER_ID_BASE = 1_000_000_000_000;
 
 // ---- Split -------------------------------------------------------------------------
 
 export function applySplit(feature: SplitFeature, ctx: ReplayContextLike, kit: FeatureKit): void {
-  const body = bodyOrFail(kit, ctx, feature.bodyId);
+  const ids = splitBodyIds(feature);
+  ids.forEach((bodyId, k) => splitOne(feature, ctx, kit, bodyOrFail(kit, ctx, bodyId), k));
+}
+
+/**
+ * Splits one body of the step (index `k`): the first keeps the ids it always
+ * had (`body:<step>` for the positive part, `…:0` for the kept-original
+ * negative part); further bodies get `…:<100 + 2k>` and `…:<101 + 2k>`.
+ */
+function splitOne(
+  feature: SplitFeature,
+  ctx: ReplayContextLike,
+  kit: FeatureKit,
+  body: BodyStateLike,
+  k: number,
+): void {
   const [min, max] = body.shape.boundingBox.bounds as [Vec3, Vec3];
   const centre: Vec3 = scale(add(min, max), 0.5);
   const what = feature.profile ? 'profile' : 'plane';
@@ -403,7 +545,7 @@ export function applySplit(feature: SplitFeature, ctx: ReplayContextLike, kit: F
         part.history,
         [{ shape: body.shape, faces: body.faces }],
         ctx.featureOrder,
-        () => `${feature.id}:cut`,
+        () => `${feature.id}:cut${k === 0 ? '' : `:${k}`}`,
       );
     const positiveFaces = keyed(positive);
     const negativeFaces = keyed(negative);
@@ -412,7 +554,7 @@ export function applySplit(feature: SplitFeature, ctx: ReplayContextLike, kit: F
       kit.addBody(
         ctx,
         {
-          id: extraBodyId(feature.id, 0),
+          id: extraBodyId(feature.id, k === 0 ? 0 : 101 + 2 * k),
           name: `${body.name} (split 1)`,
           createdBy: feature.id,
           shape: negative.shape,
@@ -428,7 +570,7 @@ export function applySplit(feature: SplitFeature, ctx: ReplayContextLike, kit: F
     kit.addBody(
       ctx,
       {
-        id: bodyIdFor(feature.id),
+        id: k === 0 ? bodyIdFor(feature.id) : extraBodyId(feature.id, 100 + 2 * k),
         name: feature.keepOriginal ? `${body.name} (split 2)` : `${body.name} (split)`,
         createdBy: feature.id,
         shape: positive.shape,
@@ -441,7 +583,6 @@ export function applySplit(feature: SplitFeature, ctx: ReplayContextLike, kit: F
     negative.history.delete();
   }
 }
-
 /** The half-space on the plane's positive side: a large prism standing on the plane. */
 function halfSpace(
   kit: FeatureKit,
@@ -676,22 +817,143 @@ export function applyTranslate(
 
 // ---- Align ----------------------------------------------------------------------------
 
+/** What an Align reference stands for: a plane, a line (an axis) or a point (a centre). */
+type AlignPrimitive =
+  | { type: 'plane'; point: Vec3; normal: Vec3 }
+  | { type: 'line'; point: Vec3; dir: Vec3 }
+  | { type: 'point'; point: Vec3 };
+
+function alignPrimitive(
+  kit: FeatureKit,
+  ctx: ReplayContextLike,
+  ref: AlignReference,
+): AlignPrimitive {
+  if (ref.kind === 'axis') {
+    const line = resolveAxis(kit, ctx, ref.axis);
+    // A sketch line's centre is its midpoint (resolveAxis starts it at its first point).
+    if (ref.axis.kind === 'sketchLine') {
+      const sketch = ctx.sketchFeatures.get(ref.axis.featureId);
+      const evaluated = ctx.sketches.get(ref.axis.featureId);
+      const entities = sketch ? entityMap(sketch) : null;
+      const entity = entities?.get(ref.axis.entityId);
+      if (entities && evaluated && entity?.kind === 'line') {
+        const a = pointPos(entities, entity.a);
+        const b = pointPos(entities, entity.b);
+        if (a && b) {
+          const mid = framePoint(evaluated.frame, (a[0] + b[0]) / 2, (a[1] + b[1]) / 2);
+          return { type: 'line', point: mid, dir: line.dir };
+        }
+      }
+    }
+    return { type: 'line', point: line.point, dir: line.dir };
+  }
+  if (ref.kind === 'plane') {
+    const plane = resolvePlane(kit, ctx, ref.plane);
+    return { type: 'plane', point: plane.point, normal: plane.normal };
+  }
+  const body = bodyOrFail(kit, ctx, ref.face.bodyId);
+  const { face, geom, topology, index } = kit.resolveFace(body, ref.face, ctx.warn);
+  if (geom.surface === 'plane' && geom.normal) {
+    return { type: 'plane', point: geom.centroid, normal: geom.normal };
+  }
+  if (geom.id.type === 'cylinder') {
+    // The axis, through the face's middle (so "centred" seats a pin halfway into a hole).
+    const dir = normalize(geom.id.axis);
+    const point = add(geom.id.point, scale(dir, dot(sub(geom.centroid, geom.id.point), dir)));
+    return { type: 'line', point, dir };
+  }
+  if (geom.surface === 'sphere') {
+    const adaptor = new kit.oc.BRepAdaptor_Surface(face.wrapped as never, true);
+    try {
+      const sphere = adaptor.Sphere();
+      const loc = sphere.Location();
+      const point: Vec3 = [loc.X(), loc.Y(), loc.Z()];
+      loc.delete();
+      sphere.delete();
+      return { type: 'point', point };
+    } finally {
+      adaptor.delete();
+    }
+  }
+  if (geom.surface === 'cone') {
+    // `gp_Cone` is not bound: the axis of one of the cone's circular edges is the cone axis.
+    const circle = (topology.faceEdges[index] ?? []).find(
+      (e) => topology.edgeGeoms[e]!.curve === 'circle',
+    );
+    if (circle === undefined)
+      kit.fail('Align: this conical face has no round edge to find its axis');
+    const edge = topology.edges[circle]!;
+    const adaptor = new kit.oc.BRepAdaptor_Curve(edge.wrapped);
+    const c = adaptor.Circle();
+    const axis = c.Axis();
+    const loc = axis.Location();
+    const direction = axis.Direction();
+    const dir = normalize([direction.X(), direction.Y(), direction.Z()]);
+    const origin: Vec3 = [loc.X(), loc.Y(), loc.Z()];
+    for (const o of [direction, loc, axis, c, adaptor]) o.delete();
+    return {
+      type: 'line',
+      point: add(origin, scale(dir, dot(sub(geom.centroid, origin), dir))),
+      dir,
+    };
+  }
+  kit.fail(
+    `Align takes planar, cylindrical, conical or spherical faces (this one is ${geom.surface})`,
+  );
+}
+
+/** A unit vector perpendicular to `v`. */
+function perpendicularTo(v: Vec3): Vec3 {
+  const other: Vec3 = Math.abs(v[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0];
+  return normalize(cross(v, other));
+}
+
+/** The turn about `pivot` that takes unit `from` to unit `to` (none when they agree). */
+function turnOnto(from: Vec3, to: Vec3, pivot: Vec3): RigidOp[] {
+  const c = dot(from, to);
+  if (c >= 1 - 1e-12) return [];
+  let axis = cross(from, to);
+  if (length(axis) < 1e-9) axis = perpendicularTo(from); // 180°
+  const angle = Math.acos(Math.max(-1, Math.min(1, c)));
+  return [{ kind: 'rotate', point: pivot, axis: normalize(axis), angle }];
+}
+
+/** `v` without its part along unit `dir`. */
+function across(v: Vec3, dir: Vec3): Vec3 {
+  return sub(v, scale(dir, dot(v, dir)));
+}
+
 export function applyAlign(feature: AlignFeature, ctx: ReplayContextLike, kit: FeatureKit): void {
   const body = bodyOrFail(kit, ctx, feature.bodyId);
-  if (feature.face.bodyId !== body.id) kit.fail('The moved face must belong to the moved body');
-  if (feature.target.bodyId === body.id) kit.fail('Pick the target face on another body');
-  const targetBody = bodyOrFail(kit, ctx, feature.target.bodyId);
-  const source = kit.resolveFace(body, feature.face, ctx.warn).geom;
-  const target = kit.resolveFace(targetBody, feature.target, ctx.warn).geom;
-  if (
-    !source.normal ||
-    source.surface !== 'plane' ||
-    !target.normal ||
-    target.surface !== 'plane'
-  ) {
-    kit.fail('Align needs two planar faces');
+  const fromRef: AlignReference | null =
+    feature.from ?? (feature.face ? { kind: 'face', face: feature.face } : null);
+  const toRef: AlignReference | null =
+    feature.to ?? (feature.target ? { kind: 'face', face: feature.target } : null);
+  if (!fromRef || !toRef) kit.fail('Align needs a reference on the moved body and a target');
+  if (alignRefBodyId(fromRef) !== body.id) {
+    kit.fail('The moved reference must be a face or an edge of the moved body');
+  }
+  if (alignRefBodyId(toRef) === body.id) {
+    kit.fail(`Pick the target ${toRef.kind === 'face' ? 'face' : 'edge'} on another body`);
   }
   if (!Number.isFinite(feature.offset)) kit.fail('Align offset must be a number');
+  const turnDeg = feature.turn ?? 0;
+  if (!Number.isFinite(turnDeg) || Math.abs(turnDeg) > 360) {
+    kit.fail('The turn must be between -360° and 360°');
+  }
+  const from = alignPrimitive(kit, ctx, fromRef);
+  const to = alignPrimitive(kit, ctx, toRef);
+  if (from.type !== 'plane' || to.type !== 'plane') {
+    const ops = alignOps(kit, feature, from, to);
+    // Then the turn about the target axis (Shapr3D's rotation ring after aligning).
+    if (turnDeg !== 0 && to.type === 'line') {
+      ops.push({ kind: 'rotate', point: to.point, axis: to.dir, angle: (turnDeg * Math.PI) / 180 });
+    }
+    if (ops.length > 0) moveBody(kit, ctx, feature.id, body, ops);
+    return;
+  }
+  const source = { normal: from.normal, centroid: from.point };
+  const target = { normal: to.normal, centroid: to.point };
   const want = feature.flip ? target.normal : scale(target.normal, -1);
   const ops: RigidOp[] = [];
   const c = dot(source.normal, want);
@@ -712,5 +974,57 @@ export function applyAlign(feature: AlignFeature, ctx: ReplayContextLike, kit: F
       );
   const shift = sub(destination, source.centroid);
   if (length(shift) > 0) ops.push({ kind: 'translate', vector: shift });
+  // Then the turn about the target normal through the aligned face centre.
+  if (turnDeg !== 0) {
+    ops.push({
+      kind: 'rotate',
+      point: destination,
+      axis: target.normal,
+      angle: (turnDeg * Math.PI) / 180,
+    });
+  }
   if (ops.length > 0) moveBody(kit, ctx, feature.id, body, ops);
+}
+
+/**
+ * The motion of an Align whose references are not two planes: axis on axis
+ * (coaxial: the smaller turn, `flip` end for end; `offset` along the target
+ * axis; `center` also brings the reference centres together), a centre on a
+ * centre, a centre onto an axis, an axis through a centre.
+ */
+function alignOps(
+  kit: FeatureKit,
+  feature: AlignFeature,
+  from: AlignPrimitive,
+  to: AlignPrimitive,
+): RigidOp[] {
+  const ops: RigidOp[] = [];
+  const push = (vector: Vec3) => {
+    if (length(vector) > 0) ops.push({ kind: 'translate', vector });
+  };
+  if (from.type === 'line' && to.type === 'line') {
+    const same = dot(from.dir, to.dir) >= 0;
+    const want = same !== feature.flip ? to.dir : scale(to.dir, -1);
+    ops.push(...turnOnto(from.dir, want, from.point));
+    const d = sub(to.point, from.point);
+    push(add(feature.center ? d : across(d, to.dir), scale(to.dir, feature.offset)));
+    return ops;
+  }
+  if (from.type === 'point' && to.type === 'point') {
+    push(sub(to.point, from.point));
+    return ops;
+  }
+  if (from.type === 'point' && to.type === 'line') {
+    const d = sub(to.point, from.point);
+    push(add(feature.center ? d : across(d, to.dir), scale(to.dir, feature.offset)));
+    return ops;
+  }
+  if (from.type === 'line' && to.type === 'point') {
+    const d = sub(to.point, from.point);
+    push(feature.center ? d : across(d, from.dir));
+    return ops;
+  }
+  kit.fail(
+    'Align a plane to a plane, an axis to an axis, or a centre to a centre or an axis (and back)',
+  );
 }

@@ -19,7 +19,7 @@ API_VERSION = 1
 #: The contract's methods (checked against ``apps/assembler/api/agent-api-v1.schema.json`` by the tests).
 METHODS = (
     "api.hello", "api.describe",
-    "document.get", "features.list", "feature.get", "bodies.list", "body.get",
+    "document.get", "features.list", "feature.get", "bodies.list", "body.get", "body.copyUnlinked",
     "faces.list", "edges.list", "sketches.list", "sketch.fonts", "datums.list", "selection.get", "selection.set",
     "parameters.list", "parameter.create", "parameter.edit", "parameter.delete", "parameters.sweep",
     "measure.get", "measure.distance", "measure.angle", "measure.area", "measure.clearance", "measure.volume",

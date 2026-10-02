@@ -47,7 +47,13 @@ declare module '../../foundation/commands/draftTools.js' {
 }
 
 /** Kinds whose tool takes an axis (a sketch line may be it). */
-const TAKES_AXIS: ReadonlySet<string> = new Set(['revolve', 'rotateAxis', 'pattern', 'mirror']);
+const TAKES_AXIS: ReadonlySet<string> = new Set([
+  'revolve',
+  'rotateAxis',
+  'pattern',
+  'mirror',
+  'align',
+]);
 
 export { PRIMITIVE_DRAFT_TOOL } from './primitiveTools.js';
 export { SCALE_DRAFT_TOOL, TRANSLATE_DRAFT_TOOL } from './transformTools.js';
@@ -77,7 +83,7 @@ export const MODELING_DRAFT_TOOL = defineDraftTool<ModelingDraft>({
   steps: (draft) => {
     if (draft.kind !== 'rotateAxis' && draft.kind !== 'align') return null;
     return {
-      labels: draft.kind === 'rotateAxis' ? ['Bodies', 'Axis'] : ['Moving face', 'Target face'],
+      labels: draft.kind === 'rotateAxis' ? ['Bodies', 'Axis'] : ['Moving reference', 'Target'],
       current: draft.step ?? 1,
       go: (d, step) =>
         d.kind === 'rotateAxis' || d.kind === 'align' ? { ...d, step: step <= 0 ? 0 : 1 } : d,

@@ -1084,19 +1084,33 @@ class Document(PrintToolsMixin, InteropMixin, ChecksMixin):
         params = {"bodyIds": [b.id for b in items], "from": [float(v) for v in start], "to": [float(v) for v in end], "copy": copy}
         return self._feature(self.client.create_feature("translate", params, name=name))
 
-    def pattern_linear(self, bodies: Body | Iterable[Body], direction: str | Edge | SketchLine | Datum, count: int, spacing: float, *, total: bool = False, direction2: str | Edge | SketchLine | Datum | None = None, count2: int = 1, spacing2: float | None = None, name: str | None = None) -> Feature:
+    def pattern_linear(self, bodies: Body | Iterable[Body], direction: str | Edge | SketchLine | Datum, count: int, spacing: float, *, total: bool = False, direction2: str | Edge | SketchLine | Datum | None = None, count2: int = 1, spacing2: float | None = None, direction3: str | Edge | SketchLine | Datum | None = None, count3: int = 1, spacing3: float | None = None, sketches: Sketch | Iterable[Sketch] | None = None, name: str | None = None) -> Feature:
         """Copies bodies ``count`` times along ``direction`` (``"X"``/``"Y"``/``"Z"``, an edge, …),
         ``spacing`` apart — or ``total=True``: ``spacing`` from the first to the last. ``direction2``
-        with ``count2``/``spacing2`` makes a grid (Shapr3D Pattern 3D, at most 1000 instances)."""
+        with ``count2``/``spacing2`` makes a grid, ``direction3`` with ``count3``/``spacing3`` a
+        block of layers (Shapr3D Pattern 3D: 1–3 directions, at most 1000 instances). ``sketches``
+        patterns whole sketches too (derived sketches ``<step>:sketch:<n>``; ``bodies`` may be empty)."""
         items = [bodies] if isinstance(bodies, Body) else list(bodies)
         pattern: dict[str, Any] = {"kind": "linear", "direction": self._axis_ref(direction), "count": count, "spacing": spacing}
         if total:
             pattern["spacingMode"] = "total"
         if direction2 is not None:
             pattern["second"] = {"direction": self._axis_ref(direction2), "count": count2, "spacing": spacing if spacing2 is None else spacing2}
-        return self._feature(self.client.create_feature("pattern", {"bodyIds": [b.id for b in items], "pattern": pattern}, name=name))
+        if direction3 is not None:
+            if direction2 is None:
+                raise ValueError("a third direction needs direction2")
+            pattern["third"] = {"direction": self._axis_ref(direction3), "count": count3, "spacing": spacing if spacing3 is None else spacing3}
+        return self._feature(self.client.create_feature("pattern", self._pattern_params(items, sketches, pattern), name=name))
 
-    def pattern_circular(self, bodies: Body | Iterable[Body], axis: str | Edge | SketchLine | Datum, count: int, angle: float = 360.0, *, between: bool = False, uniform: bool = False, name: str | None = None) -> Feature:
+    @staticmethod
+    def _pattern_params(items: Sequence[Body], sketches: Sketch | Iterable[Sketch] | None, pattern: dict[str, Any]) -> dict[str, Any]:
+        params: dict[str, Any] = {"bodyIds": [b.id for b in items], "pattern": pattern}
+        if sketches is not None:
+            sketch_items = [sketches] if isinstance(sketches, Sketch) else list(sketches)
+            params["sketchIds"] = [s.id for s in sketch_items]
+        return params
+
+    def pattern_circular(self, bodies: Body | Iterable[Body], axis: str | Edge | SketchLine | Datum, count: int, angle: float = 360.0, *, between: bool = False, uniform: bool = False, sketches: Sketch | Iterable[Sketch] | None = None, name: str | None = None) -> Feature:
         """Copies bodies ``count`` times about ``axis``: ``angle`` is the total (360 spreads them
         evenly) or with ``between=True`` the angle between neighbours; ``uniform=True`` keeps the
         copies' orientation (moved along the circle, not turned)."""
@@ -1106,13 +1120,17 @@ class Document(PrintToolsMixin, InteropMixin, ChecksMixin):
             pattern["angleMode"] = "spacing"
         if uniform:
             pattern["uniform"] = True
-        return self._feature(self.client.create_feature("pattern", {"bodyIds": [b.id for b in items], "pattern": pattern}, name=name))
+        return self._feature(self.client.create_feature("pattern", self._pattern_params(items, sketches, pattern), name=name))
 
-    def split(self, body: Body, plane: str | Face | Datum | tuple[str, float] = "XY", *, profile: Sketch | MirroredSketch | Face | None = None, regions: Sequence[str] | None = None, keep: bool = False, name: str | None = None) -> Feature:
+    def split(self, body: Body | Iterable[Body], plane: str | Face | Datum | tuple[str, float] = "XY", *, profile: Sketch | MirroredSketch | Face | None = None, regions: Sequence[str] | None = None, keep: bool = False, name: str | None = None) -> Feature:
         """Splits ``body`` into two bodies by ``plane`` (the positive side becomes ``body:<feature id>``)
         or by a sketch ``profile`` projected through the body (the inside becomes new); ``keep=True``
-        keeps the original and makes both parts new bodies."""
-        params: dict[str, Any] = {"bodyId": body.id, "plane": self._plane_ref(plane)}
+        keeps the original and makes both parts new bodies. Several bodies split with the same
+        element in one step (each must be cut)."""
+        items = [body] if isinstance(body, Body) else list(body)
+        params: dict[str, Any] = {"bodyId": items[0].id, "plane": self._plane_ref(plane)}
+        if len(items) > 1:
+            params["bodyIds"] = [b.id for b in items[1:]]
         if profile is not None:
             if isinstance(profile, Face):
                 params["profile"] = {"kind": "face", "face": profile.ref}
@@ -1169,7 +1187,8 @@ class Document(PrintToolsMixin, InteropMixin, ChecksMixin):
         """Moves a planar face by ``vector`` in any direction: along its normal it offsets,
         sideways its planar neighbours tilt to follow (Shapr3D Move on a face). ``turn`` (degrees,
         right-hand about ``turn_axis``, a direction in the face's plane, through ``turn_point``,
-        default the face centre) then turns it; the neighbours follow."""
+        default the face centre) then turns it; the neighbours follow. A round face (a hole wall
+        or a boss) moves across its axis: the hole or boss moves."""
         params: dict[str, Any] = {"face": face.ref, "vector": [float(v) for v in vector]}
         if turn:
             if turn_axis is None:
@@ -1177,6 +1196,52 @@ class Document(PrintToolsMixin, InteropMixin, ChecksMixin):
             point = turn_point if turn_point is not None else face.centroid
             params["rotation"] = {"point": [float(v) for v in point], "axis": [float(v) for v in turn_axis], "angle": float(turn)}
         return self._feature(self.client.create_feature("moveFace", params, name=name))
+
+    def copy_unlinked(self, body: Body, dx: float = 0.0, dy: float = 0.0, dz: float = 0.0, *, rx: float = 0.0, ry: float = 0.0, rz: float = 0.0, pivot: Sequence[float] | None = None, name: str | None = None) -> Body:
+        """An unlinked copy of ``body`` (Shapr3D Move/Rotate copy with Link off): moved by
+        ``dx/dy/dz`` and turned ``rx/ry/rz`` degrees about world X, Y, Z through ``pivot``
+        (default its box centre). The copy keeps its exact geometry; later edits of the
+        original's earlier steps do not change it."""
+        params: dict[str, Any] = {"bodyId": body.id, "dx": dx, "dy": dy, "dz": dz, "rx": rx, "ry": ry, "rz": rz, "name": name}
+        if pivot is not None:
+            params["pivot"] = [float(v) for v in pivot]
+        result = self.client.call("body.copyUnlinked", params)
+        feature = Feature(self, str(result["featureId"]), "importStep", name or str(result["featureId"]))
+        return Body(self, str(result["bodyId"]), feature)
+
+    def _align_ref(self, ref: Face | Edge | SketchLine | Datum | str) -> dict[str, Any]:
+        if isinstance(ref, Face):
+            return {"kind": "face", "face": ref.ref}
+        if isinstance(ref, Datum) and ref.kind == "plane":
+            return {"kind": "plane", "plane": ref.ref}
+        return {"kind": "axis", "axis": self._axis_ref(ref)}
+
+    def align(self, moving: Face | Edge, target: Face | Edge | SketchLine | Datum | str, *, flip: bool = False, center: bool = True, offset: float = 0.0, turn: float = 0.0, name: str | None = None) -> Feature:
+        """Align: moves the body of ``moving`` (a face or an edge of it) onto ``target`` (a face or
+        edge of another body, a construction plane/axis, or ``"X"``/``"Y"``/``"Z"``). Planes land
+        face to face (``flip``: same direction) with ``offset`` as a gap; axes (straight/round
+        edges, cylindrical/conical faces) become coaxial (``flip`` turns end for end, ``offset``
+        slides along the axis); a spherical face's centre goes onto a centre or an axis.
+        ``center`` also brings the reference centres together; ``turn`` (degrees) then turns the
+        body about the target normal or axis."""
+        params: dict[str, Any] = {"bodyId": moving.body_id, "flip": flip, "center": center, "offset": offset}
+        if turn:
+            params["turn"] = turn
+        if isinstance(moving, Face) and isinstance(target, Face) and moving.surface == "plane" and target.surface == "plane":
+            params["face"] = moving.ref
+            params["target"] = target.ref
+        else:
+            params["from"] = self._align_ref(moving)
+            params["to"] = self._align_ref(target)
+        return self._feature(self.client.create_feature("align", params, name=name))
+
+    def replace_face(self, faces: Face | Iterable[Face], target: Face, *, name: str | None = None) -> Feature:
+        """Replace Face: extends or trims planar ``faces`` (one body) until they lie on the surface
+        of ``target`` (a planar or cylindrical face of any body). A planar target turns and offsets
+        the faces (their neighbours follow); the replaced faces keep their keys."""
+        items = [faces] if isinstance(faces, Face) else list(faces)
+        params = {"faces": [f.ref for f in items], "target": target.ref}
+        return self._feature(self.client.create_feature("replaceFace", params, name=name))
 
     def color(self, body: Body, rgb_hex: str, *, name: str | None = None) -> Feature:
         return self._feature(self.client.create_feature("setAppearance", {"bodyId": body.id, "color": rgb_hex}, name=name))
