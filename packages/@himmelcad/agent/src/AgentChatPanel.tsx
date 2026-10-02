@@ -54,10 +54,18 @@ export interface AgentChatPanelProps {
   emptyMessage?: string;
   /** Prompt field placeholder. */
   placeholder?: string;
-  /** Replaces the default permission labels of the scope bar. */
-  scopeItems?: readonly string[];
+  /** Replaces the content of the permission scope bar (e.g. one condensed line). */
+  scopeBar?: ReactNode;
   /** Extra content under a timeline row (e.g. an image a tool call returned). Keep its height fixed. */
   renderRowExtra?: (row: AgentTimelineRow) => ReactNode;
+  /**
+   * Rows the timeline shows, derived from the full rows (e.g. a product
+   * folds consecutive tool calls into one group row). The pending-approval
+   * and recovery bars always read the full rows.
+   */
+  prepareRows?: (rows: readonly AgentTimelineRow[]) => readonly AgentTimelineRow[];
+  /** Renders a row instead of the default card; `fallback()` is the default card. */
+  renderRow?: (row: AgentTimelineRow, fallback: () => ReactNode) => ReactNode;
 }
 
 export function AgentChatPanel(props: AgentChatPanelProps): JSX.Element {
@@ -69,6 +77,8 @@ export function AgentChatPanel(props: AgentChatPanelProps): JSX.Element {
     timelineRef.current = next;
     return next.result;
   }, [props.events]);
+  const prepareRows = props.prepareRows;
+  const shownRows = useMemo(() => (prepareRows ? prepareRows(rows) : rows), [prepareRows, rows]);
   const active = props.discoveries.find(
     (item) => item.state === 'available' && item.identity.provider === props.activeProvider,
   );
@@ -154,8 +164,8 @@ export function AgentChatPanel(props: AgentChatPanelProps): JSX.Element {
       </header>
       {props.providerCredentialControl}
       <div className={styles.scopeBar} role="group" aria-label="Agent permissions">
-        {props.scopeItems ? (
-          props.scopeItems.map((item) => <span key={item}>{item}</span>)
+        {props.scopeBar !== undefined ? (
+          props.scopeBar
         ) : (
           <>
             <span>{props.permissions.workspaceScopeLabel}</span>
@@ -198,19 +208,21 @@ export function AgentChatPanel(props: AgentChatPanelProps): JSX.Element {
           </div>
         ) : (
           <VirtualAgentTimeline
-            rows={rows}
+            rows={shownRows}
             busy={props.busy}
             ariaLabel="Agent conversation"
-            renderRow={(row) =>
-              props.renderRowExtra ? (
-                <>
+            renderRow={(row) => {
+              const fallback = (): ReactNode =>
+                props.renderRowExtra ? (
+                  <>
+                    <AgentRow row={row} onApproval={props.onApproval} />
+                    {props.renderRowExtra(row)}
+                  </>
+                ) : (
                   <AgentRow row={row} onApproval={props.onApproval} />
-                  {props.renderRowExtra(row)}
-                </>
-              ) : (
-                <AgentRow row={row} onApproval={props.onApproval} />
-              )
-            }
+                );
+              return props.renderRow ? props.renderRow(row, fallback) : fallback();
+            }}
           />
         )}
       </div>
