@@ -1177,14 +1177,17 @@ class Document(PrintToolsMixin, InteropMixin):
             return {"kind": "plane", "plane": ref.ref}
         return {"kind": "axis", "axis": self._axis_ref(ref)}
 
-    def align(self, moving: Face | Edge, target: Face | Edge | SketchLine | Datum | str, *, flip: bool = False, center: bool = True, offset: float = 0.0, name: str | None = None) -> Feature:
+    def align(self, moving: Face | Edge, target: Face | Edge | SketchLine | Datum | str, *, flip: bool = False, center: bool = True, offset: float = 0.0, turn: float = 0.0, name: str | None = None) -> Feature:
         """Align: moves the body of ``moving`` (a face or an edge of it) onto ``target`` (a face or
         edge of another body, a construction plane/axis, or ``"X"``/``"Y"``/``"Z"``). Planes land
         face to face (``flip``: same direction) with ``offset`` as a gap; axes (straight/round
         edges, cylindrical/conical faces) become coaxial (``flip`` turns end for end, ``offset``
         slides along the axis); a spherical face's centre goes onto a centre or an axis.
-        ``center`` also brings the reference centres together."""
+        ``center`` also brings the reference centres together; ``turn`` (degrees) then turns the
+        body about the target normal or axis."""
         params: dict[str, Any] = {"bodyId": moving.body_id, "flip": flip, "center": center, "offset": offset}
+        if turn:
+            params["turn"] = turn
         if isinstance(moving, Face) and isinstance(target, Face) and moving.surface == "plane" and target.surface == "plane":
             params["face"] = moving.ref
             params["target"] = target.ref

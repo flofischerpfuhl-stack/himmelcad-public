@@ -154,6 +154,8 @@ export interface AlignDraft {
   flip: boolean;
   center: boolean;
   offset: number;
+  /** Turn about the target normal/axis after aligning, degrees (absent: 0). */
+  turn?: number;
   /** Input step (Next): 0 the moving reference, 1 the target. Absent: by body. */
   step?: 0 | 1;
 }
@@ -1121,6 +1123,7 @@ export function modelingDraftToFeature(
         flip: draft.flip,
         center: draft.center,
         offset: draft.offset,
+        ...(draft.turn ? { turn: draft.turn } : {}),
       };
     }
   }
@@ -2085,6 +2088,8 @@ export function modelingDraftHandles(
           ? { point: line.point, dir: line.dir, label: 'Offset along the axis' }
           : null;
       if (!target) return [];
+      // The turn about the target normal/axis (Shapr3D's rotation ring after aligning).
+      const ref = perpendicular(target.dir);
       return [
         {
           kind: 'linear',
@@ -2096,6 +2101,23 @@ export function modelingDraftHandles(
           dir: target.dir,
           length: STEM_MM + Math.max(0, draft.offset),
           apply: (d, value) => (d.kind === 'align' ? { ...d, offset: value } : d),
+        },
+        {
+          kind: 'angle',
+          id: 'turn',
+          label: 'Turn',
+          unit: 'deg',
+          value: draft.turn ?? 0,
+          center: target.point,
+          axis: target.dir,
+          ref,
+          radius: STEM_MM * 2,
+          apply: (d, value) => {
+            if (d.kind !== 'align') return d;
+            const turn = Math.max(-360, Math.min(360, Number.isFinite(value) ? value : 0));
+            const { turn: _old, ...rest } = d;
+            return turn === 0 ? rest : { ...rest, turn };
+          },
         },
       ];
     }

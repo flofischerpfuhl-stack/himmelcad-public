@@ -219,6 +219,14 @@ const BODY_KIND_SCHEMAS: Record<string, FeatureKindSpec> = {
         flip: { type: 'boolean', default: false },
         center: { type: 'boolean', default: true },
         offset: { type: 'number', default: 0 },
+        turn: {
+          type: 'number',
+          minimum: -360,
+          maximum: 360,
+          default: 0,
+          description:
+            'Then turns the body (degrees, right-hand) about the target plane normal through the aligned centre, or about the target axis.',
+        },
       },
       [],
       'Either `face` or `from` (on the moved body), and either `target` or `to`.',

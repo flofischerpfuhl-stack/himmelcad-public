@@ -267,6 +267,7 @@ export function validateModelingFeature(r: Rec, path: string, h: FormatHelpers):
       bool('flip');
       bool('center');
       num('offset');
+      if (r.turn !== undefined) num('turn');
       break;
     }
     default:

@@ -20,7 +20,7 @@ import {
 } from '../../../foundation/document/document.js';
 import type { SketchFeature } from '../../../foundation/sketch-solver/sketchFeature.js';
 import { addProjection, projectSource } from '../../../foundation/sketch-solver/projection.js';
-import { EMPTY_SKETCH } from '../../../foundation/sketch-solver/types.js';
+import { EMPTY_SKETCH, entityMap, pointPos } from '../../../foundation/sketch-solver/types.js';
 import { evaluateSketchGeometry } from '../../../foundation/geometry-kernel/sketchGeometry.js';
 import { sampleEdge } from '../../../foundation/geometry-kernel/sketchProjection.js';
 import {
@@ -830,6 +830,21 @@ function alignPrimitive(
 ): AlignPrimitive {
   if (ref.kind === 'axis') {
     const line = resolveAxis(kit, ctx, ref.axis);
+    // A sketch line's centre is its midpoint (resolveAxis starts it at its first point).
+    if (ref.axis.kind === 'sketchLine') {
+      const sketch = ctx.sketchFeatures.get(ref.axis.featureId);
+      const evaluated = ctx.sketches.get(ref.axis.featureId);
+      const entities = sketch ? entityMap(sketch) : null;
+      const entity = entities?.get(ref.axis.entityId);
+      if (entities && evaluated && entity?.kind === 'line') {
+        const a = pointPos(entities, entity.a);
+        const b = pointPos(entities, entity.b);
+        if (a && b) {
+          const mid = framePoint(evaluated.frame, (a[0] + b[0]) / 2, (a[1] + b[1]) / 2);
+          return { type: 'line', point: mid, dir: line.dir };
+        }
+      }
+    }
     return { type: 'line', point: line.point, dir: line.dir };
   }
   if (ref.kind === 'plane') {
@@ -922,10 +937,18 @@ export function applyAlign(feature: AlignFeature, ctx: ReplayContextLike, kit: F
     kit.fail(`Pick the target ${toRef.kind === 'face' ? 'face' : 'edge'} on another body`);
   }
   if (!Number.isFinite(feature.offset)) kit.fail('Align offset must be a number');
+  const turnDeg = feature.turn ?? 0;
+  if (!Number.isFinite(turnDeg) || Math.abs(turnDeg) > 360) {
+    kit.fail('The turn must be between -360° and 360°');
+  }
   const from = alignPrimitive(kit, ctx, fromRef);
   const to = alignPrimitive(kit, ctx, toRef);
   if (from.type !== 'plane' || to.type !== 'plane') {
     const ops = alignOps(kit, feature, from, to);
+    // Then the turn about the target axis (Shapr3D's rotation ring after aligning).
+    if (turnDeg !== 0 && to.type === 'line') {
+      ops.push({ kind: 'rotate', point: to.point, axis: to.dir, angle: (turnDeg * Math.PI) / 180 });
+    }
     if (ops.length > 0) moveBody(kit, ctx, feature.id, body, ops);
     return;
   }
@@ -951,6 +974,15 @@ export function applyAlign(feature: AlignFeature, ctx: ReplayContextLike, kit: F
       );
   const shift = sub(destination, source.centroid);
   if (length(shift) > 0) ops.push({ kind: 'translate', vector: shift });
+  // Then the turn about the target normal through the aligned face centre.
+  if (turnDeg !== 0) {
+    ops.push({
+      kind: 'rotate',
+      point: destination,
+      axis: target.normal,
+      angle: (turnDeg * Math.PI) / 180,
+    });
+  }
   if (ops.length > 0) moveBody(kit, ctx, feature.id, body, ops);
 }
 

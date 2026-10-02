@@ -598,6 +598,14 @@ export function ModelingFeatureParams({
               onCommit={(v) => edit({ offset: v })}
             />
           )}
+          {to === 'point' ? null : (
+            <ExpressionField
+              label="Turn"
+              value={feature.turn ?? 0}
+              unit="°"
+              onCommit={(v) => edit({ turn: v === 0 ? undefined : v })}
+            />
+          )}
           {planes || axes ? (
             <div>
               <span className={styles.paramLabel}>{planes ? 'Faces' : 'Axis'}</span>

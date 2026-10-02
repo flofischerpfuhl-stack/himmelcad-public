@@ -71,8 +71,9 @@ class HelperTests(unittest.TestCase):
         self.assertEqual(self.params()["from"], {"kind": "axis", "axis": {"kind": "edge", "edge": rim.ref}})
         self.assertEqual(self.params()["to"], {"kind": "face", "face": wall.ref})
         self.assertTrue(self.params()["flip"])
-        self.doc.align(rim, "Z", center=False)
+        self.doc.align(rim, "Z", center=False, turn=30)
         self.assertEqual(self.params()["to"], {"kind": "axis", "axis": {"kind": "world", "axis": "Z"}})
+        self.assertEqual(self.params()["turn"], 30)
 
     def test_split_several_bodies(self) -> None:
         a, b = Body(self.doc, "body:a"), Body(self.doc, "body:b")

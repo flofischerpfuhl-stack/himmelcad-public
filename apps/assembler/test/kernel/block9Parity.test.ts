@@ -494,3 +494,41 @@ void test('Pattern of a sketch: derived sketches whose profiles later steps extr
     's',
   ]);
 });
+
+void test('Align: a turn about the target normal after aligning; a sketch line as target axis', async () => {
+  const bodies = [...box('a', 0, 0, 10, 10, 10), ...box('b', 30, 0, 20, 20, 4)];
+  const first = await evaluate(bodies);
+  const bottom = faceRef(only(first, 'body:a'), planeAt(2, 0, -1));
+  const top = faceRef(only(first, 'body:b'), planeAt(2, 4));
+  const turned = await evaluate([...bodies, align('al', { face: bottom, target: top, turn: 45 })]);
+  noErrors(turned);
+  const a = only(turned, 'body:a');
+  near(a.max[0] - a.min[0], 10 * Math.SQRT2, 1e-6, 'turned 45° about the vertical');
+  near(a.min[2], 4, 1e-6, 'standing on b');
+  near((a.min[0] + a.max[0]) / 2, 40, 1e-6, 'centred on b');
+  // A sketch line as the target axis: the cylinder lies down along it.
+  const withLine: Feature[] = [
+    ...cylinderBody('a', 0, 0, 2, 10),
+    {
+      ...sketch('l-s', 'XY', 0),
+      entities: [
+        { id: 'p1', kind: 'point', x: 20, y: 0 },
+        { id: 'p2', kind: 'point', x: 40, y: 0 },
+        { id: 'l1', kind: 'line', a: 'p1', b: 'p2' },
+      ],
+    } as unknown as Feature,
+  ];
+  const before = await evaluate(withLine);
+  const wall = faceRef(only(before, 'body:a'), (f) => f.surface === 'cylinder');
+  const laid = await evaluate([
+    ...withLine,
+    align('al', {
+      from: { kind: 'face', face: wall },
+      to: { kind: 'axis', axis: { kind: 'sketchLine', featureId: 'l-s', entityId: 'l1' } },
+    }),
+  ]);
+  noErrors(laid);
+  const c = only(laid, 'body:a');
+  near(c.max[0] - c.min[0], 10, 1e-6, 'along X now');
+  near((c.min[0] + c.max[0]) / 2, 30, 1e-6, 'centred on the line');
+});

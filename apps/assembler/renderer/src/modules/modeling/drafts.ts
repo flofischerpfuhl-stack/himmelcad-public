@@ -47,7 +47,13 @@ declare module '../../foundation/commands/draftTools.js' {
 }
 
 /** Kinds whose tool takes an axis (a sketch line may be it). */
-const TAKES_AXIS: ReadonlySet<string> = new Set(['revolve', 'rotateAxis', 'pattern', 'mirror']);
+const TAKES_AXIS: ReadonlySet<string> = new Set([
+  'revolve',
+  'rotateAxis',
+  'pattern',
+  'mirror',
+  'align',
+]);
 
 export { PRIMITIVE_DRAFT_TOOL } from './primitiveTools.js';
 export { SCALE_DRAFT_TOOL, TRANSLATE_DRAFT_TOOL } from './transformTools.js';

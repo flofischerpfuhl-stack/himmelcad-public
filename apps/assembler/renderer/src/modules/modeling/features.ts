@@ -257,6 +257,12 @@ export interface AlignFeature extends FeatureBase {
   flip: boolean;
   center: boolean;
   offset: Millimeters;
+  /**
+   * Then turns the body by this many degrees (right-hand) about the target
+   * plane's normal through the aligned centre, or about the target axis
+   * (Block 9; Shapr3D's rotation after aligning). Absent: 0.
+   */
+  turn?: number;
 }
 
 /**
