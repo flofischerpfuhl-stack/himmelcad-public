@@ -103,7 +103,7 @@ async function serve(mode: 'jsonrpc' | 'mcp'): Promise<void> {
       if (mode === 'mcp') {
         let message: unknown;
         try {
-          message = JSON.parse(line.replace(/^﻿/, ''));
+          message = JSON.parse(line.replace(/^\uFEFF/, ''));
         } catch {
           writeLine({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } });
           return;
