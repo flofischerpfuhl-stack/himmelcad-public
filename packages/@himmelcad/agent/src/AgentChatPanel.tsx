@@ -39,6 +39,33 @@ export interface AgentChatPanelProps {
   onResume(): void;
   onApproval(requestId: string, decision: 'approved' | 'denied'): void;
   providerCredentialControl?: ReactNode;
+  // ---- optional product customisation (absent: the default Builder/PhotoLab panel) ----
+  /** Panel heading; default "Agent". */
+  title?: string;
+  /** Extra class on the panel root (a product's docked size). */
+  className?: string;
+  /** Rendered at the end of the header (e.g. a close button). */
+  headerAccessory?: ReactNode;
+  /** Rendered between the scope bar and the timeline (e.g. a session bar). */
+  beforeTimeline?: ReactNode;
+  /** Rendered in the composer above the prompt field (e.g. entity reference chips). */
+  composerAccessory?: ReactNode;
+  /** Empty-timeline text while a harness is selected. */
+  emptyMessage?: string;
+  /** Prompt field placeholder. */
+  placeholder?: string;
+  /** Replaces the content of the permission scope bar (e.g. one condensed line). */
+  scopeBar?: ReactNode;
+  /** Extra content under a timeline row (e.g. an image a tool call returned). Keep its height fixed. */
+  renderRowExtra?: (row: AgentTimelineRow) => ReactNode;
+  /**
+   * Rows the timeline shows, derived from the full rows (e.g. a product
+   * folds consecutive tool calls into one group row). The pending-approval
+   * and recovery bars always read the full rows.
+   */
+  prepareRows?: (rows: readonly AgentTimelineRow[]) => readonly AgentTimelineRow[];
+  /** Renders a row instead of the default card; `fallback()` is the default card. */
+  renderRow?: (row: AgentTimelineRow, fallback: () => ReactNode) => ReactNode;
 }
 
 export function AgentChatPanel(props: AgentChatPanelProps): JSX.Element {
@@ -50,6 +77,8 @@ export function AgentChatPanel(props: AgentChatPanelProps): JSX.Element {
     timelineRef.current = next;
     return next.result;
   }, [props.events]);
+  const prepareRows = props.prepareRows;
+  const shownRows = useMemo(() => (prepareRows ? prepareRows(rows) : rows), [prepareRows, rows]);
   const active = props.discoveries.find(
     (item) => item.state === 'available' && item.identity.provider === props.activeProvider,
   );
@@ -92,10 +121,13 @@ export function AgentChatPanel(props: AgentChatPanelProps): JSX.Element {
   };
 
   return (
-    <section className={styles.chatPanel} aria-labelledby={headingId}>
+    <section
+      className={props.className ? `${styles.chatPanel} ${props.className}` : styles.chatPanel}
+      aria-labelledby={headingId}
+    >
       <header className={styles.chatHeader}>
         <div>
-          <h2 id={headingId}>Agent</h2>
+          <h2 id={headingId}>{props.title ?? 'Agent'}</h2>
           <span>
             {active?.state === 'available'
               ? `${active.identity.provider} · ${active.identity.version}`
@@ -128,19 +160,27 @@ export function AgentChatPanel(props: AgentChatPanelProps): JSX.Element {
             );
           })}
         </div>
+        {props.headerAccessory}
       </header>
       {props.providerCredentialControl}
       <div className={styles.scopeBar} role="group" aria-label="Agent permissions">
-        <span>{props.permissions.workspaceScopeLabel}</span>
-        <span>FS {props.permissions.filesystem}</span>
-        <span>Network {props.permissions.network}</span>
-        <span>Destructive · product approval</span>
+        {props.scopeBar !== undefined ? (
+          props.scopeBar
+        ) : (
+          <>
+            <span>{props.permissions.workspaceScopeLabel}</span>
+            <span>FS {props.permissions.filesystem}</span>
+            <span>Network {props.permissions.network}</span>
+            <span>Destructive · product approval</span>
+          </>
+        )}
       </div>
+      {props.beforeTimeline}
       <div className={styles.timelineHost}>
         {rows.length === 0 ? (
           <div className={styles.emptyChat} role="status">
             {active ? (
-              'Ask the agent to use the HimmelCAD SDK.'
+              (props.emptyMessage ?? 'Ask the agent to use the HimmelCAD SDK.')
             ) : hasAvailableHarness ? (
               'Choose an available local harness to start.'
             ) : runtimeNotConfigured ? (
@@ -168,10 +208,21 @@ export function AgentChatPanel(props: AgentChatPanelProps): JSX.Element {
           </div>
         ) : (
           <VirtualAgentTimeline
-            rows={rows}
+            rows={shownRows}
             busy={props.busy}
             ariaLabel="Agent conversation"
-            renderRow={(row) => <AgentRow row={row} onApproval={props.onApproval} />}
+            renderRow={(row) => {
+              const fallback = (): ReactNode =>
+                props.renderRowExtra ? (
+                  <>
+                    <AgentRow row={row} onApproval={props.onApproval} />
+                    {props.renderRowExtra(row)}
+                  </>
+                ) : (
+                  <AgentRow row={row} onApproval={props.onApproval} />
+                );
+              return props.renderRow ? props.renderRow(row, fallback) : fallback();
+            }}
           />
         )}
       </div>
@@ -209,6 +260,9 @@ export function AgentChatPanel(props: AgentChatPanelProps): JSX.Element {
         </div>
       ) : null}
       <form className={styles.composer} onSubmit={send}>
+        {props.composerAccessory ? (
+          <div className={styles.composerAccessory}>{props.composerAccessory}</div>
+        ) : null}
         <textarea
           value={prompt}
           maxLength={MAX_AGENT_PROMPT_CHARS}
@@ -216,7 +270,7 @@ export function AgentChatPanel(props: AgentChatPanelProps): JSX.Element {
             setPrompt(event.currentTarget.value.slice(0, MAX_AGENT_PROMPT_CHARS))
           }
           onKeyDown={sendFromKeyboard}
-          placeholder="Use the SDK to inspect or edit this project…"
+          placeholder={props.placeholder ?? 'Use the SDK to inspect or edit this project…'}
           aria-label="Agent prompt"
         />
         {props.busy ? (

@@ -18,6 +18,9 @@ export type ProviderEventNormalizer = (
   context: ProviderNormalizeContext,
 ) => NormalizedAgentEvent | null;
 
+/** Turn lifecycle payloads a desktop host emits around one CLI turn, for every provider. */
+const HOST_TURN_STATE = /^turn\.(started|completed|failed|interrupted)$/u;
+
 export const PROVIDER_EVENT_NORMALIZERS: Readonly<
   Record<HarnessProvider, ProviderEventNormalizer>
 > = {
@@ -57,6 +60,8 @@ export function normalizeClaudeEvent(
   if (!value) return null;
   const type = text(value.type) || text(value.kind);
   const data = record(value.message) ?? record(value.content_block) ?? value;
+  // Host lifecycle payloads (`turn.started` … emitted by the desktop host around a CLI turn).
+  if (HOST_TURN_STATE.test(type)) return turnState('claude', type, data, context);
   if (/assistant|content_block_delta|text_delta/i.test(type)) {
     return message('claude', data, context, 'assistant');
   }
@@ -75,6 +80,7 @@ export function normalizeOpenCodeEvent(
   if (!value) return null;
   const type = text(value.type) || text(value.kind);
   const data = record(value.properties) ?? record(value.part) ?? value;
+  if (HOST_TURN_STATE.test(type)) return turnState('opencode', type, data, context);
   if (/message|text/i.test(type)) return message('opencode', data, context, 'assistant');
   if (/tool|command/i.test(type)) return command('opencode', data, context);
   if (/file/i.test(type)) return fileChange('opencode', data, context);

@@ -10,6 +10,7 @@ import type { AssemblerHost } from './host.js';
 
 export type * from './host.js';
 export {
+  ASSISTANT_NEEDS_DESKTOP,
   browserFiles,
   downloadBlob,
   inertWindow,

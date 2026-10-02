@@ -5,6 +5,7 @@
  */
 
 import { installModuleUis } from '../platform/widgets/moduleUi.js';
+import { assistantUi } from '../interface/assistant/module.ui.js';
 import { shellUi } from '../interface/shell-ui/module.ui.js';
 import { canvasUi } from '../modules/canvas/module.ui.js';
 import { checksUi } from '../modules/checks/module.ui.js';
@@ -32,5 +33,6 @@ installModuleUis([
   measureUi,
   displayUi,
   interopUi,
+  assistantUi,
   shellUi,
 ]);

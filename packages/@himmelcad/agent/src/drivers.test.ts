@@ -275,6 +275,43 @@ describe('harness drivers', () => {
     assert.equal(adapter.diagnostics.snapshot().items.length, 2);
   });
 
+  it('passes a resume thread id to the host only when one is given', async () => {
+    let opened = 0;
+    const transport: FixtureTransport = new FixtureTransport(
+      (request: HostHarnessRequest): HostHarnessResponse =>
+        request.kind === 'openSession'
+          ? {
+              kind: 'sessionOpened',
+              hostSessionId: `host-${(opened += 1)}`,
+              providerThreadId: request.resumeThreadId ?? 'fresh-thread',
+            }
+          : { kind: 'accepted' },
+    );
+    const make = () =>
+      findHarnessDriver('codex').create({
+        transport,
+        identity: codexIdentity(['codexExecJson']),
+        scope: scope(),
+      });
+    const fresh = await make().startThread({ systemPrompt: 'Tools only' });
+    assert.equal(fresh.threadId, 'fresh-thread');
+    const resumed = await make().startThread({
+      systemPrompt: 'Tools only',
+      resumeThreadId: 'thread-from-last-week',
+    });
+    assert.equal(resumed.threadId, 'thread-from-last-week');
+    const opens = transport.requests.filter((request) => request.kind === 'openSession');
+    assert.equal('resumeThreadId' in opens[0]!, false);
+    assert.equal(
+      opens[1]?.kind === 'openSession' && opens[1].resumeThreadId,
+      'thread-from-last-week',
+    );
+    await assert.rejects(
+      () => make().startThread({ systemPrompt: 'Tools only', resumeThreadId: ' ' }),
+      /resume thread id is invalid/i,
+    );
+  });
+
   it('builds a prompt containing docs and skills references but no project copy', () => {
     const prompt = buildAgentSystemPrompt({
       sdkDocs: 'himmelcad://sdk/docs',

@@ -1,0 +1,818 @@
+.island {
+  /* Tokens the shared chat panel names that Assembler's theme spells differently. */
+  --hc-accent: var(--hc-accent-base);
+  --hc-danger-bg: rgb(247 84 100 / 14%);
+  --hc-danger-border: var(--hc-error);
+  --hc-danger-fg: var(--hc-error-fg);
+
+  position: absolute;
+  top: 64px;
+  bottom: 52px;
+  left: 352px;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  width: min(440px, calc(100vw - 380px));
+  min-width: 320px;
+  background: var(--hc-bg-island);
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-lg);
+  box-shadow: var(--hc-shadow-island);
+  font-family: var(--hc-font-ui);
+  font-size: 12px;
+  color: var(--hc-fg-default);
+  pointer-events: auto;
+  overflow: hidden;
+}
+
+/* Narrow windows: over the Items column instead of next to it. */
+@media (max-width: 1100px) {
+  .island {
+    left: 68px;
+    width: min(440px, calc(100vw - 96px));
+  }
+}
+
+/* Tablet layout: the wider tool column and Items (82 px + 272 px) push it right. */
+:global(html[data-hc-touch]) .island {
+  left: 366px;
+  width: min(440px, calc(100vw - 660px));
+}
+
+/* Left-handed: tools and Items sit on the right, so the island mirrors to their left. */
+:global(html[data-hc-hand='left']) .island {
+  left: auto;
+  right: 352px;
+}
+:global(html[data-hc-touch][data-hc-hand='left']) .island {
+  right: 366px;
+}
+@media (max-width: 1100px) {
+  :global(html[data-hc-hand='left']) .island,
+  :global(html[data-hc-touch][data-hc-hand='left']) .island {
+    right: 68px;
+  }
+  :global(html[data-hc-touch]) .island {
+    width: min(440px, calc(100vw - 110px));
+  }
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: var(--hc-space-2);
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--hc-border-subtle);
+  flex-shrink: 0;
+}
+
+.tabs {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--hc-bg-island-lo);
+  border-radius: var(--hc-radius-sm);
+}
+
+.tab,
+.tabActive {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 24px;
+  padding: 0 9px;
+  font: inherit;
+  color: var(--hc-fg-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--hc-radius-sm);
+  cursor: pointer;
+}
+
+.tabActive {
+  color: var(--hc-fg-strong);
+  background: var(--hc-bg-island-hi);
+  border-color: var(--hc-border-default);
+}
+
+.spacer {
+  flex: 1;
+}
+
+.sessionBar {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.sessionSelect,
+.sessionName {
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  padding: 0 24px 0 8px;
+  font: inherit;
+  color: var(--hc-fg-default);
+  background-color: var(--hc-bg-input);
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-sm);
+  appearance: none;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--hc-fg-muted) 50%),
+    linear-gradient(135deg, var(--hc-fg-muted) 50%, transparent 50%);
+  background-position:
+    calc(100% - 13px) 11px,
+    calc(100% - 9px) 11px;
+  background-size: 4px 4px;
+  background-repeat: no-repeat;
+  outline: none;
+}
+
+.sessionName {
+  padding-right: 8px;
+  background-image: none;
+}
+
+.sessionSelect:focus-visible,
+.sessionName:focus {
+  border-color: var(--hc-border-accent);
+  box-shadow: 0 0 0 1px var(--hc-focus-ring);
+}
+
+.iconButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  color: var(--hc-fg-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--hc-radius-sm);
+  cursor: pointer;
+}
+
+.iconButton:hover:not(:disabled) {
+  color: var(--hc-fg-strong);
+  background: var(--hc-bg-island-hi);
+  border-color: var(--hc-border-default);
+}
+
+.iconButton:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.iconButton:focus-visible,
+.textButton:focus-visible,
+.primaryButton:focus-visible,
+.tab:focus-visible,
+.tabActive:focus-visible {
+  outline: 2px solid var(--hc-focus-ring);
+  outline-offset: 1px;
+}
+
+.unavailable {
+  display: grid;
+  align-content: center;
+  gap: 8px;
+  height: 100%;
+  padding: 28px;
+  color: var(--hc-fg-muted);
+  text-align: center;
+}
+
+.unavailable p {
+  margin: 0;
+  line-height: 1.5;
+}
+
+/* ---- chat ---------------------------------------------------------------- */
+
+.chatHost {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+/* Fills the island instead of the shared panel's own popover size. */
+.chatHost .chat {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+/* The session name as the panel title: the UI font, one line. */
+.chatHost .chat h2 {
+  max-width: 220px;
+  overflow: hidden;
+  font: 600 13px/1.3 var(--hc-font-ui);
+  color: var(--hc-fg-strong);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  color: var(--hc-warning-fg);
+  background: var(--hc-bg-island-lo);
+  border-bottom: 1px solid var(--hc-warning);
+}
+
+.notice button,
+.addReference {
+  min-height: 22px;
+  padding: 0 8px;
+  font: inherit;
+  color: var(--hc-fg-default);
+  background: var(--hc-bg-island-hi);
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-sm);
+  cursor: pointer;
+}
+
+.references {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-height: 64px;
+  overflow: auto;
+}
+
+.addReference {
+  color: var(--hc-fg-muted);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  max-width: 220px;
+  height: 22px;
+  padding: 0 2px 0 7px;
+  color: var(--hc-fg-strong);
+  background: var(--hc-bg-chip);
+  border: 1px solid var(--hc-border-accent);
+  border-radius: var(--hc-radius-chip);
+}
+
+.chipLabel {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chip button {
+  display: inline-flex;
+  padding: 2px;
+  color: var(--hc-fg-muted);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.thumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-width: 760px;
+  margin: 6px auto 0;
+}
+
+.thumb {
+  width: 160px;
+  height: 120px;
+  object-fit: contain;
+  background: var(--hc-bg-island-lo);
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-sm);
+}
+
+/* ---- skills -------------------------------------------------------------- */
+
+.skills,
+.skillsEditor {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.skillsBar,
+.skillsEditorBar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px;
+  border-bottom: 1px solid var(--hc-border-subtle);
+}
+
+.search {
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  padding: 0 8px;
+  font: inherit;
+  color: var(--hc-fg-default);
+  background: var(--hc-bg-input);
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-sm);
+  outline: none;
+}
+
+.search:focus {
+  border-color: var(--hc-border-accent);
+  box-shadow: 0 0 0 1px var(--hc-focus-ring);
+}
+
+.textButton,
+.primaryButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 26px;
+  padding: 0 10px;
+  font: inherit;
+  color: var(--hc-fg-default);
+  background: var(--hc-bg-island-hi);
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-sm);
+  cursor: pointer;
+}
+
+.primaryButton {
+  color: var(--hc-fg-on-accent);
+  background: var(--hc-accent-base);
+  border-color: var(--hc-border-accent);
+}
+
+.primaryButton:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.skillsBody {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: minmax(96px, 40%) minmax(0, 1fr);
+}
+
+.skillList {
+  margin: 0;
+  padding: 6px;
+  overflow: auto;
+  list-style: none;
+  border-bottom: 1px solid var(--hc-border-subtle);
+}
+
+.skillItem,
+.skillItemActive {
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  padding: 6px 8px;
+  font: inherit;
+  text-align: left;
+  color: var(--hc-fg-default);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--hc-radius-sm);
+  cursor: pointer;
+}
+
+.skillItem:hover {
+  background: var(--hc-bg-island-hi);
+}
+
+.skillItemActive {
+  background: var(--hc-bg-island-hi);
+  border-color: var(--hc-border-accent);
+}
+
+.skillName {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--hc-fg-strong);
+  font-weight: 600;
+}
+
+.skillDescription {
+  color: var(--hc-fg-muted);
+  line-height: 1.4;
+}
+
+.badge,
+.badgeProject {
+  padding: 1px 5px;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--hc-fg-muted);
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-chip);
+}
+
+.badgeProject {
+  color: var(--hc-accent-base);
+  border-color: var(--hc-border-accent);
+}
+
+.empty {
+  padding: 12px;
+  color: var(--hc-fg-subtle);
+}
+
+.skillView {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.skillViewHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px 4px;
+}
+
+.skillViewHeader strong {
+  display: block;
+  color: var(--hc-fg-strong);
+}
+
+.skillMeta {
+  color: var(--hc-fg-subtle);
+  font-size: 11px;
+}
+
+.skillActions {
+  display: flex;
+  gap: 2px;
+}
+
+.skillBody {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 4px 10px 12px;
+  overflow: auto;
+  font: 11px/1.5 var(--hc-font-mono);
+  color: var(--hc-fg-default);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.skillsText {
+  flex: 1;
+  min-height: 0;
+  margin: 8px;
+  padding: 8px;
+  resize: none;
+  font: 11px/1.5 var(--hc-font-mono);
+  color: var(--hc-fg-default);
+  background: var(--hc-bg-input);
+  border: 1px solid var(--hc-border-default);
+  border-radius: var(--hc-radius-sm);
+  outline: none;
+}
+
+.skillsText:focus {
+  border-color: var(--hc-border-accent);
+  box-shadow: 0 0 0 1px var(--hc-focus-ring);
+}
+
+.skillsValidation {
+  max-height: 96px;
+  overflow: auto;
+  padding: 0 10px 10px;
+  color: var(--hc-error-fg);
+}
+
+.skillsValidation ul {
+  margin: 0;
+  padding-left: 16px;
+}
+
+.ok {
+  color: var(--hc-fg-muted);
+}
+
+/* ---- left dock button ----------------------------------------------------- */
+
+.running {
+  width: 6px;
+  height: 6px;
+  margin-left: 4px;
+  border-radius: 50%;
+  background: var(--hc-accent-base);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.3;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .running {
+    animation: none;
+  }
+}
+
+/* ---- compact timeline rows (TimelineRows.tsx) ------------------------------ */
+
+.step,
+.group {
+  box-sizing: border-box;
+  max-width: 760px;
+  margin: 0 auto;
+}
+
+.stepNested {
+  padding-left: 18px;
+}
+
+.stepLine {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 26px;
+  padding: 2px 6px;
+  font: inherit;
+  text-align: left;
+  color: var(--hc-fg-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--hc-radius-sm);
+  cursor: pointer;
+}
+
+.stepLine:hover:not(:disabled) {
+  color: var(--hc-fg-default);
+  background: var(--hc-bg-island-hi);
+}
+
+.stepLine:disabled {
+  cursor: default;
+}
+
+.stepLine:focus-visible {
+  outline: 2px solid var(--hc-focus-ring);
+  outline-offset: 1px;
+}
+
+.chevron,
+.chevronOpen {
+  flex-shrink: 0;
+  color: var(--hc-fg-subtle);
+  transition: transform 120ms ease;
+}
+
+.chevronOpen {
+  transform: rotate(90deg);
+}
+
+.stepLine:disabled .chevron {
+  visibility: hidden;
+}
+
+.stepIcon {
+  flex-shrink: 0;
+  color: var(--hc-fg-subtle);
+}
+
+.stepText {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.group > .stepLine .stepText {
+  color: var(--hc-fg-default);
+}
+
+.stepSummary {
+  color: var(--hc-fg-muted);
+}
+
+.doneMark {
+  flex-shrink: 0;
+  color: var(--hc-success);
+}
+
+.failMark {
+  flex-shrink: 0;
+  color: var(--hc-error);
+}
+
+.spin {
+  flex-shrink: 0;
+  color: var(--hc-accent-base);
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.stepError {
+  margin: 2px 0 2px 25px;
+  color: var(--hc-error-fg);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.stepDetail {
+  max-height: 220px;
+  margin: 4px 0 4px 25px;
+  padding: 6px 8px;
+  overflow: auto;
+  color: var(--hc-fg-default);
+  background: var(--hc-bg-island-lo);
+  border: 1px solid var(--hc-border-subtle);
+  border-radius: var(--hc-radius-sm);
+  font: 10px/1.4 var(--hc-font-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.groupSteps {
+  margin-top: 2px;
+}
+
+.step .thumbs,
+.group .thumbs {
+  margin: 4px 0 2px 25px;
+}
+
+.approvalLine,
+.noteLine {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 4px 6px;
+  color: var(--hc-fg-muted);
+  line-height: 1.4;
+}
+
+.approvalLine svg,
+.noteLine svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.approvalLine[data-state='pending'] {
+  color: var(--hc-warning-fg);
+}
+
+.approvalLine[data-state='pending'] svg {
+  color: var(--hc-warning);
+}
+
+.approvalLine strong {
+  font-weight: 600;
+}
+
+.noteLine[data-tone='warning'] svg {
+  color: var(--hc-warning);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spin {
+    animation: none;
+  }
+  .chevron,
+  .chevronOpen {
+    transition: none;
+  }
+}
+
+/* ---- the permission line (replaces the shared chip row) -------------------- */
+
+.chatHost [aria-label='Agent permissions'] {
+  display: block;
+  padding: 4px 8px 4px 10px;
+  overflow: visible;
+  font: 11px/1.4 var(--hc-font-ui);
+  color: var(--hc-fg-muted);
+}
+
+.scopeSummary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.scopeSummary p {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scopeInfo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  color: var(--hc-fg-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--hc-radius-sm);
+  cursor: pointer;
+}
+
+.scopeInfo:hover,
+.scopeInfo[aria-expanded='true'] {
+  color: var(--hc-fg-strong);
+  background: var(--hc-bg-island-hi);
+  border-color: var(--hc-border-default);
+}
+
+.scopeInfo:focus-visible {
+  outline: 2px solid var(--hc-focus-ring);
+  outline-offset: 1px;
+}
+
+.scopeDetails {
+  margin: 4px 0 2px;
+  padding-left: 22px;
+  color: var(--hc-fg-default);
+}
+
+/* ---- approval bar of the shared panel: clear buttons ------------------------ */
+
+.chatHost [aria-label='Pending agent approval'] button {
+  min-height: 30px;
+  padding: 0 14px;
+}
+
+/* ---- tablet layout: finger-sized targets ----------------------------------- */
+
+:global(html[data-hc-touch]) .iconButton {
+  width: 40px;
+  height: 40px;
+}
+:global(html[data-hc-touch]) .tab,
+:global(html[data-hc-touch]) .tabActive,
+:global(html[data-hc-touch]) .textButton,
+:global(html[data-hc-touch]) .primaryButton,
+:global(html[data-hc-touch]) .addReference,
+:global(html[data-hc-touch]) .notice button {
+  min-height: 40px;
+}
+:global(html[data-hc-touch]) .sessionSelect,
+:global(html[data-hc-touch]) .sessionName,
+:global(html[data-hc-touch]) .search {
+  height: 40px;
+}
+:global(html[data-hc-touch]) .stepLine {
+  min-height: 40px;
+}
+:global(html[data-hc-touch]) .scopeInfo {
+  width: 36px;
+  height: 36px;
+}
+:global(html[data-hc-touch]) .chip {
+  height: 32px;
+}
+:global(html[data-hc-touch]) .chip button {
+  padding: 8px;
+}
+:global(html[data-hc-touch]) .chatHost [aria-label='Pending agent approval'] button,
+:global(html[data-hc-touch]) .chatHost form button,
+:global(html[data-hc-touch]) .chatHost [aria-label='Local agent harnesses'] button {
+  min-height: 44px;
+  min-width: 44px;
+}
+:global(html[data-hc-touch]) .skillItem,
+:global(html[data-hc-touch]) .skillItemActive {
+  min-height: 44px;
+}

@@ -1,0 +1,31 @@
+{
+  "$comment": "Plain-language assistant benchmark tasks (assembler/AGENT-ASSISTANT.md 'Benchmark'). Each prompt goes to an agent CLI driving assembler-headless --mcp; acceptance is checked on the saved project. Sizes in mm, tolerance 0.01 unless given.",
+  "tasks": [
+    {
+      "id": "rpi5-enclosure",
+      "prompt": "Design an enclosure for a Raspberry Pi 5 with ventilation. It should be printable without supports, have standoffs for the board's mounting holes and parameters so I can change the size later.",
+      "accept": {
+        "bodies": 1,
+        "valid": true,
+        "bboxSize": [91, 62, 30],
+        "volumeRange": [8000, 40000],
+        "minFaces": 60,
+        "maxErrorFindings": 0,
+        "parameters": ["board_l", "board_w", "wall"],
+        "parameterEdit": { "name": "board_l", "value": 95, "bboxSize": [101, 62, 30] }
+      }
+    },
+    {
+      "id": "wall-hook",
+      "prompt": "Make a wall hook for a 20 mm towel bar with two screw holes.",
+      "accept": {
+        "bodies": 1,
+        "valid": true,
+        "bboxSize": [30, 20, 60],
+        "volumeRange": [6000, 12000],
+        "minFaces": 12,
+        "maxErrorFindings": 0
+      }
+    }
+  ]
+}

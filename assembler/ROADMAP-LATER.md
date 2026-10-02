@@ -111,6 +111,15 @@ Ellipsen/Splines aus Strichen.
 - Vorlage/Benchmark: die fünf Druckteile aus `apps/assembler/bench/` plus
   Aufgaben in Alltagssprache („Gehäuse für Raspberry Pi 5 mit Lüftung“).
 
+**Stand 2026-10-02 (Block 9, Agent-Stream, `asm/b9-agent-20261002`):
+umgesetzt** – siehe [AGENT-ASSISTANT.md](AGENT-ASSISTANT.md). Assistent-Insel
+auf `@himmelcad/agent` (Chat, Sitzungen im Projekt, Referenz-Chips,
+Rückfrage vor destruktiven Schritten, ein Undo-Schritt pro Zug), Desktop-Host
+für die CLIs der Nutzer, Werkzeuge = `hcasm.agent-api@1` per MCP (auch
+`assembler-headless --mcp`), Benchmark mit Alltagsaufgaben und skriptiertem
+Provider in CI. Offen: echte Provider-Läufe (nur manuell), Pick-Werkzeug,
+Web (Browser kann keine CLIs starten – Grund wird angezeigt).
+
 ### 2b. Übernahmen aus der ForgeCAD-Analyse (Florian 2026-10-02: Empfehlungen 1–5 freigegeben)
 
 Siehe [research/2026-10-01-forgecad/Report.md](research/2026-10-01-forgecad/Report.md) §6.
@@ -142,8 +151,20 @@ Printability-Befund (mit „Ignore here“/„Don't show this type“) und als C
 Checks: eigenes Domänenmodul `checks`, Registry in `foundation/commands`, Arten von
 `measure`, `print` und `checks`, Panel mit passivem Badge, Undo/Redo, optionales
 `.hcasm`-Feld `checks` (kein Format v4: additiv wie Block 8), `checks.*` und Python.
-Offen: Sweep-Anbindung durch Stream „params“ (Vertrag in MODULES.md), Spiel über
-Bewegungen/Posen (§4, Gelenke).
+Offen: Spiel über Bewegungen/Posen (§4, Gelenke).
+
+Stand 2026-10-02 (Block 9, Agent-Stream): **1 umgesetzt** (`view.render`,
+`view.inspect`: GPU in der App, Software-Rasterizer headless; Python
+`doc.render`/`doc.inspect`) und **5 umgesetzt** (eingebaute Skills
+`printable-part`, `fix-printability`, `parametric-part`, `api-quickstart`;
+Projekt-Skills in `.hcasm` mit Skills-Tab; `skills.list`/`skills.read`;
+installierbare `SKILL.md` für externe CLIs und Kontextdatei für Chat-Tools).
+2–4: Streams „checks“ und „params“ (oben).
+
+Integration Block 9 (2026-10-02): Checks und Sweep sind verbunden — das
+Checks-Modul registriert seinen Runner im Hook `documentChecks.ts`;
+`parameters.sweep` und „Test range“ melden je Stichprobe echte
+Check-Ergebnisse (Vertrag in MODULES.md §3).
 
 ## 3. Maker-Werkzeuge für Druckteile (≈ 1 Block)
 

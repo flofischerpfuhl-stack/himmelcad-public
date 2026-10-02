@@ -3,6 +3,7 @@ import { extname, join, normalize, resolve } from 'node:path';
 
 import { BrowserWindow, app, ipcMain, nativeImage, protocol } from 'electron';
 
+import { registerAssistant, stopAssistant } from './assistantIpc';
 import { registerAutomation, stopAutomation } from './automationIpc';
 import { attachCloseGuard, readHcasmFile, registerFileApi } from './fileApi';
 import { registerSlicerIpc } from './slicerIpc';
@@ -213,9 +214,13 @@ async function createWindow(): Promise<void> {
   registerSlicerIpc(() => mainWindow);
   // Agent access (loopback JSON-RPC endpoint): off until the user turns it on in the UI.
   registerAutomation(() => mainWindow);
+  // The embedded assistant: the user's own agent CLIs as child processes, their tool calls
+  // answered by the renderer's command layer (assembler/AGENT-ASSISTANT.md).
+  registerAssistant(() => mainWindow);
   attachCloseGuard(win);
   win.on('closed', () => {
     void stopAutomation();
+    void stopAssistant();
     if (mainWindow === win) mainWindow = null;
   });
 

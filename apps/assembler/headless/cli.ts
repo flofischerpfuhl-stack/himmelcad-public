@@ -13,6 +13,8 @@
  *
  * Usage:
  *   assembler-headless                 serve JSON-RPC on stdio
+ *   assembler-headless --mcp           serve the assistant tools over MCP (stdio) for
+ *                                      Claude Code / Codex / OpenCode (assembler/AGENT-ASSISTANT.md)
  *   assembler-headless --print-schema  print the hcasm.agent-api@1 contract
  *   assembler-headless --write-schema <file>  write it (UTF-8) to a file
  *   assembler-headless --version
@@ -28,6 +30,7 @@ import { createInterface } from 'node:readline';
 // The kernel's own composition (`app/kernelModules.ts`) loads in the kernel thread.
 import '../renderer/src/app/composition.js';
 import { handleJsonRpcText } from '../renderer/src/interface/agent-api/jsonRpc.js';
+import { handleMcpMessage } from '../renderer/src/interface/assistant/tools.js';
 import {
   AGENT_API_SCHEMA,
   API_ID,
@@ -63,7 +66,7 @@ function protectStdout(): void {
   console.debug = toStderr;
 }
 
-async function serve(): Promise<void> {
+async function serve(mode: 'jsonrpc' | 'mcp'): Promise<void> {
   protectStdout();
   const store = useAssemblerStore;
   // Start from an empty document (the store's initial content is the UI demo part).
@@ -97,12 +100,36 @@ async function serve(): Promise<void> {
   lines.on('line', (line) => {
     if (line.trim() === '') return;
     pending = pending.then(async () => {
+      if (mode === 'mcp') {
+        let message: unknown;
+        try {
+          message = JSON.parse(line.replace(/^\uFEFF/, ''));
+        } catch {
+          writeLine({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } });
+          return;
+        }
+        const response = await handleMcpMessage({ session }, message, {
+          name: 'hcasm-assembler-headless',
+          version: String(API_VERSION),
+        });
+        if (response) writeLine(response);
+        return;
+      }
       const response = await handleJsonRpcText(session, line);
       if (response) writeLine(response);
     });
   });
   await new Promise<void>((done) => lines.once('close', () => done()));
   await pending;
+  // MCP clients end the server by closing stdin; keep the result for checks if asked to.
+  const saveOnExit = process.env.HCASM_MCP_SAVE_ON_EXIT;
+  if (mode === 'mcp' && saveOnExit) {
+    try {
+      await session.handle('project.save', { path: saveOnExit });
+    } catch (error) {
+      process.stderr.write(`assembler-headless: could not save ${saveOnExit}: ${String(error)}\n`);
+    }
+  }
   session.dispose();
   kernel.dispose();
 }
@@ -111,6 +138,8 @@ async function main(argv: string[]): Promise<number> {
   if (argv.includes('--help') || argv.includes('-h')) {
     process.stdout.write(
       'assembler-headless — JSON-RPC 2.0 over stdio (one JSON object per line).\n' +
+        '  --mcp            serve the assistant tools as an MCP server (stdio) instead\n' +
+        '                   (HCASM_MCP_SAVE_ON_EXIT=<file.hcasm> saves the project when stdin closes)\n' +
         '  --print-schema   print the hcasm.agent-api@1 contract (JSON Schema)\n' +
         '  --version        print the API id and version\n',
     );
@@ -133,7 +162,7 @@ async function main(argv: string[]): Promise<number> {
     process.stdout.write(`${JSON.stringify(AGENT_API_SCHEMA, null, 2)}\n`);
     return 0;
   }
-  await serve();
+  await serve(argv.includes('--mcp') ? 'mcp' : 'jsonrpc');
   return 0;
 }
 

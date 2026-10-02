@@ -31,6 +31,7 @@ from .errors import AssemblerError, NotFoundError
 from .checks import ChecksMixin
 from .interop import InteropMixin
 from .printing import PrintToolsMixin
+from .view import ViewMixin
 
 Vec3 = tuple[float, float, float]
 _AXES = {"X": 0, "Y": 1, "Z": 2}
@@ -646,8 +647,9 @@ class _LoggedCall:
     params: Mapping[str, Any]
 
 
-class Document(PrintToolsMixin, InteropMixin, ChecksMixin):
-    """An Assembler document driven through canonical commands (print-part helpers: :mod:`.printing`)."""
+class Document(PrintToolsMixin, InteropMixin, ChecksMixin, ViewMixin):
+    """An Assembler document driven through canonical commands (print-part helpers: :mod:`.printing`,
+    checks: :mod:`.checks`, renders and skills: :mod:`.view`)."""
 
     def __init__(self, client: AssemblerClient) -> None:
         self.client = client
@@ -689,7 +691,7 @@ class Document(PrintToolsMixin, InteropMixin, ChecksMixin):
     @property
     def commands(self) -> list[str]:
         """Methods issued so far that change or export the document (for benchmarks/audits)."""
-        reads = {"api.hello", "api.describe", "document.get", "features.list", "feature.get", "bodies.list", "body.get", "faces.list", "edges.list", "sketches.list", "selection.get", "print.analyze", "print.orientations", "export.meshStats", "parameters.list", "parameters.sweep", "measure.get", "measure.distance", "measure.angle", "measure.area", "measure.volume", "measure.clearance", "checks.kinds", "checks.list", "checks.run"}
+        reads = {"api.hello", "api.describe", "document.get", "features.list", "feature.get", "bodies.list", "body.get", "faces.list", "edges.list", "sketches.list", "selection.get", "print.analyze", "print.orientations", "export.meshStats", "parameters.list", "parameters.sweep", "measure.get", "measure.distance", "measure.angle", "measure.area", "measure.volume", "measure.clearance", "checks.kinds", "checks.list", "checks.run", "view.render", "view.inspect", "skills.list", "skills.read"}
         return [call.method for call in self.log if call.method not in reads]
 
     # ---- parameters ---------------------------------------------------------------------

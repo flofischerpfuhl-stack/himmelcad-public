@@ -1122,6 +1122,7 @@ export function Viewport(props: ViewportProps): JSX.Element {
         if (!input) throw new Error('The 3D view is not ready.');
         const built = buildScene({
           ...input,
+          ...request.scene,
           forExport: true,
           hover: null,
           gridVisible: input.gridVisible && request.grid,

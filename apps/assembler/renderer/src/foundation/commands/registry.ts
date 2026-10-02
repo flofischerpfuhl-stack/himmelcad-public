@@ -177,6 +177,8 @@ export const COMMAND_ORDER = {
   fileInterop: 1600,
   interop: 1700,
   agent: 1800,
+  /** The embedded assistant (Assistant panel, Mention in Assistant). */
+  assistant: 1850,
 } as const;
 
 // ---- registration ---------------------------------------------------------------------------

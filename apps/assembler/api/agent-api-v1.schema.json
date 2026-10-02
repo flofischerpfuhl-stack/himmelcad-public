@@ -5797,6 +5797,444 @@
         "additionalProperties": false
       },
       "result": "{featureId, bodyId, revision, committed}"
+    },
+    "view.render": {
+      "kind": "query",
+      "capability": "document.read",
+      "summary": "Renders the model to a PNG (named view or azimuth/elevation, orthographic or perspective, isolate/highlight/tint, section, display mode, printability overlay). Never moves the user's camera.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "view": {
+            "oneOf": [
+              {
+                "enum": ["iso", "front", "back", "left", "right", "top", "bottom"]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "azimuth": {
+                    "type": "number",
+                    "description": "Degrees; direction from the model towards the eye, from +X towards +Y (front = -90)."
+                  },
+                  "elevation": {
+                    "type": "number",
+                    "minimum": -90,
+                    "maximum": 90,
+                    "description": "Degrees above the XY plane."
+                  }
+                },
+                "required": ["azimuth", "elevation"],
+                "additionalProperties": false
+              }
+            ],
+            "description": "A named view (iso, front = looking along +Y, back, left, right, top = looking down -Z, bottom) or {azimuth, elevation} in degrees."
+          },
+          "projection": {
+            "enum": ["orthographic", "perspective"],
+            "default": "orthographic"
+          },
+          "width": {
+            "type": "integer",
+            "minimum": 64,
+            "maximum": 2048,
+            "default": 768
+          },
+          "height": {
+            "type": "integer",
+            "minimum": 64,
+            "maximum": 2048,
+            "default": 576
+          },
+          "margin": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 0.45,
+            "default": 0.06,
+            "description": "Free border around the framed bodies, as a fraction of the image."
+          },
+          "highlight": {
+            "type": "object",
+            "properties": {
+              "bodyIds": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "faces": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "bodyId": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "key": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": ["bodyId", "key"],
+                  "additionalProperties": false
+                }
+              },
+              "edges": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "bodyId": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "key": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": ["bodyId", "key"],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [],
+            "additionalProperties": false
+          },
+          "tint": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "bodyId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "faceKeys": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "color": {
+                  "oneOf": [
+                    {
+                      "enum": ["red", "amber", "green", "blue", "violet", "accent"]
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^#[0-9a-fA-F]{6}$"
+                    }
+                  ]
+                }
+              },
+              "required": ["bodyId", "color"],
+              "additionalProperties": false
+            },
+            "description": "Colour faces (or a whole body without faceKeys), e.g. to mark what a step changes."
+          },
+          "axes": {
+            "type": "boolean",
+            "default": true,
+            "description": "Axis triad (X red, Y green, Z blue)."
+          },
+          "bodyIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1,
+            "description": "Isolate: only these bodies are drawn and framed (default: every body)."
+          },
+          "section": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "axis": {
+                    "enum": ["x", "y", "z"]
+                  },
+                  "offset": {
+                    "type": "number",
+                    "description": "Plane position along the axis, mm (default 0)."
+                  },
+                  "flip": {
+                    "type": "boolean",
+                    "description": "Keep the positive side instead."
+                  }
+                },
+                "required": ["axis"],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "origin": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    },
+                    "minItems": 3,
+                    "maxItems": 3
+                  },
+                  "normal": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    },
+                    "minItems": 3,
+                    "maxItems": 3
+                  },
+                  "flip": {
+                    "type": "boolean"
+                  }
+                },
+                "required": ["origin", "normal"],
+                "additionalProperties": false
+              }
+            ],
+            "description": "Section cut: material on the positive side of the plane (axis or normal) is removed, unless `flip`."
+          },
+          "displayMode": {
+            "enum": ["shaded", "shadedEdges", "wireframe", "xray"],
+            "default": "shadedEdges"
+          },
+          "overlay": {
+            "type": "array",
+            "items": {
+              "enum": ["printFindings"]
+            },
+            "description": "`printFindings`: runs print.analyze and colours the faces of its findings (errors red, warnings amber, info blue); the result lists them."
+          },
+          "printSettings": {
+            "type": "object",
+            "description": "Settings for the printFindings overlay (PrintSettings of print.analyze)."
+          },
+          "background": {
+            "enum": ["light", "dark", "transparent"],
+            "default": "light"
+          },
+          "renderer": {
+            "enum": ["auto", "gpu", "software"],
+            "default": "auto",
+            "description": "`auto`: the app’s GPU renderer when its 3D view is open, else the software renderer (headless)."
+          },
+          "scope": {
+            "enum": ["auto", "committed", "staged"],
+            "default": "auto",
+            "description": "`auto`: the open transaction's staged state if any, else the committed document."
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Headless: write the PNG to this file instead of returning base64."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "result": "{mediaType: \"image/png\", width, height, byteLength, data (base64) | path, renderer: \"gpu\" | \"software\", view: {name?, azimuth, elevation, projection}, bodies: [{id, name}], bounds: {min, max} | null, findings?: {count, bySeverity, listed: [{id, kind, severity, bodyId, faceKeys, message}]}, notes: [string]}"
+    },
+    "view.inspect": {
+      "kind": "query",
+      "capability": "document.read",
+      "summary": "Standard views of the model as PNGs plus a JSON manifest (bodies with bounding boxes, volumes and validity, feature errors, optional printability findings) — one call to look at a part from all sides.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "views": {
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "enum": ["iso", "front", "back", "left", "right", "top", "bottom"]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "azimuth": {
+                      "type": "number",
+                      "description": "Degrees; direction from the model towards the eye, from +X towards +Y (front = -90)."
+                    },
+                    "elevation": {
+                      "type": "number",
+                      "minimum": -90,
+                      "maximum": 90,
+                      "description": "Degrees above the XY plane."
+                    }
+                  },
+                  "required": ["azimuth", "elevation"],
+                  "additionalProperties": false
+                }
+              ],
+              "description": "A named view (iso, front = looking along +Y, back, left, right, top = looking down -Z, bottom) or {azimuth, elevation} in degrees."
+            },
+            "minItems": 1,
+            "maxItems": 8,
+            "description": "Default: iso, front, top, right."
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 64,
+            "maximum": 1024,
+            "default": 384,
+            "description": "Side of each square image, px."
+          },
+          "bodyIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1,
+            "description": "Isolate: only these bodies are drawn and framed (default: every body)."
+          },
+          "section": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "axis": {
+                    "enum": ["x", "y", "z"]
+                  },
+                  "offset": {
+                    "type": "number",
+                    "description": "Plane position along the axis, mm (default 0)."
+                  },
+                  "flip": {
+                    "type": "boolean",
+                    "description": "Keep the positive side instead."
+                  }
+                },
+                "required": ["axis"],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "origin": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    },
+                    "minItems": 3,
+                    "maxItems": 3
+                  },
+                  "normal": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    },
+                    "minItems": 3,
+                    "maxItems": 3
+                  },
+                  "flip": {
+                    "type": "boolean"
+                  }
+                },
+                "required": ["origin", "normal"],
+                "additionalProperties": false
+              }
+            ],
+            "description": "Section cut: material on the positive side of the plane (axis or normal) is removed, unless `flip`."
+          },
+          "displayMode": {
+            "enum": ["shaded", "shadedEdges", "wireframe", "xray"],
+            "default": "shadedEdges"
+          },
+          "overlay": {
+            "type": "array",
+            "items": {
+              "enum": ["printFindings"]
+            },
+            "description": "`printFindings`: runs print.analyze and colours the faces of its findings (errors red, warnings amber, info blue); the result lists them."
+          },
+          "printSettings": {
+            "type": "object",
+            "description": "Settings for the printFindings overlay (PrintSettings of print.analyze)."
+          },
+          "background": {
+            "enum": ["light", "dark", "transparent"],
+            "default": "light"
+          },
+          "renderer": {
+            "enum": ["auto", "gpu", "software"],
+            "default": "auto",
+            "description": "`auto`: the app’s GPU renderer when its 3D view is open, else the software renderer (headless)."
+          },
+          "scope": {
+            "enum": ["auto", "committed", "staged"],
+            "default": "auto",
+            "description": "`auto`: the open transaction's staged state if any, else the committed document."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "result": "{images: [{view, width, height, mediaType, byteLength, data}], renderer, manifest: {projectName, revision, units: \"mm\", bodies: [{id, name, valid, volume, area, bbox, faceCount, edgeCount}], totals: {bodies, volume}, errors, warnings, findings?}}"
+    },
+    "skills.list": {
+      "kind": "query",
+      "capability": "document.read",
+      "summary": "Compact index of the assistant skills (built-in workflows and the project’s own): id, name, description, scope, size. Filter with `query` (all words must match), page with `cursor`.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "minLength": 1
+          },
+          "scope": {
+            "enum": ["built-in", "project"]
+          },
+          "cursor": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Index of the first entry (from `nextCursor`)."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50,
+            "default": 20
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "result": "{skills: [{id, name, description, scope, version, tags, chars}], total, nextCursor: number | null}"
+    },
+    "skills.read": {
+      "kind": "query",
+      "capability": "document.read",
+      "summary": "One page of a skill's Markdown body (default 4096, at most 16384 characters); continue at `nextOffset`.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0,
+            "default": 0
+          },
+          "maxChars": {
+            "type": "integer",
+            "minimum": 256,
+            "maximum": 16384,
+            "default": 4096
+          }
+        },
+        "required": ["id"],
+        "additionalProperties": false
+      },
+      "result": "{id, name, scope, version, offset, total, text, nextOffset: number | null}"
     }
   },
   "limits": {

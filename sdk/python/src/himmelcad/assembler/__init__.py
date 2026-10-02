@@ -37,6 +37,7 @@ from .modeling import (
 )
 from .checks import Check, CheckReport
 from .interop import ReferenceMesh
+from .view import Inspection, Render
 from .printing import METRIC_HOLE_SIZES, PRINT_FITS, hole_diameter
 from .transport import LoopbackTransport, StdioTransport, Transport, find_headless_command
 
@@ -48,4 +49,5 @@ __all__ = [
     "ReferenceNotFoundError", "Sketch", "SketchConflictError", "SketchLine", "StdioTransport", "Transaction", "TransactionStateError",
     "Transport", "TransportError", "find_headless_command",
     "METRIC_HOLE_SIZES", "PRINT_FITS", "hole_diameter", "ReferenceMesh", "Check", "CheckReport",
+    "Inspection", "Render",
 ]

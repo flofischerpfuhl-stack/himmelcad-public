@@ -12,6 +12,9 @@
   "include": [
     "electron/windowOptions.ts",
     "electron/automationServer.ts",
+    "electron/assistantHost.ts",
+    "electron/assistantTools.ts",
+    "electron/assistantMcpServer.ts",
     "electron/recentFiles.ts",
     "electron/slicerPaths.ts",
     "renderer/src/global.d.ts",

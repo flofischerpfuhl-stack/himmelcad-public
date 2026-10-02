@@ -38,6 +38,7 @@ METHODS = (
     "interop.formats", "import.mesh", "import.dxf", "export.dxf", "mesh.toSolid",
     "import.iges", "export.iges",
     "image.insert", "image.calibrate",
+    "view.render", "view.inspect", "skills.list", "skills.read",
 )
 
 
@@ -379,6 +380,27 @@ class AssemblerClient:
     def mesh_stats(self, *, body_ids: list[str] | None = None, resolution: str | None = None) -> Mapping[str, Any]:
         """Triangle counts and expected STL sizes at an export resolution."""
         return self.call("export.meshStats", {"bodyIds": body_ids, "resolution": resolution})
+
+    # ---- view renders and skills (assembler/AGENT-API.md "View renders", AGENT-ASSISTANT.md) ----
+    def view_render(self, **params: Any) -> Mapping[str, Any]:
+        """``view.render``: a PNG of the model (base64 ``data``, or written to ``path`` headless).
+
+        Keyword names are the contract's: ``view`` (``"iso"`` … or ``{"azimuth", "elevation"}``),
+        ``projection``, ``width``, ``height``, ``bodyIds``, ``highlight``, ``tint``, ``section``,
+        ``displayMode``, ``overlay``, ``printSettings``, ``background``, ``renderer``, ``margin``,
+        ``axes``, ``path``.
+        """
+        return self.call("view.render", params)
+
+    def view_inspect(self, **params: Any) -> Mapping[str, Any]:
+        """``view.inspect``: standard views as PNGs plus a manifest of the bodies."""
+        return self.call("view.inspect", params)
+
+    def skills_list(self, *, query: str | None = None, scope: str | None = None, cursor: int | None = None, limit: int | None = None) -> Mapping[str, Any]:
+        return self.call("skills.list", {"query": query, "scope": scope, "cursor": cursor, "limit": limit})
+
+    def skills_read(self, skill_id: str, *, offset: int | None = None, max_chars: int | None = None) -> Mapping[str, Any]:
+        return self.call("skills.read", {"id": skill_id, "offset": offset, "maxChars": max_chars})
 
     def print_analyze(self, *, body_ids: list[str] | None = None, settings: Mapping[str, Any] | None = None) -> Mapping[str, Any]:
         """Printability report (overhangs, walls, holes, validity, material, build volume, findings)."""

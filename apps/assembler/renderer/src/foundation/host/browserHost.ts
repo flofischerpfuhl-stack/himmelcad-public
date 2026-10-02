@@ -119,6 +119,10 @@ export const inertWindow: HostWindow = {
   onOpenRequested: () => () => undefined,
 };
 
+/** Why the embedded assistant is missing in a browser (shown in its island and command). */
+export const ASSISTANT_NEEDS_DESKTOP =
+  'The assistant runs the Claude, Codex or OpenCode command-line tool installed on your computer, with your own subscription. A browser cannot start programs: use the desktop app, or connect an external agent through Agent Access.';
+
 export function createBrowserHost(): AssemblerHost {
   return {
     kind: 'browser',
@@ -128,11 +132,14 @@ export function createBrowserHost(): AssemblerHost {
     recentFiles: null,
     slicers: null,
     automation: null,
+    assistant: null,
     unavailableReason: (capability) =>
       capability === 'recentFiles'
         ? 'Recent projects are listed in the desktop app.'
         : capability === 'slicers'
           ? 'Starting a slicer needs the desktop app: Open in Slicer downloads the 3MF.'
-          : 'Only available in the desktop app.',
+          : capability === 'assistant'
+            ? ASSISTANT_NEEDS_DESKTOP
+            : 'Only available in the desktop app.',
   };
 }

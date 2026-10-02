@@ -1,5 +1,6 @@
 import type { HarnessProvider, NormalizedAgentEvent } from './events.js';
 import { validateNormalizedAgentEvent } from './events.js';
+import { createProviderPayloadExpander } from './expand.js';
 import { PROVIDER_EVENT_NORMALIZERS } from './normalize.js';
 import { BoundedDiagnosticLog, BoundedQueue, redactSensitiveText } from './queue.js';
 import type {
@@ -120,9 +121,15 @@ class TransportHarnessAdapter implements AgentHarnessAdapter {
     this.mode = selectTransportMode(identity);
   }
 
-  async startThread(input: { systemPrompt: string }): Promise<{ threadId: string }> {
+  async startThread(input: {
+    systemPrompt: string;
+    resumeThreadId?: string;
+  }): Promise<{ threadId: string }> {
     if (!input.systemPrompt.trim() || input.systemPrompt.length > 64 * 1024) {
       throw new Error('Agent system prompt is empty or exceeds 64 KiB.');
+    }
+    if (input.resumeThreadId !== undefined && !validHostIdentifier(input.resumeThreadId)) {
+      throw new Error('Resume thread id is invalid.');
     }
     const response = await this.#transport.request({
       kind: 'openSession',
@@ -134,6 +141,7 @@ class TransportHarnessAdapter implements AgentHarnessAdapter {
       ...(this.mode === 'codexAppServer'
         ? { initialization: codexInitialization(this.identity) }
         : {}),
+      ...(input.resumeThreadId ? { resumeThreadId: input.resumeThreadId } : {}),
     });
     if (response.kind !== 'sessionOpened') throw new Error(responseDetail(response));
     const { hostSessionId, providerThreadId: threadId } = response;
@@ -212,37 +220,23 @@ class TransportHarnessAdapter implements AgentHarnessAdapter {
       this.#listeners.set(threadId, listeners);
       try {
         let active = true;
+        const expand = createProviderPayloadExpander(this.identity.provider);
         const unsubscribeHost = this.#transport.subscribe(sessionId, (payload) => {
           if (!active) return;
           const receivedAt = new Date().toISOString();
           this.diagnostics.push({ provider: this.identity.provider, receivedAt, payload });
+          let parts: readonly unknown[];
           try {
-            const event = PROVIDER_EVENT_NORMALIZERS[this.identity.provider](payload, {
-              threadId,
-              nextSequence: () => this.#sequence++,
-              now: () => new Date().toISOString(),
-            });
-            if (!event) return;
-            validateNormalizedAgentEvent(event);
-            if (!this.events.push(event)) return;
-            for (const subscriber of this.#listeners.get(threadId) ?? []) {
-              try {
-                subscriber(event);
-              } catch (error) {
-                this.diagnostics.push({
-                  provider: this.identity.provider,
-                  receivedAt: new Date().toISOString(),
-                  payload: { kind: 'subscriberError', error },
-                });
-              }
-            }
+            parts = expand(payload);
           } catch (error) {
             this.diagnostics.push({
               provider: this.identity.provider,
               receivedAt: new Date().toISOString(),
               payload: { kind: 'normalizationError', error },
             });
+            return;
           }
+          for (const part of parts) this.#deliver(threadId, part);
         });
         this.#unsubscribe.set(threadId, () => {
           active = false;
@@ -262,6 +256,36 @@ class TransportHarnessAdapter implements AgentHarnessAdapter {
       listeners?.delete(listener);
       if (listeners?.size === 0) this.#detachSubscription(threadId);
     };
+  }
+
+  #deliver(threadId: string, payload: unknown): void {
+    try {
+      const event = PROVIDER_EVENT_NORMALIZERS[this.identity.provider](payload, {
+        threadId,
+        nextSequence: () => this.#sequence++,
+        now: () => new Date().toISOString(),
+      });
+      if (!event) return;
+      validateNormalizedAgentEvent(event);
+      if (!this.events.push(event)) return;
+      for (const subscriber of this.#listeners.get(threadId) ?? []) {
+        try {
+          subscriber(event);
+        } catch (error) {
+          this.diagnostics.push({
+            provider: this.identity.provider,
+            receivedAt: new Date().toISOString(),
+            payload: { kind: 'subscriberError', error },
+          });
+        }
+      }
+    } catch (error) {
+      this.diagnostics.push({
+        provider: this.identity.provider,
+        receivedAt: new Date().toISOString(),
+        payload: { kind: 'normalizationError', error },
+      });
+    }
   }
 
   async #accepted(request: HostHarnessRequest): Promise<void> {
