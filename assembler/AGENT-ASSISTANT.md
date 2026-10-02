@@ -21,7 +21,10 @@ works through is [AGENT-API.md](AGENT-API.md) (`hcasm.agent-api@1`).
    user's own login.
 3. **Sessions** — the session menu lists this project's conversations
    (newest first, "· interrupted" when the last turn did not finish);
-   New session, double-click to rename, Delete. Sessions are saved with the
+   the shared dropdown (`@himmelcad/ui` Select: long names are cut in the
+   trigger and shown in full in the list), New session, Rename, Delete.
+   A turn that removes a stored check the user had needs approval, and
+   check edits are part of the turn's one undo step. Sessions are saved with the
    project; reopening the project brings them back, and the next message
    continues the CLI's own conversation when this computer still has it.
 4. **References** — "@ Add selection" (or the context-menu command

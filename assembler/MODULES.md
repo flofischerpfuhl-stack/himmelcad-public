@@ -765,6 +765,22 @@ and order unchanged), the API schema only gained methods, kinds and
 optional properties. The kernel-thread registration test names the new
 kinds; the web build uses the same compositions (hc.3 wasm, `canvas`).
 
+**Block 9 integration** (four streams merged: params, checks, parity,
+agent). Schema still 3; geometry-changing optional fields are format
+capabilities (`requires`), everything else stays a plain optional field.
+`API_ORDER.methods`: `checks` 450, `modeling` 650 (`body.copyUnlinked`),
+`view` 660 (moved from 650, which both the parity and the agent stream
+had taken), `skills` 700. Contracts wired between streams: the checks
+module's runner in the document-checks hook (sweeps report real check
+results); check edits count as assistant-turn steps (one undo step per
+turn) and as foreign changes when the user makes them during a turn;
+removing a stored check that existed before the turn needs approval;
+sweep samples of concurrent sweeps share one slot on the `background`
+channel (`modules/parameters/sweep.ts`); a `documentPreview` counts as
+editing for the checks runner (results out of date). The assistant's MCP
+tools are generic over the method registry (`hcasm_methods` index,
+`hcasm_call`), so every new method is exposed without a tool change.
+
 ## 7. Block 8: the web product and the host contract
 
 `apps/assembler-web` is the second renderer product ([WEB.md](WEB.md)). It stays
