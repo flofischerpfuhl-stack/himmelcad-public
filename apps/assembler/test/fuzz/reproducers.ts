@@ -141,6 +141,21 @@ export const REPRODUCERS: RegressionCase[] = [
       { op: 'exchangeIges', r: [0.3801, 0.1849, 0.3902, 0.4125, 0.4982, 0.6291, 0.5076, 0.0514] },
     ],
   },
+  {
+    // Rectangle + text "O-ring" on YZ, revolved 360° about Z, IGES (faces) export → import:
+    // the "O"'s torus-like faces lost their boundary (OCCT) and the closed void shells came
+    // back as solids of their own (14 600 → 15 571 mm³). Now cavities are inner shells and the
+    // empty faces are skipped with a warning (Block 9 integration).
+    name: 'roundTrip-s1-q0',
+    finding: 'F14',
+    invariant: 'roundTrip',
+    ops: [
+      { op: 'sketch', r: [0.9385, 0.2048, 0.1977, 0.7222, 0.8567, 0.4216, 0.3221, 0.2493] },
+      { op: 'text', r: [0.4139, 0.8099, 0.753, 0.8225, 0.3672, 0.6249, 0.4332, 0.0966] },
+      { op: 'revolve', r: [0.6749, 0.2893, 0.186, 0.7277, 0.6527, 0.5634, 0.1674, 0.3911] },
+      { op: 'exchangeIges', r: [0.2745, 0.4259, 0.4575, 0.0349, 0.3781, 0.1643, 0.8609, 0.4851] },
+    ],
+  },
 ];
 
 /**

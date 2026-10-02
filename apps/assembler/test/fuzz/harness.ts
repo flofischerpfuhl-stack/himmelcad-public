@@ -1527,10 +1527,13 @@ export class FuzzHarness {
           label: `export.${format} ${JSON.stringify(exportParams)} → import.${format}`,
           run: async () => {
             const exported = await this.call<{ data: string }>(`export.${format}`, exportParams);
-            const imported = await this.call<{ createdBodyIds: string[] }>(`import.${format}`, {
-              data: exported.data,
-              fileName: `fuzz.${format === 'step' ? 'step' : 'igs'}`,
-            });
+            const imported = await this.call<{ createdBodyIds: string[]; warnings?: string[] }>(
+              `import.${format}`,
+              {
+                data: exported.data,
+                fileName: `fuzz.${format === 'step' ? 'step' : 'igs'}`,
+              },
+            );
             await this.settle();
             // Exact B-rep round trip: the imported solids hold the exported volume.
             if (chosen.every((b) => b!.valid)) {
@@ -1540,6 +1543,14 @@ export class FuzzHarness {
               // A body the import flags invalid (with a warning) is reported, not silent: IGES
               // surfaces of touching bodies sew into one shell (F10, documented).
               if (created.some((b) => !b.valid)) return;
+              // Faces closed in both directions lose their boundary in IGES (OCCT, F14): the import
+              // skips them and says so (a documented, reported loss, not a silent one).
+              const warnings: unknown = imported.warnings;
+              if (
+                Array.isArray(warnings) &&
+                warnings.some((w) => /no extent in the IGES file/.test(String(w)))
+              )
+                return;
               const back = created.reduce((s, b) => s + Math.abs(b.volume), 0);
               const sent = chosen.reduce((s, b) => s + Math.abs(b!.volume), 0);
               if (Math.abs(back - sent) > 1e-3 * Math.max(1, sent)) {

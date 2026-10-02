@@ -415,6 +415,69 @@ void test('F10: an inside-out solid (negative volume) is not valid; the IGES imp
   }
 });
 
+void test('F14: IGES (surfaces) keeps a closed cavity as a void of its body; empty faces are reported', async (t) => {
+  const harness = await harnessReady;
+  await harness.reset();
+  // A 20 mm cube with a closed 10 mm cubic void inside (a cut that never reaches the surface).
+  const sketch = await harness.call<Json>('feature.create', {
+    kind: 'sketch',
+    params: {
+      plane: { kind: 'plane', plane: 'XY', offset: 0 },
+      profiles: [{ kind: 'rectangle', x: 0, y: 0, width: 20, height: 20 }],
+    },
+  });
+  const cube = await harness.call<Json>('feature.create', {
+    kind: 'extrude',
+    params: { profile: { kind: 'sketch', featureId: sketch.featureId }, distance: 20 },
+  });
+  const inner = await harness.call<Json>('feature.create', {
+    kind: 'sketch',
+    params: {
+      plane: { kind: 'plane', plane: 'XY', offset: 5 },
+      profiles: [{ kind: 'rectangle', x: 5, y: 5, width: 10, height: 10 }],
+    },
+  });
+  await harness.call('feature.create', {
+    kind: 'extrude',
+    params: {
+      profile: { kind: 'sketch', featureId: inner.featureId },
+      distance: 10,
+      operation: 'cut',
+      targetBodyId: `body:${String(cube.featureId)}`,
+    },
+  });
+  const [hollow] =
+    await harness.call<{ id: string; valid: boolean; volume: number }[]>('bodies.list');
+  assert.equal(hollow?.valid, true);
+  assert.equal(Math.round(hollow?.volume ?? 0), 7000);
+  let exported: { data: string };
+  try {
+    exported = await harness.call('export.iges', { bodyIds: [hollow!.id], mode: 'faces' });
+  } catch (error) {
+    assert.ok(error instanceof ApiError && error.code === 'unsupported', String(error));
+    t.skip('IGES needs the HimmelCAD OCCT module');
+    return;
+  }
+  const imported = await harness.call<{ createdBodyIds: string[]; warnings?: string[] }>(
+    'import.iges',
+    { data: exported.data, fileName: 'hollow.igs' },
+  );
+  // One body with the void (it used to come back as two solids: 8 000 + 1 000 mm³).
+  assert.equal(imported.createdBodyIds.length, 1, JSON.stringify(imported.warnings));
+  const back = (
+    await harness.call<{ id: string; valid: boolean; volume: number }[]>('bodies.list')
+  ).filter((b) => imported.createdBodyIds.includes(b.id));
+  assert.equal(back[0]?.valid, true);
+  assert.ok(Math.abs((back[0]?.volume ?? 0) - 7000) < 1, `${back[0]?.volume} mm³`);
+
+  // The fuzz case: a revolved "O" has faces closed in both directions; IGES loses their
+  // boundary (OCCT). They are skipped with a warning instead of coming back as empty bodies.
+  const repro = REPRODUCERS.find((r) => r.finding === 'F14')!;
+  const result = await harness.run(repro.ops);
+  assert.equal(result.failure, null, result.failure?.message ?? '');
+  const last = result.log.at(-1)!;
+  assert.equal(last.outcome, 'ok');
+});
 void test('F12: while the History is rolled back, STEP export holds what the viewport shows', async () => {
   const harness = await harnessReady;
   await harness.reset();
