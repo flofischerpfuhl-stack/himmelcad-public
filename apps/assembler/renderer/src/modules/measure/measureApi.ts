@@ -41,6 +41,9 @@ import type { JsonSchema } from '../../foundation/commands/api/validate.js';
 import { ApiError } from '../../foundation/commands/api/errors.js';
 import { isKernelTimeout } from '../../foundation/geometry-kernel/timeout.js';
 import { resolveEdgeInput, resolveFaceInput } from '../../foundation/commands/api/references.js';
+import { referenceMeshIdOf } from '../../foundation/commands/referenceMesh.js';
+import { clearanceCandidates } from '../../foundation/geometry-kernel/clearancePairs.js';
+import { exactDistance } from './measureStore.js';
 
 type Json = Record<string, unknown>;
 
@@ -139,8 +142,102 @@ async function kernelDistance(
   }
 }
 
+/** Two bodies' clearance from the kernel (distance, contact or overlap with its volume). */
+async function kernelClearance(
+  env: MeasureEnv,
+  a: MeasureRef,
+  b: MeasureRef,
+): Promise<DistanceResult> {
+  if (!env.kernel.measureClearance) return kernelDistance(env, a, b);
+  try {
+    return await exactDistance(env.kernel, env.features, a, b);
+  } catch (error) {
+    if (isKernelTimeout(error)) throw error;
+    throw new ApiError(
+      'featureFailed',
+      `Clearance query failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
+/** Kernel time an agent's clearance query may use before the remaining pairs are skipped, ms. */
+const API_CLEARANCE_BUDGET_MS = 60_000;
+
+const round6 = (v: number) => Math.round(v * 1e6) / 1e6;
+
+/** `measure.clearance`: exact clearance of body pairs (see the method summary). */
+async function clearanceQuery(env: MeasureEnv, p: Json): Promise<Json> {
+  const bodies = env.evaluation.bodies.filter((b) => referenceMeshIdOf(b.id) === null);
+  let pairs: { a: string; b: string }[];
+  if (typeof p.a === 'string' || typeof p.b === 'string') {
+    if (typeof p.a !== 'string' || typeof p.b !== 'string') {
+      throw new ApiError('invalidParams', 'Give both a and b, or bodies');
+    }
+    const a = findBody(env.evaluation, p.a).id;
+    const b = findBody(env.evaluation, p.b).id;
+    if (a === b) throw new ApiError('invalidParams', 'a and b must be different bodies');
+    pairs = [{ a, b }];
+  } else {
+    const ids = Array.isArray(p.bodyIds)
+      ? (p.bodyIds as string[]).map((id) => findBody(env.evaluation, id).id)
+      : bodies.map((b) => b.id);
+    const chosen = ids.map((id) => bodies.find((b) => b.id === id)!).filter(Boolean);
+    const below = typeof p.below === 'number' ? p.below : Infinity;
+    pairs = clearanceCandidates(chosen, below).map(({ a, b }) => ({ a, b }));
+  }
+  if (pairs.length > MAX_CLEARANCE_PAIRS) {
+    throw new ApiError(
+      'invalidParams',
+      `${pairs.length} body pairs to measure; at most ${MAX_CLEARANCE_PAIRS} per call`,
+      { hint: 'Pass bodyIds, or below (only pairs closer than that, by bounding box).' },
+    );
+  }
+  if (!env.kernel.measureClearance) {
+    throw new ApiError('internal', 'The CAD kernel cannot measure clearance here');
+  }
+  let result;
+  try {
+    result = await env.kernel.measureClearance([...env.features], {
+      pairs,
+      overlap: p.overlap !== false,
+      budgetMs: typeof p.budgetMs === 'number' ? p.budgetMs : API_CLEARANCE_BUDGET_MS,
+    });
+  } catch (error) {
+    if (isKernelTimeout(error)) throw error;
+    throw new ApiError(
+      'featureFailed',
+      `Clearance query failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  const below = typeof p.below === 'number' ? p.below : Infinity;
+  const name = (id: string) => bodies.find((b) => b.id === id)?.name ?? id;
+  return {
+    unit: 'mm',
+    pairs: result.pairs
+      .filter((r) => r.relation !== 'clear' || r.distance < below)
+      .map((r) => ({
+        a: r.a,
+        b: r.b,
+        aName: name(r.a),
+        bName: name(r.b),
+        relation: r.relation,
+        distance: round6(r.distance),
+        pointA: r.pointA.map(round6),
+        pointB: r.pointB.map(round6),
+        delta: r.pointB.map((v, i) => round6(Math.abs(v - r.pointA[i]!))),
+        overlapVolume: r.overlapVolume === null ? null : round6(r.overlapVolume),
+        ...(r.overlapCenter ? { overlapCenter: r.overlapCenter.map(round6) } : {}),
+      })),
+    checkedPairs: result.pairs.length,
+    skipped: result.skipped,
+  };
+}
+
+/** Upper bound of body pairs one `measure.clearance` call measures. */
+const MAX_CLEARANCE_PAIRS = 2000;
+
 /** The panel's measurement of `refs`, with the kernel's exact distance where the pair needs one. */
-async function panelMeasurement(env: MeasureEnv, refs: MeasureRef[]): Promise<Measurement> {
+export async function panelMeasurement(env: MeasureEnv, refs: MeasureRef[]): Promise<Measurement> {
   const activeCount = env.features.length;
   let exact: DistanceResult | 'pending' | null = 'pending';
   const ctx: MeasureContext = {
@@ -150,7 +247,11 @@ async function panelMeasurement(env: MeasureEnv, refs: MeasureRef[]): Promise<Me
   };
   let result = measure(refs, ctx);
   if (result?.pending && refs.length === 2) {
-    exact = await kernelDistance(env, refs[0]!, refs[1]!);
+    const [a, b] = refs as [MeasureRef, MeasureRef];
+    exact =
+      a.kind === 'body' && b.kind === 'body'
+        ? await kernelClearance(env, a, b)
+        : await kernelDistance(env, a, b);
     result = measure(refs, ctx);
   }
   if (!result) throw new ApiError('invalidParams', 'Nothing to measure');
@@ -228,6 +329,8 @@ export async function runMeasureQuery(method: string, p: Json, env: MeasureEnv):
         });
       return { area: rows.reduce((sum, r) => sum + r.area, 0), unit: 'mm²', faces: rows };
     }
+    case 'measure.clearance':
+      return clearanceQuery(env, p);
     case 'measure.volume': {
       const ids = Array.isArray(p.bodyIds)
         ? p.bodyIds.map((id) => findBody(env.evaluation, String(id)).id)
@@ -330,6 +433,28 @@ const MEASURE_METHODS: Record<string, MethodSpec> = {
       ['faces'],
     ),
     result: '{area, unit: "mm²", faces: [{bodyId, key, surface, area}]}',
+  },
+  'measure.clearance': {
+    kind: 'query',
+    capability: 'document.read',
+    summary:
+      'Clearance between bodies (print-in-place, lid/enclosure fit): exact minimum distance (kernel BRepExtrema), closest points, and whether they are `clear`, in `contact` or `overlap` with the shared volume (BRepAlgoAPI_Common) and its centre. One pair (`a`, `b`), every pair of `bodyIds`, or every pair of bodies; `below` keeps only pairs closer than that (bounding boxes farther apart are not measured). Pairs left when `budgetMs` of kernel time is used up come back in `skipped`.',
+    params: schemaObject({
+      a: schemaString,
+      b: schemaString,
+      bodyIds: { type: 'array', items: schemaString, minItems: 2 },
+      below: { type: 'number', minimum: 0, description: 'Only pairs closer than this, mm.' },
+      overlap: {
+        type: 'boolean',
+        default: true,
+        description:
+          'Compute overlap volumes of touching pairs (false: faster, contact/overlap only from the distance).',
+      },
+      budgetMs: { type: 'integer', minimum: 1, default: 60000 },
+      scope: schemaScope,
+    }),
+    result:
+      '{unit: "mm", pairs: [{a, b, aName, bName, relation: "clear"|"contact"|"overlap", distance, pointA, pointB, delta, overlapVolume, overlapCenter?}], checkedPairs, skipped: [{a, b}]}',
   },
   'measure.volume': {
     kind: 'query',

@@ -420,3 +420,103 @@
   flex-direction: column;
   gap: 6px;
 }
+
+/* A finding with its quiet actions (Ignore here / Don't show this type), shown on hover and focus. */
+.findingRow {
+  display: flex;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.findingRow > .finding {
+  flex: 1;
+  min-width: 0;
+}
+
+.findingActions {
+  display: flex;
+  gap: 1px;
+  padding-top: 2px;
+  opacity: 0;
+}
+
+.findingRow:hover .findingActions,
+.findingRow:focus-within .findingActions {
+  opacity: 1;
+}
+
+.findingAction {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: var(--hc-radius-sm);
+  background: transparent;
+  color: var(--hc-fg-muted);
+  cursor: pointer;
+}
+
+.findingAction:hover {
+  background: var(--hc-hover-bg);
+  color: var(--hc-fg-strong);
+}
+
+.findingAction:focus-visible {
+  outline: 2px solid var(--hc-focus-ring);
+  outline-offset: 1px;
+}
+
+.suppressed {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 4px;
+}
+
+.suppressedRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 22px;
+  font-size: 10px;
+  color: var(--hc-fg-subtle);
+}
+
+.suppressedText {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.linkButton {
+  border: none;
+  background: transparent;
+  padding: 0 2px;
+  color: var(--hc-accent-text, var(--hc-accent-base));
+  font-family: var(--hc-font-ui);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.linkButton:hover {
+  text-decoration: underline;
+}
+
+.linkButton:focus-visible {
+  outline: 2px solid var(--hc-focus-ring);
+  outline-offset: 1px;
+}
+
+@media (pointer: coarse) {
+  .findingActions {
+    opacity: 1;
+  }
+  .findingAction {
+    width: 36px;
+    height: 36px;
+  }
+}

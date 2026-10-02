@@ -50,12 +50,45 @@ while a newer one is pending the panel says "Out of date". Measured: 3 bodies
 | Volume, mass, cost    | Exact B-rep volume × density (solid part); cost = mass × price per kg. Presets PLA 1.24, PETG 1.27, ABS 1.04, TPU 1.21 g/cm³ (price 20/22/22/35 per kg, editable, currency label only).                                                                                                                            | PLA                    |
 | Build volume          | Body bounding-box size ≤ printer volume (X, Y, Z); "fits only rotated 90° about Z" is a warning, not fitting at all an error. Presets Bambu Lab X1/P1 256³, Prusa MK4 250×210×220, Creality Ender-3 220×220×250, custom, none. The box is drawn centred on the origin on Z = 0.                                    | Bambu X1               |
 | Not on plate          | Info when the lowest point is not at Z = 0 (slicers drop parts to the plate).                                                                                                                                                                                                                                      | ±0.01 mm               |
+| Clearance (Block 9)   | Body pairs whose bounding boxes are closer than the minimum clearance are measured exactly in the kernel (`BRepExtrema` distance, `BRepAlgoAPI_Common` overlap volume): **overlap** (error, "printed together they fuse") and **clearance below X mm** / **touch** (warning), see below.                           | 0.3 mm, on             |
 
 Overlay colours (fixed print semantics, legend in the panel): overhang amber
 (threshold) → red (90°), thin walls violet, build volume translucent blue,
 orientation preview translucent green. Clicking a finding selects its faces
 (or the body) and frames them; thin walls are one finding per body with all
 affected faces (a wall has two sides).
+
+### Clearance between bodies (Block 9)
+
+Print-in-place parts, lids and enclosures fail when bodies printed together
+overlap or sit too close. After the mesh analysis (worker) the panel runs a
+kernel pass (`modules/print/clearance.ts`, [CHECKS.md](CHECKS.md)): pairs
+whose boxes are within "Min. clearance" are measured in chunks of four
+(Cancel stops before the next chunk; 10 s total budget, left-over pairs are
+listed as "Clearance not checked …", never dropped silently). Findings name
+both bodies; clicking one selects both and frames them; the closest points
+(orange, with end ticks) and the centre of an overlap (pink cross) are drawn
+through the bodies. Settings: "Min. clearance" and "Check clearance between
+bodies" under "Thresholds, material and printer"; the agent API's
+`PrintSettings` has `checkClearance` and `minClearanceMm`. Measured: see the
+`bench:kernel` clearance rows (CHECKS.md "Performance").
+
+### Ignoring findings (owner requirement 2026-10-02)
+
+Findings never block anything and can be dismissed, reversibly:
+
+- **Ignore here** (overlaps: **Mark as intended**, e.g. bodies that will be
+  combined): stored in the document as the optional `.hcasm` field
+  `printIgnored` (finding ids: `<kind>:<bodyId>[:<faceKey>]`, pairs
+  `<kind>:<a>|<b>`), so it travels with the model and survives rebuilds
+  while the names stay. Not undo-tracked; makes the project unsaved.
+- **Don't show this type**: a user preference (`hiddenPrintFindings`), for
+  every document.
+- Below the list: "n ignored in this document · Show · Restore all" and
+  "<type> hidden (all documents) · Show again"; Settings › Checks and
+  analysis › "Show all again".
+- `print.analyze` still returns every finding (ignored ones with
+  `ignored: true`); the overlays draw only the listed ones.
 
 ### Limits (stated honestly)
 
@@ -94,6 +127,11 @@ affected faces (a wall has two sides).
   not modelled (the slicer's estimate is authoritative).
 - Reference meshes (imported STL) are not analysed; they are exported and
   handed to slicers like bodies.
+- **Clearance** is between whole bodies in their modelled positions (no
+  motion); two bodies that only touch along an edge or a point are
+  "contact"; bodies resting on each other (a lid on its box) are reported as
+  touching — ignore the finding there, or set "Min. clearance" to 0 (then
+  only overlaps are reported).
 - Watertightness is checked on the render mesh after welding; it is the mesh
   the STL/3MF export writes, not the B-rep itself (that is `BRepCheck`).
 

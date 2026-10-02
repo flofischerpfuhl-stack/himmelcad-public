@@ -26,6 +26,7 @@ const FINAL_RESPONSES: ReadonlySet<string> = new Set([
   'meshFailed',
   'measureResult',
   'measureFailed',
+  'clearanceResult',
   'queryResult',
   'queryFailed',
 ]);

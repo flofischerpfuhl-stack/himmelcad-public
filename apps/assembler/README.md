@@ -264,7 +264,17 @@ manifold objects, names, colours, item transforms) and Open in Slicer
 (detected or added Bambu Studio / OrcaSlicer / PrusaSlicer / Cura, temp 3MF,
 `spawn` without a shell; the browser build downloads). Code in
 `renderer/src/modules/print/`, `renderer/src/modules/printers/`, `electron/slicer*.ts`; methods, thresholds and limits:
-`assembler/PRINTING.md`.
+`assembler/PRINTING.md`. Clearance between bodies (overlaps, gaps below
+0.3 mm) is part of the analysis since Block 9; any finding can be ignored
+here (stored in the document) or hidden by type (preference).
+
+**Checks** (left dock › Checks, command search): requirements the document
+keeps — clearance between bodies, distances, angles, sizes, volume, mass,
+body count, printable, minimum wall, fits the printer — evaluated in the
+background after every rebuild, shown with a passive badge, created from the
+selection or from a value in Measure ("Add as check"), one undo step per
+edit. Code in `renderer/src/modules/checks/` and
+`renderer/src/foundation/commands/checks.ts`; `assembler/CHECKS.md`.
 
 ## Display, Measure, Section View and image export
 
@@ -298,7 +308,9 @@ manifold objects, names, colours, item transforms) and Open in Slicer
   between faces/edges, centre distances; minimum distance between any two
   bodies/faces/edges/points is exact from the kernel (`BRepExtrema`,
   `KernelAdapter.measureDistance`), else (reference meshes) a mesh estimate
-  labelled "approx.". Values in the display unit (Settings).
+  labelled "approx."; two bodies show their clearance (touch, or overlap
+  with the shared volume, `measureClearance`). Values in the display unit
+  (Settings); the list icon next to a value adds it as a check.
 - **Section View**: X/Y/Z or **Face** (the selected planar face, or pick
   one), caps in each body's own colour (stencil parity per body, hatched),
   cut outlines, **Section only** (2D: just the cut regions, camera normal to
@@ -324,9 +336,14 @@ manifold objects, names, colours, item transforms) and Open in Slicer
   stays 3 and there is no migration. Block 9 adds, also optional: the
   parameter range `min`/`max`/`step` (+ `minExpression`/`maxExpression`/
   `stepExpression`; strictly typed, `step > 0`, `min ≤ max`; a value
-  outside its range still loads and is flagged in the panel). Dirty
-  tracking covers features, Items, saved views and reference meshes; the
-  feature-id counter is reseeded from each loaded document.
+  outside its range still loads and is flagged in the panel), `checks`
+  (stored checks, `assembler/CHECKS.md`) and `printIgnored` (Printability
+  findings ignored in the document). An older build ignores `checks` and
+  `printIgnored` and drops them when it saves; a newer build's check kinds
+  or check parameters this build does not know are kept unchanged and
+  round-trip (reported as unsupported, never a reason to refuse the file).
+  Dirty tracking covers features, Items, saved views and reference meshes;
+  the feature-id counter is reseeded from each loaded document.
 - **Versioning rule (minimum reader, Block 9).** Older builds refuse a file
   with a new feature kind, but they ignore unknown optional fields — so an
   optional field that changes what a feature _builds_ would open as the

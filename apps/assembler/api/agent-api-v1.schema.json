@@ -190,6 +190,15 @@
           "minimum": 0,
           "description": "Smallest pin diameter (default 1)."
         },
+        "checkClearance": {
+          "type": "boolean",
+          "description": "Measure the clearance between bodies in the kernel: overlaps and gaps below minClearanceMm become findings (default true)."
+        },
+        "minClearanceMm": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Smallest gap between bodies, e.g. print-in-place (default 0.3)."
+        },
         "material": {
           "enum": ["PLA", "PETG", "ABS", "TPU", "custom"]
         },
@@ -3497,6 +3506,55 @@
       },
       "result": "{area, unit: \"mm²\", faces: [{bodyId, key, surface, area}]}"
     },
+    "measure.clearance": {
+      "kind": "query",
+      "capability": "document.read",
+      "summary": "Clearance between bodies (print-in-place, lid/enclosure fit): exact minimum distance (kernel BRepExtrema), closest points, and whether they are `clear`, in `contact` or `overlap` with the shared volume (BRepAlgoAPI_Common) and its centre. One pair (`a`, `b`), every pair of `bodyIds`, or every pair of bodies; `below` keeps only pairs closer than that (bounding boxes farther apart are not measured). Pairs left when `budgetMs` of kernel time is used up come back in `skipped`.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "a": {
+            "type": "string",
+            "minLength": 1
+          },
+          "b": {
+            "type": "string",
+            "minLength": 1
+          },
+          "bodyIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 2
+          },
+          "below": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Only pairs closer than this, mm."
+          },
+          "overlap": {
+            "type": "boolean",
+            "default": true,
+            "description": "Compute overlap volumes of touching pairs (false: faster, contact/overlap only from the distance)."
+          },
+          "budgetMs": {
+            "type": "integer",
+            "minimum": 1,
+            "default": 60000
+          },
+          "scope": {
+            "enum": ["auto", "committed", "staged"],
+            "default": "auto",
+            "description": "`auto`: the open transaction's staged state if any, else the committed document."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "result": "{unit: \"mm\", pairs: [{a, b, aName, bName, relation: \"clear\"|\"contact\"|\"overlap\", distance, pointA, pointB, delta, overlapVolume, overlapCenter?}], checkedPairs, skipped: [{a, b}]}"
+    },
     "measure.volume": {
       "kind": "query",
       "capability": "document.read",
@@ -4899,7 +4957,7 @@
     "print.analyze": {
       "kind": "query",
       "capability": "document.read",
-      "summary": "Printability of the bodies (build direction +Z): overhang area/faces beyond the angle, sampled wall thickness, small holes/pins, B-rep validity, watertight mesh, volume, mass and cost, build-volume fit, plus a findings list.",
+      "summary": "Printability of the bodies (build direction +Z): overhang area/faces beyond the angle, sampled wall thickness, small holes/pins, B-rep validity, watertight mesh, volume, mass and cost, build-volume fit, clearance between bodies (overlaps and gaps below minClearanceMm, exact from the kernel), plus a findings list. Every finding is returned, also those the user ignored in the app (`ignored: true`) or hid by type.",
       "params": {
         "type": "object",
         "properties": {
@@ -4923,7 +4981,7 @@
         "required": [],
         "additionalProperties": false
       },
-      "result": "{settings, totals: {bodies, volumeMm3, massG, cost}, bodies: [{bodyId, name, brepValid, watertight, boundaryEdges, nonManifoldEdges, volumeMm3, massG, cost, size, overhang: {areaMm2, totalAreaMm2, faces: [{faceKey, areaMm2, maxAngleDeg}]}, thinWall: {samples, thinSamples, minThicknessMm, faces: [{faceKey, areaMm2, minThicknessMm}]}, holes: [{faceKey, kind, diameterMm, flagged}], buildVolume}], findings: [{id, kind, severity, bodyId, faceKeys, message, value}]}"
+      "result": "{settings, totals: {bodies, volumeMm3, massG, cost}, bodies: [{bodyId, name, brepValid, watertight, boundaryEdges, nonManifoldEdges, volumeMm3, massG, cost, size, overhang: {areaMm2, totalAreaMm2, faces: [{faceKey, areaMm2, maxAngleDeg}]}, thinWall: {samples, thinSamples, minThicknessMm, faces: [{faceKey, areaMm2, minThicknessMm}]}, holes: [{faceKey, kind, diameterMm, flagged}], buildVolume}], findings: [{id, kind, severity, bodyId, faceKeys, message, value, otherBodyId?, segment?, point?, ignored?}]}"
     },
     "print.orientations": {
       "kind": "query",
@@ -5066,6 +5124,158 @@
         "additionalProperties": false
       },
       "result": "{resolution, bodies: [{id, name, triangles}], triangles, stlBinaryBytes, stlAsciiBytes}"
+    },
+    "checks.kinds": {
+      "kind": "query",
+      "capability": "document.read",
+      "summary": "The check kinds this build evaluates (distance, angle, length, clearance, volume, mass, bodyCount, printable, wallThickness, buildVolume …), each with its parameter schema.",
+      "params": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "result": "[{kind, label, summary, module, cost: \"instant\"|\"kernel\"|\"worker\", params: JSONSchema}]"
+    },
+    "checks.list": {
+      "kind": "query",
+      "capability": "document.read",
+      "summary": "The document's stored checks (requirements evaluated after every rebuild) with the app's latest background result when it is current (`checks.run` evaluates afresh).",
+      "params": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "result": "{revision, checks: [{id, kind, name?, displayName, params, enabled, supported?, lastResult?: {id, kind, name, status: \"pass\"|\"fail\"|\"error\"|\"disabled\"|\"unsupported\", value?, unit?, expected?: {min?, max?}, message, locations?: [{bodyIds, faces?: [{bodyId, faceKey}], edges?: [{bodyId, edgeKey}], segment?, point?, label?}], details?, ms}}]}"
+    },
+    "checks.add": {
+      "kind": "command",
+      "capability": "document.write",
+      "summary": "Adds a stored check (one undo step; not inside a transaction) and evaluates it at once on the committed document. `params` follow the kind’s schema (checks.kinds); body ids from bodies.list, faces/edges as FaceInput/EdgeInput inside MeasureTarget.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "minLength": 1
+          },
+          "params": {
+            "type": "object",
+            "description": "The kind’s parameters (checks.kinds)."
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Label (default: described from the parameters)."
+          },
+          "enabled": {
+            "type": "boolean",
+            "default": true
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Optimistic concurrency: the command fails with `conflict` unless the document revision still equals this value."
+          }
+        },
+        "required": ["kind", "params"],
+        "additionalProperties": false
+      },
+      "result": "{check, revision, result: {id, kind, name, status: \"pass\"|\"fail\"|\"error\"|\"disabled\"|\"unsupported\", value?, unit?, expected?: {min?, max?}, message, locations?: [{bodyIds, faces?: [{bodyId, faceKey}], edges?: [{bodyId, edgeKey}], segment?, point?, label?}], details?, ms}}"
+    },
+    "checks.update": {
+      "kind": "command",
+      "capability": "document.write",
+      "summary": "Changes a check’s parameters (replaced as a whole), label (`name: null` clears it) or enabled flag: one undo step, then evaluates it.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "checkId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "params": {
+            "type": "object"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Optimistic concurrency: the command fails with `conflict` unless the document revision still equals this value."
+          }
+        },
+        "required": ["checkId"],
+        "additionalProperties": false
+      },
+      "result": "{check, revision, result: {id, kind, name, status: \"pass\"|\"fail\"|\"error\"|\"disabled\"|\"unsupported\", value?, unit?, expected?: {min?, max?}, message, locations?: [{bodyIds, faces?: [{bodyId, faceKey}], edges?: [{bodyId, edgeKey}], segment?, point?, label?}], details?, ms}}"
+    },
+    "checks.remove": {
+      "kind": "command",
+      "capability": "document.write",
+      "summary": "Removes a check (one undo step).",
+      "params": {
+        "type": "object",
+        "properties": {
+          "checkId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Optimistic concurrency: the command fails with `conflict` unless the document revision still equals this value."
+          }
+        },
+        "required": ["checkId"],
+        "additionalProperties": false
+      },
+      "result": "{checkId, revision}"
+    },
+    "checks.run": {
+      "kind": "query",
+      "capability": "document.read",
+      "summary": "Evaluates the document's checks (or `ids`) now on the committed document or, with `scope: \"staged\"`, on the open transaction's state, and returns structured results: status, measured value, unit, expected range, message and locations (body ids, face/edge keys, closest points). `passed` is true when no check fails or errs.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
+          },
+          "budgetMs": {
+            "type": "integer",
+            "minimum": 1,
+            "default": 5000,
+            "description": "Kernel/worker time per check, ms."
+          },
+          "scope": {
+            "enum": ["auto", "committed", "staged"],
+            "default": "auto",
+            "description": "`auto`: the open transaction's staged state if any, else the committed document."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "result": "{revision, scope, passed, summary: {total, passed, failed, errors, disabled}, results: [{id, kind, name, status: \"pass\"|\"fail\"|\"error\"|\"disabled\"|\"unsupported\", value?, unit?, expected?: {min?, max?}, message, locations?: [{bodyIds, faces?: [{bodyId, faceKey}], edges?: [{bodyId, edgeKey}], segment?, point?, label?}], details?, ms}]}"
     },
     "interop.formats": {
       "kind": "query",

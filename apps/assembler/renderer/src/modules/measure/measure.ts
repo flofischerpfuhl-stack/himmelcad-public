@@ -13,7 +13,12 @@
  * Values are millimetres, mm², mm³, degrees and grams; the panel formats
  * them in the user's display unit.
  */
-import type { Body, EdgeInfo, FaceInfo } from '../../foundation/geometry-kernel/types.js';
+import type {
+  Body,
+  ClearanceRelation,
+  EdgeInfo,
+  FaceInfo,
+} from '../../foundation/geometry-kernel/types.js';
 import {
   DEFAULT_DENSITY_MATERIAL,
   materialPreset,
@@ -70,6 +75,12 @@ export interface DistanceResult {
   pointA: Vec3;
   pointB: Vec3;
   approx: boolean;
+  /** Two bodies (kernel clearance): apart, touching or sharing volume. */
+  relation?: ClearanceRelation;
+  /** Shared volume of two overlapping bodies, mm³. */
+  overlapVolume?: number | null;
+  /** Centre of the shared volume. */
+  overlapCenter?: Vec3;
 }
 
 export interface MeasureContext {
@@ -585,6 +596,18 @@ function measurePairOnly(a: Resolved, b: Resolved, ctx: MeasureContext): Measure
       ...componentValues(result.pointA, result.pointB, result.approx),
     );
     graphics.unshift({ kind: 'segment', a: result.pointA, b: result.pointB });
+    // Two bodies: their clearance (Measure "Clearance", assembler/CHECKS.md).
+    if (result.relation && a.ref.kind === 'body' && b.ref.kind === 'body') {
+      if (result.relation === 'overlap') {
+        title = 'Bodies overlap';
+        if (typeof result.overlapVolume === 'number') {
+          values.unshift({ label: 'Overlap volume', kind: 'volume', value: result.overlapVolume });
+        }
+        if (result.overlapCenter) graphics.unshift({ kind: 'point', at: result.overlapCenter });
+      } else {
+        title = result.relation === 'contact' ? 'Bodies touch' : 'Clearance';
+      }
+    }
   }
   if (values.length === 0) {
     return { title, subject, values, graphics, note: 'Nothing to measure between these.' };

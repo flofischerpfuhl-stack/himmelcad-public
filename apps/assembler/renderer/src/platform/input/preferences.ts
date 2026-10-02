@@ -104,9 +104,17 @@ export interface Preferences {
   touchUndoGestures: boolean;
   /** A pen has been used on this device (switches `fingerDrawing: 'auto'` to pen-only drawing). */
   penSeen: boolean;
+
+  // ---- Checks and analysis (assembler/CHECKS.md) ----
+  /** Status of the document's checks in the workspace: a small passive badge, or nothing. */
+  checkStatus: CheckStatusDisplay;
+  /** Printability finding types the user chose not to see ("Don't show this type"); agents still get them. */
+  hiddenPrintFindings: string[];
 }
 
 export type TabletLayoutSetting = 'auto' | 'on' | 'off';
+/** Settings › Checks: the workspace badge with the checks' status, or none. */
+export type CheckStatusDisplay = 'badge' | 'off';
 export type Handedness = 'right' | 'left';
 
 export type RenderQuality = 'high' | 'standard';
@@ -183,6 +191,8 @@ export const DEFAULT_PREFERENCES: Preferences = {
   twistRoll: true,
   touchUndoGestures: true,
   penSeen: false,
+  checkStatus: 'badge',
+  hiddenPrintFindings: [],
 };
 
 function parseSnaps(raw: unknown): SketchSnapToggles {
@@ -203,6 +213,14 @@ function parseShortcuts(raw: unknown): Record<string, string> {
     if (typeof value === 'string' && value.length <= 40 && id.length <= 80) out[id] = value;
   }
   return out;
+}
+
+/** A short list of short strings (finding types); anything else → empty. */
+function parseStringList(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  return [
+    ...new Set(raw.filter((v): v is string => typeof v === 'string' && v.length <= 40)),
+  ].slice(0, 40);
 }
 
 function parsePanelPosition(raw: unknown): { x: number; y: number } | null {
@@ -290,6 +308,8 @@ export function parsePreferences(text: string | null): Preferences {
     twistRoll: pick('twistRoll', bool),
     touchUndoGestures: pick('touchUndoGestures', bool),
     penSeen: pick('penSeen', bool),
+    checkStatus: pick('checkStatus', oneOf(['badge', 'off'])),
+    hiddenPrintFindings: parseStringList(r.hiddenPrintFindings),
   };
 }
 
@@ -324,7 +344,13 @@ export const usePreferences = create<PreferencesState>((set, get) => ({
   resetPreferences: () => {
     // "A pen was used here" is a fact about the device, not a setting: it survives a reset.
     const penSeen = get().penSeen;
-    set({ ...DEFAULT_PREFERENCES, snaps: { ...DEFAULT_SKETCH_SNAPS }, shortcuts: {}, penSeen });
+    set({
+      ...DEFAULT_PREFERENCES,
+      snaps: { ...DEFAULT_SKETCH_SNAPS },
+      shortcuts: {},
+      hiddenPrintFindings: [],
+      penSeen,
+    });
     persist(snapshot(get()));
   },
 }));

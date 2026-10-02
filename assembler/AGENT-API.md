@@ -203,6 +203,33 @@ FaceInput}`, `{kind: "edge", edge: EdgeInput}`, `{kind: "point", point:
   `doc.volume(*bodies)`, `doc.measure(*items)` with `Body`/`Face`/`Edge`
   objects or `(x, y, z)` points. Tests: `test/api/session.test.ts`
   (`measure.*`), `sdk/python/tests/test_assembler.py`.
+- **Clearance between bodies** (Block 9, `assembler/CHECKS.md`):
+  `measure.clearance {a, b}` / `{bodyIds}` / `{}` (every pair; `below`
+  skips pairs whose bounding boxes are farther apart) returns per pair
+  `relation` (`clear` / `contact` / `overlap`), the exact `distance`, closest
+  points, `overlapVolume` (`BRepAlgoAPI_Common`) and `overlapCenter`;
+  pairs left when `budgetMs` (default 60 s) is used up come back in
+  `skipped`. `measure.get` of two bodies shows the same (title "Clearance" /
+  "Bodies touch" / "Bodies overlap", "Overlap volume"). `print.analyze`
+  adds `overlap` and `clearance` findings (`settings.checkClearance`,
+  `minClearanceMm`) and marks findings the user ignored in the app with
+  `ignored: true` — agents always get every finding. Python:
+  `doc.clearance(a, b)`, `doc.clearances(bodies, below=)`.
+- **Stored checks** (Block 9, `assembler/CHECKS.md`): requirements kept in
+  the document and evaluated after every rebuild. `checks.kinds` (kinds with
+  their parameter schemas), `checks.list` (with the app's current
+  background result), `checks.add {kind, params, name?, enabled?}`,
+  `checks.update {checkId, params?, name?, enabled?}`, `checks.remove
+{checkId}` — one undo step each, not inside a transaction, document
+  revision bumped, the new/changed check evaluated at once — and
+  `checks.run {ids?, scope?}` → `{passed, summary, results: [{id, kind,
+name, status, value, unit, expected, message, locations, details}]}`.
+  `scope: "staged"` evaluates against an open transaction (the parameter
+  sweep's contract). Python: `doc.add_check(kind, name=, **params)` →
+  `Check` (`update`, `remove`, `passed`), `doc.checks()`,
+  `doc.run_checks()` → `CheckReport` (`bool(report)`, `failed`,
+  `by_name`). Tests: `test/checks/checksApi.test.ts`,
+  `sdk/python/tests/test_checks.py`.
 - **Display modes, view toggles, section view, pins and image export are
   UI-only by design.** Display mode (`Alt+1…7`), edges/hidden edges/grid/
   axes, render quality, camera, section plane, Measure pins and PNG export
@@ -269,9 +296,10 @@ small in-repo validator (no new dependency).
 | Transactions | `transaction.begin`, `transaction.preview`, `transaction.commit`, `transaction.cancel`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | History      | `history.undo`, `history.redo`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | Files        | `export.stl` (`format` binary/ascii, `resolution`), `export.3mf` (`resolution`), `export.obj` (`resolution`), `image.insert` / `image.calibrate` (reference images), `export.step` (`schema`, `unit`, `structure`, `visibleOnly`), `export.dxf`, `export.meshStats`, `import.step` (`structure`), `import.mesh`, `import.dxf`, `mesh.toSolid`, `interop.formats` (`INTEROP.md`), `project.new`, `project.open`, `project.save`                                                                                                                                                                                                                                               |
-| 3D printing  | `print.analyze` (query), `print.orientations` (query), `print.placeOnPlate`, `print.orient` (one transform step each) — see `assembler/PRINTING.md`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| 3D printing  | `print.analyze` (query; clearance between bodies, ignored findings marked), `print.orientations` (query), `print.placeOnPlate`, `print.orient` (one transform step each) — see `assembler/PRINTING.md`                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | Parameters   | `parameters.list` (query), `parameter.create`, `parameter.edit`, `parameter.delete`; Block 9: `min`/`max`/`step` on create/edit, query `parameters.sweep` — see "Document parameters" above                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| Measure      | `measure.get`, `measure.distance`, `measure.angle`, `measure.area`, `measure.volume` (queries) — see "Measurement and display" below                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| Measure      | `measure.get`, `measure.distance`, `measure.angle`, `measure.area`, `measure.clearance`, `measure.volume` (queries) — see "Measurement and display" below                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| Checks       | `checks.kinds`, `checks.list`, `checks.run` (queries), `checks.add`, `checks.update`, `checks.remove` (one undo step each) — see `assembler/CHECKS.md`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | View         | `selection.set` (not undoable)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 
 Design rules:
@@ -429,6 +457,8 @@ with Document.headless() as doc:              # or Document.connect_app('{"url":
     report = doc.printability(material="PETG", minHoleMm=2)   # print.analyze (query)
     assert report.printable, report.findings_of("thinWall")
     doc.place_on_plate(plate.face("+X"))                      # print.placeOnPlate: one transform step
+    doc.add_check("volume", bodies=[plate], max=30000)         # checks.add: kept in the document
+    assert doc.run_checks(), doc.run_checks().failed          # checks.run: structured results
     doc.orient(plate)                                         # print.orient rank 1 (least overhang, then lowest)
     doc.export_stl("plate.stl", ascii=True, resolution="fine")  # export.stl with options
 ```

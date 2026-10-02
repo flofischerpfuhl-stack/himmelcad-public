@@ -47,6 +47,10 @@ export interface PrintSettings {
   minHoleMm: number;
   /** Pins/bosses with a smaller diameter (mm) are flagged. */
   minPinMm: number;
+  /** Measure the clearance between bodies (overlaps, gaps below `minClearanceMm`) in the kernel. */
+  checkClearance: boolean;
+  /** Bodies closer than this (mm) are flagged; overlaps always are. 0.3 mm is a common print-in-place gap. */
+  minClearanceMm: number;
   material: MaterialId;
   /** Used when `material` is `custom`, else overwritten by the preset on selection. */
   density: number;
@@ -67,6 +71,8 @@ export const DEFAULT_PRINT_SETTINGS: PrintSettings = {
   minWallMm: 0.8,
   minHoleMm: 2,
   minPinMm: 1,
+  checkClearance: true,
+  minClearanceMm: 0.3,
   material: 'PLA',
   density: 1.24,
   costPerKg: 20,
@@ -119,6 +125,8 @@ export function sanitizePrintSettings(input: unknown): PrintSettings {
     minWallMm: finiteIn(s.minWallMm, 0, 100, d.minWallMm),
     minHoleMm: finiteIn(s.minHoleMm, 0, 1000, d.minHoleMm),
     minPinMm: finiteIn(s.minPinMm, 0, 1000, d.minPinMm),
+    checkClearance: typeof s.checkClearance === 'boolean' ? s.checkClearance : d.checkClearance,
+    minClearanceMm: finiteIn(s.minClearanceMm, 0, 100, d.minClearanceMm),
     material,
     density: finiteIn(s.density, 0.01, 30, preset?.density ?? d.density),
     costPerKg: finiteIn(s.costPerKg, 0, 1e6, preset?.costPerKg ?? d.costPerKg),

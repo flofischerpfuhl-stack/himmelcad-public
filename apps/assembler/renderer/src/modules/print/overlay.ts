@@ -10,8 +10,10 @@
 import type { Body } from '../../foundation/geometry-kernel/types.js';
 import type { FlatBatch } from '../../platform/viewport/gl.js';
 import { expandBody } from '../../platform/viewport/geometry.js';
+import { usePreferences } from '../../platform/input/preferences.js';
+import type { PrintFinding } from './analysis.js';
 import { transformPositions } from './orientation.js';
-import { usePrintStore, type PrintState } from './printStore.js';
+import { usePrintStore, visibleFindings, type PrintState } from './printStore.js';
 import { buildVolumeSize } from './settings.js';
 
 export const OVERHANG_COLOR_LOW: readonly [number, number, number] = [0.96, 0.62, 0.04];
@@ -19,6 +21,10 @@ export const OVERHANG_COLOR_HIGH: readonly [number, number, number] = [0.86, 0.1
 export const THIN_WALL_COLOR: readonly [number, number, number] = [0.66, 0.33, 0.97];
 export const BUILD_VOLUME_COLOR: readonly [number, number, number] = [0.23, 0.51, 0.96];
 export const ORIENT_PREVIEW_COLOR: readonly [number, number, number] = [0.13, 0.77, 0.37];
+/** Closest points of a gap below the minimum clearance. */
+export const CLEARANCE_COLOR: readonly [number, number, number] = [0.98, 0.45, 0.09];
+/** Marker at the centre of two bodies' shared volume. */
+export const OVERLAP_COLOR: readonly [number, number, number] = [0.94, 0.17, 0.42];
 
 export function rgbCss(c: readonly [number, number, number]): string {
   return `rgb(${Math.round(c[0] * 255)}, ${Math.round(c[1] * 255)}, ${Math.round(c[2] * 255)})`;
@@ -31,6 +37,8 @@ interface CacheKey {
   orient: unknown;
   hidden: readonly string[];
   isolated: readonly string[] | null;
+  ignored: readonly string[];
+  hiddenKinds: readonly string[];
 }
 let cacheKey: CacheKey | null = null;
 export interface PrintOverlays {
@@ -49,6 +57,8 @@ function sameKey(a: CacheKey, b: CacheKey): boolean {
     a.orient === b.orient &&
     a.hidden === b.hidden &&
     a.isolated === b.isolated &&
+    a.ignored === b.ignored &&
+    a.hiddenKinds === b.hiddenKinds &&
     a.bodies.length === b.bodies.length &&
     a.bodies.every((body, i) => body === b.bodies[i])
   );
@@ -135,6 +145,54 @@ function buildVolumeBatches(size: [number, number, number]): FlatBatch[] {
   ];
 }
 
+/**
+ * Lines for clearance findings (the closest points, with end ticks) and
+ * overlap findings (a cross at the shared volume's centre), sized to the
+ * bodies involved.
+ */
+function markerBatch(findings: readonly PrintFinding[], bodies: readonly Body[]): FlatBatch | null {
+  if (findings.length === 0) return null;
+  const positions: number[] = [];
+  const colors: number[] = [];
+  const line = (a: readonly number[], b: readonly number[], c: readonly number[]) => {
+    positions.push(a[0]!, a[1]!, a[2]!, b[0]!, b[1]!, b[2]!);
+    colors.push(c[0]!, c[1]!, c[2]!, 1, c[0]!, c[1]!, c[2]!, 1);
+  };
+  const cross = (p: readonly number[], size: number, c: readonly number[]) => {
+    for (let axis = 0; axis < 3; axis += 1) {
+      const a = [...p];
+      const b = [...p];
+      a[axis]! -= size;
+      b[axis]! += size;
+      line(a, b, c);
+    }
+  };
+  for (const f of findings) {
+    const involved = bodies.filter((b) => b.id === f.bodyId || b.id === f.otherBodyId);
+    const diagonal = Math.max(
+      1,
+      ...involved.map((b) =>
+        Math.hypot(b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2]),
+      ),
+    );
+    const size = Math.min(5, diagonal * 0.03);
+    if (f.kind === 'clearance' && f.segment) {
+      line(f.segment[0], f.segment[1], CLEARANCE_COLOR);
+      cross(f.segment[0], size * 0.4, CLEARANCE_COLOR);
+      cross(f.segment[1], size * 0.4, CLEARANCE_COLOR);
+    } else if (f.kind === 'overlap' && f.point) {
+      cross(f.point, size, OVERLAP_COLOR);
+    }
+  }
+  if (positions.length === 0) return null;
+  return {
+    positions: new Float32Array(positions),
+    colors: new Float32Array(colors),
+    mode: 'lines',
+    depthTest: false,
+  };
+}
+
 /** The Print-mode overlay batches for the displayed `bodies` (empty when Print mode is off). */
 export function printOverlayBatches(
   bodies: readonly Body[],
@@ -143,6 +201,7 @@ export function printOverlayBatches(
   state: PrintState = usePrintStore.getState(),
 ): PrintOverlays {
   if (!state.enabled) return EMPTY;
+  const hiddenKinds = usePreferences.getState().hiddenPrintFindings;
   const key: CacheKey = {
     report: state.report,
     bodies,
@@ -150,6 +209,8 @@ export function printOverlayBatches(
     orient: state.orient,
     hidden: hiddenBodyIds,
     isolated: isolatedBodyIds,
+    ignored: state.ignored,
+    hiddenKinds,
   };
   if (cacheKey && sameKey(cacheKey, key)) return cacheValue;
   const batches: FlatBatch[] = [];
@@ -198,6 +259,21 @@ export function printOverlayBatches(
         if (batch) batches.push(batch);
       }
     }
+    // Clearance and overlap markers of the listed findings, drawn through the bodies.
+    const current = (id: string | undefined) => {
+      if (!id) return true;
+      const body = bodies.find((b) => b.id === id);
+      const source = analysed.find((b) => b.id === id);
+      return !!body && !!source && source.mesh === body.mesh && visible.includes(body);
+    };
+    const markers = visibleFindings(report.findings, state.ignored, hiddenKinds).filter(
+      (f) =>
+        (f.kind === 'clearance' || f.kind === 'overlap') &&
+        current(f.bodyId) &&
+        current(f.otherBodyId),
+    );
+    const marker = markerBatch(markers, visible);
+    if (marker) last.push(marker);
   }
   const orient = state.orient;
   if (orient && orient.preview !== null) {

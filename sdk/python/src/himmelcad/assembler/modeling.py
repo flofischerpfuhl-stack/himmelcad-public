@@ -28,6 +28,7 @@ from typing import Any, TypeVar
 
 from .client import AssemblerClient
 from .errors import AssemblerError, NotFoundError
+from .checks import ChecksMixin
 from .interop import InteropMixin
 from .printing import PrintToolsMixin
 
@@ -584,7 +585,7 @@ class PrintReport:
         return list(self.raw.get("findings", []))
 
     def findings_of(self, kind: str) -> list[Mapping[str, Any]]:
-        """Findings of one kind: ``overhang``, ``thinWall``, ``smallHole``, ``smallPin``, ``notWatertight``, ``invalidBrep``, ``buildVolume``, ``notOnPlate``."""
+        """Findings of one kind: ``overhang``, ``thinWall``, ``smallHole``, ``smallPin``, ``notWatertight``, ``invalidBrep``, ``buildVolume``, ``notOnPlate``, ``overlap``, ``clearance``, ``clearanceSkipped``."""
         return [f for f in self.findings if f.get("kind") == kind]
 
     @property
@@ -645,7 +646,7 @@ class _LoggedCall:
     params: Mapping[str, Any]
 
 
-class Document(PrintToolsMixin, InteropMixin):
+class Document(PrintToolsMixin, InteropMixin, ChecksMixin):
     """An Assembler document driven through canonical commands (print-part helpers: :mod:`.printing`)."""
 
     def __init__(self, client: AssemblerClient) -> None:
@@ -688,7 +689,7 @@ class Document(PrintToolsMixin, InteropMixin):
     @property
     def commands(self) -> list[str]:
         """Methods issued so far that change or export the document (for benchmarks/audits)."""
-        reads = {"api.hello", "api.describe", "document.get", "features.list", "feature.get", "bodies.list", "body.get", "faces.list", "edges.list", "sketches.list", "selection.get", "print.analyze", "print.orientations", "export.meshStats", "parameters.list", "parameters.sweep", "measure.get", "measure.distance", "measure.angle", "measure.area", "measure.volume"}
+        reads = {"api.hello", "api.describe", "document.get", "features.list", "feature.get", "bodies.list", "body.get", "faces.list", "edges.list", "sketches.list", "selection.get", "print.analyze", "print.orientations", "export.meshStats", "parameters.list", "parameters.sweep", "measure.get", "measure.distance", "measure.angle", "measure.area", "measure.volume", "measure.clearance", "checks.kinds", "checks.list", "checks.run"}
         return [call.method for call in self.log if call.method not in reads]
 
     # ---- parameters ---------------------------------------------------------------------

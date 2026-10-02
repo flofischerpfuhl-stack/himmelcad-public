@@ -50,6 +50,8 @@ import {
   sanitizePrintSettings,
   type PrintSettings,
 } from './settings.js';
+import { runClearancePass } from './clearance.js';
+import { mergeFindings, usePrintStore } from './printStore.js';
 
 /**
  * Host services of the print methods: app only, the print worker and the
@@ -112,6 +114,16 @@ export const PRINT_SETTINGS_SCHEMA: JsonSchema = {
     minWallMm: { type: 'number', minimum: 0, description: 'Thin-wall threshold (default 0.8).' },
     minHoleMm: { type: 'number', minimum: 0, description: 'Smallest hole diameter (default 2).' },
     minPinMm: { type: 'number', minimum: 0, description: 'Smallest pin diameter (default 1).' },
+    checkClearance: {
+      type: 'boolean',
+      description:
+        'Measure the clearance between bodies in the kernel: overlaps and gaps below minClearanceMm become findings (default true).',
+    },
+    minClearanceMm: {
+      type: 'number',
+      minimum: 0,
+      description: 'Smallest gap between bodies, e.g. print-in-place (default 0.3).',
+    },
     material: { enum: ['PLA', 'PETG', 'ABS', 'TPU', 'custom'] },
     density: { type: 'number', exclusiveMinimum: 0, description: 'g/cm³ (material custom).' },
     costPerKg: { type: 'number', minimum: 0 },
@@ -127,14 +139,14 @@ export const PRINT_METHODS: Record<string, MethodSpec> = {
     kind: 'query',
     capability: 'document.read',
     summary:
-      'Printability of the bodies (build direction +Z): overhang area/faces beyond the angle, sampled wall thickness, small holes/pins, B-rep validity, watertight mesh, volume, mass and cost, build-volume fit, plus a findings list.',
+      'Printability of the bodies (build direction +Z): overhang area/faces beyond the angle, sampled wall thickness, small holes/pins, B-rep validity, watertight mesh, volume, mass and cost, build-volume fit, clearance between bodies (overlaps and gaps below minClearanceMm, exact from the kernel), plus a findings list. Every finding is returned, also those the user ignored in the app (`ignored: true`) or hid by type.',
     params: obj({
       bodyIds: { type: 'array', items: str, minItems: 1 },
       settings: { $ref: '#/$defs/PrintSettings' },
       scope,
     }),
     result:
-      '{settings, totals: {bodies, volumeMm3, massG, cost}, bodies: [{bodyId, name, brepValid, watertight, boundaryEdges, nonManifoldEdges, volumeMm3, massG, cost, size, overhang: {areaMm2, totalAreaMm2, faces: [{faceKey, areaMm2, maxAngleDeg}]}, thinWall: {samples, thinSamples, minThicknessMm, faces: [{faceKey, areaMm2, minThicknessMm}]}, holes: [{faceKey, kind, diameterMm, flagged}], buildVolume}], findings: [{id, kind, severity, bodyId, faceKeys, message, value}]}',
+      '{settings, totals: {bodies, volumeMm3, massG, cost}, bodies: [{bodyId, name, brepValid, watertight, boundaryEdges, nonManifoldEdges, volumeMm3, massG, cost, size, overhang: {areaMm2, totalAreaMm2, faces: [{faceKey, areaMm2, maxAngleDeg}]}, thinWall: {samples, thinSamples, minThicknessMm, faces: [{faceKey, areaMm2, minThicknessMm}]}, holes: [{faceKey, kind, diameterMm, flagged}], buildVolume}], findings: [{id, kind, severity, bodyId, faceKeys, message, value, otherBodyId?, segment?, point?, ignored?}]}',
   },
   'print.orientations': {
     kind: 'query',
@@ -204,7 +216,7 @@ export const PRINT_METHODS: Record<string, MethodSpec> = {
 const round = (v: number, digits = 3) => Math.round(v * 10 ** digits) / 10 ** digits;
 
 /** JSON result of `print.analyze` (typed arrays and per-triangle data left out). */
-export function printReportJson(report: PrintReport): Json {
+export function printReportJson(report: PrintReport, ignored?: ReadonlySet<string>): Json {
   return {
     settings: report.settings,
     totals: {
@@ -255,6 +267,9 @@ export function printReportJson(report: PrintReport): Json {
     findings: report.findings.map((f) => ({
       ...f,
       ...(f.value !== undefined ? { value: round(f.value) } : {}),
+      ...(f.segment ? { segment: f.segment.map((p) => p.map((v) => round(v, 6))) } : {}),
+      ...(f.point ? { point: f.point.map((v) => round(v, 6)) } : {}),
+      ...(ignored?.has(f.id) ? { ignored: true } : {}),
     })),
   };
 }
@@ -347,10 +362,16 @@ const analyze: ApiHandler = async (ctx, p) => {
     .filter((b) => referenceMeshIdOf(b.id) === null)
     .map(bodyToPrintInput);
   const settings = printSettings(ctx, p.settings);
-  const report = ctx.host.printability
+  let report = ctx.host.printability
     ? await ctx.host.printability.analyze(bodies, settings)
     : analyzePrintability(bodies, settings);
-  return printReportJson(report);
+  if (settings.checkClearance && bodies.length >= 2 && ctx.kernel.measureClearance) {
+    await ctx.kernelReady();
+    const pass = await runClearancePass(ctx.kernel, ctx.activeFeatures(p), bodies, settings);
+    report = { ...report, findings: mergeFindings(report.findings, pass.findings) };
+  }
+  // Agents get every finding; the ones ignored in the app are marked.
+  return printReportJson(report, new Set(usePrintStore.getState().ignored));
 };
 
 const orientations: ApiHandler = async (ctx, p) => {

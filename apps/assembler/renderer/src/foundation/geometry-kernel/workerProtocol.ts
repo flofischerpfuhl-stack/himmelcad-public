@@ -9,6 +9,8 @@ import type { IgesExportOptions } from './igesExchange.js';
 import type { StepExportOptions } from './stepExport.js';
 import type {
   Body,
+  ClearanceRequest,
+  ClearanceResult,
   DistanceMeasurement,
   DistanceTarget,
   EvaluationProgress,
@@ -57,6 +59,13 @@ export type WorkerRequest =
       b: DistanceTarget;
     }
   | {
+      /** Clearance of body pairs; answered by `clearanceResult` / `measureFailed`. */
+      type: 'measureClearance';
+      jobId: number;
+      features: Feature[];
+      request: ClearanceRequest;
+    }
+  | {
       /**
        * A named query a host adds to its worker (`workerHost.ts` `queries`), e.g. the
        * headless CLI's cold re-evaluation for determinism checks. Answered by
@@ -83,5 +92,6 @@ export type WorkerResponse =
   | { type: 'meshFailed'; jobId: number; message: string }
   | { type: 'measureResult'; jobId: number; result: DistanceMeasurement }
   | { type: 'measureFailed'; jobId: number; message: string }
+  | { type: 'clearanceResult'; jobId: number; result: ClearanceResult }
   | { type: 'queryResult'; jobId: number; value: unknown }
   | { type: 'queryFailed'; jobId: number; message: string };

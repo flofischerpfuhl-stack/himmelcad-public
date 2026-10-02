@@ -25,6 +25,8 @@
  */
 import type { Feature } from '../document/document.js';
 import type {
+  ClearanceRequest,
+  ClearanceResult,
   DistanceMeasurement,
   DistanceTarget,
   EvaluationChannel,
@@ -110,6 +112,17 @@ export interface KernelAdapter {
     a: DistanceTarget,
     b: DistanceTarget,
   ): Promise<DistanceMeasurement>;
+  /**
+   * Clearance of body pairs of the document `features` evaluates to: exact
+   * minimum distance, closest points, contact or overlap with the shared
+   * volume (Measure, Print analysis, clearance checks). A one-off query like
+   * `measureDistance`; the request's `budgetMs` bounds its kernel time.
+   * Optional: adapters without it report clearance as unavailable.
+   */
+  measureClearance?(
+    features: readonly Feature[],
+    request: ClearanceRequest,
+  ): Promise<ClearanceResult>;
   dispose(): void;
 }
 
@@ -267,6 +280,13 @@ export abstract class QueuedKernelAdapter implements KernelAdapter {
     _b: DistanceTarget,
   ): Promise<DistanceMeasurement> {
     return Promise.reject(new Error('Distance queries are not supported by this kernel adapter'));
+  }
+
+  measureClearance(
+    _features: readonly Feature[],
+    _request: ClearanceRequest,
+  ): Promise<ClearanceResult> {
+    return Promise.reject(new Error('Clearance queries are not supported by this kernel adapter'));
   }
 
   /** Evaluates one request. Must not throw synchronously for kernel errors. */
@@ -508,5 +528,14 @@ export class InProcessKernelAdapter extends QueuedKernelAdapter {
     const evaluator = this.evaluator ?? (await this.ready);
     if (!evaluator.measureDistance) return super.measureDistance(features, a, b);
     return evaluator.measureDistance(features, a, b);
+  }
+
+  override async measureClearance(
+    features: readonly Feature[],
+    request: ClearanceRequest,
+  ): Promise<ClearanceResult> {
+    const evaluator = this.evaluator ?? (await this.ready);
+    if (!evaluator.measureClearance) return super.measureClearance(features, request);
+    return evaluator.measureClearance(features, request);
   }
 }

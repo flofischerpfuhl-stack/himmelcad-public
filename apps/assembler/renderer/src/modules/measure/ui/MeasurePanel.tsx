@@ -8,7 +8,17 @@
  * viewport, which each can hide. Every value and measurement can be copied.
  * Exact values come from the kernel's B-rep; mesh estimates say "approx.".
  */
-import { Copy, Crosshair, Eye, EyeOff, GripHorizontal, Pin, Trash2, X } from 'lucide-react';
+import {
+  Copy,
+  Crosshair,
+  Eye,
+  EyeOff,
+  GripHorizontal,
+  ListChecks,
+  Pin,
+  Trash2,
+  X,
+} from 'lucide-react';
 import {
   useCallback,
   useEffect,
@@ -19,7 +29,8 @@ import {
 
 import { Spinner, Tooltip, registerEscapeRung } from '@himmelcad/ui';
 
-import type { Measurement } from '../measure.js';
+import { addCheckForValue, checkForValue } from '../addCheck.js';
+import type { MeasureRef, Measurement } from '../measure.js';
 import {
   formatMeasureValue,
   measurementText,
@@ -43,7 +54,16 @@ async function copyText(text: string): Promise<void> {
   }
 }
 
-function Values({ m, unit }: { m: Measurement; unit: LengthUnit }): JSX.Element {
+function Values({
+  m,
+  unit,
+  refs,
+}: {
+  m: Measurement;
+  unit: LengthUnit;
+  /** What was measured: values that can become a stored check offer "Add as check". */
+  refs?: readonly MeasureRef[];
+}): JSX.Element {
   return (
     <dl className={styles.values}>
       {m.values.map((v) => {
@@ -67,6 +87,17 @@ function Values({ m, unit }: { m: Measurement; unit: LengthUnit }): JSX.Element 
             >
               <Copy size={12} />
             </button>
+            {refs && checkForValue(refs, v) ? (
+              <button
+                type="button"
+                className={styles.rowButton}
+                aria-label={`Add ${v.label} as check`}
+                title="Add as check: keep this value within a range"
+                onClick={() => addCheckForValue(refs, v)}
+              >
+                <ListChecks size={12} />
+              </button>
+            ) : null}
           </div>
         );
       })}
@@ -238,7 +269,7 @@ export function MeasurePanel({ state }: { state: AssemblerState }): JSX.Element 
             {current.measurement.note ? (
               <p className={styles.note}>{current.measurement.note}</p>
             ) : (
-              <Values m={current.measurement} unit={unit} />
+              <Values m={current.measurement} unit={unit} refs={current.refs} />
             )}
           </div>
         ) : (
@@ -308,6 +339,7 @@ export function MeasurePanel({ state }: { state: AssemblerState }): JSX.Element 
                   <Values
                     m={{ ...measurement, values: measurement.values.filter((v) => !v.secondary) }}
                     unit={unit}
+                    refs={pin.refs}
                   />
                 )}
               </li>

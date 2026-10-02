@@ -7,6 +7,7 @@
 import { installModuleUis } from '../platform/widgets/moduleUi.js';
 import { shellUi } from '../interface/shell-ui/module.ui.js';
 import { canvasUi } from '../modules/canvas/module.ui.js';
+import { checksUi } from '../modules/checks/module.ui.js';
 import { constructionUi } from '../modules/construction/module.ui.js';
 import { directEditUi } from '../modules/direct-edit/module.ui.js';
 import { displayUi } from '../modules/display/module.ui.js';
@@ -27,6 +28,7 @@ installModuleUis([
   parametersUi,
   printUi,
   printersUi,
+  checksUi,
   measureUi,
   displayUi,
   interopUi,

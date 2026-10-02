@@ -128,6 +128,21 @@ export function createKernelRequestHandler(
       );
       return;
     }
+    if (message.type === 'measureClearance') {
+      void ready.then(
+        async (evaluator) => {
+          try {
+            if (!evaluator.measureClearance) throw new Error('Clearance queries are not available');
+            const result = await evaluator.measureClearance(message.features, message.request);
+            post({ type: 'clearanceResult', jobId: message.jobId, result });
+          } catch (error) {
+            post(failure(error, 'measureFailed', message.jobId));
+          }
+        },
+        () => undefined,
+      );
+      return;
+    }
     if (message.type === 'query') {
       void ready.then(
         async (evaluator) => {

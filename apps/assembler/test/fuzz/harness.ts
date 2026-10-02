@@ -1534,6 +1534,66 @@ export class FuzzHarness {
           undoable: !this.session.transactionOpen,
         };
       }
+      case 'checkAdd': {
+        const ids = (await this.bodies()).map((b) => b.id);
+        const kind = pick(
+          ['clearance', 'clearance', 'volume', 'bodyCount', 'length', 'distance', 'buildVolume'],
+          r[0],
+        )!;
+        const a = pick(ids, r[1]);
+        const b = pick(
+          ids.filter((id) => id !== a),
+          r[2],
+        );
+        let params: Json;
+        if (kind === 'clearance') {
+          params =
+            a && b && (r[3] ?? 0) < 0.6
+              ? { a, b, min: between(r[4], 0, 2, 0.1) }
+              : { min: between(r[4], 0, 2, 0.1) };
+        } else if (kind === 'volume') {
+          params = { ...(a ? { bodies: [a] } : {}), min: between(r[4], 0, 5000, 10) };
+        } else if (kind === 'bodyCount') {
+          params = { min: Math.floor((r[4] ?? 0) * 3), max: 2 + Math.floor((r[5] ?? 0) * 4) };
+        } else if (kind === 'length') {
+          if (!a) return null;
+          params = {
+            target: { kind: 'body', bodyId: a },
+            quantity: pick(['width', 'depth', 'height'], r[3])!,
+            max: between(r[4], 1, 60),
+          };
+        } else if (kind === 'distance') {
+          if (!a || !b) return null;
+          params = {
+            a: { kind: 'body', bodyId: a },
+            b: { kind: 'body', bodyId: b },
+            min: between(r[4], 0, 10),
+          };
+        } else {
+          params = { printer: pick(['bambuX1', 'prusaMk4', 'ender3'], r[3])! };
+        }
+        return this.api('checks.add', { kind, params });
+      }
+      case 'checkEdit': {
+        const check = pick(this.store.getState().checks, r[0]);
+        if (!check) return null;
+        const params = { ...check.params } as Json;
+        if (typeof params.min === 'number') params.min = between(r[1], 0, 3, 0.1);
+        if ((r[2] ?? 0) < 0.3)
+          return this.api('checks.update', { checkId: check.id, enabled: (r[3] ?? 0) < 0.5 });
+        return this.api('checks.update', { checkId: check.id, params });
+      }
+      case 'checkRemove': {
+        const check = pick(this.store.getState().checks, r[0]);
+        if (!check) return null;
+        return this.api('checks.remove', { checkId: check.id });
+      }
+      case 'checkRun':
+        return {
+          label: 'checks.run (result invariants)',
+          run: () => this.checkResults(),
+          undoable: false,
+        };
       case 'undo':
         return this.api('history.undo', {}, false);
       case 'redo':
@@ -1562,12 +1622,15 @@ export class FuzzHarness {
     const before = this.store.getState();
     const features = plain(before.features);
     const parameters = plain(before.parameters);
+    const checks = plain(before.checks);
     const expected = evaluationSignature(await this.coldEvaluate(before.features));
     await this.call('project.open', { text: saved.text });
     await this.settle();
     const after = this.store.getState();
     const d1 = firstDifference(plain(after.features), features);
     if (d1) fail('saveReopen', `reopened features differ: ${d1}`);
+    const dc = firstDifference(plain(after.checks), checks);
+    if (dc) fail('saveReopen', `reopened checks differ: ${dc}`);
     const d2 = firstDifference(plain(after.parameters), parameters);
     if (d2) fail('saveReopen', `reopened parameters differ: ${d2}`);
     const d3 = firstDifference(evaluationSignature(after.evaluation), expected);
@@ -1696,10 +1759,63 @@ export class FuzzHarness {
     return (await this.kernel.evaluateFresh(features, { staged })).result;
   }
 
+  /**
+   * `checks.run` (Block 9): one result per check in order, a known status,
+   * a readable message, finite values, locations that name existing bodies,
+   * and the same verdicts on a second run (deterministic).
+   */
+  private async checkResults(): Promise<void> {
+    const checks = this.store.getState().checks;
+    const run = await this.call<{ passed: boolean; results: Json[] }>('checks.run');
+    if (run.results.length !== checks.length) {
+      fail('checkResults', `${run.results.length} results for ${checks.length} checks`);
+    }
+    const bodies = new Set((await this.bodies()).map((b) => b.id));
+    run.results.forEach((result, i) => {
+      if (result.id !== checks[i]!.id) fail('checkResults', `result ${i} is ${String(result.id)}`);
+      if (!['pass', 'fail', 'error', 'disabled', 'unsupported'].includes(String(result.status))) {
+        fail('checkResults', `unknown status ${String(result.status)}`);
+      }
+      if (result.status !== 'disabled') {
+        const message = result.message;
+        if (
+          typeof message !== 'string' ||
+          message.trim().length < 2 ||
+          /undefined|NaN|\[object /.test(message)
+        ) {
+          fail(
+            'checkResults',
+            `unreadable message of ${checks[i]!.kind}: ${JSON.stringify(message)}`,
+          );
+        }
+      }
+      if (result.value !== undefined && result.value !== null && !Number.isFinite(result.value)) {
+        fail('checkResults', `value ${String(result.value)} of ${checks[i]!.kind}`);
+      }
+      for (const location of (result.locations as { bodyIds: string[] }[] | undefined) ?? []) {
+        for (const id of location.bodyIds) {
+          if (!bodies.has(id)) fail('checkResults', `location names missing body ${id}`);
+        }
+      }
+    });
+    const passed = !run.results.some((r) =>
+      ['fail', 'error', 'unsupported'].includes(String(r.status)),
+    );
+    if (passed !== run.passed)
+      fail('checkResults', `passed ${run.passed} but statuses say ${passed}`);
+    const again = await this.call<{ results: Json[] }>('checks.run');
+    const d = firstDifference(
+      again.results.map((r) => r.status),
+      run.results.map((r) => r.status),
+    );
+    if (d) fail('checkResults', `a second run differs: ${d}`);
+  }
+
   private async checkUndoRedo(): Promise<void> {
     const before = this.store.getState();
     const features = plain(before.features);
     const parameters = plain(before.parameters);
+    const checks = plain(before.checks);
     const signature = evaluationSignature(before.evaluation);
     await this.call('history.undo');
     await this.call('history.redo');
@@ -1708,6 +1824,8 @@ export class FuzzHarness {
     if (d1) fail('undoRedo', `features after undo+redo differ: ${d1}`);
     const d2 = firstDifference(plain(after.parameters), parameters);
     if (d2) fail('undoRedo', `parameters after undo+redo differ: ${d2}`);
+    const dc = firstDifference(plain(after.checks), checks);
+    if (dc) fail('undoRedo', `checks after undo+redo differ: ${dc}`);
     const d3 = firstDifference(evaluationSignature(after.evaluation), signature);
     if (d3) fail('undoRedo', `evaluation after undo+redo differs: ${d3}`);
   }
@@ -1726,6 +1844,8 @@ export class FuzzHarness {
     if (d1) fail('saveReopen', `saved features differ: ${d1}`);
     const d2 = firstDifference(plain(loaded.parameters ?? []), plain(state.parameters));
     if (d2) fail('saveReopen', `saved parameters differ: ${d2}`);
+    const d3 = firstDifference(plain(loaded.checks ?? []), plain(state.checks));
+    if (d3) fail('saveReopen', `saved checks differ: ${d3}`);
   }
 
   // ---- running -------------------------------------------------------------------------
@@ -1782,7 +1902,11 @@ export class FuzzHarness {
         this.checkAsyncErrors();
         const after = this.store.getState();
         if (!ok && op.op !== 'saveReopen') {
-          if (after.features !== before.features || after.parameters !== before.parameters) {
+          if (
+            after.features !== before.features ||
+            after.parameters !== before.parameters ||
+            after.checks !== before.checks
+          ) {
             fail(
               'refusalTrace',
               `refused ${resolved.label} changed the document (${entry.detail})`,
@@ -1812,7 +1936,8 @@ export class FuzzHarness {
             }
           }
           if (!this.session.transactionOpen) txBase = null;
-          if (resolved.undoable && !wasTx && after.features !== before.features) committed += 1;
+          const edited = after.features !== before.features || after.checks !== before.checks;
+          if (resolved.undoable && !wasTx && edited) committed += 1;
         }
         options.log?.(
           `#${step} ${entry.outcome} ${resolved.label.slice(0, 160)}${entry.detail ? ` — ${entry.detail.slice(0, 160)}` : ''}`,
@@ -1826,9 +1951,15 @@ export class FuzzHarness {
           after.features !== before.features ||
           after.parameters !== before.parameters ||
           after.rollbackBefore !== before.rollbackBefore ||
+          after.checks !== before.checks ||
           beforeRevision !== this.session.documentRevision;
         if (changed || op.op === 'saveReopen') await this.checkDeterminism();
-        if (ok && resolved.undoable && !wasTx && after.features !== before.features) {
+        if (
+          ok &&
+          resolved.undoable &&
+          !wasTx &&
+          (after.features !== before.features || after.checks !== before.checks)
+        ) {
           await this.checkUndoRedo();
         }
         if (changed) await this.checkSaveLoad();

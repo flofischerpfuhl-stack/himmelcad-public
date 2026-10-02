@@ -75,6 +75,7 @@ import {
   type Parameter,
 } from '../document/parameters.js';
 import { setParameterValuesProvider } from '../sketch-solver/solverProvider.js';
+import type { StoredCheck } from '../document/checks.js';
 
 /** One selectable/hoverable thing in the viewport or a panel. */
 export type SelectionItem =
@@ -468,6 +469,19 @@ export interface AssemblerState extends AssemblerStateExtensions {
    */
   parameters: Parameter[];
 
+  /**
+   * Stored checks (`document/checks.ts`, assembler/CHECKS.md): requirements
+   * evaluated after every rebuild. Undo-tracked document state like
+   * `parameters`; empty unless the user or an agent adds one.
+   */
+  checks: StoredCheck[];
+  /**
+   * Replaces the stored checks as exactly one undo step (the features are
+   * not re-evaluated). Refused (`false`) while a tool or a sketch session
+   * owns the undo history.
+   */
+  commitChecks: (checks: StoredCheck[]) => boolean;
+
   viewState: ViewState;
   setDisplayMode: (mode: DisplayMode) => void;
   setSectionEnabled: (enabled: boolean) => void;
@@ -519,7 +533,12 @@ export interface AssemblerState extends AssemblerStateExtensions {
    */
   loadDocument: (
     features: Feature[],
-    options?: { projectName?: string; referenceMeshes?: ReferenceMesh[]; parameters?: Parameter[] },
+    options?: {
+      projectName?: string;
+      referenceMeshes?: ReferenceMesh[];
+      parameters?: Parameter[];
+      checks?: StoredCheck[];
+    },
   ) => void;
 
   /**
@@ -817,6 +836,11 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
   interface HistorySnapshot {
     features: Feature[];
     parameters: Parameter[];
+    /** Stored checks (`document/checks.ts`): document state, undone with the features. */
+    checks: StoredCheck[];
+  }
+  function historySnapshot(state: AssemblerState): HistorySnapshot {
+    return { features: state.features, parameters: state.parameters, checks: state.checks };
   }
   let past: HistorySnapshot[] = [];
   let future: HistorySnapshot[] = [];
@@ -1173,7 +1197,7 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
     evaluation?: EvaluationResult,
   ): void {
     const state = get();
-    past = [...past, { features: state.features, parameters: state.parameters }];
+    past = [...past, historySnapshot(state)];
     future = [];
     endPreview();
     const marker = state.rollbackBefore;
@@ -1291,11 +1315,13 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
           // Restore features and marker together (not via `commitFeatures`, whose
           // insert-at-marker rule would misplace a restored list while rolled back).
           const viaUndo = featuresChanged && past[past.length - 1]?.features === restore.features;
+          // Undoing the cancelled step also restores the checks it was taken with.
+          const restoredChecks = viaUndo ? past[past.length - 1]!.checks : state.checks;
           if (viaUndo) {
             past = past.slice(0, -1);
-            future = [...future, { features: state.features, parameters: state.parameters }];
+            future = [...future, historySnapshot(state)];
           } else if (featuresChanged) {
-            past = [...past, { features: state.features, parameters: state.parameters }];
+            past = [...past, historySnapshot(state)];
             future = [];
           }
           const marker =
@@ -1305,6 +1331,7 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
           set({
             features: restore.features,
             parameters: restore.parameters,
+            checks: restoredChecks,
             rollbackBefore: marker,
             history: { canUndo: past.length > 0, canRedo: future.length > 0 },
             kernelNotice: featuresChanged
@@ -1369,9 +1396,10 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
       if (past.length === 0) return;
       const previous = past[past.length - 1]!;
       past = past.slice(0, -1);
-      future = [...future, { features: state.features, parameters: state.parameters }];
+      future = [...future, historySnapshot(state)];
       setFeatures(previous.features, {
         parameters: previous.parameters,
+        checks: previous.checks,
         history: { canUndo: past.length > 0, canRedo: future.length > 0 },
       });
     },
@@ -1384,11 +1412,24 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
       if (future.length === 0) return;
       const next = future[future.length - 1]!;
       future = future.slice(0, -1);
-      past = [...past, { features: state.features, parameters: state.parameters }];
+      past = [...past, historySnapshot(state)];
       setFeatures(next.features, {
         parameters: next.parameters,
+        checks: next.checks,
         history: { canUndo: past.length > 0, canRedo: future.length > 0 },
       });
+    },
+    checks: [],
+    commitChecks: (checks) => {
+      const state = get();
+      // A tool or a sketch session owns the undo history meanwhile.
+      if (state.activeTool || historyDelegate) return false;
+      if (checks === state.checks) return true;
+      past = [...past, historySnapshot(state)];
+      future = [];
+      // The features do not change: nothing is re-evaluated.
+      set({ checks, history: { canUndo: true, canRedo: false } });
+      return true;
     },
 
     selection: [],
@@ -1791,6 +1832,8 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
         rollbackBefore: null,
         referenceMeshes: options?.referenceMeshes ?? [],
         parameters: options?.parameters ?? [],
+        // A loaded project's checks come with its file section (`modules/checks`), after this.
+        checks: options?.checks ?? [],
       });
       setFeatures(features);
     },
