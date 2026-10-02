@@ -13,6 +13,7 @@ import {
   type TabletLayoutSetting,
   type ThemeName,
   type ToolbarLabels,
+  type UndoRedoPlacement,
 } from '../../platform/input/preferences.js';
 import type { FingerDrawing } from '../../platform/input/pointer.js';
 import { useTabletLayout } from '../../platform/input/tabletLayout.js';
@@ -101,6 +102,17 @@ export function SettingsDialog(): JSX.Element {
               { value: 'always', label: 'Always' },
             ]}
             onChange={(e) => set('labels', e.currentTarget.value as ToolbarLabels)}
+          />
+        </Row>
+        <Row label="Undo and Redo" hint="Buttons in the title bar or below the tools">
+          <Select
+            aria-label="Undo and Redo buttons"
+            value={prefs.undoRedoPlacement}
+            options={[
+              { value: 'titleBar', label: 'Title bar' },
+              { value: 'bottomBar', label: 'Below the tools' },
+            ]}
+            onChange={(e) => set('undoRedoPlacement', e.currentTarget.value as UndoRedoPlacement)}
           />
         </Row>
         <Row label="Home at start" hint="Recent projects and templates when the app opens">

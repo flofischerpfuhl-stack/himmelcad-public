@@ -13,6 +13,9 @@ import type { FingerDrawing } from './pointer.js';
 
 export type LengthUnit = 'mm' | 'in';
 export type ToolbarLabels = 'icons' | 'hover' | 'always';
+
+/** Where the Undo/Redo buttons sit (the tablet layout always shows them by the tools too). */
+export type UndoRedoPlacement = 'titleBar' | 'bottomBar';
 export type ThemeName = 'dark' | 'light';
 /**
  * Camera projection (owner decision 2026-10-01): parallel everywhere, the
@@ -34,6 +37,8 @@ export interface Preferences {
   gridStep: number;
   /** Toolbar labels: icons only, on hover (tooltips), or always next to the icon. */
   labels: ToolbarLabels;
+  /** Undo/Redo buttons in the title bar or at the bottom of the tool column (Shapr3D, Windows). */
+  undoRedoPlacement: UndoRedoPlacement;
   /** Single-letter shortcuts (E = Extrude, …). Off: typing a letter opens command search. */
   singleKeyHotkeys: boolean;
   navigationPreset: NavigationPresetId;
@@ -154,6 +159,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   gridVisible: true,
   gridStep: 5,
   labels: 'hover',
+  undoRedoPlacement: 'titleBar',
   singleKeyHotkeys: true,
   navigationPreset: 'shapr3d',
   theme: 'dark',
@@ -259,6 +265,7 @@ export function parsePreferences(text: string | null): Preferences {
     gridVisible: pick('gridVisible', bool),
     gridStep: pick('gridStep', number(0.01, 1000)),
     labels: pick('labels', oneOf(['icons', 'hover', 'always'])),
+    undoRedoPlacement: pick('undoRedoPlacement', oneOf(['titleBar', 'bottomBar'])),
     singleKeyHotkeys: pick('singleKeyHotkeys', bool),
     navigationPreset: pick('navigationPreset', oneOf(NAVIGATION_PRESETS.map((p) => p.id))),
     theme: pick('theme', oneOf(['dark', 'light'])),

@@ -34,6 +34,8 @@ export function LeftDock({ state, onOpenSearch }: LeftDockProps): JSX.Element {
   );
   // Left-handed: the column is on the right edge, its menus open towards the canvas.
   const menuAlign = usePreferences((p) => (p.handedness === 'left' ? 'right' : 'left'));
+  // Undo/Redo below the tools: always in the tablet layout, else by Settings (UI-18).
+  const undoBelow = usePreferences((p) => p.undoRedoPlacement === 'bottomBar') || tablet;
   const tip = (text: string) => (labels === 'hover' ? text : undefined);
   const trigger = (Icon: SketchIconType, text: string) =>
     labels === 'always' ? (
@@ -139,15 +141,21 @@ export function LeftDock({ state, onOpenSearch }: LeftDockProps): JSX.Element {
 
       <div className={styles.spacer} />
 
-      {tablet ? (
+      {undoBelow ? (
         // Undo/Redo within reach of the tool hand (the gestures do the same: two-finger tap,
-        // three-finger tap; assembler/TOUCH.md).
+        // three-finger tap; assembler/TOUCH.md), or where Settings puts them.
         <div className={`${styles.group} ${styles.historyGroup}`}>
           <button
             type="button"
             className={styles.iconButton}
             aria-label="Undo"
-            title={state.history.canUndo ? 'Undo (two-finger tap)' : 'Nothing to undo'}
+            title={
+              state.history.canUndo
+                ? tablet
+                  ? 'Undo (two-finger tap)'
+                  : 'Undo (Ctrl+Z)'
+                : 'Nothing to undo'
+            }
             disabled={!state.history.canUndo}
             onClick={() => state.undo()}
           >
@@ -157,7 +165,13 @@ export function LeftDock({ state, onOpenSearch }: LeftDockProps): JSX.Element {
             type="button"
             className={styles.iconButton}
             aria-label="Redo"
-            title={state.history.canRedo ? 'Redo (three-finger tap)' : 'Nothing to redo'}
+            title={
+              state.history.canRedo
+                ? tablet
+                  ? 'Redo (three-finger tap)'
+                  : 'Redo (Ctrl+Shift+Z)'
+                : 'Nothing to redo'
+            }
             disabled={!state.history.canRedo}
             onClick={() => state.redo()}
           >
