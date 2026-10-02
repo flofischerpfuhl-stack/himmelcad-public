@@ -149,9 +149,9 @@ function registerAppProtocol(rendererDir: string): void {
 
 app.setName(ASSEMBLER_APP_NAME);
 
-// `build/icon.png` (see `apps/assembler/scripts/generate-icon.mjs`) — a
-// documented placeholder mark; same file electron-builder derives the
-// installer/taskbar `.ico` from (`electron-builder.win.yml`). `__dirname`
+// `build/icon.png` (see `apps/assembler/scripts/generate-icon.mjs`) — the
+// Assembler bolt on the family's black card; the installer/taskbar use `build/icon.ico`,
+// rendered from the same master (`electron-builder.win.yml`). `__dirname`
 // is `dist/electron` at runtime, so `../../build` reaches `apps/assembler/build`.
 const applicationIcon = nativeImage.createFromPath(resolve(__dirname, '../../build/icon.png'));
 

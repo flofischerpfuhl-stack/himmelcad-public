@@ -95,8 +95,8 @@ function occtCacheFiles(): Plugin {
   };
 }
 
-// The favicon (the app's procedural placeholder mark, `scripts/generate-icon.mjs`, as on the
-// web): without one, a browser asks for `/favicon.ico` on every load and logs a 404 (Block 9).
+// The favicon (the Assembler bolt on its card, `scripts/generate-icon.mjs`, as on the web):
+// without one, a browser asks for `/favicon.ico` on every load and logs a 404 (Block 9).
 // Loaded at run time, not bundled into the config: the script starts with a shebang.
 const iconScript = new URL('./scripts/generate-icon.mjs', import.meta.url).href;
 const { drawIcon, encodePng } = (await import(/* @vite-ignore */ iconScript)) as {

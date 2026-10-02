@@ -30,6 +30,7 @@ import {
 } from '../../foundation/document/persistence.js';
 import { useProjectStore } from './project/projectStore.js';
 import { useWorkspaceStore } from './workspace.js';
+import { BrandMark, PreviewBadge } from './BrandMark.js';
 import { projectTemplates } from '../../foundation/commands/projectTemplates.js';
 import { TEMPLATE_ICONS } from '../../modules/templates/icons.js';
 import styles from './HomeScreen.module.css';
@@ -160,10 +161,11 @@ export function HomeScreen(): JSX.Element | null {
       data-home-screen
     >
       <header className={styles.header}>
-        <Box size={18} className={styles.mark} aria-hidden />
+        <BrandMark size={20} className={styles.mark} />
         <h1 id="home-title" className={styles.title}>
           Himmel:CAD Assembler
         </h1>
+        <PreviewBadge />
         <span className={styles.spacer} />
         {busy ? (
           <span className={styles.busy} role="status">

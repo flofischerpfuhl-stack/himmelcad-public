@@ -17,6 +17,16 @@ optimized in place.
 | Himmel:CAD WeltView      | `himmelcad-weltview-on-light.svg`            | Globe for light backgrounds                                    | `67b65c929959c4841163e3f29c76b41ca9f49cc88a3789ed52c35b5b694a66bf` |
 | Himmel:CAD Cap (on hold) | `himmelcad-cap.svg`                          | Aperture, kept for Cap                                         | `72e6130ab1b27cc5fdbb1357de54eef2f7f0f6ed567d352dab3a4c5edf3da90a` |
 | Himmel:CAD Cap (on hold) | `himmelcad-cap-on-light.svg`                 | Aperture for light backgrounds                                 | `10838ae50b60690c68a798ec6fdc35d9fab8f87c957137e5f17eacf553ce80dd` |
+| Himmel:CAD Assembler     | `himmelcad-assembler.svg`                    | Bolt, primary Assembler mark                                   | `664ca42adff752b3e4706118728fe130676829ba7c3fbadba92450c8a72483d4` |
+| Himmel:CAD Assembler     | `himmelcad-assembler-on-light.svg`           | Bolt for light backgrounds                                     | `0796b79d8f3db0e22e4282d9e9abbfc42f9db3e836a64cda85d467af7fdc958d` |
+| Himmel:CAD Assembler     | `himmelcad-assembler-small.svg`              | Bolt for 16–32 px: three thread steps, taller head             | `8eeb9eff880dfcb46144b28dca280140b5aaf1df39e37d7b416755daa853a8cd` |
+| Himmel:CAD Assembler     | `himmelcad-assembler-small-on-light.svg`     | Small bolt for light backgrounds                               | `16ba87edca89104ad8db4bec4e04ec4bd01783b7e76bdc003e13f409460bb844` |
+
+The Assembler bolt was made on the owner's request of 2026-10-02 (family blues, low-poly, nut
+or screw) and chosen by the owner the same day over a hex nut and a printer nozzle (candidates,
+the rejected alternatives and the overview against the family: `logos/proposals/2026-10-02-assembler/`). They are not part of `pnpm branding:generate` (which
+needs Inkscape and ImageMagick); `apps/assembler/scripts/generate-icon.mjs` renders the
+Assembler's desktop and web icons from them in plain Node, with the same card conventions.
 
 The Builder hard hat, PhotoLab crystal, WeltView globe, Cap aperture and all `-on-light` masters
 were approved by the product owner on 2026-09-25. They come from the low-poly

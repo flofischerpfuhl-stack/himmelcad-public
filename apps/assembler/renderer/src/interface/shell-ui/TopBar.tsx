@@ -4,7 +4,7 @@
  * shortcuts), and Undo/Redo icon buttons. The native window frame stays —
  * this is an in-app bar, not a titlebar replacement.
  */
-import { Box, Redo2, Undo2 } from 'lucide-react';
+import { Redo2, Undo2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
 import {
@@ -27,6 +27,7 @@ import { useProjectStore } from './project/projectStore.js';
 import { CommandGroupMenu } from './CommandGroupMenu.js';
 import { DisplayMenuItems } from '../../modules/display/ui/DisplayMenu.js';
 import { RecentFilesMenu } from './RecentFilesMenu.js';
+import { BrandMark, PreviewBadge } from './BrandMark.js';
 import type { AssemblerState } from '../../foundation/commands/store.js';
 import styles from './TopBar.module.css';
 
@@ -80,7 +81,7 @@ export function TopBar({ state }: { state: AssemblerState }): JSX.Element {
   return (
     <div className={styles.root}>
       <div className={styles.brand}>
-        <Box size={16} className={styles.mark} aria-hidden />
+        <BrandMark size={16} className={styles.mark} />
         <span className={styles.wordmark}>Himmel:CAD Assembler</span>
       </div>
       {renaming ? (
@@ -311,7 +312,11 @@ function HelpMenu(): JSX.Element {
         onClose={() => setDialog(null)}
         title="About Himmel:CAD Assembler"
       >
-        <p>Himmel:CAD Assembler — Phase 1 CAD-kernel spike.</p>
+        <p className={styles.aboutTitle}>
+          <BrandMark size={32} />
+          <span>Himmel:CAD Assembler: CAD for 3D printing.</span>
+          <PreviewBadge />
+        </p>
         <p>
           This application makes use of, and is based on facilities provided by, the Open CASCADE
           Technology software (OCCT 8.0.1, LGPL 2.1 with the Open CASCADE exception), compiled to
