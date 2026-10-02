@@ -378,3 +378,28 @@ void test('Reference images: a click on the picture selects it unless a body lie
   assert.equal(click(30, 0, { kind: 'face', bodyId: 'body:a', faceKey: 'x' }, [30, 0, 10]), false);
   assert.deepEqual(store.getState().selection, []);
 });
+
+// ---- History multi-select (SEL-11) -----------------------------------------------------------------
+
+void test('History: several selected steps are suppressed or deleted as one undo step', async () => {
+  await load([cube('a', [0, 0, 0], 4), cube('b', [10, 0, 0], 4), cube('c', [20, 0, 0], 4)]);
+  store.getState().setSuppressed(['a', 'b'], true);
+  await store.getState().whenSettled();
+  assert.deepEqual(
+    store.getState().features.map((f) => f.suppressed),
+    [true, true, false],
+  );
+  assert.equal(store.getState().evaluation.bodies.length, 1);
+  store.getState().undo();
+  await store.getState().whenSettled();
+  assert.equal(store.getState().evaluation.bodies.length, 3, 'one undo step');
+  store.getState().deleteFeature(['b', 'c']);
+  await store.getState().whenSettled();
+  assert.deepEqual(
+    store.getState().features.map((f) => f.id),
+    ['a'],
+  );
+  store.getState().undo();
+  await store.getState().whenSettled();
+  assert.equal(store.getState().features.length, 3, 'one undo step');
+});

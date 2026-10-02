@@ -448,9 +448,11 @@ export interface AssemblerState extends AssemblerStateExtensions {
   moveReferenceMesh: (id: string, transform: ReferenceMeshTransform) => void;
 
   editFeatureParams: (featureId: string, patch: FeaturePatch) => void;
-  setSuppressed: (featureId: string, suppressed: boolean) => void;
+  /** Suppresses (or restores) one step, or several as one undo step (History multi-select). */
+  setSuppressed: (featureId: string | readonly string[], suppressed: boolean) => void;
   renameFeature: (featureId: string, name: string) => void;
-  deleteFeature: (featureId: string) => void;
+  /** Deletes one step, or several as one undo step (History multi-select). */
+  deleteFeature: (featureId: string | readonly string[]) => void;
 
   /**
    * Document parameters ("variables", `model/parameters.ts`): named values
@@ -1554,7 +1556,8 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
     },
     setSuppressed: (featureId, suppressed) => {
       const state = get();
-      commitFeatures(state.features.map((f) => (f.id === featureId ? { ...f, suppressed } : f)));
+      const ids = new Set(typeof featureId === 'string' ? [featureId] : featureId);
+      commitFeatures(state.features.map((f) => (ids.has(f.id) ? { ...f, suppressed } : f)));
     },
     renameFeature: (featureId, name) => {
       const state = get();
@@ -1562,7 +1565,8 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
     },
     deleteFeature: (featureId) => {
       const state = get();
-      commitFeatures(state.features.filter((f) => f.id !== featureId));
+      const ids = new Set(typeof featureId === 'string' ? [featureId] : featureId);
+      commitFeatures(state.features.filter((f) => !ids.has(f.id)));
     },
 
     parameters: [],
