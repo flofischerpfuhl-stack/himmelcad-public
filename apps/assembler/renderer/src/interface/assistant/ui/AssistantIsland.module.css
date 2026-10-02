@@ -185,6 +185,16 @@
   box-shadow: none;
 }
 
+/* The session name as the panel title: the UI font, one line. */
+.chatHost .chat h2 {
+  max-width: 220px;
+  overflow: hidden;
+  font: 600 13px/1.3 var(--hc-font-ui);
+  color: var(--hc-fg-strong);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .notice {
   display: flex;
   align-items: center;

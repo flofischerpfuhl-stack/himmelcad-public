@@ -36,6 +36,7 @@ from .modeling import (
     BBox, Body, Datum, Document, Edge, EdgeSet, Face, FaceSet, Feature, MirroredSketch, MirrorResult, Parameter, PrintReport, Sketch, SketchLine, Transaction,
 )
 from .interop import ReferenceMesh
+from .view import Inspection, Render
 from .printing import METRIC_HOLE_SIZES, PRINT_FITS, hole_diameter
 from .transport import LoopbackTransport, StdioTransport, Transport, find_headless_command
 
@@ -47,4 +48,5 @@ __all__ = [
     "ReferenceNotFoundError", "Sketch", "SketchConflictError", "SketchLine", "StdioTransport", "Transaction", "TransactionStateError",
     "Transport", "TransportError", "find_headless_command",
     "METRIC_HOLE_SIZES", "PRINT_FITS", "hole_diameter", "ReferenceMesh",
+    "Inspection", "Render",
 ]

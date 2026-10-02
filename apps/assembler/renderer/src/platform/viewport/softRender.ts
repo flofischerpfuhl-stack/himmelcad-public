@@ -230,7 +230,8 @@ export function softRender(options: SoftRenderOptions): Uint8Array {
           }
           continue;
         }
-        if (z >= depth[i]!) continue;
+        // Near ties keep what was drawn first: coplanar faces of two bodies do not flicker.
+        if (z >= depth[i]! - 1e-6) continue;
         depth[i] = z;
         ids[i] = id;
         color[i * 4] = r;

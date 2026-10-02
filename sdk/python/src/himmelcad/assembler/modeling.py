@@ -30,6 +30,7 @@ from .client import AssemblerClient
 from .errors import AssemblerError, NotFoundError
 from .interop import InteropMixin
 from .printing import PrintToolsMixin
+from .view import ViewMixin
 
 Vec3 = tuple[float, float, float]
 _AXES = {"X": 0, "Y": 1, "Z": 2}
@@ -621,8 +622,9 @@ class _LoggedCall:
     params: Mapping[str, Any]
 
 
-class Document(PrintToolsMixin, InteropMixin):
-    """An Assembler document driven through canonical commands (print-part helpers: :mod:`.printing`)."""
+class Document(PrintToolsMixin, InteropMixin, ViewMixin):
+    """An Assembler document driven through canonical commands (print-part helpers: :mod:`.printing`,
+    renders and skills: :mod:`.view`)."""
 
     def __init__(self, client: AssemblerClient) -> None:
         self.client = client

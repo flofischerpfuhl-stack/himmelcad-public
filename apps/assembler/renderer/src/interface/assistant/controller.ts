@@ -516,7 +516,15 @@ function flushLive(): void {
     events: boundEvents([...s.events, ...stored]),
     updatedAt: new Date().toISOString(),
   }));
-  useAssistant.setState({ live: [] });
+  // Render thumbnails follow their tool row into the stored transcript (`eventsFromStored` ids).
+  const session = useAssistantSessions.getState().sessions.find((s) => s.id === activeId);
+  const provider = session?.provider ?? 'claude';
+  const images: Record<string, readonly AssistantImage[]> = {};
+  for (const [key, list] of Object.entries(useAssistant.getState().images)) {
+    const match = /^[^:]+:[^:]+:command:(.+)$/u.exec(key);
+    images[match ? `${provider}:${activeId}:command:${match[1]}` : key] = list;
+  }
+  useAssistant.setState({ live: [], images });
 }
 
 /** Normalized events → the stored transcript (merged rows; reasoning and usage left out). */
