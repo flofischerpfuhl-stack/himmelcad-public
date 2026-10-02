@@ -11,7 +11,15 @@ import test from 'node:test';
 
 import { DOCUMENT_CSP, DOCUMENT_CSP_HEADER, WORKER_CSP, isWorkerCspFile } from './csp.mjs';
 import { headersFor, netlifyHeaders } from './headers.mjs';
-import { isCompressible, isPrecached, listFiles, precacheManifest } from './postbuild.mjs';
+import {
+  ASSETS_IGNORE,
+  isCloudflareUpload,
+  isCompressible,
+  isPrecached,
+  listFiles,
+  precacheManifest,
+  robotsTxt,
+} from './postbuild.mjs';
 
 test('the document policy never allows eval; the worker policy only adds eval for scripts', () => {
   for (const policy of [DOCUMENT_CSP, DOCUMENT_CSP_HEADER]) {
@@ -94,4 +102,43 @@ test('precache list and version', () => {
   assert.equal(isPrecached('licenses/LGPL-2.1.txt'), true);
   assert.equal(isCompressible('assets/x.wasm'), true);
   assert.equal(isCompressible('icons/icon-192.png'), false);
+});
+
+test('preview release: X-Robots-Tag on every response and robots.txt keeps crawlers out', () => {
+  assert.equal(headersFor('index.html', { noindex: true })['X-Robots-Tag'], 'noindex, nofollow');
+  assert.equal(headersFor('index.html')['X-Robots-Tag'], undefined);
+  assert.match(
+    netlifyHeaders('/', { noindex: true }),
+    /^\/\*\n(?: {2}[^\n]*\n)* {2}X-Robots-Tag: noindex, nofollow\n/,
+  );
+  assert.doesNotMatch(netlifyHeaders('/'), /X-Robots-Tag/);
+  assert.match(robotsTxt(false), /^User-agent: \*\nDisallow: \/$/m);
+  assert.match(robotsTxt(true), /^Allow: \/$/m);
+  for (const path of ['robots.txt', '.assetsignore', 'screenshots/wide.png'])
+    assert.equal(isPrecached(path), false, path);
+});
+
+test("Cloudflare uploads: no compressed siblings but the OCCT module's, never the raw module", () => {
+  const uploads = [
+    'index.html',
+    'assets/index-1.js',
+    'assets/planegcs-1.wasm',
+    'assets/himmelcad_occt-1.wasm.br',
+    'assets/himmelcad_occt-1.wasm.gz',
+    'assets/replicad_single-1.wasm.br',
+  ];
+  const skipped = [
+    '.assetsignore',
+    'assets/himmelcad_occt-1.wasm',
+    'assets/replicad_single-1.wasm',
+    'assets/index-1.js.br',
+    'assets/planegcs-1.wasm.gz',
+    'index.html.br',
+  ];
+  for (const path of uploads) assert.equal(isCloudflareUpload(path), true, path);
+  for (const path of skipped) assert.equal(isCloudflareUpload(path), false, path);
+  // `.assetsignore` says the same in gitignore syntax.
+  assert.match(ASSETS_IGNORE, /^\*\.br$/m);
+  assert.match(ASSETS_IGNORE, /^!assets\/himmelcad_occt-\*\.wasm\.br$/m);
+  assert.match(ASSETS_IGNORE, /^assets\/himmelcad_occt-\*\.wasm$/m);
 });

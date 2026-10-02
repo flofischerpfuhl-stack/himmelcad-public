@@ -141,3 +141,6 @@ packages/@himmelcad/app/src/**/*.map
 packages/@himmelcad/data/src/generated/**/*.js
 packages/@himmelcad/data/src/generated/**/*.d.ts
 packages/@himmelcad/data/src/generated/**/*.map
+
+# Wrangler (Cloudflare) local state
+.wrangler/

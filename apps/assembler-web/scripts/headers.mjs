@@ -38,6 +38,12 @@ export const COMMON_HEADERS = {
   'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=(), usb=(), serial=()',
 };
 
+/**
+ * A preview release asks search engines not to index anything (with the `<meta name="robots">`
+ * of `index.html` and `robots.txt`; deploy/README.md "Going public").
+ */
+export const NOINDEX_HEADERS = { 'X-Robots-Tag': 'noindex, nofollow' };
+
 const IMMUTABLE = 'public, max-age=31536000, immutable';
 const REVALIDATE = 'no-cache';
 
@@ -53,9 +59,9 @@ function extensionOf(path) {
  * (`index.html`, `sw.js`, the manifest, icons, license texts) revalidate,
  * so a new deployment is seen at once.
  */
-export function headersFor(path) {
+export function headersFor(path, { noindex = false } = {}) {
   const ext = extensionOf(path);
-  const headers = { ...COMMON_HEADERS };
+  const headers = { ...COMMON_HEADERS, ...(noindex ? NOINDEX_HEADERS : {}) };
   headers['Content-Type'] = MIME_TYPES[ext] ?? 'application/octet-stream';
   headers['Cache-Control'] = path.startsWith('assets/') ? IMMUTABLE : REVALIDATE;
   if (ext === '.html') headers['Content-Security-Policy'] = DOCUMENT_CSP_HEADER;
@@ -65,15 +71,18 @@ export function headersFor(path) {
   return headers;
 }
 
-/** A `_headers` file (Netlify, Cloudflare Pages) with the same rules, for `base` (e.g. `/`). */
-export function netlifyHeaders(base = '/') {
+/**
+ * A `_headers` file (Netlify, Cloudflare Pages, Cloudflare Workers static assets) with the
+ * same rules, for `base` (e.g. `/`).
+ */
+export function netlifyHeaders(base = '/', { noindex = false } = {}) {
   const lines = [];
   const block = (pattern, headers) => {
     lines.push(`${base}${pattern}`);
     for (const [name, value] of Object.entries(headers)) lines.push(`  ${name}: ${value}`);
     lines.push('');
   };
-  block('*', COMMON_HEADERS);
+  block('*', { ...COMMON_HEADERS, ...(noindex ? NOINDEX_HEADERS : {}) });
   block('', { 'Cache-Control': REVALIDATE, 'Content-Security-Policy': DOCUMENT_CSP_HEADER });
   block('index.html', {
     'Cache-Control': REVALIDATE,

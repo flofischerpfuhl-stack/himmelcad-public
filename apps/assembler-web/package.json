@@ -10,7 +10,7 @@
     "build": "vite build && node scripts/postbuild.mjs",
     "preview": "node scripts/serve.mjs",
     "typecheck": "tsc -b tsconfig.json",
-    "test": "node --test scripts/postbuild.test.mjs deploy/worker.test.mjs",
+    "test": "node --test scripts/postbuild.test.mjs scripts/fetch-occt-module.test.mjs deploy/worker.test.mjs",
     "test:e2e": "pnpm build && node --test --test-concurrency=1 --test-timeout=300000 e2e/web.e2e.test.mjs e2e/pwa.e2e.test.mjs",
     "test:e2e:browsers": "pnpm build && node --test --test-concurrency=1 --test-timeout=300000 e2e/otherBrowsers.e2e.test.mjs"
   },

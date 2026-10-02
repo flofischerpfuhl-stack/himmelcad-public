@@ -1,0 +1,32 @@
+// HimmelCAD Assembler (web) on Cloudflare Workers with static assets — its own
+// project, separate from the main site ("himmelcad", website/wrangler.jsonc).
+//
+// Build (from the repository root; deploy/README.md "Cloudflare"):
+//   pnpm --filter @himmelcad/assembler-web build
+// Deploy (from apps/assembler-web/; wrangler must be logged in to the owner's account):
+//   npx wrangler deploy
+// Preview URL: https://himmelcad-assembler.<account subdomain>.workers.dev
+// The custom domain assembler.himmelcad.com is attached by the owner (routes or
+// "custom_domain" below `name`, or the dashboard), not by this file.
+//
+// Every file of dist/ is a static asset served by Cloudflare with the rules of
+// dist/_headers, except what dist/.assetsignore excludes: the .br/.gz siblings and
+// the raw OCCT module (Cloudflare's 25 MiB per-asset limit). deploy/worker.mjs runs
+// only for requests no asset matches and serves the OCCT module from its
+// precompressed sibling with Content-Encoding and application/wasm.
+{
+  "name": "himmelcad-assembler",
+  "main": "deploy/worker.mjs",
+  "compatibility_date": "2026-09-01",
+  "workers_dev": true,
+  "preview_urls": false,
+  "assets": {
+    "directory": "dist",
+    "binding": "ASSETS",
+    // Default "auto-trailing-slash": `/` serves index.html.
+    "html_handling": "auto-trailing-slash",
+    // No SPA fallback: unmatched requests reach the Worker (the OCCT module), then 404.
+    "not_found_handling": "none",
+  },
+  "observability": { "enabled": true },
+}

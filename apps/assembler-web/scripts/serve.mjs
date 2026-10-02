@@ -9,7 +9,7 @@
  *   --base   serve the site under a sub-path (the build is relative, any base works)
  *   --plain  no CSP/cache headers and no compression: a minimal host
  */
-import { createReadStream, existsSync, statSync } from 'node:fs';
+import { createReadStream, existsSync, readFileSync, statSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -33,6 +33,9 @@ function extensionOf(path) {
 export function startServer({ dir, port = 0, base = '/', plain = false, onServe } = {}) {
   const root = resolve(dir ?? join(fileURLToPath(new URL('..', import.meta.url)), 'dist'));
   const prefix = base.endsWith('/') ? base : `${base}/`;
+  // A preview build (build-info.json `release`) asks search engines to stay away, as the host must.
+  const info = join(root, 'build-info.json');
+  const noindex = existsSync(info) && JSON.parse(readFileSync(info, 'utf8')).release !== 'public';
   const server = createServer((req, res) => {
     const url = new URL(req.url ?? '/', 'http://localhost');
     if (url.pathname === prefix.slice(0, -1)) {
@@ -59,7 +62,7 @@ export function startServer({ dir, port = 0, base = '/', plain = false, onServe 
     const relative = path.split(sep).join('/');
     const headers = plain
       ? { 'Content-Type': MIME_TYPES[extensionOf(file)] ?? 'application/octet-stream' }
-      : headersFor(relative);
+      : headersFor(relative, { noindex });
     let body = file;
     if (!plain) {
       const accept = String(req.headers['accept-encoding'] ?? '');

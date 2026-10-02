@@ -37,11 +37,14 @@ const appDir = resolve(here, '..');
 const repoRoot = resolve(appDir, '../..');
 const toPosix = (path) => path.split(sep).join('/');
 
-/** Files never precached: the worker itself, compressed siblings, host config. */
+/** Files never precached: the worker itself, compressed siblings, host config, store listing images. */
 export function isPrecached(path) {
   return !(
     path === 'sw.js' ||
     path === '_headers' ||
+    path === '.assetsignore' ||
+    path === 'robots.txt' ||
+    path.startsWith('screenshots/') ||
     path.endsWith('.br') ||
     path.endsWith('.gz') ||
     path.endsWith('.map')
@@ -80,6 +83,63 @@ function copyTree(from, to, skip = () => false) {
 }
 
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
+
+/** Cloudflare Workers static assets: largest file per asset (25 MiB). */
+export const CLOUDFLARE_ASSET_LIMIT = 25 * 1024 * 1024;
+
+/** The OCCT module (either build): served precompressed by `deploy/worker.mjs`, never uploaded raw. */
+const OCCT_WASM = /^assets\/(himmelcad_occt|replicad_single)-[^/]*\.wasm$/;
+
+/**
+ * Whether Cloudflare (`wrangler.jsonc`) uploads `path`: not the `.br`/`.gz` siblings
+ * (Cloudflare compresses on its own) except the OCCT module's, and not the raw OCCT module
+ * (25.3 MB today, close to the per-asset limit): `deploy/worker.mjs` answers its URL with the
+ * brotli (or gzip) sibling and `Content-Encoding`. Mirrored by the generated `.assetsignore`.
+ */
+export function isCloudflareUpload(path) {
+  if (path === '.assetsignore') return false;
+  const sibling = /\.(br|gz)$/.exec(path);
+  if (sibling) return OCCT_WASM.test(path.slice(0, -sibling[0].length));
+  return !OCCT_WASM.test(path);
+}
+
+/** `.assetsignore` (gitignore syntax, read by wrangler) with the rules of {@link isCloudflareUpload}. */
+export const ASSETS_IGNORE = `# Cloudflare Workers static assets (wrangler.jsonc): files not uploaded.
+# Compressed siblings: Cloudflare compresses on its own; the OCCT module's are kept for deploy/worker.mjs.
+*.br
+*.gz
+!assets/himmelcad_occt-*.wasm.br
+!assets/himmelcad_occt-*.wasm.gz
+!assets/replicad_single-*.wasm.br
+!assets/replicad_single-*.wasm.gz
+# The raw OCCT module (25 MiB per-asset limit): deploy/worker.mjs serves the siblings.
+assets/himmelcad_occt-*.wasm
+assets/replicad_single-*.wasm
+`;
+
+/** Fails when a file Cloudflare would upload exceeds its per-asset limit (or the worker would lack a sibling). */
+export function checkCloudflareUploads(dist, files) {
+  const uploads = files.filter(isCloudflareUpload);
+  for (const path of uploads) {
+    const size = statSync(join(dist, path)).size;
+    if (size > CLOUDFLARE_ASSET_LIMIT)
+      throw new Error(`${path}: ${size} bytes, over Cloudflare's 25 MiB per-asset limit`);
+  }
+  for (const path of files.filter((p) => OCCT_WASM.test(p))) {
+    if (!uploads.includes(`${path}.br`) || !uploads.includes(`${path}.gz`))
+      throw new Error(`${path}: no .br/.gz sibling for deploy/worker.mjs`);
+  }
+  return uploads;
+}
+
+/**
+ * `robots.txt`: a preview release keeps crawlers out (with `X-Robots-Tag` and the robots
+ * `<meta>`); the public release allows them (deploy/README.md "Going public").
+ */
+export const robotsTxt = (publicRelease) =>
+  publicRelease
+    ? 'User-agent: *\nAllow: /\n'
+    : '# Himmel:CAD Assembler preview: not announced yet.\nUser-agent: *\nDisallow: /\n';
 
 /** Precache entries (relative URLs) and the build version (hash of every file's hash). */
 export function precacheManifest(dist, files) {
@@ -145,7 +205,10 @@ function main() {
       throw new Error(`dist/assets has no ${prefix}* file: the worker CSP would not match`);
   }
 
+  const publicRelease = process.env.HIMMELCAD_WEB_PUBLIC === '1';
   writeLicenses(dist, occtModule);
+  writeFileSync(join(dist, 'robots.txt'), robotsTxt(publicRelease));
+  writeFileSync(join(dist, '.assetsignore'), ASSETS_IGNORE);
   const files = listFiles(dist).filter((path) => !path.endsWith('.br') && !path.endsWith('.gz'));
   const { entries, version } = precacheManifest(dist, files);
   const bytes = entries.reduce((sum, entry) => sum + statSync(join(dist, entry.url)).size, 0);
@@ -162,7 +225,10 @@ function main() {
     .replace('__HC_CSP__', JSON.stringify(csp));
   if (sw.includes('__HC_')) throw new Error('sw.js: a placeholder was not replaced');
   writeFileSync(join(dist, 'sw.js'), sw);
-  writeFileSync(join(dist, '_headers'), netlifyHeaders(process.env.HIMMELCAD_WEB_BASE ?? '/'));
+  writeFileSync(
+    join(dist, '_headers'),
+    netlifyHeaders(process.env.HIMMELCAD_WEB_BASE ?? '/', { noindex: !publicRelease }),
+  );
 
   const wasm = entries
     .filter((entry) => entry.url.endsWith('.wasm'))
@@ -177,6 +243,8 @@ function main() {
       {
         product: 'himmelcad-assembler-web',
         version,
+        // `preview`: noindex + "Preview" badge; read by the local server and deploy/worker.mjs.
+        release: publicRelease ? 'public' : 'preview',
         builtAt: new Date().toISOString(),
         occtModule,
         precache: { files: entries.length, bytes },
@@ -187,11 +255,15 @@ function main() {
     )}\n`,
   );
 
-  const compressed = process.argv.includes('--no-compress') ? 0 : compress(dist, listFiles(dist));
+  const noCompress = process.argv.includes('--no-compress');
+  const compressed = noCompress ? 0 : compress(dist, listFiles(dist));
+  // Cloudflare (wrangler.jsonc) needs the OCCT siblings; without compression there are none.
+  const uploads = noCompress ? null : checkCloudflareUploads(dist, listFiles(dist));
   const mb = (n) => (n / 1048576).toFixed(1);
   process.stdout.write(
-    `assembler-web: version ${version}, OCCT ${occtModule}, ${entries.length} files / ${mb(bytes)} MB precached` +
-      `${compressed ? `, brotli saves ${mb(compressed)} MB` : ''}\n`,
+    `assembler-web: version ${version} (${publicRelease ? 'public' : 'preview'}), OCCT ${occtModule}, ${entries.length} files / ${mb(bytes)} MB precached` +
+      `${compressed ? `, brotli saves ${mb(compressed)} MB` : ''}` +
+      `${uploads ? `, Cloudflare uploads ${uploads.length} files` : ''}\n`,
   );
 }
 

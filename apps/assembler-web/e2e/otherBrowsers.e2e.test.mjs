@@ -51,7 +51,10 @@ for (const [name, engine, executablePath] of ENGINES) {
       skip: executablePath ? false : `no local ${name} build`,
     },
     async (t) => {
-      const server = await startServer();
+      // `ASM_WEB_URL`: the deployed site instead of the local build.
+      const server = process.env.ASM_WEB_URL
+        ? { url: process.env.ASM_WEB_URL, close: async () => undefined }
+        : await startServer();
       const browser = await engine.launch({ executablePath });
       t.after(async () => {
         await browser.close();

@@ -18,6 +18,10 @@
  * 5. Layout at tablet and phone sizes, with touch input enabled.
  * 6. Navigation: orbiting over a bore pivots inside it (orthographic, perspective,
  *    adaptive), chosen in the Display popover's projection row.
+ *
+ * `ASM_WEB_URL=https://…/` runs 1–3 against a deployed site instead (bytes on the wire
+ * then from the browser's own accounting; the offline test only cuts the network);
+ * 4–6 need the local build and are skipped.
  */
 import assert from 'node:assert/strict';
 import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -42,6 +46,15 @@ import {
   waitForModel,
   watchErrors,
 } from './helpers.mjs';
+
+const REMOTE = process.env.ASM_WEB_URL ?? null;
+const LOCAL_ONLY = { skip: REMOTE ? 'needs the local build (ASM_WEB_URL set)' : false };
+
+/** The local static server, or the deployed site of `ASM_WEB_URL`. */
+async function serve(options) {
+  if (!REMOTE) return startServer(options);
+  return { url: REMOTE.endsWith('/') ? REMOTE : `${REMOTE}/`, close: async () => undefined };
+}
 
 const launch = () =>
   chromium.launch({ executablePath: chromiumPath(), args: ['--enable-unsafe-swiftshader'] });
@@ -69,7 +82,7 @@ const offlineReady = (page) =>
 
 void test('first load: strict CSP, kernel ready, service worker precache; first vs warm load', async (t) => {
   const wire = traffic();
-  const server = await startServer({ onServe: wire.onServe });
+  const server = await serve({ onServe: wire.onServe });
   const browser = await launch();
   t.after(async () => {
     await browser.close();
@@ -78,6 +91,23 @@ void test('first load: strict CSP, kernel ready, service worker precache; first 
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   const page = await context.newPage();
   const errors = watchErrors(page);
+  // The OCCT module as the browser received it (type, encoding), and the bytes on the wire as
+  // the browser counts them (a deployed site has no local server to ask).
+  const wasm = [];
+  page.on('response', (response) => {
+    if (/\.wasm$/.test(new URL(response.url()).pathname))
+      wasm.push({ url: response.url(), status: response.status(), ...response.headers() });
+  });
+  if (REMOTE) {
+    page.on(
+      'requestfinished',
+      (request) =>
+        void request
+          .sizes()
+          .then((s) => wire.onServe({ bytes: s.responseBodySize + s.responseHeadersSize }))
+          .catch(() => undefined),
+    );
+  }
 
   const started = Date.now();
   await page.goto(server.url);
@@ -149,12 +179,23 @@ void test('first load: strict CSP, kernel ready, service worker precache; first 
   const warmTraffic = wire.take();
   assert.ok(warmTraffic.bytes < 200_000, `warm load fetched ${warmTraffic.bytes} bytes`);
 
-  const buildInfo = JSON.parse(
-    readFileSync(new URL('../dist/build-info.json', import.meta.url), 'utf8'),
-  );
+  const buildInfo = REMOTE
+    ? await (await fetch(new URL('build-info.json', server.url))).json()
+    : JSON.parse(readFileSync(new URL('../dist/build-info.json', import.meta.url), 'utf8'));
+  const occt = wasm.find((r) => /himmelcad_occt-|replicad_single-/.test(r.url));
+  assert.ok(occt, 'the OCCT module was fetched');
+  assert.equal(occt.status, 200);
+  assert.equal(occt['content-type'], 'application/wasm');
+  assert.match(occt['content-encoding'] ?? '', /^(br|gzip)$/, 'the OCCT module travels compressed');
   const report = {
     measuredAt: new Date().toISOString(),
-    host: 'localhost static server (scripts/serve.mjs), brotli precompressed, no network throttling',
+    host: REMOTE
+      ? `${REMOTE} (Cloudflare), bytes as counted by the browser`
+      : 'localhost static server (scripts/serve.mjs), brotli precompressed, no network throttling',
+    occtResponse: {
+      'content-type': occt['content-type'],
+      'content-encoding': occt['content-encoding'],
+    },
     build: {
       version: buildInfo.version,
       occtModule: buildInfo.occtModule,
@@ -165,7 +206,10 @@ void test('first load: strict CSP, kernel ready, service worker precache; first 
     warmLoad: { msToModel: warmReadyMs, ...warmTraffic },
     cache: controlled,
   };
-  writeFileSync(join(SHOTS_DIR, 'web-load.json'), `${JSON.stringify(report, null, 2)}\n`);
+  writeFileSync(
+    join(SHOTS_DIR, REMOTE ? 'web-load-deployed.json' : 'web-load.json'),
+    `${JSON.stringify(report, null, 2)}\n`,
+  );
   process.stdout.write(`web load: ${JSON.stringify(report)}\n`);
   // The only console errors are the CSP reports of the eval probe above.
   assert.deepEqual(
@@ -175,7 +219,7 @@ void test('first load: strict CSP, kernel ready, service worker precache; first 
 });
 
 void test('offline: reload without server and network starts the app, kernel and solver', async (t) => {
-  let server = await startServer();
+  let server = await serve();
   const browser = await launch();
   t.after(async () => {
     await browser.close();
@@ -233,7 +277,7 @@ void test('offline: reload without server and network starts the app, kernel and
 });
 
 void test('sketch → extrude in the UI; save/open round trip via download/upload; STL export', async (t) => {
-  const server = await startServer();
+  const server = await serve();
   const browser = await launch();
   const downloads = mkdtempSync(join(tmpdir(), 'assembler-web-e2e-'));
   t.after(async () => {
@@ -335,179 +379,190 @@ void test('sketch → extrude in the UI; save/open round trip via download/uploa
   assert.deepEqual(errors, []);
 });
 
-void test('File System Access (Chromium): save in place and reopen from Recent projects', async (t) => {
-  const server = await startServer();
-  const browser = await launch();
-  t.after(async () => {
-    await browser.close();
-    await server.close();
-  });
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
-  // The native pickers cannot be driven headlessly: they return handles of the
-  // origin-private file system instead, which are real FileSystemFileHandles.
-  await context.addInitScript(() => {
-    const handle = async (name) =>
-      (await navigator.storage.getDirectory()).getFileHandle(name, { create: true });
-    window.__pickerCalls = [];
-    window.showSaveFilePicker = async (options) => {
-      window.__pickerCalls.push(['save', options?.suggestedName ?? null]);
-      return handle(options?.suggestedName ?? 'export.bin');
-    };
-    window.showOpenFilePicker = async () => {
-      window.__pickerCalls.push(['open', null]);
-      return [await handle('Plate.hcasm')];
-    };
-  });
-  const page = await context.newPage();
-  const errors = watchErrors(page);
-  await page.goto(server.url);
-  await page.locator('[data-home-screen]').waitFor({ timeout: 120_000 });
-  await page.getByText('Projects you open or save appear here').waitFor();
-  await page.getByRole('button', { name: /^Blank/ }).click();
-  const rpc = await agentAccess(page);
-  await waitFor(
-    () => rpc('document.get'),
-    (d) => d.kernel.status === 'ready',
-    'kernel ready',
-  );
-  await rpc('project.new', { name: 'Plate' });
-  await rpc('feature.create', {
-    kind: 'sketch',
-    params: {
-      plane: { kind: 'plane', plane: 'XY', offset: 0 },
-      profiles: [{ kind: 'rectangle', x: 0, y: 0, width: 40, height: 30 }],
-    },
-  });
-  const sketchId = (await rpc('features.list'))[0].id;
-  await rpc('feature.create', {
-    kind: 'extrude',
-    params: { profile: { kind: 'sketch', featureId: sketchId }, distance: 10 },
-  });
-
-  // First Save: the save picker; the file is written through the handle.
-  await page.keyboard.press('Control+s');
-  await waitFor(
-    () => page.evaluate(() => window.__pickerCalls.length),
-    (n) => n === 1,
-    'one save picker',
-  );
-  // `{}` while the file is still empty (the picker created it; the write lands on close) —
-  // or while a save in place swaps the file (Chromium briefly reports it as not found).
-  const readOpfs = () =>
-    page.evaluate(async () => {
-      try {
-        const root = await navigator.storage.getDirectory();
-        const file = await (await root.getFileHandle('Plate.hcasm')).getFile();
-        const text = await file.text();
-        return text ? JSON.parse(text) : {};
-      } catch (error) {
-        if (error instanceof DOMException && error.name === 'NotFoundError') return {};
-        throw error;
-      }
+void test(
+  'File System Access (Chromium): save in place and reopen from Recent projects',
+  LOCAL_ONLY,
+  async (t) => {
+    const server = await startServer();
+    const browser = await launch();
+    t.after(async () => {
+      await browser.close();
+      await server.close();
     });
-  const first = await waitFor(
-    readOpfs,
-    (p) => p.features?.length === 2,
-    'written through the handle',
-  );
-  assert.equal(first.projectName, 'Plate');
-
-  // Second Save after an edit: in place, no picker.
-  await rpc('feature.create', {
-    kind: 'sketch',
-    params: {
-      plane: { kind: 'plane', plane: 'XY', offset: 10 },
-      profiles: [{ kind: 'circle', cx: 20, cy: 15, radius: 5 }],
-    },
-  });
-  await page.keyboard.press('Control+s');
-  await waitFor(readOpfs, (p) => p.features?.length === 3, 'saved in place');
-  assert.equal(await page.evaluate(() => window.__pickerCalls.length), 1, 'no second picker');
-
-  // A reload, then the project from Recent projects on the Home screen.
-  await page.reload();
-  const home = page.locator('[data-home-screen]');
-  await home.waitFor({ timeout: 120_000 });
-  // The card's name is the file name without the extension (the icon button is "Remove …").
-  const recent = home.getByRole('button', { name: /^Plate/ }).first();
-  await recent.waitFor({ timeout: 20_000 });
-  // Saved work is no recovery case: no "Recover unsaved changes?" offer after the reload.
-  assert.equal(await home.getByRole('button', { name: 'Recover' }).count(), 0);
-  await shot(page, 'w4-home-recent');
-  await recent.click();
-  await home.waitFor({ state: 'detached', timeout: 60_000 });
-  const reopenRpc = await agentAccess(page);
-  const reopened = await waitFor(
-    () => reopenRpc('features.list'),
-    (list) => list.length === 3,
-    'reopened from the recent list',
-  );
-  assert.deepEqual(
-    reopened.map((f) => f.kind),
-    ['sketch', 'extrude', 'sketch'],
-  );
-  assert.deepEqual(errors, []);
-});
-
-void test('update: a new deployment installs in the background and waits for Reload', async (t) => {
-  // A copy of the site, so the "deployment" can change under the running app.
-  const site = mkdtempSync(join(tmpdir(), 'assembler-web-update-'));
-  cpSync(fileURLToPath(new URL('../dist', import.meta.url)), site, { recursive: true });
-  const server = await startServer({ dir: site });
-  const browser = await launch();
-  t.after(async () => {
-    await browser.close();
-    await server.close();
-    rmSync(site, { recursive: true, force: true });
-  });
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
-  const page = await context.newPage();
-  const errors = watchErrors(page);
-  const version = () =>
-    page.evaluate(
-      () =>
-        new Promise((resolve) => {
-          const channel = new MessageChannel();
-          channel.port1.onmessage = (event) => resolve(event.data.version);
-          navigator.serviceWorker.controller.postMessage({ type: 'VERSION' }, [channel.port2]);
-        }),
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    // The native pickers cannot be driven headlessly: they return handles of the
+    // origin-private file system instead, which are real FileSystemFileHandles.
+    await context.addInitScript(() => {
+      const handle = async (name) =>
+        (await navigator.storage.getDirectory()).getFileHandle(name, { create: true });
+      window.__pickerCalls = [];
+      window.showSaveFilePicker = async (options) => {
+        window.__pickerCalls.push(['save', options?.suggestedName ?? null]);
+        return handle(options?.suggestedName ?? 'export.bin');
+      };
+      window.showOpenFilePicker = async () => {
+        window.__pickerCalls.push(['open', null]);
+        return [await handle('Plate.hcasm')];
+      };
+    });
+    const page = await context.newPage();
+    const errors = watchErrors(page);
+    await page.goto(server.url);
+    await page.locator('[data-home-screen]').waitFor({ timeout: 120_000 });
+    await page.getByText('Projects you open or save appear here').waitFor();
+    await page.getByRole('button', { name: /^Blank/ }).click();
+    const rpc = await agentAccess(page);
+    await waitFor(
+      () => rpc('document.get'),
+      (d) => d.kernel.status === 'ready',
+      'kernel ready',
     );
-  await page.goto(server.url);
-  await waitForModel(page);
-  await offlineReady(page);
-  const before = await version();
+    await rpc('project.new', { name: 'Plate' });
+    await rpc('feature.create', {
+      kind: 'sketch',
+      params: {
+        plane: { kind: 'plane', plane: 'XY', offset: 0 },
+        profiles: [{ kind: 'rectangle', x: 0, y: 0, width: 40, height: 30 }],
+      },
+    });
+    const sketchId = (await rpc('features.list'))[0].id;
+    await rpc('feature.create', {
+      kind: 'extrude',
+      params: { profile: { kind: 'sketch', featureId: sketchId }, distance: 10 },
+    });
 
-  // Deploy: a changed index.html and a service worker with a new version.
-  const swPath = join(site, 'sw.js');
-  writeFileSync(swPath, readFileSync(swPath, 'utf8').replace(before, `${before.slice(0, 12)}next`));
-  const indexPath = join(site, 'index.html');
-  writeFileSync(indexPath, `${readFileSync(indexPath, 'utf8')}<!-- next deployment -->\n`);
-  // Their precompressed copies would still be the old deployment.
-  for (const stale of [swPath, indexPath]) {
-    rmSync(`${stale}.br`, { force: true });
-    rmSync(`${stale}.gz`, { force: true });
-  }
-  await page.evaluate(async () => (await navigator.serviceWorker.getRegistration()).update());
+    // First Save: the save picker; the file is written through the handle.
+    await page.keyboard.press('Control+s');
+    await waitFor(
+      () => page.evaluate(() => window.__pickerCalls.length),
+      (n) => n === 1,
+      'one save picker',
+    );
+    // `{}` while the file is still empty (the picker created it; the write lands on close) —
+    // or while a save in place swaps the file (Chromium briefly reports it as not found).
+    const readOpfs = () =>
+      page.evaluate(async () => {
+        try {
+          const root = await navigator.storage.getDirectory();
+          const file = await (await root.getFileHandle('Plate.hcasm')).getFile();
+          const text = await file.text();
+          return text ? JSON.parse(text) : {};
+        } catch (error) {
+          if (error instanceof DOMException && error.name === 'NotFoundError') return {};
+          throw error;
+        }
+      });
+    const first = await waitFor(
+      readOpfs,
+      (p) => p.features?.length === 2,
+      'written through the handle',
+    );
+    assert.equal(first.projectName, 'Plate');
 
-  const reload = page.getByRole('button', { name: 'Reload' });
-  await reload.waitFor({ timeout: 120_000 });
-  await page.getByText('A new version of Assembler is ready.').waitFor();
-  assert.equal(await version(), before, 'the running app keeps its version until Reload');
-  await shot(page, 'w7-update-ready');
-  await Promise.all([page.waitForEvent('load'), reload.click()]);
-  await waitForModel(page);
-  assert.equal(await version(), `${before.slice(0, 12)}next`);
-  assert.equal(
-    await page.evaluate(async () =>
-      (await (await fetch('index.html')).text()).includes('next deployment'),
-    ),
-    true,
-    'the new deployment is what the service worker serves',
-  );
-  assert.deepEqual(errors, []);
-});
+    // Second Save after an edit: in place, no picker.
+    await rpc('feature.create', {
+      kind: 'sketch',
+      params: {
+        plane: { kind: 'plane', plane: 'XY', offset: 10 },
+        profiles: [{ kind: 'circle', cx: 20, cy: 15, radius: 5 }],
+      },
+    });
+    await page.keyboard.press('Control+s');
+    await waitFor(readOpfs, (p) => p.features?.length === 3, 'saved in place');
+    assert.equal(await page.evaluate(() => window.__pickerCalls.length), 1, 'no second picker');
 
-void test('layout: tablet and phone sizes with touch', async (t) => {
+    // A reload, then the project from Recent projects on the Home screen.
+    await page.reload();
+    const home = page.locator('[data-home-screen]');
+    await home.waitFor({ timeout: 120_000 });
+    // The card's name is the file name without the extension (the icon button is "Remove …").
+    const recent = home.getByRole('button', { name: /^Plate/ }).first();
+    await recent.waitFor({ timeout: 20_000 });
+    // Saved work is no recovery case: no "Recover unsaved changes?" offer after the reload.
+    assert.equal(await home.getByRole('button', { name: 'Recover' }).count(), 0);
+    await shot(page, 'w4-home-recent');
+    await recent.click();
+    await home.waitFor({ state: 'detached', timeout: 60_000 });
+    const reopenRpc = await agentAccess(page);
+    const reopened = await waitFor(
+      () => reopenRpc('features.list'),
+      (list) => list.length === 3,
+      'reopened from the recent list',
+    );
+    assert.deepEqual(
+      reopened.map((f) => f.kind),
+      ['sketch', 'extrude', 'sketch'],
+    );
+    assert.deepEqual(errors, []);
+  },
+);
+
+void test(
+  'update: a new deployment installs in the background and waits for Reload',
+  LOCAL_ONLY,
+  async (t) => {
+    // A copy of the site, so the "deployment" can change under the running app.
+    const site = mkdtempSync(join(tmpdir(), 'assembler-web-update-'));
+    cpSync(fileURLToPath(new URL('../dist', import.meta.url)), site, { recursive: true });
+    const server = await startServer({ dir: site });
+    const browser = await launch();
+    t.after(async () => {
+      await browser.close();
+      await server.close();
+      rmSync(site, { recursive: true, force: true });
+    });
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const page = await context.newPage();
+    const errors = watchErrors(page);
+    const version = () =>
+      page.evaluate(
+        () =>
+          new Promise((resolve) => {
+            const channel = new MessageChannel();
+            channel.port1.onmessage = (event) => resolve(event.data.version);
+            navigator.serviceWorker.controller.postMessage({ type: 'VERSION' }, [channel.port2]);
+          }),
+      );
+    await page.goto(server.url);
+    await waitForModel(page);
+    await offlineReady(page);
+    const before = await version();
+
+    // Deploy: a changed index.html and a service worker with a new version.
+    const swPath = join(site, 'sw.js');
+    writeFileSync(
+      swPath,
+      readFileSync(swPath, 'utf8').replace(before, `${before.slice(0, 12)}next`),
+    );
+    const indexPath = join(site, 'index.html');
+    writeFileSync(indexPath, `${readFileSync(indexPath, 'utf8')}<!-- next deployment -->\n`);
+    // Their precompressed copies would still be the old deployment.
+    for (const stale of [swPath, indexPath]) {
+      rmSync(`${stale}.br`, { force: true });
+      rmSync(`${stale}.gz`, { force: true });
+    }
+    await page.evaluate(async () => (await navigator.serviceWorker.getRegistration()).update());
+
+    const reload = page.getByRole('button', { name: 'Reload' });
+    await reload.waitFor({ timeout: 120_000 });
+    await page.getByText('A new version of Assembler is ready.').waitFor();
+    assert.equal(await version(), before, 'the running app keeps its version until Reload');
+    await shot(page, 'w7-update-ready');
+    await Promise.all([page.waitForEvent('load'), reload.click()]);
+    await waitForModel(page);
+    assert.equal(await version(), `${before.slice(0, 12)}next`);
+    assert.equal(
+      await page.evaluate(async () =>
+        (await (await fetch('index.html')).text()).includes('next deployment'),
+      ),
+      true,
+      'the new deployment is what the service worker serves',
+    );
+    assert.deepEqual(errors, []);
+  },
+);
+
+void test('layout: tablet and phone sizes with touch', LOCAL_ONLY, async (t) => {
   const server = await startServer();
   const browser = await launch();
   t.after(async () => {
@@ -555,83 +610,217 @@ void test('layout: tablet and phone sizes with touch', async (t) => {
   }
 });
 
-void test('navigation: the orbit pivot sits inside a bore; projection row in the Display popover', async (t) => {
-  const server = await startServer();
-  const browser = await launch();
-  t.after(async () => {
-    await browser.close();
-    await server.close();
-  });
-  const page = await (
-    await browser.newContext({ viewport: { width: 1280, height: 800 } })
-  ).newPage();
-  const errors = watchErrors(page);
-  await page.goto(server.url);
-  await page.locator('[data-home-screen]').waitFor({ timeout: 120_000 });
-  await page.getByRole('button', { name: /^Blank/ }).click();
-  await page.locator('[data-home-screen]').waitFor({ state: 'detached' });
-  const rpc = await agentAccess(page);
-  await waitFor(
-    () => rpc('document.get'),
-    (d) => d.kernel.status === 'ready',
-    'kernel ready',
-  );
-  // A 40 × 40 × 10 plate centred on the origin with a Ø5 through bore in its middle.
-  const plate = await rpc('feature.create', {
-    kind: 'sketch',
-    params: {
-      plane: { kind: 'plane', plane: 'XY' },
-      profiles: [{ kind: 'rectangle', x: -20, y: -20, width: 40, height: 40 }],
-    },
-  });
-  const body = await rpc('feature.create', {
-    kind: 'extrude',
-    params: { profile: { kind: 'sketch', featureId: plate.featureId }, distance: 10 },
-  });
-  const bodyId = `body:${body.featureId}`;
-  const bore = await rpc('feature.create', {
-    kind: 'sketch',
-    params: {
-      plane: { kind: 'face', face: { bodyId, select: '>Z' } },
-      profiles: [{ kind: 'circle', cx: 0, cy: 0, radius: 2.5 }],
-    },
-  });
-  await rpc('feature.create', {
-    kind: 'extrude',
-    params: {
-      profile: { kind: 'sketch', featureId: bore.featureId },
-      distance: -10,
-      operation: 'cut',
-      targetBodyId: bodyId,
-    },
-  });
-  const [solid] = await waitFor(
-    () => rpc('bodies.list'),
-    (list) =>
-      list.length === 1 && list[0].valid && Math.abs(list[0].volume - (16000 - 62.5 * Math.PI)) < 1,
-    'the plate with its bore',
-  );
-  assert.ok(solid);
+void test(
+  'navigation: the orbit pivot sits inside a bore; projection row in the Display popover',
+  LOCAL_ONLY,
+  async (t) => {
+    const server = await startServer();
+    const browser = await launch();
+    t.after(async () => {
+      await browser.close();
+      await server.close();
+    });
+    const page = await (
+      await browser.newContext({ viewport: { width: 1280, height: 800 } })
+    ).newPage();
+    const errors = watchErrors(page);
+    await page.goto(server.url);
+    await page.locator('[data-home-screen]').waitFor({ timeout: 120_000 });
+    await page.getByRole('button', { name: /^Blank/ }).click();
+    await page.locator('[data-home-screen]').waitFor({ state: 'detached' });
+    const rpc = await agentAccess(page);
+    await waitFor(
+      () => rpc('document.get'),
+      (d) => d.kernel.status === 'ready',
+      'kernel ready',
+    );
+    // A 40 × 40 × 10 plate centred on the origin with a Ø5 through bore in its middle.
+    const plate = await rpc('feature.create', {
+      kind: 'sketch',
+      params: {
+        plane: { kind: 'plane', plane: 'XY' },
+        profiles: [{ kind: 'rectangle', x: -20, y: -20, width: 40, height: 40 }],
+      },
+    });
+    const body = await rpc('feature.create', {
+      kind: 'extrude',
+      params: { profile: { kind: 'sketch', featureId: plate.featureId }, distance: 10 },
+    });
+    const bodyId = `body:${body.featureId}`;
+    const bore = await rpc('feature.create', {
+      kind: 'sketch',
+      params: {
+        plane: { kind: 'face', face: { bodyId, select: '>Z' } },
+        profiles: [{ kind: 'circle', cx: 0, cy: 0, radius: 2.5 }],
+      },
+    });
+    await rpc('feature.create', {
+      kind: 'extrude',
+      params: {
+        profile: { kind: 'sketch', featureId: bore.featureId },
+        distance: -10,
+        operation: 'cut',
+        targetBodyId: bodyId,
+      },
+    });
+    const [solid] = await waitFor(
+      () => rpc('bodies.list'),
+      (list) =>
+        list.length === 1 &&
+        list[0].valid &&
+        Math.abs(list[0].volume - (16000 - 62.5 * Math.PI)) < 1,
+      'the plate with its bore',
+    );
+    assert.ok(solid);
 
-  // Orthographic is the default; the Display popover offers the three modes in one row.
-  await page.locator('button[aria-label^="Display:"]').click();
-  const row = page.getByRole('radiogroup', { name: 'Projection' });
-  assert.equal(
-    await row.getByRole('radio', { name: 'Orthographic' }).getAttribute('aria-checked'),
-    'true',
-  );
-  await shot(page, 'w7-display-projection-row');
-  await page.keyboard.press('Escape');
+    // Orthographic is the default; the Display popover offers the three modes in one row.
+    await page.locator('button[aria-label^="Display:"]').click();
+    const row = page.getByRole('radiogroup', { name: 'Projection' });
+    assert.equal(
+      await row.getByRole('radio', { name: 'Orthographic' }).getAttribute('aria-checked'),
+      'true',
+    );
+    await shot(page, 'w7-display-projection-row');
+    await page.keyboard.press('Escape');
 
-  /** Top view, fitted: the bore is in the middle of the canvas. Orbits from there; reads the dot. */
-  const orbitOverBore = async (name) => {
+    /** Top view, fitted: the bore is in the middle of the canvas. Orbits from there; reads the dot. */
+    const orbitOverBore = async (name) => {
+      await page.keyboard.press('Control+4');
+      await page.waitForTimeout(500);
+      await runCommand(page, 'Zoom to fit');
+      await page.waitForTimeout(800);
+      const c = await canvasCentre(page);
+      const x = Math.round(c.x);
+      const y = Math.round(c.y);
+      await page.mouse.move(x, y);
+      await page.waitForTimeout(150);
+      await page.mouse.down({ button: 'right' });
+      for (let i = 1; i <= 10; i += 1) await page.mouse.move(x + i * 6, y + i * 2);
+      await page.waitForTimeout(150);
+      const dot = await page.evaluate(() => {
+        const el = document.querySelector('[data-pivot]');
+        return el
+          ? {
+              point: el.getAttribute('data-pivot').split(',').map(Number),
+              rule: el.getAttribute('data-pivot-rule'),
+            }
+          : null;
+      });
+      await shot(page, `w7-pivot-${name}`);
+      await page.mouse.up({ button: 'right' });
+      await page.waitForTimeout(200);
+      assert.ok(dot, `${name}: the pivot dot shows while orbiting`);
+      assert.equal(
+        await page.locator('[data-pivot]').count(),
+        0,
+        `${name}: the dot goes with the orbit`,
+      );
+      const [px, py, pz] = dot.point;
+      assert.ok(Math.hypot(px, py) < 2.5, `${name}: inside the bore (x, y = ${px}, ${py})`);
+      return { rule: dot.rule, z: pz };
+    };
+
+    // Orthographic: nothing under the cursor (it looks through the bore) → the rim's depth.
+    const ortho = await orbitOverBore('orthographic');
+    assert.equal(ortho.rule, 'near');
+    assert.ok(Math.abs(ortho.z - 10) < 0.2, `orthographic: at the rim depth (z = ${ortho.z})`);
+
+    // Perspective (chosen in the popover): the bore's wall is seen too, the pivot sits in the bore.
+    await page.locator('button[aria-label^="Display:"]').click();
+    await row.getByRole('radio', { name: 'Perspective' }).click();
+    await page.keyboard.press('Escape');
+    const persp = await orbitOverBore('perspective');
+    assert.ok(persp.z > 0 && persp.z <= 10.05, `perspective: inside the bore (z = ${persp.z})`);
+
+    // Adaptive: the Top view is a standard view → parallel again → the rim depth exactly.
+    await page.locator('button[aria-label^="Display:"]').click();
+    await row.getByRole('radio', { name: 'Adaptive' }).click();
+    await page.keyboard.press('Escape');
+    const adaptive = await orbitOverBore('adaptive');
+    assert.ok(Math.abs(adaptive.z - 10) < 0.2, `adaptive top view is parallel (z = ${adaptive.z})`);
+    assert.deepEqual(errors, []);
+  },
+);
+
+void test(
+  'navigation: over a bore much wider than the 64 px window the pivot finds the nearest rim',
+  LOCAL_ONLY,
+  async (t) => {
+    const server = await startServer();
+    const browser = await launch();
+    t.after(async () => {
+      await browser.close();
+      await server.close();
+    });
+    const page = await (
+      await browser.newContext({ viewport: { width: 1280, height: 800 } })
+    ).newPage();
+    const errors = watchErrors(page);
+    await page.goto(server.url);
+    await page.locator('[data-home-screen]').waitFor({ timeout: 120_000 });
+    // Block 9: Escape on the Home screen leaves a blank project, never the sample bracket.
+    await page.keyboard.press('Escape');
+    await page.locator('[data-home-screen]').waitFor({ state: 'detached' });
+    const rpc = await agentAccess(page);
+    await waitFor(
+      () => rpc('document.get'),
+      (d) => d.kernel.status === 'ready',
+      'kernel ready',
+    );
+    const start = await rpc('document.get');
+    assert.equal(start.projectName, 'Untitled', 'a blank project');
+    assert.equal((await rpc('features.list')).length, 0, 'no sample features');
+    assert.ok(await page.getByText('No items yet').isVisible());
+    // A 40 × 40 × 10 plate with a Ø30 through bore: fitted, the bore is ~450 px wide on screen.
+    const plate = await rpc('feature.create', {
+      kind: 'sketch',
+      params: {
+        plane: { kind: 'plane', plane: 'XY' },
+        profiles: [{ kind: 'rectangle', x: -20, y: -20, width: 40, height: 40 }],
+      },
+    });
+    const body = await rpc('feature.create', {
+      kind: 'extrude',
+      params: { profile: { kind: 'sketch', featureId: plate.featureId }, distance: 10 },
+    });
+    const bodyId = `body:${body.featureId}`;
+    const bore = await rpc('feature.create', {
+      kind: 'sketch',
+      params: {
+        plane: { kind: 'face', face: { bodyId, select: '>Z' } },
+        profiles: [{ kind: 'circle', cx: 0, cy: 0, radius: 15 }],
+      },
+    });
+    await rpc('feature.create', {
+      kind: 'extrude',
+      params: {
+        profile: { kind: 'sketch', featureId: bore.featureId },
+        distance: -10,
+        operation: 'cut',
+        targetBodyId: bodyId,
+      },
+    });
+    await waitFor(
+      () => rpc('bodies.list'),
+      (list) =>
+        list.length === 1 &&
+        list[0].valid &&
+        Math.abs(list[0].volume - (16000 - 2250 * Math.PI)) < 1,
+      'the plate with its wide bore',
+    );
     await page.keyboard.press('Control+4');
     await page.waitForTimeout(500);
     await runCommand(page, 'Zoom to fit');
     await page.waitForTimeout(800);
+    // How wide the bore is on screen: project two rim points.
     const c = await canvasCentre(page);
     const x = Math.round(c.x);
     const y = Math.round(c.y);
+    const span = await page.evaluate(() => {
+      const canvas = document.querySelector('canvas');
+      return canvas ? canvas.getBoundingClientRect().height : 0;
+    });
+    assert.ok(span > 300, 'a tall enough viewport');
     await page.mouse.move(x, y);
     await page.waitForTimeout(150);
     await page.mouse.down({ button: 'right' });
@@ -646,135 +835,13 @@ void test('navigation: the orbit pivot sits inside a bore; projection row in the
           }
         : null;
     });
-    await shot(page, `w7-pivot-${name}`);
+    await shot(page, 'b9-pivot-wide-bore');
     await page.mouse.up({ button: 'right' });
-    await page.waitForTimeout(200);
-    assert.ok(dot, `${name}: the pivot dot shows while orbiting`);
-    assert.equal(
-      await page.locator('[data-pivot]').count(),
-      0,
-      `${name}: the dot goes with the orbit`,
-    );
+    assert.ok(dot, 'the pivot dot shows while orbiting');
+    assert.equal(dot.rule, 'nearest', 'the window is empty: the coarse map finds the rim');
     const [px, py, pz] = dot.point;
-    assert.ok(Math.hypot(px, py) < 2.5, `${name}: inside the bore (x, y = ${px}, ${py})`);
-    return { rule: dot.rule, z: pz };
-  };
-
-  // Orthographic: nothing under the cursor (it looks through the bore) → the rim's depth.
-  const ortho = await orbitOverBore('orthographic');
-  assert.equal(ortho.rule, 'near');
-  assert.ok(Math.abs(ortho.z - 10) < 0.2, `orthographic: at the rim depth (z = ${ortho.z})`);
-
-  // Perspective (chosen in the popover): the bore's wall is seen too, the pivot sits in the bore.
-  await page.locator('button[aria-label^="Display:"]').click();
-  await row.getByRole('radio', { name: 'Perspective' }).click();
-  await page.keyboard.press('Escape');
-  const persp = await orbitOverBore('perspective');
-  assert.ok(persp.z > 0 && persp.z <= 10.05, `perspective: inside the bore (z = ${persp.z})`);
-
-  // Adaptive: the Top view is a standard view → parallel again → the rim depth exactly.
-  await page.locator('button[aria-label^="Display:"]').click();
-  await row.getByRole('radio', { name: 'Adaptive' }).click();
-  await page.keyboard.press('Escape');
-  const adaptive = await orbitOverBore('adaptive');
-  assert.ok(Math.abs(adaptive.z - 10) < 0.2, `adaptive top view is parallel (z = ${adaptive.z})`);
-  assert.deepEqual(errors, []);
-});
-
-void test('navigation: over a bore much wider than the 64 px window the pivot finds the nearest rim', async (t) => {
-  const server = await startServer();
-  const browser = await launch();
-  t.after(async () => {
-    await browser.close();
-    await server.close();
-  });
-  const page = await (
-    await browser.newContext({ viewport: { width: 1280, height: 800 } })
-  ).newPage();
-  const errors = watchErrors(page);
-  await page.goto(server.url);
-  await page.locator('[data-home-screen]').waitFor({ timeout: 120_000 });
-  // Block 9: Escape on the Home screen leaves a blank project, never the sample bracket.
-  await page.keyboard.press('Escape');
-  await page.locator('[data-home-screen]').waitFor({ state: 'detached' });
-  const rpc = await agentAccess(page);
-  await waitFor(
-    () => rpc('document.get'),
-    (d) => d.kernel.status === 'ready',
-    'kernel ready',
-  );
-  const start = await rpc('document.get');
-  assert.equal(start.projectName, 'Untitled', 'a blank project');
-  assert.equal((await rpc('features.list')).length, 0, 'no sample features');
-  assert.ok(await page.getByText('No items yet').isVisible());
-  // A 40 × 40 × 10 plate with a Ø30 through bore: fitted, the bore is ~450 px wide on screen.
-  const plate = await rpc('feature.create', {
-    kind: 'sketch',
-    params: {
-      plane: { kind: 'plane', plane: 'XY' },
-      profiles: [{ kind: 'rectangle', x: -20, y: -20, width: 40, height: 40 }],
-    },
-  });
-  const body = await rpc('feature.create', {
-    kind: 'extrude',
-    params: { profile: { kind: 'sketch', featureId: plate.featureId }, distance: 10 },
-  });
-  const bodyId = `body:${body.featureId}`;
-  const bore = await rpc('feature.create', {
-    kind: 'sketch',
-    params: {
-      plane: { kind: 'face', face: { bodyId, select: '>Z' } },
-      profiles: [{ kind: 'circle', cx: 0, cy: 0, radius: 15 }],
-    },
-  });
-  await rpc('feature.create', {
-    kind: 'extrude',
-    params: {
-      profile: { kind: 'sketch', featureId: bore.featureId },
-      distance: -10,
-      operation: 'cut',
-      targetBodyId: bodyId,
-    },
-  });
-  await waitFor(
-    () => rpc('bodies.list'),
-    (list) =>
-      list.length === 1 && list[0].valid && Math.abs(list[0].volume - (16000 - 2250 * Math.PI)) < 1,
-    'the plate with its wide bore',
-  );
-  await page.keyboard.press('Control+4');
-  await page.waitForTimeout(500);
-  await runCommand(page, 'Zoom to fit');
-  await page.waitForTimeout(800);
-  // How wide the bore is on screen: project two rim points.
-  const c = await canvasCentre(page);
-  const x = Math.round(c.x);
-  const y = Math.round(c.y);
-  const span = await page.evaluate(() => {
-    const canvas = document.querySelector('canvas');
-    return canvas ? canvas.getBoundingClientRect().height : 0;
-  });
-  assert.ok(span > 300, 'a tall enough viewport');
-  await page.mouse.move(x, y);
-  await page.waitForTimeout(150);
-  await page.mouse.down({ button: 'right' });
-  for (let i = 1; i <= 10; i += 1) await page.mouse.move(x + i * 6, y + i * 2);
-  await page.waitForTimeout(150);
-  const dot = await page.evaluate(() => {
-    const el = document.querySelector('[data-pivot]');
-    return el
-      ? {
-          point: el.getAttribute('data-pivot').split(',').map(Number),
-          rule: el.getAttribute('data-pivot-rule'),
-        }
-      : null;
-  });
-  await shot(page, 'b9-pivot-wide-bore');
-  await page.mouse.up({ button: 'right' });
-  assert.ok(dot, 'the pivot dot shows while orbiting');
-  assert.equal(dot.rule, 'nearest', 'the window is empty: the coarse map finds the rim');
-  const [px, py, pz] = dot.point;
-  assert.ok(Math.hypot(px, py) < 15, `inside the bore (x, y = ${px}, ${py})`);
-  assert.ok(Math.abs(pz - 10) < 0.3, `at the rim depth, not the model centre (z = ${pz})`);
-  assert.deepEqual(errors, []);
-});
+    assert.ok(Math.hypot(px, py) < 15, `inside the bore (x, y = ${px}, ${py})`);
+    assert.ok(Math.abs(pz - 10) < 0.3, `at the rim depth, not the model centre (z = ${pz})`);
+    assert.deepEqual(errors, []);
+  },
+);
