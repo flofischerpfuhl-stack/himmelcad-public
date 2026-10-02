@@ -666,3 +666,101 @@ void test('navigation: the orbit pivot sits inside a bore; projection row in the
   assert.ok(Math.abs(adaptive.z - 10) < 0.2, `adaptive top view is parallel (z = ${adaptive.z})`);
   assert.deepEqual(errors, []);
 });
+
+void test('navigation: over a bore much wider than the 64 px window the pivot finds the nearest rim', async (t) => {
+  const server = await startServer();
+  const browser = await launch();
+  t.after(async () => {
+    await browser.close();
+    await server.close();
+  });
+  const page = await (
+    await browser.newContext({ viewport: { width: 1280, height: 800 } })
+  ).newPage();
+  const errors = watchErrors(page);
+  await page.goto(server.url);
+  await page.locator('[data-home-screen]').waitFor({ timeout: 120_000 });
+  // Block 9: Escape on the Home screen leaves a blank project, never the sample bracket.
+  await page.keyboard.press('Escape');
+  await page.locator('[data-home-screen]').waitFor({ state: 'detached' });
+  const rpc = await agentAccess(page);
+  await waitFor(
+    () => rpc('document.get'),
+    (d) => d.kernel.status === 'ready',
+    'kernel ready',
+  );
+  const start = await rpc('document.get');
+  assert.equal(start.projectName, 'Untitled', 'a blank project');
+  assert.equal((await rpc('features.list')).length, 0, 'no sample features');
+  assert.ok(await page.getByText('No items yet').isVisible());
+  // A 40 × 40 × 10 plate with a Ø30 through bore: fitted, the bore is ~450 px wide on screen.
+  const plate = await rpc('feature.create', {
+    kind: 'sketch',
+    params: {
+      plane: { kind: 'plane', plane: 'XY' },
+      profiles: [{ kind: 'rectangle', x: -20, y: -20, width: 40, height: 40 }],
+    },
+  });
+  const body = await rpc('feature.create', {
+    kind: 'extrude',
+    params: { profile: { kind: 'sketch', featureId: plate.featureId }, distance: 10 },
+  });
+  const bodyId = `body:${body.featureId}`;
+  const bore = await rpc('feature.create', {
+    kind: 'sketch',
+    params: {
+      plane: { kind: 'face', face: { bodyId, select: '>Z' } },
+      profiles: [{ kind: 'circle', cx: 0, cy: 0, radius: 15 }],
+    },
+  });
+  await rpc('feature.create', {
+    kind: 'extrude',
+    params: {
+      profile: { kind: 'sketch', featureId: bore.featureId },
+      distance: -10,
+      operation: 'cut',
+      targetBodyId: bodyId,
+    },
+  });
+  await waitFor(
+    () => rpc('bodies.list'),
+    (list) =>
+      list.length === 1 && list[0].valid && Math.abs(list[0].volume - (16000 - 2250 * Math.PI)) < 1,
+    'the plate with its wide bore',
+  );
+  await page.keyboard.press('Control+4');
+  await page.waitForTimeout(500);
+  await runCommand(page, 'Zoom to fit');
+  await page.waitForTimeout(800);
+  // How wide the bore is on screen: project two rim points.
+  const c = await canvasCentre(page);
+  const x = Math.round(c.x);
+  const y = Math.round(c.y);
+  const span = await page.evaluate(() => {
+    const canvas = document.querySelector('canvas');
+    return canvas ? canvas.getBoundingClientRect().height : 0;
+  });
+  assert.ok(span > 300, 'a tall enough viewport');
+  await page.mouse.move(x, y);
+  await page.waitForTimeout(150);
+  await page.mouse.down({ button: 'right' });
+  for (let i = 1; i <= 10; i += 1) await page.mouse.move(x + i * 6, y + i * 2);
+  await page.waitForTimeout(150);
+  const dot = await page.evaluate(() => {
+    const el = document.querySelector('[data-pivot]');
+    return el
+      ? {
+          point: el.getAttribute('data-pivot').split(',').map(Number),
+          rule: el.getAttribute('data-pivot-rule'),
+        }
+      : null;
+  });
+  await shot(page, 'b9-pivot-wide-bore');
+  await page.mouse.up({ button: 'right' });
+  assert.ok(dot, 'the pivot dot shows while orbiting');
+  assert.equal(dot.rule, 'nearest', 'the window is empty: the coarse map finds the rim');
+  const [px, py, pz] = dot.point;
+  assert.ok(Math.hypot(px, py) < 15, `inside the bore (x, y = ${px}, ${py})`);
+  assert.ok(Math.abs(pz - 10) < 0.3, `at the rim depth, not the model centre (z = ${pz})`);
+  assert.deepEqual(errors, []);
+});

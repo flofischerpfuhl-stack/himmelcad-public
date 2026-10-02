@@ -150,6 +150,19 @@ function loadWithoutDirty(load: () => void): void {
   }
 }
 
+/**
+ * The products' start document: a blank "Untitled" project, never the
+ * sample (owner, Block 9: Escape or closing the Home screen at start must
+ * not leave the demo bracket behind; desktop and web alike). Called by the
+ * product compositions before the kernel is attached, so nothing is
+ * evaluated for a document that was never shown. Not an edit (not dirty)
+ * and, unlike New, it keeps the crash-recovery copy the Home screen offers.
+ */
+export function startWithBlankDocument(): void {
+  useAssemblerStore.getState().loadDocument([], { projectName: 'Untitled' });
+  if (subscribed) baselineFeatures = useAssemblerStore.getState().features;
+}
+
 function restoreExtras(project: ProjectFileV1 | null): void {
   restoringExtras = true;
   try {

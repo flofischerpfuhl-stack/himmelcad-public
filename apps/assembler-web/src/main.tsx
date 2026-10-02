@@ -29,7 +29,10 @@ import { WorkerSketchSolver } from '../../assembler/renderer/src/foundation/sket
 import { installAutomationBridge } from '../../assembler/renderer/src/interface/agent-api/automationStore.js';
 import { App } from '../../assembler/renderer/src/interface/shell-ui/App.js';
 import { installPreferenceEffects } from '../../assembler/renderer/src/interface/shell-ui/preferenceEffects.js';
-import { useProjectStore } from '../../assembler/renderer/src/interface/shell-ui/project/projectStore.js';
+import {
+  startWithBlankDocument,
+  useProjectStore,
+} from '../../assembler/renderer/src/interface/shell-ui/project/projectStore.js';
 // Sketch text font (Inter, SIL OFL 1.1 — LICENSES/THIRD_PARTY.md), bundled as an asset.
 import interWoffUrl from '@fontsource/inter/files/inter-latin-400-normal.woff?url';
 
@@ -37,6 +40,9 @@ import { WebChrome } from './pwa/WebChrome.js';
 import { registerServiceWorker, requestPersistentStorage } from './pwa/serviceWorker.js';
 
 installPreferenceEffects();
+
+// A blank project until the user opens or creates one (Home, a launched file, recovery).
+startWithBlankDocument();
 
 // Phone-sized windows: the floating Items and History panels would cover the whole model, so
 // they start closed there (the docks reopen them). The shell has no phone layout yet.

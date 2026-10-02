@@ -81,9 +81,7 @@ void test('production app: corrupted project files opened from the editor show a
   const page = await app.firstWindow();
   const errors = watchErrors(page);
   await page.waitForLoadState('domcontentloaded');
-  await page.waitForFunction(() => !document.body.innerText.includes('No items yet'), {
-    timeout: 60_000,
-  });
+  // Home → Escape (a blank project) → the demo bracket opened (`home.ts`).
   await dismissHome(page);
 
   // Open a valid project first, so there is a known document to keep.
