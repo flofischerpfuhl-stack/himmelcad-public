@@ -19,6 +19,13 @@ import {
   type ToolSession,
 } from '../../renderer/src/foundation/commands/store.js';
 import { PICK_PLANS } from '../../renderer/src/foundation/commands/pickSession.js';
+import {
+  buildItemTree,
+  EMPTY_ITEMS_META,
+  useItemsStore,
+  withoutAbsentStepFolders,
+} from '../../renderer/src/foundation/commands/items.js';
+import { installStepFolderSync } from '../../renderer/src/foundation/commands/stepFolders.js';
 import { createNodeKernelAdapter } from '../kernel/nodeKernel.js';
 
 const store = useAssemblerStore;
@@ -144,4 +151,66 @@ void test('Replace Face: tool before selection asks for the faces, then the repl
   const availability = command.availability(store.getState());
   assert.equal(availability.enabled, false);
   assert.match(availability.reason ?? '', /Only planar faces/);
+});
+
+// ---- Pattern copies in an Items folder (MOD-20) -----------------------------------------------
+
+void test('Pattern: a new step files its instances into an Items folder; undo hides it', async () => {
+  installStepFolderSync(store);
+  useItemsStore.getState().setItemsMeta(EMPTY_ITEMS_META);
+  await load([cube('a', [0, 0, 0], 4)]);
+  const pattern = {
+    ...base('p'),
+    name: 'Pattern 1',
+    kind: 'pattern',
+    bodyIds: ['body:a'],
+    pattern: { kind: 'linear', direction: { kind: 'world', axis: 'X' }, count: 3, spacing: 10 },
+  } as Feature;
+  store.getState().addFeature(pattern);
+  await store.getState().whenSettled();
+  const items = useItemsStore.getState();
+  assert.equal(items.folders.length, 1);
+  const folder = items.folders[0]!;
+  assert.equal(folder.name, 'Pattern 1');
+  assert.equal(folder.featureId, 'p');
+  const filed = Object.entries(items.parent)
+    .filter(([, f]) => f === folder.id)
+    .map(([key]) => key)
+    .sort();
+  assert.equal(filed.length, 3, `original and two copies: ${filed.join(', ')}`);
+  assert.ok(filed.includes('body:body:a'));
+  const rows = store
+    .getState()
+    .evaluation.bodies.map((b) => ({ key: `body:${b.id}`, kind: 'body' as const }));
+  const live = () => new Set(store.getState().features.map((f) => f.id));
+  assert.equal(buildItemTree(rows, useItemsStore.getState(), live())[0]?.type, 'folder');
+  store.getState().undo();
+  await store.getState().whenSettled();
+  const afterUndo = buildItemTree(
+    store.getState().evaluation.bodies.map((b) => ({ key: `body:${b.id}`, kind: 'body' as const })),
+    useItemsStore.getState(),
+    live(),
+  );
+  assert.deepEqual(
+    afterUndo.map((n) => n.type),
+    ['leaf'],
+    'the folder is hidden; the original is back at the top level',
+  );
+  assert.deepEqual(
+    withoutAbsentStepFolders(useItemsStore.getState(), live()).folders,
+    [],
+    'Save leaves the folder out',
+  );
+  store.getState().redo();
+  await store.getState().whenSettled();
+  assert.equal(useItemsStore.getState().folders.length, 1, 'no second folder on redo');
+  assert.equal(
+    buildItemTree(rows, useItemsStore.getState(), live())[0]?.type,
+    'folder',
+    'shown again',
+  );
+  // Opening a document with a pattern makes no folder.
+  useItemsStore.getState().setItemsMeta(EMPTY_ITEMS_META);
+  await load([cube('a', [0, 0, 0], 4), pattern]);
+  assert.equal(useItemsStore.getState().folders.length, 0);
 });

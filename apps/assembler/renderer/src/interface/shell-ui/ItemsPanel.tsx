@@ -68,7 +68,7 @@ import { anchoredMenuStyle } from '../../platform/widgets/anchoredMenu.js';
 import panelStyles from '../../platform/widgets/Panel.module.css';
 import styles from './ItemsPanel.module.css';
 
-type TypeFilter = 'all' | 'bodies' | 'sketches' | 'meshes' | 'construction';
+type TypeFilter = 'all' | 'bodies' | 'sketches' | 'meshes' | 'construction' | 'images';
 
 /** Whether a row passes the Items type filter ("Bodies" lists solids and reference meshes). */
 function passesFilter(filter: TypeFilter, kind: RowInfo['kind']): boolean {
@@ -83,6 +83,8 @@ function passesFilter(filter: TypeFilter, kind: RowInfo['kind']): boolean {
       return kind === 'mesh';
     case 'construction':
       return kind === 'plane' || kind === 'axis';
+    case 'images':
+      return kind === 'image';
   }
 }
 
@@ -93,6 +95,7 @@ const FILTER_LABEL: Record<TypeFilter, string> = {
   meshes: 'Meshes',
   // Short enough for the segmented filter row (planes and axes).
   construction: 'Datums',
+  images: 'Images',
 };
 
 const DRAG_MIME = 'application/x-hcasm-items';
@@ -190,7 +193,9 @@ export function ItemsPanel({ state, onContextMenu }: ItemsPanelProps): JSX.Eleme
   const leaves: LeafRow[] = [...rows.values()]
     .filter((r) => passesFilter(filter, r.kind))
     .map((r) => ({ key: r.key, kind: r.kind }));
-  let tree = buildItemTree(leaves, meta);
+  // Folders of steps that are undone or deleted (Pattern copies) are not shown.
+  const liveFeatureIds = useMemo(() => new Set(state.features.map((f) => f.id)), [state.features]);
+  let tree = buildItemTree(leaves, meta, liveFeatureIds);
   if (filter !== 'all') tree = pruneEmptyFolders(tree);
   const order = visibleLeafOrder(tree);
   const bodyCount = [...rows.values()].filter((r) => r.kind === 'body').length;
@@ -528,10 +533,11 @@ export function ItemsPanel({ state, onContextMenu }: ItemsPanelProps): JSX.Eleme
         </div>
       </div>
       <div className={styles.filters} role="radiogroup" aria-label="Show item types">
-        {(['all', 'bodies', 'sketches', 'meshes', 'construction'] as const)
-          // "Meshes" / "Planes & axes" only once the project has one (or it is the active filter).
+        {(['all', 'bodies', 'sketches', 'meshes', 'construction', 'images'] as const)
+          // "Meshes", "Datums" and "Images" only once the project has one (or it is the active filter).
           .filter((f) => f !== 'meshes' || meshCount > 0 || filter === 'meshes')
           .filter((f) => f !== 'construction' || datumCount > 0 || filter === 'construction')
+          .filter((f) => f !== 'images' || imageCount > 0 || filter === 'images')
           .map((f) => (
             <button
               key={f}
