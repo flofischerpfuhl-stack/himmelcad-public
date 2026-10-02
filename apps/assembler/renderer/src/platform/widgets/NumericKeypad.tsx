@@ -11,6 +11,10 @@
  *
  * Which fields: `data-hc-keypad="number|expression"` (units in
  * `data-hc-keypad-units`) or plain `inputmode="decimal"` inputs.
+ *
+ * With the keypad off (mouse), a second click on a value field that already
+ * has the focus opens the same keypad as a calculator (Shapr3D: "click the
+ * label, then click again for the calculator"); it closes with the field.
  */
 import { Check, Delete, Keyboard, X } from 'lucide-react';
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
@@ -91,10 +95,7 @@ export function NumericKeypad(): JSX.Element | null {
   }, []);
 
   useEffect(() => {
-    if (!enabled) {
-      close();
-      return;
-    }
+    if (!enabled) close();
     const consider = (element: Element | null) => {
       if (!(element instanceof HTMLInputElement) || element === dismissedRef.current) return;
       const spec = specOf(element);
@@ -102,7 +103,18 @@ export function NumericKeypad(): JSX.Element | null {
       claimInput(element);
       setTarget({ input: element, spec });
     };
-    const onFocusIn = (event: FocusEvent) => consider(event.target as Element | null);
+    // Keypad on: every value field that takes focus. Off (mouse): a second click on a
+    // field that already has the focus opens it as a calculator (Shapr3D, CON-07).
+    const onFocusIn = (event: FocusEvent) => {
+      if (enabled) consider(event.target as Element | null);
+    };
+    const onPointerDown = (event: PointerEvent) => {
+      if (enabled || event.pointerType === 'touch' || targetRef.current) return;
+      const element = event.target;
+      if (element instanceof HTMLInputElement && element === document.activeElement) {
+        consider(element);
+      }
+    };
     const onFocusOut = (event: FocusEvent) => {
       if (event.target === dismissedRef.current) dismissedRef.current = null;
       if (targetRef.current && event.target === targetRef.current.input) close();
@@ -114,11 +126,13 @@ export function NumericKeypad(): JSX.Element | null {
     document.addEventListener('focusin', onFocusIn);
     document.addEventListener('focusout', onFocusOut);
     document.addEventListener('input', onInput, true);
-    consider(document.activeElement);
+    document.addEventListener('pointerdown', onPointerDown, true);
+    if (enabled) consider(document.activeElement);
     return () => {
       document.removeEventListener('focusin', onFocusIn);
       document.removeEventListener('focusout', onFocusOut);
       document.removeEventListener('input', onInput, true);
+      document.removeEventListener('pointerdown', onPointerDown, true);
     };
   }, [enabled, close]);
 
@@ -132,7 +146,7 @@ export function NumericKeypad(): JSX.Element | null {
     return () => clearInterval(timer);
   }, [target, close]);
 
-  if (!enabled || !target) return null;
+  if (!target) return null;
   const { input, spec } = target;
 
   const apply = (key: KeypadKey) => {
