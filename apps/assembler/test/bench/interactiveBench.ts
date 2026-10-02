@@ -13,7 +13,10 @@
  * (e) the orbit/zoom pivot's CPU part (`orbitPivot.ts` rules on a 64 × 64
  *     depth window around a bore, plus the ray math), once per gesture — the
  *     GPU read of that window is measured in the app (DEV probe `pivotAt`,
- *     assembler/SELECTION-NAVIGATION.md).
+ *     assembler/SELECTION-NAVIGATION.md); Block 9 adds rule "nearest" on a
+ *     240 × 135 coarse map of the whole view;
+ * (f) a parameter slider driving the demo bracket's fillet: each drag step
+ *     until its live preview shows, then the release's commit.
  *
  * Stages per step: wall time until the stores settle; `ui` = the synchronous
  * main-thread work a React render of the adaptive toolbar and the command
@@ -451,6 +454,49 @@ async function scenarioFillet(steps: number): Promise<StepRow[]> {
   return rows;
 }
 
+/**
+ * (f) Block 9: a parameter slider on the demo bracket — `r` drives the
+ * fillet; each drag step plans the value (like an edit) and evaluates it on
+ * the kernel's preview channel (incremental, preview tessellation) until the
+ * live preview shows it; release commits one undo step.
+ */
+async function scenarioParameterSlider(steps: number): Promise<StepRow[]> {
+  const s = 'f parameter slider';
+  store.getState().cancel();
+  store.getState().loadDocument(createDemoDocument());
+  await settle();
+  const created = await store
+    .getState()
+    .upsertParameter({ name: 'r', unit: 'mm', value: 4, min: 1, max: 12, step: 0.5 });
+  if (!created.ok) throw new Error(created.message);
+  const fillet = store.getState().features.find((f) => f.kind === 'fillet')!;
+  store.getState().editFeatureParams(fillet.id, { radiusExpression: 'r' } as never);
+  await settle();
+  const sliderIdle = async () => {
+    for (let i = 0; i < 2000 && (store.getState().parameterSlider?.pending ?? false); i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+  };
+  const rows: StepRow[] = [];
+  for (let i = 1; i <= steps; i += 1) {
+    const value = 4 + i * 0.5;
+    rows.push(
+      await step(s, 'drag step (live preview)', async () => {
+        store.getState().previewParameterValue(created.id, value);
+        await sliderIdle();
+        if (!store.getState().documentPreview) throw new Error('no slider preview');
+      }),
+    );
+  }
+  rows.push(
+    await step(s, 'release (commit, one undo step)', async () => {
+      const outcome = await store.getState().endParameterPreview(true);
+      if (!outcome?.ok) throw new Error(outcome && !outcome.ok ? outcome.message : 'no commit');
+    }),
+  );
+  return rows;
+}
+
 /** (d) a 60-entity sketch (5 rectangles, 10 circles), dragging one rectangle corner. */
 async function scenarioSketchDrag(steps: number): Promise<StepRow[]> {
   const s = 'd 60-entity drag';
@@ -684,6 +730,7 @@ async function main(): Promise<void> {
       ...medianRows([await scenarioFillet(10)]),
       ...medianRows([await scenarioSketchDrag(30)]),
       ...medianRows([scenarioPivot(200)]),
+      ...medianRows([await scenarioParameterSlider(10)]),
     ];
   }
 
