@@ -124,6 +124,15 @@ const PROFILE_KIND_SCHEMAS: Record<string, FeatureKindSpec> = {
 };
 
 /** Pattern, Split, Move/Rotate, Rotate, Align (after the construction kinds). */
+/** An Align reference (`features.ts` `AlignReference`). */
+const ALIGN_REFERENCE: JsonSchema = {
+  oneOf: [
+    schemaObject({ kind: { const: 'face' }, face: schemaRef('FaceInput') }, ['kind', 'face']),
+    schemaObject({ kind: { const: 'axis' }, axis: schemaRef('AxisRef') }, ['kind', 'axis']),
+    schemaObject({ kind: { const: 'plane' }, plane: schemaRef('SketchPlane') }, ['kind', 'plane']),
+  ],
+};
+
 const BODY_KIND_SCHEMAS: Record<string, FeatureKindSpec> = {
   pattern: {
     label: 'Pattern',
@@ -188,17 +197,20 @@ const BODY_KIND_SCHEMAS: Record<string, FeatureKindSpec> = {
   align: {
     label: 'Align',
     summary:
-      'Moves a body so its planar `face` lies on the plane of `target` (a planar face of another body): face to face by default, same direction with flip; `offset` leaves a gap; `center` slides the face centres together.',
+      'Moves a body so a reference of it lands on a target. Two planar faces (`face` on the moved body, `target` on another): face to face by default, same direction with flip; `offset` leaves a gap; `center` slides the face centres together. Any other pair as `from`/`to` (which win over face/target): a face (planar = plane, cylindrical/conical = axis, spherical = centre), an `axis` (a straight or circular edge, sketch line, construction or world axis) or a `plane`; an axis onto an axis (coaxial; flip turns it end for end; offset slides along the target axis), a centre onto a centre or an axis, an axis through a centre.',
     params: schemaObject(
       {
         bodyId: schemaString,
         face: schemaRef('FaceInput'),
         target: schemaRef('FaceInput'),
+        from: ALIGN_REFERENCE,
+        to: ALIGN_REFERENCE,
         flip: { type: 'boolean', default: false },
         center: { type: 'boolean', default: true },
         offset: { type: 'number', default: 0 },
       },
-      ['face', 'target'],
+      [],
+      'Either `face` or `from` (on the moved body), and either `target` or `to`.',
     ),
   },
   scale: {

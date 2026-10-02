@@ -62,9 +62,18 @@ import type {
 import {
   MAX_HELIX_TURNS,
   MAX_PATTERN_COUNT,
+  type AlignReference,
   type PatternDefinition,
   type RevolveHelix,
 } from './features.js';
+import {
+  alignEdgeRef,
+  alignFaceRef,
+  alignPairProblem,
+  alignRefBodyId,
+  alignShapeOf,
+  bothPlanarFaces,
+} from './alignRefs.js';
 import { findSketchContact, pointInsideBody } from './modeling.js';
 import type { SelectionItem } from '../../foundation/commands/store.js';
 
@@ -134,12 +143,14 @@ export interface RotateAxisDraft {
 export interface AlignDraft {
   kind: 'align';
   bodyId: string;
-  face: FaceRef;
-  target: FaceRef;
+  /** The moved reference: a face or an edge of `bodyId` (`alignRefs.ts`). */
+  from: AlignReference;
+  /** The target: a face or an edge of another body, or a construction plane/axis. */
+  to: AlignReference;
   flip: boolean;
   center: boolean;
   offset: number;
-  /** Input step (Next): 0 the moving face, 1 the target face. Absent: by body. */
+  /** Input step (Next): 0 the moving reference, 1 the target. Absent: by body. */
   step?: 0 | 1;
 }
 
@@ -689,30 +700,26 @@ export function createModelingDraft(
       };
     }
     case 'align': {
-      const faces = selectedFaceRefs(ctx);
-      if (faces.length !== 2 || ctx.selection.length !== 2) {
+      // Shapr3D Align: the first pick moves onto the second (faces, edges, a datum as target).
+      const refs = ctx.selection.map((item) => alignRefOfItem(ctx.evaluation, item));
+      if (refs.length !== 2 || refs.some((r) => r === null)) {
         return {
           ok: false,
-          reason: 'Select a face on the body to move, then a face on the target body.',
+          reason:
+            'Select a face or edge on the body to move, then a face, edge or datum to align it to.',
         };
       }
-      const [face, target] = faces as [FaceRef, FaceRef];
-      if (face.bodyId === target.bodyId)
-        return { ok: false, reason: 'The two faces must be on different bodies.' };
-      if (!isPlanar(face) || !isPlanar(target))
-        return { ok: false, reason: 'Align needs two planar faces.' };
+      const [from, to] = refs as [AlignReference, AlignReference];
+      const bodyId = alignRefBodyId(from);
+      if (!bodyId) return { ok: false, reason: 'Select the moving face or edge first.' };
+      if (alignRefBodyId(to) === bodyId) {
+        return { ok: false, reason: 'The two references must be on different bodies.' };
+      }
+      const problem = alignPairProblem(from, to);
+      if (problem) return { ok: false, reason: problem };
       return {
         ok: true,
-        draft: {
-          kind: 'align',
-          bodyId: face.bodyId,
-          face,
-          target,
-          flip: false,
-          center: true,
-          offset: 0,
-          step: 1,
-        },
+        draft: { kind: 'align', bodyId, from, to, flip: false, center: true, offset: 0, step: 1 },
       };
     }
   }
@@ -878,18 +885,23 @@ export function acceptModelingPick(
         return { ...draft, bodyIds: toggle(draft.bodyIds, pickedBody, (a, b) => a === b) };
       }
       return draft;
-    case 'align':
-      if (faceRef && isPlanar(faceRef)) {
-        // With steps: the moving face (any body but the target's), then the target face.
-        if (draft.step === 0) {
-          if (faceRef.bodyId === draft.target.bodyId) return draft;
-          return { ...draft, face: faceRef, bodyId: faceRef.bodyId };
-        }
-        if (draft.step === 1 && faceRef.bodyId === draft.bodyId) return draft;
-        if (faceRef.bodyId === draft.bodyId) return { ...draft, face: faceRef };
-        return { ...draft, target: faceRef };
-      }
-      return draft;
+    case 'align': {
+      const ref = faceRef ? alignFaceRef(faceRef) : edgeRef ? alignEdgeRef(edgeRef) : null;
+      const refBody = ref ? alignRefBodyId(ref) : null;
+      if (!ref || !refBody) return draft;
+      // With steps: the moving reference (any body but the target's), then the target.
+      const asFrom = (): AlignDraft =>
+        refBody === alignRefBodyId(draft.to) || alignPairProblem(ref, draft.to)
+          ? draft
+          : { ...draft, from: ref, bodyId: refBody };
+      const asTo = (): AlignDraft =>
+        refBody === draft.bodyId || alignPairProblem(draft.from, ref)
+          ? draft
+          : { ...draft, to: ref };
+      if (draft.step === 0) return asFrom();
+      if (draft.step === 1) return asTo();
+      return refBody === draft.bodyId ? asFrom() : asTo();
+    }
   }
 }
 
@@ -917,6 +929,16 @@ function acceptDatumPick(
     }
     case 'split':
       return plane ? { ...draft, plane } : draft;
+    case 'align': {
+      // A construction plane or axis is a target.
+      if (draft.step === 0) return draft;
+      const to: AlignReference | null = plane
+        ? { kind: 'plane', plane }
+        : axis
+          ? { kind: 'axis', axis }
+          : null;
+      return to && !alignPairProblem(draft.from, to) ? { ...draft, to } : draft;
+    }
     case 'revolve':
       return axis ? { ...draft, axis } : draft;
     case 'rotateAxis':
@@ -1043,17 +1065,19 @@ export function modelingDraftToFeature(
         angle: draft.angle,
         copy: draft.copy,
       };
-    case 'align':
+    case 'align': {
+      // Two planar faces keep the original fields (any build reads them); the rest from/to.
+      const faces = bothPlanarFaces(draft.from, draft.to);
       return {
         ...common,
         kind: 'align',
         bodyId: draft.bodyId,
-        face: draft.face,
-        target: draft.target,
+        ...(faces ?? { from: draft.from, to: draft.to }),
         flip: draft.flip,
         center: draft.center,
         offset: draft.offset,
       };
+    }
   }
 }
 
@@ -1136,7 +1160,9 @@ export function modelingDraftMeta(draft: ModelingDraft): DraftMeta {
         label: 'Align',
         shortcut: '',
         prompt:
-          'The first body moves onto the target face. Type a gap, or click faces to change them.',
+          alignShapeOf(draft.to) === 'plane'
+            ? 'The first body moves onto the target plane. Type a gap, or click faces or edges to change them.'
+            : 'The first body moves onto the target axis or centre. Type an offset along the axis, or click to change the references.',
       };
   }
 }
@@ -1413,9 +1439,12 @@ export function modelingDraftBadges(draft: ModelingDraft): DraftBadge[] {
           },
         },
       ];
-    case 'align':
-      return [
-        {
+    case 'align': {
+      const from = alignShapeOf(draft.from);
+      const to = alignShapeOf(draft.to);
+      const out: DraftBadge[] = [];
+      if (from === 'plane' && to === 'plane') {
+        out.push({
           ariaLabel: 'Face direction',
           value: draft.flip ? 'flush' : 'opposed',
           options: [
@@ -1423,8 +1452,21 @@ export function modelingDraftBadges(draft: ModelingDraft): DraftBadge[] {
             { value: 'flush', label: 'Same direction' },
           ],
           apply: (d, value) => (d.kind === 'align' ? { ...d, flip: value === 'flush' } : d),
-        },
-        {
+        });
+      } else if (from === 'line' && to === 'line') {
+        // Coaxial: the smaller turn, or end for end (Shapr3D's flip 180°).
+        out.push({
+          ariaLabel: 'Axis direction',
+          value: draft.flip ? 'flipped' : 'same',
+          options: [
+            { value: 'same', label: 'Along the axis' },
+            { value: 'flipped', label: 'Flipped 180°' },
+          ],
+          apply: (d, value) => (d.kind === 'align' ? { ...d, flip: value === 'flipped' } : d),
+        });
+      }
+      if (!(from === 'point' && to === 'point')) {
+        out.push({
           ariaLabel: 'Centre',
           value: draft.center ? 'center' : 'keep',
           options: [
@@ -1432,8 +1474,10 @@ export function modelingDraftBadges(draft: ModelingDraft): DraftBadge[] {
             { value: 'keep', label: 'Keep position' },
           ],
           apply: (d, value) => (d.kind === 'align' ? { ...d, center: value === 'center' } : d),
-        },
-      ];
+        });
+      }
+      return out;
+    }
   }
 }
 
@@ -1624,6 +1668,35 @@ function planeOf(
   const normal = face?.normal ?? plane.face.signature.normal;
   if (!normal) return null;
   return { point: face?.centroid ?? plane.face.signature.centroid, normal };
+}
+
+/** The axis an Align reference stands for (edges, datums, cylindrical faces), when the UI knows it. */
+function alignLine(
+  evaluation: EvaluationResult,
+  ref: AlignReference,
+): { point: Vec3; dir: Vec3 } | null {
+  // A face's axis is only known to the kernel (no handle or guide for it here).
+  return ref.kind === 'axis' ? axisLine(evaluation, ref.axis, []) : null;
+}
+
+/** A selected face or edge (or a datum, as a target) as an Align reference. */
+function alignRefOfItem(evaluation: EvaluationResult, item: SelectionItem): AlignReference | null {
+  if (item.kind === 'face') {
+    const ref = faceRefOf(evaluation, item.bodyId, item.faceKey);
+    return ref ? alignFaceRef(ref) : null;
+  }
+  if (item.kind === 'edge') {
+    const ref = edgeRefOf(evaluation, item.bodyId, item.edgeKey);
+    return ref ? alignEdgeRef(ref) : null;
+  }
+  if (item.kind === 'datum') {
+    const ref = datumRef(evaluation, item.featureId);
+    if (!ref) return null;
+    return 'frame' in ref
+      ? { kind: 'plane', plane: ref as PlaneRef }
+      : { kind: 'axis', axis: ref as AxisRef };
+  }
+  return null;
 }
 
 function bodyCentre(evaluation: EvaluationResult, ids: readonly string[]): Vec3 | null {
@@ -1859,17 +1932,35 @@ export function modelingDraftHandles(
       ];
     }
     case 'align': {
-      const target = planeOf(evaluation, { kind: 'face', face: draft.target });
+      // A gap along the target plane's normal, or an offset along the target axis.
+      const to = alignShapeOf(draft.to);
+      const plane =
+        to === 'plane'
+          ? draft.to.kind === 'face'
+            ? planeOf(evaluation, { kind: 'face', face: draft.to.face })
+            : draft.to.kind === 'plane'
+              ? planeOf(evaluation, draft.to.plane)
+              : null
+          : null;
+      const line =
+        to === 'line' && alignShapeOf(draft.from) !== 'point'
+          ? alignLine(evaluation, draft.to)
+          : null;
+      const target = plane
+        ? { point: plane.point, dir: plane.normal, label: 'Align gap' }
+        : line
+          ? { point: line.point, dir: line.dir, label: 'Offset along the axis' }
+          : null;
       if (!target) return [];
       return [
         {
           kind: 'linear',
           id: 'offset',
-          label: 'Align gap',
+          label: target.label,
           unit: 'mm',
           value: draft.offset,
           base: target.point,
-          dir: target.normal,
+          dir: target.dir,
           length: STEM_MM + Math.max(0, draft.offset),
           apply: (d, value) => (d.kind === 'align' ? { ...d, offset: value } : d),
         },
@@ -1990,6 +2081,12 @@ export function modelingDraftGuides(
   } else if (draft.kind === 'mirror' && draft.axis) {
     const centre = bodyCentre(evaluation, draft.bodyIds);
     axisSegment(draft.axis, centre, 40);
+  } else if (draft.kind === 'align' && alignShapeOf(draft.to) === 'line') {
+    // The target axis the moved reference lines up with.
+    const line = alignLine(evaluation, draft.to);
+    if (line) {
+      out.lines.push([add(line.point, scale(line.dir, -40)), add(line.point, scale(line.dir, 40))]);
+    }
   } else if (draft.kind === 'mirror' || (draft.kind === 'split' && !draft.profile)) {
     const plane = planeOf(evaluation, draft.plane);
     const bounds = unionBounds(

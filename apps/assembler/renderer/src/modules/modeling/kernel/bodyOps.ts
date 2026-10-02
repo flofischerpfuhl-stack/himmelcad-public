@@ -30,6 +30,7 @@ import {
   MAX_SCALE_FACTOR,
   MIN_SCALE_FACTOR,
   type AlignFeature,
+  type AlignReference,
   type MirrorFeature,
   type PatternFeature,
   type RotateAxisFeature,
@@ -39,6 +40,7 @@ import {
   type TranslateFeature,
 } from '../features.js';
 import { assignFaceKeys } from '../../../foundation/geometry-kernel/naming.js';
+import { alignRefBodyId } from '../alignRefs.js';
 import {
   booleanWithHistory,
   type HistoryResult,
@@ -676,22 +678,120 @@ export function applyTranslate(
 
 // ---- Align ----------------------------------------------------------------------------
 
+/** What an Align reference stands for: a plane, a line (an axis) or a point (a centre). */
+type AlignPrimitive =
+  | { type: 'plane'; point: Vec3; normal: Vec3 }
+  | { type: 'line'; point: Vec3; dir: Vec3 }
+  | { type: 'point'; point: Vec3 };
+
+function alignPrimitive(
+  kit: FeatureKit,
+  ctx: ReplayContextLike,
+  ref: AlignReference,
+): AlignPrimitive {
+  if (ref.kind === 'axis') {
+    const line = resolveAxis(kit, ctx, ref.axis);
+    return { type: 'line', point: line.point, dir: line.dir };
+  }
+  if (ref.kind === 'plane') {
+    const plane = resolvePlane(kit, ctx, ref.plane);
+    return { type: 'plane', point: plane.point, normal: plane.normal };
+  }
+  const body = bodyOrFail(kit, ctx, ref.face.bodyId);
+  const { face, geom, topology, index } = kit.resolveFace(body, ref.face, ctx.warn);
+  if (geom.surface === 'plane' && geom.normal) {
+    return { type: 'plane', point: geom.centroid, normal: geom.normal };
+  }
+  if (geom.id.type === 'cylinder') {
+    // The axis, through the face's middle (so "centred" seats a pin halfway into a hole).
+    const dir = normalize(geom.id.axis);
+    const point = add(geom.id.point, scale(dir, dot(sub(geom.centroid, geom.id.point), dir)));
+    return { type: 'line', point, dir };
+  }
+  if (geom.surface === 'sphere') {
+    const adaptor = new kit.oc.BRepAdaptor_Surface(face.wrapped as never, true);
+    try {
+      const sphere = adaptor.Sphere();
+      const loc = sphere.Location();
+      const point: Vec3 = [loc.X(), loc.Y(), loc.Z()];
+      loc.delete();
+      sphere.delete();
+      return { type: 'point', point };
+    } finally {
+      adaptor.delete();
+    }
+  }
+  if (geom.surface === 'cone') {
+    // `gp_Cone` is not bound: the axis of one of the cone's circular edges is the cone axis.
+    const circle = (topology.faceEdges[index] ?? []).find(
+      (e) => topology.edgeGeoms[e]!.curve === 'circle',
+    );
+    if (circle === undefined)
+      kit.fail('Align: this conical face has no round edge to find its axis');
+    const edge = topology.edges[circle]!;
+    const adaptor = new kit.oc.BRepAdaptor_Curve(edge.wrapped);
+    const c = adaptor.Circle();
+    const axis = c.Axis();
+    const loc = axis.Location();
+    const direction = axis.Direction();
+    const dir = normalize([direction.X(), direction.Y(), direction.Z()]);
+    const origin: Vec3 = [loc.X(), loc.Y(), loc.Z()];
+    for (const o of [direction, loc, axis, c, adaptor]) o.delete();
+    return {
+      type: 'line',
+      point: add(origin, scale(dir, dot(sub(geom.centroid, origin), dir))),
+      dir,
+    };
+  }
+  kit.fail(
+    `Align takes planar, cylindrical, conical or spherical faces (this one is ${geom.surface})`,
+  );
+}
+
+/** A unit vector perpendicular to `v`. */
+function perpendicularTo(v: Vec3): Vec3 {
+  const other: Vec3 = Math.abs(v[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0];
+  return normalize(cross(v, other));
+}
+
+/** The turn about `pivot` that takes unit `from` to unit `to` (none when they agree). */
+function turnOnto(from: Vec3, to: Vec3, pivot: Vec3): RigidOp[] {
+  const c = dot(from, to);
+  if (c >= 1 - 1e-12) return [];
+  let axis = cross(from, to);
+  if (length(axis) < 1e-9) axis = perpendicularTo(from); // 180°
+  const angle = Math.acos(Math.max(-1, Math.min(1, c)));
+  return [{ kind: 'rotate', point: pivot, axis: normalize(axis), angle }];
+}
+
+/** `v` without its part along unit `dir`. */
+function across(v: Vec3, dir: Vec3): Vec3 {
+  return sub(v, scale(dir, dot(v, dir)));
+}
+
 export function applyAlign(feature: AlignFeature, ctx: ReplayContextLike, kit: FeatureKit): void {
   const body = bodyOrFail(kit, ctx, feature.bodyId);
-  if (feature.face.bodyId !== body.id) kit.fail('The moved face must belong to the moved body');
-  if (feature.target.bodyId === body.id) kit.fail('Pick the target face on another body');
-  const targetBody = bodyOrFail(kit, ctx, feature.target.bodyId);
-  const source = kit.resolveFace(body, feature.face, ctx.warn).geom;
-  const target = kit.resolveFace(targetBody, feature.target, ctx.warn).geom;
-  if (
-    !source.normal ||
-    source.surface !== 'plane' ||
-    !target.normal ||
-    target.surface !== 'plane'
-  ) {
-    kit.fail('Align needs two planar faces');
+  const fromRef: AlignReference | null =
+    feature.from ?? (feature.face ? { kind: 'face', face: feature.face } : null);
+  const toRef: AlignReference | null =
+    feature.to ?? (feature.target ? { kind: 'face', face: feature.target } : null);
+  if (!fromRef || !toRef) kit.fail('Align needs a reference on the moved body and a target');
+  if (alignRefBodyId(fromRef) !== body.id) {
+    kit.fail('The moved reference must be a face or an edge of the moved body');
+  }
+  if (alignRefBodyId(toRef) === body.id) {
+    kit.fail(`Pick the target ${toRef.kind === 'face' ? 'face' : 'edge'} on another body`);
   }
   if (!Number.isFinite(feature.offset)) kit.fail('Align offset must be a number');
+  const from = alignPrimitive(kit, ctx, fromRef);
+  const to = alignPrimitive(kit, ctx, toRef);
+  if (from.type !== 'plane' || to.type !== 'plane') {
+    const ops = alignOps(kit, feature, from, to);
+    if (ops.length > 0) moveBody(kit, ctx, feature.id, body, ops);
+    return;
+  }
+  const source = { normal: from.normal, centroid: from.point };
+  const target = { normal: to.normal, centroid: to.point };
   const want = feature.flip ? target.normal : scale(target.normal, -1);
   const ops: RigidOp[] = [];
   const c = dot(source.normal, want);
@@ -713,4 +813,47 @@ export function applyAlign(feature: AlignFeature, ctx: ReplayContextLike, kit: F
   const shift = sub(destination, source.centroid);
   if (length(shift) > 0) ops.push({ kind: 'translate', vector: shift });
   if (ops.length > 0) moveBody(kit, ctx, feature.id, body, ops);
+}
+
+/**
+ * The motion of an Align whose references are not two planes: axis on axis
+ * (coaxial: the smaller turn, `flip` end for end; `offset` along the target
+ * axis; `center` also brings the reference centres together), a centre on a
+ * centre, a centre onto an axis, an axis through a centre.
+ */
+function alignOps(
+  kit: FeatureKit,
+  feature: AlignFeature,
+  from: AlignPrimitive,
+  to: AlignPrimitive,
+): RigidOp[] {
+  const ops: RigidOp[] = [];
+  const push = (vector: Vec3) => {
+    if (length(vector) > 0) ops.push({ kind: 'translate', vector });
+  };
+  if (from.type === 'line' && to.type === 'line') {
+    const same = dot(from.dir, to.dir) >= 0;
+    const want = same !== feature.flip ? to.dir : scale(to.dir, -1);
+    ops.push(...turnOnto(from.dir, want, from.point));
+    const d = sub(to.point, from.point);
+    push(add(feature.center ? d : across(d, to.dir), scale(to.dir, feature.offset)));
+    return ops;
+  }
+  if (from.type === 'point' && to.type === 'point') {
+    push(sub(to.point, from.point));
+    return ops;
+  }
+  if (from.type === 'point' && to.type === 'line') {
+    const d = sub(to.point, from.point);
+    push(add(feature.center ? d : across(d, to.dir), scale(to.dir, feature.offset)));
+    return ops;
+  }
+  if (from.type === 'line' && to.type === 'point') {
+    const d = sub(to.point, from.point);
+    push(feature.center ? d : across(d, from.dir));
+    return ops;
+  }
+  kit.fail(
+    'Align a plane to a plane, an axis to an axis, or a centre to a centre or an axis (and back)',
+  );
 }

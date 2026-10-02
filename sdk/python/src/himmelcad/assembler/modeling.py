@@ -1140,6 +1140,29 @@ class Document(PrintToolsMixin, InteropMixin):
             params["rotation"] = {"point": [float(v) for v in point], "axis": [float(v) for v in turn_axis], "angle": float(turn)}
         return self._feature(self.client.create_feature("moveFace", params, name=name))
 
+    def _align_ref(self, ref: Face | Edge | SketchLine | Datum | str) -> dict[str, Any]:
+        if isinstance(ref, Face):
+            return {"kind": "face", "face": ref.ref}
+        if isinstance(ref, Datum) and ref.kind == "plane":
+            return {"kind": "plane", "plane": ref.ref}
+        return {"kind": "axis", "axis": self._axis_ref(ref)}
+
+    def align(self, moving: Face | Edge, target: Face | Edge | SketchLine | Datum | str, *, flip: bool = False, center: bool = True, offset: float = 0.0, name: str | None = None) -> Feature:
+        """Align: moves the body of ``moving`` (a face or an edge of it) onto ``target`` (a face or
+        edge of another body, a construction plane/axis, or ``"X"``/``"Y"``/``"Z"``). Planes land
+        face to face (``flip``: same direction) with ``offset`` as a gap; axes (straight/round
+        edges, cylindrical/conical faces) become coaxial (``flip`` turns end for end, ``offset``
+        slides along the axis); a spherical face's centre goes onto a centre or an axis.
+        ``center`` also brings the reference centres together."""
+        params: dict[str, Any] = {"bodyId": moving.body_id, "flip": flip, "center": center, "offset": offset}
+        if isinstance(moving, Face) and isinstance(target, Face) and moving.surface == "plane" and target.surface == "plane":
+            params["face"] = moving.ref
+            params["target"] = target.ref
+        else:
+            params["from"] = self._align_ref(moving)
+            params["to"] = self._align_ref(target)
+        return self._feature(self.client.create_feature("align", params, name=name))
+
     def replace_face(self, faces: Face | Iterable[Face], target: Face, *, name: str | None = None) -> Feature:
         """Replace Face: extends or trims planar ``faces`` (one body) until they lie on the surface
         of ``target`` (a planar or cylindrical face of any body). A planar target turns and offsets

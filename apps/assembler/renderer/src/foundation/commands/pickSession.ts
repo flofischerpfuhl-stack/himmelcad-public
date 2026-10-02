@@ -143,6 +143,20 @@ const axisRef: PickStep['accept'] = (item, _picks, ctx) => {
   return 'Click a straight edge or a construction axis.';
 };
 
+/** Align references (MOD-22): planar, cylindrical, conical, spherical faces; straight or round edges. */
+const alignable = (ctx: PickContext, item: SelectionItem): string | null => {
+  const f = face(ctx, item);
+  if (f) {
+    return ['plane', 'cylinder', 'cone', 'sphere'].includes(f.surface)
+      ? null
+      : 'Click a planar, cylindrical, conical or spherical face.';
+  }
+  const e = edge(ctx, item);
+  if (e)
+    return e.curve === 'line' || e.curve === 'circle' ? null : 'Click a straight or round edge.';
+  return 'Click a face or an edge.';
+};
+
 const profiles: PickStep = {
   role: 'Profile',
   prompt: 'Click a sketch profile or a planar face.',
@@ -353,23 +367,25 @@ const PLANS: Record<string, PickPlan> = {
     label: 'Align',
     steps: [
       {
-        role: 'Moving face',
-        prompt: 'Click a planar face on the body to move.',
+        role: 'Moving reference',
+        prompt: 'Click a face or an edge on the body to move.',
         min: 1,
         max: 1,
-        accept: (item, _p, ctx) =>
-          face(ctx, item)?.surface === 'plane' ? null : 'Click a planar face.',
+        accept: (item, _p, ctx) => alignable(ctx, item),
       },
       {
-        role: 'Target face',
-        prompt: 'Click a planar face on the target body.',
+        role: 'Target',
+        prompt: 'Click a face or edge on the target body, or a construction plane or axis.',
         min: 1,
         max: 1,
         accept: (item, picks, ctx) => {
-          if (face(ctx, item)?.surface !== 'plane') return 'Click a planar face.';
+          if (item.kind !== 'datum') {
+            const problem = alignable(ctx, item);
+            if (problem) return problem;
+          }
           const moving = picks[0]?.[0];
           return moving && bodyOfItem(moving) === bodyOfItem(item)
-            ? 'Pick the target face on another body.'
+            ? 'Pick the target on another body.'
             : null;
         },
       },

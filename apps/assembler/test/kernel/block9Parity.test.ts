@@ -6,18 +6,23 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { faceSignatureOf } from '../../renderer/src/foundation/geometry-kernel/naming.js';
+import {
+  edgeSignatureOf,
+  faceSignatureOf,
+} from '../../renderer/src/foundation/geometry-kernel/naming.js';
 import type {
   Body,
   EvaluationResult,
 } from '../../renderer/src/foundation/geometry-kernel/types.js';
 import type {
+  EdgeRef,
   ExtrudeFeature,
   FaceRef,
   Feature,
   Plane,
 } from '../../renderer/src/foundation/document/document.js';
 import type { SketchFeature } from '../../renderer/src/foundation/sketch-solver/sketchFeature.js';
+import type { AlignFeature } from '../../renderer/src/modules/modeling/features.js';
 import type {
   MoveFaceFeature,
   ReplaceFaceFeature,
@@ -197,4 +202,169 @@ void test('Replace Face refuses curved faces, perpendicular targets and itself',
   // Along the post's axis the normal never meets its wall.
   const along = await evaluate([...bodies, replace('r', [top], wall)]);
   assert.match(along.errors['r'] ?? '', /runs along the cylinder axis/);
+});
+
+// ---- Align with axes, edges and centres (MOD-22) -------------------------------------------
+
+function cylinderBody(id: string, cx: number, cy: number, r: number, h: number, z0 = 0): Feature[] {
+  return [{ ...sketch(`${id}-s`, 'XY', z0, circle(cx, cy, r)) }, extrude(id, `${id}-s`, h)];
+}
+
+function align(id: string, extra: Partial<AlignFeature>): AlignFeature {
+  return {
+    ...base(id),
+    kind: 'align',
+    bodyId: 'body:a',
+    flip: false,
+    center: true,
+    offset: 0,
+    ...extra,
+  } as AlignFeature;
+}
+
+const edgeRef = (body: Body, predicate: (e: Body['edges'][number]) => boolean): EdgeRef => {
+  const edge = body.edges.find(predicate);
+  assert.ok(edge, `edge found on ${body.id}`);
+  return { bodyId: body.id, key: edge.key, signature: edgeSignatureOf(edge) };
+};
+
+void test('Align: a pin lands coaxial in a post (cylindrical faces), centred or kept, offset along the axis', async () => {
+  // Pin: r 2, h 10 lying along Z at (30, 10); target: post r 5, h 20 at the origin.
+  const bodies = [...cylinderBody('a', 30, 10, 2, 10, 5), ...cylinderBody('b', 0, 0, 5, 20)];
+  const first = await evaluate(bodies);
+  const pin = faceRef(only(first, 'body:a'), (f) => f.surface === 'cylinder');
+  const post = faceRef(only(first, 'body:b'), (f) => f.surface === 'cylinder');
+  const centred = await evaluate([
+    ...bodies,
+    align('al', { from: { kind: 'face', face: pin }, to: { kind: 'face', face: post } }),
+  ]);
+  noErrors(centred);
+  const a = only(centred, 'body:a');
+  near((a.min[0] + a.max[0]) / 2, 0, 1e-6, 'x on the post axis');
+  near((a.min[1] + a.max[1]) / 2, 0, 1e-6, 'y on the post axis');
+  near((a.min[2] + a.max[2]) / 2, 10, 1e-6, 'mid-heights together');
+  const kept = await evaluate([
+    ...bodies,
+    align('al', {
+      from: { kind: 'face', face: pin },
+      to: { kind: 'face', face: post },
+      center: false,
+      offset: 3,
+    }),
+  ]);
+  noErrors(kept);
+  near(only(kept, 'body:a').min[2], 8, 1e-6, 'height kept, then 3 mm along the axis');
+  near(only(kept, 'body:a').min[0], -2, 1e-6, 'on the axis');
+});
+
+void test('Align: a round edge onto a round edge (coaxial, centres together), a straight edge onto a world axis', async () => {
+  const bodies = [...cylinderBody('a', 30, 10, 2, 10, 5), ...box('b', -5, -5, 10, 10, 4)];
+  const first = await evaluate(bodies);
+  const bottomCircle = edgeRef(
+    only(first, 'body:a'),
+    (e) => e.curve === 'circle' && Math.abs(e.midpoint[2] - 5) < 1e-6,
+  );
+  // b's top front edge (y = -5, z = 4) along X.
+  const top = edgeRef(
+    only(first, 'body:b'),
+    (e) =>
+      e.curve === 'line' &&
+      Math.abs(e.midpoint[1] + 5) < 1e-6 &&
+      Math.abs(e.midpoint[2] - 4) < 1e-6,
+  );
+  // The pin's circle centre onto the edge's midpoint line (a centre onto an axis is not this; an axis onto an axis is).
+  const coaxial = await evaluate([
+    ...bodies,
+    align('al', {
+      from: { kind: 'axis', axis: { kind: 'edge', edge: bottomCircle } },
+      to: { kind: 'axis', axis: { kind: 'world', axis: 'Z' } },
+    }),
+  ]);
+  noErrors(coaxial);
+  const a = only(coaxial, 'body:a');
+  near((a.min[0] + a.max[0]) / 2, 0, 1e-6, 'on Z (x)');
+  near((a.min[1] + a.max[1]) / 2, 0, 1e-6, 'on Z (y)');
+  near(a.min[2], 0, 1e-6, 'circle centre at the world origin');
+  // An axis lying along X (the pin turned) onto the box's top front edge.
+  const turned = await evaluate([
+    ...bodies,
+    align('al', {
+      from: { kind: 'axis', axis: { kind: 'edge', edge: bottomCircle } },
+      to: { kind: 'axis', axis: { kind: 'edge', edge: top } },
+      center: false,
+    }),
+  ]);
+  noErrors(turned);
+  const t = only(turned, 'body:a');
+  near(t.max[0] - t.min[0], 10, 1e-6, 'the pin now lies along X');
+  near((t.min[1] + t.max[1]) / 2, -5, 1e-6, 'its axis on the edge (y)');
+  near((t.min[2] + t.max[2]) / 2, 4, 1e-6, 'its axis on the edge (z)');
+  // A plane onto an axis is refused with the rule.
+  const planeOnAxis = await evaluate([
+    ...bodies,
+    align('al', {
+      from: { kind: 'face', face: faceRef(only(first, 'body:a'), planeAt(2, 15)) },
+      to: { kind: 'axis', axis: { kind: 'edge', edge: top } },
+    }),
+  ]);
+  assert.match(planeOnAxis.errors['al'] ?? '', /plane to a plane/);
+  // Two planar faces still work through face/target (stored as before).
+  const planes = await evaluate([
+    ...bodies,
+    align('al', {
+      face: faceRef(only(first, 'body:a'), planeAt(2, 5, -1)),
+      target: faceRef(only(first, 'body:b'), planeAt(2, 4)),
+    }),
+  ]);
+  noErrors(planes);
+  near(only(planes, 'body:a').min[2], 4, 1e-6, 'standing on the box');
+});
+
+void test('Align: a ball centre onto an axis and onto a centre, a cone axis onto an axis', async () => {
+  const prim = (id: string, shape: string, center: [number, number, number], extra: object) =>
+    ({
+      ...base(id),
+      kind: 'primitive',
+      shape,
+      plane: { kind: 'plane', plane: 'XY', offset: 0 },
+      center,
+      operation: 'new',
+      ...extra,
+    }) as unknown as Feature;
+  const bodies = [
+    prim('a', 'sphere', [20, 10, 0], { radius: 3 }),
+    prim('c', 'cone', [-20, 5, 0], { radius: 4, radius2: 1, height: 6 }),
+    ...cylinderBody('b', 0, 0, 5, 20),
+  ];
+  const first = await evaluate(bodies);
+  noErrors(first);
+  const ball = faceRef(only(first, 'body:a'), (f) => f.surface === 'sphere');
+  const cone = faceRef(only(first, 'body:c'), (f) => f.surface === 'cone');
+  const post = faceRef(only(first, 'body:b'), (f) => f.surface === 'cylinder');
+  const onAxis = await evaluate([
+    ...bodies,
+    align('al', {
+      from: { kind: 'face', face: ball },
+      to: { kind: 'face', face: post },
+      center: false,
+    }),
+  ]);
+  noErrors(onAxis);
+  const a = only(onAxis, 'body:a');
+  near((a.min[0] + a.max[0]) / 2, 0, 1e-5, 'ball centre on the post axis (x)');
+  near((a.min[1] + a.max[1]) / 2, 0, 1e-5, 'ball centre on the post axis (y)');
+  near((a.min[2] + a.max[2]) / 2, 3, 1e-5, 'height kept');
+  const coneAxis = await evaluate([
+    ...bodies,
+    align('al', {
+      bodyId: 'body:c',
+      from: { kind: 'face', face: cone },
+      to: { kind: 'axis', axis: { kind: 'world', axis: 'Z' } },
+      center: false,
+    }),
+  ]);
+  noErrors(coneAxis);
+  const c = only(coneAxis, 'body:c');
+  near((c.min[0] + c.max[0]) / 2, 0, 1e-5, 'cone axis on Z (x)');
+  near((c.min[1] + c.max[1]) / 2, 0, 1e-5, 'cone axis on Z (y)');
 });

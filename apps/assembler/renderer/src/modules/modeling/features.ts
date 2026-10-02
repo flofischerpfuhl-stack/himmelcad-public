@@ -204,16 +204,37 @@ export interface RotateAxisFeature extends FeatureBase {
 }
 
 /**
- * Moves body `bodyId` so its planar `face` lies on the plane of `target`
- * (a planar face of another body): opposed (touching) by default,
- * facing the same way with `flip`; `offset` leaves a gap along the target
- * normal; `center` also slides the face centres together.
+ * An Align reference (Shapr3D Align: planar, spherical and conical faces,
+ * planes and axes, line and circle edges): a face (planar: its plane;
+ * cylindrical/conical: its axis; spherical: its centre), an axis (a straight
+ * edge, a circular edge's axis through its centre, a sketch line, a
+ * construction or world axis) or a plane (a construction or world plane).
+ */
+export type AlignReference =
+  | { kind: 'face'; face: FaceRef }
+  | { kind: 'axis'; axis: AxisRef }
+  | { kind: 'plane'; plane: PlaneRef };
+
+/**
+ * Moves body `bodyId` so a reference of it lands on a target reference:
+ * a plane on a plane (opposed, touching, by default; facing the same way
+ * with `flip`; `offset` leaves a gap along the target normal), an axis on an
+ * axis (coaxial; `flip` turns it end for end; `offset` slides along the
+ * target axis), a centre on a centre or onto an axis, an axis through a
+ * centre. `center` also brings the reference centres together.
+ *
+ * Two planar faces are stored as `face`/`target` (as before Block 9); any
+ * other pair as `from`/`to` (Block 9, which then win).
  */
 export interface AlignFeature extends FeatureBase {
   kind: 'align';
   bodyId: string;
-  face: FaceRef;
-  target: FaceRef;
+  face?: FaceRef;
+  target?: FaceRef;
+  /** The moved reference (a face or an edge of `bodyId`); wins over `face`. */
+  from?: AlignReference;
+  /** The target reference (another body's face or edge, a datum); wins over `target`. */
+  to?: AlignReference;
   flip: boolean;
   center: boolean;
   offset: Millimeters;

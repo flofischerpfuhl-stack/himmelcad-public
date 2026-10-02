@@ -16,6 +16,7 @@ import {
 import type { AssemblerState, FeaturePatch } from '../../../foundation/commands/store.js';
 import { ExpressionField } from '../../../platform/widgets/ExpressionField.js';
 import { PrintFeatureParams } from './PrintFeatureParams.js';
+import { alignReferencesOf, alignShapeOf } from '../alignRefs.js';
 import styles from '../../../platform/widgets/HistoryCard.module.css';
 
 const OPERATION_OPTIONS = [
@@ -559,41 +560,62 @@ export function ModelingFeatureParams({
           </span>
         </div>
       );
-    case 'align':
+    case 'align': {
+      // Planes: a gap and face to face / same direction; axes: an offset along the axis and a flip.
+      const refs = alignReferencesOf(feature);
+      const from = refs.from ? alignShapeOf(refs.from) : null;
+      const to = refs.to ? alignShapeOf(refs.to) : null;
+      const planes = from === 'plane' && to === 'plane';
+      const axes = from === 'line' && to === 'line';
+      const points = from === 'point' && to === 'point';
       return (
         <div className={styles.params}>
-          <ExpressionField
-            label="Gap"
-            value={feature.offset}
-            unit="mm"
-            onCommit={(v) => edit({ offset: v })}
-          />
-          <div>
-            <span className={styles.paramLabel}>Faces</span>
-            <Select
-              aria-label={`${feature.name} direction`}
-              value={feature.flip ? 'flush' : 'opposed'}
-              options={[
-                { value: 'opposed', label: 'Face to face' },
-                { value: 'flush', label: 'Same direction' },
-              ]}
-              onChange={(event) => edit({ flip: event.currentTarget.value === 'flush' })}
+          {points ? null : (
+            <ExpressionField
+              label={planes ? 'Gap' : 'Offset'}
+              value={feature.offset}
+              unit="mm"
+              onCommit={(v) => edit({ offset: v })}
             />
-          </div>
-          <div>
-            <span className={styles.paramLabel}>Position</span>
-            <Select
-              aria-label={`${feature.name} centre`}
-              value={feature.center ? 'center' : 'keep'}
-              options={[
-                { value: 'center', label: 'Centred' },
-                { value: 'keep', label: 'Keep position' },
-              ]}
-              onChange={(event) => edit({ center: event.currentTarget.value === 'center' })}
-            />
-          </div>
+          )}
+          {planes || axes ? (
+            <div>
+              <span className={styles.paramLabel}>{planes ? 'Faces' : 'Axis'}</span>
+              <Select
+                aria-label={`${feature.name} direction`}
+                value={feature.flip ? 'flush' : 'opposed'}
+                options={
+                  planes
+                    ? [
+                        { value: 'opposed', label: 'Face to face' },
+                        { value: 'flush', label: 'Same direction' },
+                      ]
+                    : [
+                        { value: 'opposed', label: 'Along the axis' },
+                        { value: 'flush', label: 'Flipped 180°' },
+                      ]
+                }
+                onChange={(event) => edit({ flip: event.currentTarget.value === 'flush' })}
+              />
+            </div>
+          ) : null}
+          {points ? null : (
+            <div>
+              <span className={styles.paramLabel}>Position</span>
+              <Select
+                aria-label={`${feature.name} centre`}
+                value={feature.center ? 'center' : 'keep'}
+                options={[
+                  { value: 'center', label: 'Centred' },
+                  { value: 'keep', label: 'Keep position' },
+                ]}
+                onChange={(event) => edit({ center: event.currentTarget.value === 'center' })}
+              />
+            </div>
+          )}
         </div>
       );
+    }
     case 'hole':
     case 'emboss':
     case 'draft':

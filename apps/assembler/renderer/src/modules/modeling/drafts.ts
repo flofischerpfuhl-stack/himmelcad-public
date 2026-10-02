@@ -77,7 +77,7 @@ export const MODELING_DRAFT_TOOL = defineDraftTool<ModelingDraft>({
   steps: (draft) => {
     if (draft.kind !== 'rotateAxis' && draft.kind !== 'align') return null;
     return {
-      labels: draft.kind === 'rotateAxis' ? ['Bodies', 'Axis'] : ['Moving face', 'Target face'],
+      labels: draft.kind === 'rotateAxis' ? ['Bodies', 'Axis'] : ['Moving reference', 'Target'],
       current: draft.step ?? 1,
       go: (d, step) =>
         d.kind === 'rotateAxis' || d.kind === 'align' ? { ...d, step: step <= 0 ? 0 : 1 } : d,

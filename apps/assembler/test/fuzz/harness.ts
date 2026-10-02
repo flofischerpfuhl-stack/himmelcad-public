@@ -877,6 +877,33 @@ export class FuzzHarness {
           },
         });
       }
+      case 'alignAxis': {
+        const bodies = await this.bodies();
+        const moving = pick(bodies, r[0])?.id;
+        const target = pick(
+          bodies.filter((b) => b.id !== moving),
+          r[1],
+        )?.id;
+        if (!moving || !target) return null;
+        const axisEdges = async (id: string) =>
+          (await this.call<{ key: string; curve: string }[]>('edges.list', { bodyId: id })).filter(
+            (e) => e.curve === 'line' || e.curve === 'circle',
+          );
+        const from = pick(await axisEdges(moving), r[2]);
+        const to = pick(await axisEdges(target), r[3]);
+        if (!from || !to) return null;
+        return this.api('feature.create', {
+          kind: 'align',
+          params: {
+            bodyId: moving,
+            from: { kind: 'axis', axis: { kind: 'edge', edge: { bodyId: moving, key: from.key } } },
+            to: { kind: 'axis', axis: { kind: 'edge', edge: { bodyId: target, key: to.key } } },
+            flip: (r[4] ?? 0) < 0.3,
+            center: (r[5] ?? 0) < 0.7,
+            offset: between(r[6], -5, 5),
+          },
+        });
+      }
       case 'replaceFace': {
         const body = await bodyId(r[0]);
         const other = await bodyId(r[2]);

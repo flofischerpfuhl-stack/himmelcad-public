@@ -234,14 +234,27 @@ export function validateModelingFeature(r: Rec, path: string, h: FormatHelpers):
       num('angle');
       bool('copy');
       break;
-    case 'align':
+    case 'align': {
       str('bodyId');
-      h.faceRef(r.face, `${path}.face`);
-      h.faceRef(r.target, `${path}.target`);
+      // Two planar faces: `face`/`target`; other references (Block 9): `from`/`to`, which win.
+      const alignRef = (v: unknown, at: string) => {
+        if (!isRecord(v)) h.fail(at, 'expected an object');
+        if (v.kind === 'face') h.faceRef(v.face, `${at}.face`);
+        else if (v.kind === 'axis') axis(v.axis, `${at}.axis`);
+        else if (v.kind === 'plane') plane(v.plane, `${at}.plane`);
+        else h.fail(`${at}.kind`, 'expected "face", "axis" or "plane"');
+      };
+      if (r.from !== undefined) alignRef(r.from, `${path}.from`);
+      else h.faceRef(r.face, `${path}.face`);
+      if (r.to !== undefined) alignRef(r.to, `${path}.to`);
+      else h.faceRef(r.target, `${path}.target`);
+      if (r.from !== undefined && r.face !== undefined) h.faceRef(r.face, `${path}.face`);
+      if (r.to !== undefined && r.target !== undefined) h.faceRef(r.target, `${path}.target`);
       bool('flip');
       bool('center');
       num('offset');
       break;
+    }
     default:
       if (isPrintFeatureKind(r.kind)) return validatePrintFeature(r, path, h);
       h.fail(`${path}.kind`, `unknown feature kind "${String(r.kind)}"`);

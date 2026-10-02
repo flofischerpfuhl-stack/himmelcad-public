@@ -2348,7 +2348,7 @@
     },
     "align": {
       "label": "Align",
-      "summary": "Moves a body so its planar `face` lies on the plane of `target` (a planar face of another body): face to face by default, same direction with flip; `offset` leaves a gap; `center` slides the face centres together.",
+      "summary": "Moves a body so a reference of it lands on a target. Two planar faces (`face` on the moved body, `target` on another): face to face by default, same direction with flip; `offset` leaves a gap; `center` slides the face centres together. Any other pair as `from`/`to` (which win over face/target): a face (planar = plane, cylindrical/conical = axis, spherical = centre), an `axis` (a straight or circular edge, sketch line, construction or world axis) or a `plane`; an axis onto an axis (coaxial; flip turns it end for end; offset slides along the target axis), a centre onto a centre or an axis, an axis through a centre.",
       "params": {
         "type": "object",
         "properties": {
@@ -2361,6 +2361,92 @@
           },
           "target": {
             "$ref": "#/$defs/FaceInput"
+          },
+          "from": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "const": "face"
+                  },
+                  "face": {
+                    "$ref": "#/$defs/FaceInput"
+                  }
+                },
+                "required": ["kind", "face"],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "const": "axis"
+                  },
+                  "axis": {
+                    "$ref": "#/$defs/AxisRef"
+                  }
+                },
+                "required": ["kind", "axis"],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "const": "plane"
+                  },
+                  "plane": {
+                    "$ref": "#/$defs/SketchPlane"
+                  }
+                },
+                "required": ["kind", "plane"],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "to": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "const": "face"
+                  },
+                  "face": {
+                    "$ref": "#/$defs/FaceInput"
+                  }
+                },
+                "required": ["kind", "face"],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "const": "axis"
+                  },
+                  "axis": {
+                    "$ref": "#/$defs/AxisRef"
+                  }
+                },
+                "required": ["kind", "axis"],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "const": "plane"
+                  },
+                  "plane": {
+                    "$ref": "#/$defs/SketchPlane"
+                  }
+                },
+                "required": ["kind", "plane"],
+                "additionalProperties": false
+              }
+            ]
           },
           "flip": {
             "type": "boolean",
@@ -2375,8 +2461,9 @@
             "default": 0
           }
         },
-        "required": ["face", "target"],
-        "additionalProperties": false
+        "required": [],
+        "additionalProperties": false,
+        "description": "Either `face` or `from` (on the moved body), and either `target` or `to`."
       }
     },
     "scale": {

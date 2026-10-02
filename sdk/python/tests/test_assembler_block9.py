@@ -14,7 +14,7 @@ HEADLESS = REPOSITORY_ROOT / "apps/assembler/dist/headless/headless/cli.js"
 
 sys.path.insert(0, str(SDK_ROOT / "src"))
 
-from himmelcad.assembler import AssemblerClient, Document, Face, StdioTransport  # noqa: E402
+from himmelcad.assembler import AssemblerClient, Document, Edge, Face, StdioTransport  # noqa: E402
 
 
 class RecordingTransport:
@@ -58,6 +58,20 @@ class HelperTests(unittest.TestCase):
         self.doc.replace_face([top], other, name="Flush")
         self.assertEqual(self.request()["name"], "Flush")
 
+    def test_align_planes_axes_and_datums(self) -> None:
+        top = Face("body:a", "a:end:0", "top", "plane", (0, 0, 1), (0, 0, 10), 100.0)
+        other = Face("body:b", "b:end:0", "top", "plane", (0, 0, 1), (20, 0, 16), 100.0)
+        self.doc.align(top, other, offset=1)
+        self.assertEqual(self.params(), {"bodyId": "body:a", "flip": False, "center": True, "offset": 1, "face": top.ref, "target": other.ref})
+        rim = Edge("body:a", "a|b", "", "circle", (2, 0, 0), 12.5, None, 2.0)
+        wall = Face("body:b", "b:side:0", "side", "cylinder", None, (5, 0, 10), 600.0)
+        self.doc.align(rim, wall, flip=True)
+        self.assertEqual(self.params()["from"], {"kind": "axis", "axis": {"kind": "edge", "edge": rim.ref}})
+        self.assertEqual(self.params()["to"], {"kind": "face", "face": wall.ref})
+        self.assertTrue(self.params()["flip"])
+        self.doc.align(rim, "Z", center=False)
+        self.assertEqual(self.params()["to"], {"kind": "axis", "axis": {"kind": "world", "axis": "Z"}})
+
 
 @unittest.skipUnless(shutil.which("node") and HEADLESS.is_file(), "needs node and a built assembler-headless (pnpm --filter @himmelcad/assembler build:headless)")
 class HeadlessBlock9Tests(unittest.TestCase):
@@ -68,6 +82,17 @@ class HeadlessBlock9Tests(unittest.TestCase):
             doc.replace_face(low.face(">Z"), high.face(">Z"))
             self.assertAlmostEqual(low.volume, 1600, places=3)
             self.assertAlmostEqual(low.bbox.max[2], 16, places=6)
+            self.assertEqual(doc.errors(), {})
+
+    def test_align_pin_coaxial_with_a_post(self) -> None:
+        with Document(AssemblerClient(StdioTransport())) as doc:
+            pin = doc.cylinder(2, 10, center=(30, 10, 0))
+            post = doc.cylinder(5, 20)
+            rim = pin.edges().circles().filter(lambda e: abs(e.midpoint[2]) < 1e-6).one()
+            top = post.edges().circles().filter(lambda e: abs(e.midpoint[2] - 20) < 1e-6).one()
+            doc.align(rim, top)
+            self.assertAlmostEqual(pin.bbox.min[2], 20, places=6)
+            self.assertAlmostEqual((pin.bbox.min[0] + pin.bbox.max[0]) / 2, 0, places=6)
             self.assertEqual(doc.errors(), {})
 
 

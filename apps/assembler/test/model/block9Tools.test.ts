@@ -214,3 +214,42 @@ void test('Pattern: a new step files its instances into an Items folder; undo hi
   await load([cube('a', [0, 0, 0], 4), pattern]);
   assert.equal(useItemsStore.getState().folders.length, 0);
 });
+
+// ---- Align with edges and axes (MOD-22) -----------------------------------------------------
+
+void test('Align: two round edges of two bodies suggest Align; the axes line up; planar faces stay face/target', async () => {
+  const cylinder = (id: string, center: [number, number, number], radius: number, height: number) =>
+    ({ ...cube(id, center, 1, height), shape: 'cylinder', radius }) as Feature;
+  await load([cylinder('a', [30, 10, 0], 2, 10), cylinder('b', [0, 0, 0], 5, 20)]);
+  const circleAt = (bodyId: string, end: 'min' | 'max') => {
+    const z = body(bodyId)[end][2];
+    const edge = body(bodyId).edges.find(
+      (e) => e.curve === 'circle' && Math.abs(e.midpoint[2] - z) < 1e-6,
+    )!;
+    return { kind: 'edge' as const, bodyId, edgeKey: edge.key };
+  };
+  store.getState().setSelection([circleAt('body:a', 'min'), circleAt('body:b', 'max')]);
+  const adaptive = resolveAdaptive(store.getState()).map((c) => c.id);
+  assert.equal(adaptive[0], 'transform.align', `adaptive: ${adaptive.join(', ')}`);
+  findCommand('transform.align')!.run(store.getState());
+  const d = draft('align');
+  assert.equal(d.from.kind, 'axis');
+  assert.equal(d.to.kind, 'axis');
+  assert.deepEqual(draftSteps(d)!.labels, ['Moving reference', 'Target']);
+  store.getState().commit();
+  await store.getState().whenSettled();
+  assert.deepEqual(store.getState().evaluation.errors, {});
+  const added = store.getState().features.at(-1)! as Feature & { from?: unknown; face?: unknown };
+  assert.equal(added.kind, 'align');
+  assert.ok(added.from && !added.face, 'edges are stored as from/to');
+  const a = body('body:a');
+  assert.ok(Math.abs((a.min[0] + a.max[0]) / 2) < 1e-6, 'coaxial (x)');
+  assert.ok(Math.abs(a.min[2] - 20) < 1e-6, 'its bottom circle on the post top circle');
+  // Two planar faces: the stored fields stay face/target.
+  store.getState().setSelection([top('body:a'), top('body:b')]);
+  findCommand('transform.align')!.run(store.getState());
+  store.getState().commit();
+  await store.getState().whenSettled();
+  const planes = store.getState().features.at(-1)! as Feature & { from?: unknown; face?: unknown };
+  assert.ok(planes.face && !planes.from, 'planar faces keep face/target');
+});
