@@ -472,8 +472,11 @@ await a.waitForKernelIdle();
 
 ## Boundary
 
-Assembler must not depend on Builder: no `apps/builder`, `@himmelcad/agent`,
+Assembler must not depend on Builder: no `apps/builder`,
 `@himmelcad/automation-host`, `@himmelcad/viewer`, `@himmelcad/app`, or the
-Builder sidecar. See `assembler/README.md` (product/plan overview) and
-`docs/adr/0033-assembler-product-boundary.md` (the boundary decision) for the
-authoritative rules.
+Builder sidecar. The shared agent package `@himmelcad/agent` is used by the
+assistant module only (owner decision, ROADMAP-LATER §2; changes to it stay
+additive and keep Builder's tests green), like the shared theme and UI
+packages. See `assembler/README.md` (product/plan overview),
+`assembler/AGENT-ASSISTANT.md` and `docs/adr/0033-assembler-product-boundary.md`
+(the boundary decision) for the authoritative rules.

@@ -111,6 +111,15 @@ Ellipsen/Splines aus Strichen.
 - Vorlage/Benchmark: die fünf Druckteile aus `apps/assembler/bench/` plus
   Aufgaben in Alltagssprache („Gehäuse für Raspberry Pi 5 mit Lüftung“).
 
+**Stand 2026-10-02 (Block 9, Agent-Stream, `asm/b9-agent-20261002`):
+umgesetzt** – siehe [AGENT-ASSISTANT.md](AGENT-ASSISTANT.md). Assistent-Insel
+auf `@himmelcad/agent` (Chat, Sitzungen im Projekt, Referenz-Chips,
+Rückfrage vor destruktiven Schritten, ein Undo-Schritt pro Zug), Desktop-Host
+für die CLIs der Nutzer, Werkzeuge = `hcasm.agent-api@1` per MCP (auch
+`assembler-headless --mcp`), Benchmark mit Alltagsaufgaben und skriptiertem
+Provider in CI. Offen: echte Provider-Läufe (nur manuell), Pick-Werkzeug,
+Web (Browser kann keine CLIs starten – Grund wird angezeigt).
+
 ### 2b. Übernahmen aus der ForgeCAD-Analyse (Florian 2026-10-02: Empfehlungen 1–5 freigegeben)
 
 Siehe [research/2026-10-01-forgecad/Report.md](research/2026-10-01-forgecad/Report.md) §6.
@@ -123,6 +132,14 @@ Skills, `view.screenshot`) bereits angelegt und werden mit `@himmelcad/agent`
 3. Parameterbereiche (min/max/step), Slider, `parameters.sweep`.
 4. Kollision und Spiel zwischen Körpern (Messung, Print-Befund, Check) – aus §4 vorgezogen.
 5. Installierbare Agent-Skills (eingebaute und Projekt-Skills wie in Builder) mit Druckteil-Workflow.
+
+Stand 2026-10-02 (Block 9, Agent-Stream): **1 umgesetzt** (`view.render`,
+`view.inspect`: GPU in der App, Software-Rasterizer headless; Python
+`doc.render`/`doc.inspect`) und **5 umgesetzt** (eingebaute Skills
+`printable-part`, `fix-printability`, `parametric-part`, `api-quickstart`;
+Projekt-Skills in `.hcasm` mit Skills-Tab; `skills.list`/`skills.read`;
+installierbare `SKILL.md` für externe CLIs und Kontextdatei für Chat-Tools).
+2–4 laufen in den Streams „checks“ und „params“.
 
 ## 3. Maker-Werkzeuge für Druckteile (≈ 1 Block)
 

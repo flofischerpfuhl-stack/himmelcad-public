@@ -25,8 +25,8 @@ Pick one (paths relative to a HimmelCAD checkout; build once with
     `"mcp": {"hcasm": {"type": "local", "command": ["node", "apps/assembler/bin/assembler-headless.mjs", "--mcp"]}}`
 
   Set `HCASM_MCP_SAVE_ON_EXIT=<file.hcasm>` to keep the project when the
-  server stops, or call `hcasm_call {method: "project.save", params:
-{path: "part.hcasm"}}` yourself.
+  server stops, or save it yourself with `hcasm_call` and the method
+  `project.save` (params `{"path": "part.hcasm"}`).
 
 - **The running desktop app** — the user turns on File › Agent Access
   (Local) and gives you the connection JSON; use the Python SDK:

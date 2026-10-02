@@ -141,20 +141,69 @@ FaceInput}`, `{kind: "edge", edge: EdgeInput}`, `{kind: "point", point:
   `doc.volume(*bodies)`, `doc.measure(*items)` with `Body`/`Face`/`Edge`
   objects or `(x, y, z)` points. Tests: `test/api/session.test.ts`
   (`measure.*`), `sdk/python/tests/test_assembler.py`.
-- **Display modes, view toggles, section view, pins and image export are
-  UI-only by design.** Display mode (`Alt+1…7`), edges/hidden edges/grid/
-  axes, render quality, camera, section plane, Measure pins and PNG export
-  change how the user's window looks, not the model: they live in view
-  state/preferences (`ViewState`, `usePreferences`, not the undo-tracked
-  document), differ per window, and would make an agent fight the user for
-  the screen. An agent's legitimate needs are covered by document commands
-  (a body's `material` for "Visualized" and mass is part of its
-  `setAppearance` step via `feature.create`), by the measure queries above
-  (exact numbers instead of a picture), and by exports (`export.stl/3mf/
-step`). The headless process has no renderer at all, so screenshot or view
-  commands would work in only one of the two transports — contrary to the
-  one-contract rule (ADR 0024). Automated UI checks use the DEV hook
-  (`window.__assembler`, `README.md`), which is not an agent API.
+- **The user's view stays the user's.** Display mode (`Alt+1…7`),
+  edges/hidden edges/grid/axes, render quality, camera, section plane,
+  Measure pins and Export image change how the user's window looks, not the
+  model: they live in view state/preferences and no agent method changes
+  them, so an agent never fights the user for the screen. Agents look at
+  the model with the **render queries** below instead (Block 9), which draw
+  offscreen with their own camera, section and display mode; automated UI
+  checks still use the DEV hook (`window.__assembler`, `README.md`).
+
+## View renders (Block 9)
+
+`view.render` draws the model into a PNG; `view.inspect` bundles standard
+views with a JSON manifest. Both are queries (`document.read`): no undo
+step, no change to the camera, selection or view state. Implementation:
+`modules/display/viewApi.ts`; the agent tools and the embedded assistant
+use them ([AGENT-ASSISTANT.md](AGENT-ASSISTANT.md)).
+
+- **Same request in both transports.** In the app the offscreen GPU
+  renderer of the mounted viewport draws it (`renderViewportImage` with
+  scene overrides — the real display, materials, highlights); the headless
+  CLI, tests, and the app without a mounted 3D view use the software
+  rasterizer (`platform/viewport/softRender.ts`: two-light shading,
+  outlines where the visible B-rep face changes, darker cut surfaces, axis
+  triad; deterministic). `renderer: "auto" | "gpu" | "software"`; the
+  result says which one drew it. Decision (headless): software, because a
+  hidden Electron window would tie the CLI to an Electron install and a
+  GPU, while the meshes the kernel already tessellates are enough for a
+  technical picture.
+- **Parameters**: `view` (`iso`, `front` = looking along +Y, `back`,
+  `left`, `right`, `top`, `bottom`, or `{azimuth, elevation}` in degrees,
+  azimuth = direction to the eye from +X towards +Y), `projection`
+  (`orthographic` default, `perspective`), `width`/`height` (64–2048,
+  default 768 × 576), `margin`, `bodyIds` (isolate and frame), `highlight`
+  `{bodyIds, faces: [{bodyId, key}], edges: [{bodyId, key}]}` (accent),
+  `tint` (faces or whole bodies in red/amber/green/blue/violet or `#rrggbb`),
+  `section` (`{axis, offset, flip}` or `{origin, normal, flip}`; the
+  positive side is removed), `displayMode` (`shadedEdges` default,
+  `shaded`, `wireframe`, `xray`), `overlay: ["printFindings"]` (runs
+  `print.analyze` with optional `printSettings` and colours the faces of
+  its findings; the result lists them), `background` (`light`, `dark`,
+  `transparent`), `axes`, `path` (headless only: write the file).
+- **Result**: `{mediaType, width, height, byteLength, data | path,
+renderer, view, bodies, bounds, findings?, notes}`.
+- **`view.inspect`**: `views` (default iso, front, top, right; ≤ 8),
+  `size` (≤ 1024, square), the shared isolate/section/mode/overlay
+  parameters; at most 4 megapixels per bundle. Result: `images` (inline
+  base64) and `manifest` `{projectName, revision, units, bodies
+(descriptors with bbox, volume, validity), totals, errors, warnings,
+findings?}`.
+- **Errors**: unknown bodies `notFound`, unknown face/edge keys
+  `referenceNotFound` with candidates, `renderer: "gpu"` without the app's
+  3D view `unsupported`, oversize `invalidParams`.
+- **Python**: `doc.render(view, path=…, **options) -> Render`,
+  `doc.inspect(views, **options) -> Inspection` (`.save(prefix)`).
+
+## Assistant skills
+
+`skills.list` (compact index: id, name, description, scope, version, tags,
+size; `query`, `scope`, `cursor`/`limit` ≤ 50) and `skills.read` (`id`,
+`offset`, `maxChars` 256–16384, default 4096; `nextOffset` to continue)
+expose the built-in workflows and the project's own skills
+([AGENT-ASSISTANT.md](AGENT-ASSISTANT.md) "Skills"). Python: `doc.skills()`,
+`doc.skill(id)`.
 
 ## Shape
 
@@ -210,7 +259,8 @@ small in-repo validator (no new dependency).
 | 3D printing  | `print.analyze` (query), `print.orientations` (query), `print.placeOnPlate`, `print.orient` (one transform step each) — see `assembler/PRINTING.md`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | Parameters   | `parameters.list` (query), `parameter.create`, `parameter.edit`, `parameter.delete` — see "Document parameters" above                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | Measure      | `measure.get`, `measure.distance`, `measure.angle`, `measure.area`, `measure.volume` (queries) — see "Measurement and display" below                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| View         | `selection.set` (not undoable)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| View         | `selection.set` (not undoable); queries `view.render`, `view.inspect` — see "View renders"                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| Skills       | `skills.list`, `skills.read` (queries) — see "Assistant skills"                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 
 Design rules:
 
@@ -312,6 +362,13 @@ UTF-8 BOM is tolerated). Notifications (no `id`) get no response; batches are
 rejected (use transactions). `--print-schema` / `--write-schema <file>` emit the
 contract. Kernel start ≈ 1 s; runs with the invoking user's rights, no network
 listener, file paths relative to the working directory.
+
+**MCP (Block 9)** — `assembler-headless --mcp` serves the assistant's
+tools (`hcasm_call`, `hcasm_methods`, `view_render`, `view_inspect`,
+`skills_list`, `skills_read`) as an MCP server over stdio, for Claude Code,
+Codex, OpenCode and the assistant benchmark; `HCASM_MCP_SAVE_ON_EXIT=<file>`
+saves the project when stdin closes. In the app the same tools reach the
+document through the embedded assistant ([AGENT-ASSISTANT.md](AGENT-ASSISTANT.md)).
 
 **In the app — "Agent Access (Local)"** (`file.agentAccess` in the command
 registry / command search). `electron/automationServer.ts`,
