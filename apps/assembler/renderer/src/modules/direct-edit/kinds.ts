@@ -69,7 +69,8 @@ export interface MoveEdgeFeature extends FeatureBase {
  * Moves a planar face by `vector` in any direction (Shapr3D Move on a
  * face): the part along the normal offsets it (as Offset Face), the part in
  * its plane slides it — every planar neighbour sharing a straight edge with
- * it tilts about its far side to follow the moved edge.
+ * it tilts about its far side to follow the moved edge. A full round face
+ * (a hole wall, a boss) moves across its axis: the hole or boss moves.
  */
 export interface MoveFaceFeature extends FeatureBase {
   kind: 'moveFace';

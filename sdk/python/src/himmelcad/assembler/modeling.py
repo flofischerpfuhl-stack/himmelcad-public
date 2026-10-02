@@ -1149,7 +1149,8 @@ class Document(PrintToolsMixin, InteropMixin):
         """Moves a planar face by ``vector`` in any direction: along its normal it offsets,
         sideways its planar neighbours tilt to follow (Shapr3D Move on a face). ``turn`` (degrees,
         right-hand about ``turn_axis``, a direction in the face's plane, through ``turn_point``,
-        default the face centre) then turns it; the neighbours follow."""
+        default the face centre) then turns it; the neighbours follow. A round face (a hole wall
+        or a boss) moves across its axis: the hole or boss moves."""
         params: dict[str, Any] = {"face": face.ref, "vector": [float(v) for v in vector]}
         if turn:
             if turn_axis is None:

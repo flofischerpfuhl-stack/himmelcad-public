@@ -48,7 +48,7 @@ const KIND_SCHEMAS: Record<string, FeatureKindSpec> = {
   moveFace: {
     label: 'Move Face',
     summary:
-      'Moves a planar face by `vector` (world, mm) in any direction: the part along its normal offsets it (like Offset Face), the part in its plane slides it — every planar neighbour sharing a straight edge tilts about its far side to follow. A face with a curved edge can only move along its normal. `rotation` then turns the face about a line in its plane (the neighbours follow).',
+      'Moves a planar face by `vector` (world, mm) in any direction: the part along its normal offsets it (like Offset Face), the part in its plane slides it — every planar neighbour sharing a straight edge tilts about its far side to follow. A face with a curved edge can only move along its normal. `rotation` then turns the face about a line in its plane (the neighbours follow). A full round face (a hole wall or a boss) moves across its axis instead: the round is filled or removed and made again at the moved place (its wall and disc-shaped ends keep their keys; chamfers or fillets at its ends stay).',
     params: schemaObject(
       {
         face: schemaRef('FaceInput'),

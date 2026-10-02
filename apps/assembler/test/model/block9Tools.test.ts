@@ -11,6 +11,7 @@ import { findCommand, resolveAdaptive } from '../../renderer/src/foundation/comm
 import type { Feature } from '../../renderer/src/foundation/document/document.js';
 import {
   acceptPick,
+  draftHandles,
   draftSteps,
   type FeatureDraft,
 } from '../../renderer/src/foundation/commands/featureDrafts.js';
@@ -19,6 +20,7 @@ import {
   type ToolSession,
 } from '../../renderer/src/foundation/commands/store.js';
 import { PICK_PLANS } from '../../renderer/src/foundation/commands/pickSession.js';
+import { edgeSignatureOf } from '../../renderer/src/foundation/geometry-kernel/naming.js';
 import {
   buildItemTree,
   EMPTY_ITEMS_META,
@@ -402,4 +404,49 @@ void test('History: several selected steps are suppressed or deleted as one undo
   store.getState().undo();
   await store.getState().whenSettled();
   assert.equal(store.getState().features.length, 3, 'one undo step');
+});
+
+// ---- Move/Rotate on a hole wall moves the hole (MOD-16) ------------------------------------------
+
+void test('Move/Rotate on a round face starts Move Face with two sideways arrows; a fillet still offsets', async () => {
+  await load([
+    cube('a', [0, 0, 0], 20, 6),
+    {
+      ...cube('h', [3, 3, 0], 1, 6),
+      shape: 'cylinder',
+      radius: 2,
+      operation: 'cut',
+      targetBodyId: 'body:a',
+    } as Feature,
+  ]);
+  const wall = body('body:a').faces.find((f) => f.surface === 'cylinder')!;
+  store.getState().setSelection([{ kind: 'face', bodyId: 'body:a', faceKey: wall.key }]);
+  findCommand('transform.moveRotate')!.run(store.getState());
+  const d = draft('moveFace');
+  const handles = draftHandles(d, store.getState().evaluation);
+  assert.equal(handles.length, 2, 'two arrows across the axis');
+  store.getState().updateFeatureDraft((current) => handles[0]!.apply(current, 5));
+  await store.getState().whenSettled();
+  store.getState().commit();
+  await store.getState().whenSettled();
+  assert.deepEqual(store.getState().evaluation.errors, {});
+  const moved = body('body:a').faces.find((f) => f.surface === 'cylinder')!;
+  assert.ok(Math.hypot(moved.centroid[0] - 3, moved.centroid[1] - 3) > 4.9, 'the hole moved');
+  // A fillet (a partial round face) keeps the Offset Face route.
+  const edge = body('body:a').edges.find((e) => e.curve === 'line')!;
+  await load([
+    cube('a', [0, 0, 0], 20, 6),
+    {
+      ...base('f'),
+      kind: 'fillet',
+      edges: [{ bodyId: 'body:a', key: edge.key, signature: edgeSignatureOf(edge) }],
+      radius: 2,
+    } as Feature,
+  ]);
+  const fillet = body('body:a').faces.find((f) => f.surface === 'cylinder')!;
+  store.getState().setSelection([{ kind: 'face', bodyId: 'body:a', faceKey: fillet.key }]);
+  findCommand('transform.moveRotate')!.run(store.getState());
+  const offset = draft('offsetFace');
+  assert.equal(offset.viaMove, true);
+  store.getState().cancel();
 });

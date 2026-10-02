@@ -26,12 +26,15 @@
  */
 import { type Vec3 } from '../../foundation/document/document.js';
 import type { FeatureOf } from '../../foundation/document/featureKinds.js';
-import { baseFaceKey } from '../../foundation/geometry-kernel/naming.js';
+import { assignFaceKeys, baseFaceKey } from '../../foundation/geometry-kernel/naming.js';
+import * as R from '../../foundation/geometry-kernel/features/occtApi.js';
+import type { FaceTool } from '../../foundation/geometry-kernel/features/faceOps.js';
 import { isValidShape } from '../../foundation/geometry-kernel/occt.js';
 import type {
   BodyStateLike,
   FeatureKit,
   ReplayContextLike,
+  ResolvedFace,
   TopologyLike,
 } from '../../foundation/geometry-kernel/features/kit.js';
 import { bodyOrFail, sampleEdges } from '../../foundation/geometry-kernel/features/refs.js';
@@ -193,6 +196,11 @@ export function applyMoveFace(
   const v = finiteVector(kit, feature.vector);
   const body = bodyOrFail(kit, ctx, feature.face.bodyId);
   const first = kit.resolveFace(body, feature.face, ctx.warn);
+  if (first.geom.id.type === 'cylinder') {
+    // A hole or a round boss moves across its axis (Block 9).
+    moveRoundFace(kit, ctx, body, first, v, feature.id);
+    return;
+  }
   if (first.geom.surface !== 'plane' || !first.geom.normal) {
     kit.fail('Only planar faces can be moved sideways; use Offset Face to move a curved face', {
       bodyId: body.id,
@@ -316,4 +324,100 @@ function checkSlidable(
     );
   }
   void slide;
+}
+
+// ---- Move a round face (a hole or a boss) across its axis ---------------------------------
+
+/**
+ * Moves a full-turn cylindrical face across its axis (Shapr3D: Move on a
+ * hole wall moves the hole): the round's volume — the cylinder between the
+ * face's ends — is filled (a hole) or removed (a boss) and made again at
+ * the moved place. The moved wall and its disc-shaped end faces (a blind
+ * hole's floor, a boss's top) keep their keys. A chamfer, counterbore or
+ * fillet at the round's ends stays where it was; partial cylinders (fillets)
+ * and moves along the axis are refused.
+ */
+function moveRoundFace(
+  kit: FeatureKit,
+  ctx: ReplayContextLike,
+  body: BodyStateLike,
+  r: ResolvedFace,
+  vector: Vec3,
+  featureId: string,
+): void {
+  const id = r.geom.id;
+  if (id.type !== 'cylinder') return;
+  const dir = normalize(id.axis);
+  const along = dot(vector, dir);
+  const across = sub(vector, scale(dir, along));
+  if (Math.abs(along) >= 1e-3) {
+    kit.fail('A round face moves across its axis; to move it along the axis, move its end face', {
+      bodyId: body.id,
+      faceKeys: [r.geom.key],
+    });
+  }
+  if (length(across) < NO_MOVE_MM) return;
+  const edges = r.topology.faceEdges[r.index] ?? [];
+  const samples = sampleEdges(
+    kit,
+    edges.map((e) => r.topology.edges[e]!),
+  );
+  const t = samples.map((p) => dot(sub(p, id.point), dir));
+  const t0 = Math.min(...t);
+  const t1 = Math.max(...t);
+  const height = t1 - t0;
+  const fullTurn =
+    height > 1e-6 && Math.abs(r.geom.area - 2 * Math.PI * id.radius * height) < 1e-3 * r.geom.area;
+  if (!fullTurn) {
+    kit.fail('Only a full round face (a hole or a boss) moves sideways; offset a partial one', {
+      bodyId: body.id,
+      faceKeys: [r.geom.key],
+    });
+  }
+  const base = add(id.point, scale(dir, t0));
+  // Disc-shaped ends (a blind hole's floor, a boss's top) keep their keys at the new place.
+  const discs = edges
+    .flatMap((e) => r.topology.edgeFaces[e] ?? [])
+    .filter((f) => f !== r.index)
+    .map((f) => body.faces[f]!)
+    .filter(
+      (f) =>
+        f.surface === 'plane' &&
+        f.normal !== null &&
+        Math.abs(Math.abs(dot(f.normal, dir)) - 1) < 1e-6 &&
+        Math.abs(f.area - Math.PI * id.radius * id.radius) < 1e-3 * f.area,
+    );
+  const round = (shift: Vec3, prefix: string, keepKeys: boolean): FaceTool => {
+    const shape = R.makeCylinder(id.radius, height, add(base, shift), dir);
+    const geoms = kit.describeShape(shape);
+    let n = 0;
+    const keys = assignFaceKeys(geoms, [], new Map(), (index) => {
+      const g = geoms[index]!;
+      if (keepKeys && g.id.type === 'cylinder') return baseFaceKey(r.geom.key);
+      if (keepKeys && g.normal) {
+        const disc = discs.find(
+          (d) => Math.abs(dot(sub(d.centroid, add(g.centroid, scale(shift, -1))), dir)) < 1e-6,
+        );
+        if (disc) return baseFaceKey(disc.key);
+      }
+      n += 1;
+      return `${featureId}:${prefix}:${n - 1}`;
+    });
+    return { shape, faces: kit.withKeys(geoms, keys) };
+  };
+  try {
+    if (id.convex) {
+      // A boss: off the old place, onto the new one.
+      kit.combine(body, round([0, 0, 0], 'old', false), 'cut', featureId, ctx.featureOrder);
+      kit.combine(body, round(across, 'boss', true), 'join', featureId, ctx.featureOrder);
+    } else {
+      // A hole: filled at the old place, drilled at the new one.
+      kit.combine(body, round([0, 0, 0], 'fill', false), 'join', featureId, ctx.featureOrder);
+      kit.combine(body, round(across, 'hole', true), 'cut', featureId, ctx.featureOrder);
+    }
+  } catch (error) {
+    if (kit.isFailure(error)) throw error;
+    kit.fail(`Move failed: ${kit.describeError(error)}`);
+  }
+  ctx.touch(body.id);
 }

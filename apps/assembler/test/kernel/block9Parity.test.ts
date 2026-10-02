@@ -532,3 +532,62 @@ void test('Align: a turn about the target normal after aligning; a sketch line a
   near(c.max[0] - c.min[0], 10, 1e-6, 'along X now');
   near((c.min[0] + c.max[0]) / 2, 30, 1e-6, 'centred on the line');
 });
+
+// ---- Move Face on round faces: holes and bosses move sideways (MOD-16) ---------------------------
+
+void test('Move Face: a through hole, a blind hole and a boss move across their axes', async () => {
+  const plate = [...box('p', 0, 0, 40, 20, 5)];
+  const holeSketch = sketch('h-s', 'XY', 5, circle(10, 10, 3));
+  const through = await evaluate([
+    ...plate,
+    holeSketch,
+    { ...extrude('h', 'h-s', -5), operation: 'cut' } as ExtrudeFeature,
+  ]);
+  noErrors(through);
+  const wall = faceRef(only(through, 'body:p'), (f) => f.surface === 'cylinder');
+  const moved = await evaluate([
+    ...plate,
+    holeSketch,
+    { ...extrude('h', 'h-s', -5), operation: 'cut' } as ExtrudeFeature,
+    {
+      ...base('m'),
+      kind: 'moveFace',
+      face: wall,
+      vector: [15, 0, 0],
+    } as MoveFaceFeature,
+  ]);
+  noErrors(moved);
+  const p = only(moved, 'body:p');
+  near(p.volume, 40 * 20 * 5 - Math.PI * 9 * 5, 1e-2, 'one hole');
+  const hole = p.faces.find((f) => f.surface === 'cylinder');
+  assert.ok(hole, 'a hole wall');
+  near(hole.centroid[0], 25, 1e-6, 'moved by 15 mm');
+  assert.equal(hole.key, wall.key, 'the hole wall keeps its key');
+  // Along the axis it is refused.
+  const along = await evaluate([
+    ...plate,
+    holeSketch,
+    { ...extrude('h', 'h-s', -5), operation: 'cut' } as ExtrudeFeature,
+    { ...base('m'), kind: 'moveFace', face: wall, vector: [0, 0, 2] } as MoveFaceFeature,
+  ]);
+  assert.match(along.errors['m'] ?? '', /across its axis/);
+  // A boss on the plate.
+  const boss = [
+    ...plate,
+    sketch('b-s', 'XY', 5, circle(10, 10, 3)),
+    { ...extrude('b', 'b-s', 6), operation: 'join', targetBodyId: 'body:p' } as ExtrudeFeature,
+  ];
+  const withBoss = await evaluate(boss);
+  noErrors(withBoss);
+  const bossWall = faceRef(only(withBoss, 'body:p'), (f) => f.surface === 'cylinder');
+  const bossMoved = await evaluate([
+    ...boss,
+    { ...base('m'), kind: 'moveFace', face: bossWall, vector: [0, 4, 0] } as MoveFaceFeature,
+  ]);
+  noErrors(bossMoved);
+  const q = only(bossMoved, 'body:p');
+  near(q.volume, 4000 + Math.PI * 9 * 6, 1e-2, 'the boss kept its size');
+  near(q.max[1], 20, 1e-6, 'the plate is unchanged');
+  const bossFace = q.faces.find((f) => f.surface === 'cylinder')!;
+  near(bossFace.centroid[1], 14, 1e-6, 'the boss moved by 4 mm');
+});

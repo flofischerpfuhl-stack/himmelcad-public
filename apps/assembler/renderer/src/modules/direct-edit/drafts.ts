@@ -500,15 +500,24 @@ export const MOVE_FACE_DRAFT_TOOL = defineDraftTool<MoveFaceDraft>({
       return { ok: false, reason: 'Select one planar face to move.' };
     }
     const face = faces[0]!;
-    if (face.signature.surface !== 'plane' || !face.signature.normal) {
-      return { ok: false, reason: 'Only planar faces move in any direction; use Offset Face.' };
+    // Planar faces move in any direction; a round face (a hole, a boss) across its axis.
+    const round = face.signature.surface === 'cylinder' && roundAxis(ctx.evaluation, face) !== null;
+    if (!round && (face.signature.surface !== 'plane' || !face.signature.normal)) {
+      return {
+        ok: false,
+        reason: 'Only planar and round faces move in any direction; use Offset Face.',
+      };
     }
     return { ok: true, draft: { kind: 'moveFace', face, vector: [0, 0, 0] } };
   },
   acceptPick: (draft, pick, evaluation) => {
     if (pick.kind !== 'face' || pick.bodyId !== draft.face.bodyId) return draft;
     const ref = faceRefOf(evaluation, pick.bodyId, pick.faceKey);
-    return ref && ref.signature.surface === 'plane' ? { ...draft, face: ref } : draft;
+    if (!ref) return draft;
+    const movable =
+      ref.signature.surface === 'plane' ||
+      (ref.signature.surface === 'cylinder' && roundAxis(evaluation, ref) !== null);
+    return movable ? { ...draft, face: ref, vector: [0, 0, 0] } : draft;
   },
   toFeature: (draft, base) =>
     draft.vector.every((c) => c === 0) && !draft.rotation?.angle
@@ -522,13 +531,25 @@ export const MOVE_FACE_DRAFT_TOOL = defineDraftTool<MoveFaceDraft>({
           vector: draft.vector,
           ...(draft.rotation?.angle ? { rotation: draft.rotation } : {}),
         },
-  meta: () => ({
+  meta: (draft) => ({
     label: 'Move Face',
     shortcut: 'M',
     prompt:
-      'Drag an arrow or an arc, or type a value: the face moves or turns, its neighbours follow.',
+      draft.face.signature.surface === 'cylinder'
+        ? 'Drag an arrow or type a value: the hole or boss moves across its axis.'
+        : 'Drag an arrow or an arc, or type a value: the face moves or turns, its neighbours follow.',
   }),
   handles: (draft, evaluation) => {
+    if (draft.face.signature.surface === 'cylinder') {
+      // A round face: two arrows across its axis, on the axis at the face's middle.
+      const axis = roundAxis(evaluation, draft.face);
+      if (!axis) return [];
+      const frame = frameForFace(axis.dir, axis.point);
+      return moveHandles(draft, axis.point, [
+        { dir: frame.u, label: 'Slide 1', prefix: '↔' },
+        { dir: frame.v, label: 'Slide 2', prefix: '↕' },
+      ]);
+    }
     const anchor = faceAnchor(evaluation, draft.face);
     if (!anchor) return [];
     const frame = frameForFace(anchor.normal, anchor.point);
@@ -572,7 +593,50 @@ export const MOVE_FACE_DRAFT_TOOL = defineDraftTool<MoveFaceDraft>({
   ghostsModifiedBodies: () => true,
 });
 
+/**
+ * The axis of a round face from its mesh (the UI has no surface data): the
+ * vertex normals of a cylinder are perpendicular to the axis, so the cross
+ * product of two different ones is the axis; the face centroid lies on it.
+ * `null` unless the normals point all round (a full hole wall or boss, not
+ * a fillet) and span a direction.
+ */
+export function roundAxis(
+  evaluation: EvaluationResult,
+  ref: FaceRef,
+): { point: Vec3; dir: Vec3 } | null {
+  const body = evaluation.bodies.find((b) => b.id === ref.bodyId);
+  const face = body ? faceOf(body, ref.key) : undefined;
+  if (!body || !face || face.triangleCount === 0) return null;
+  const normals: Vec3[] = [];
+  const end = face.triangleStart + face.triangleCount;
+  const step = Math.max(1, Math.floor(face.triangleCount / 64));
+  for (let tri = face.triangleStart; tri < end; tri += step) {
+    const v = body.mesh.indices[tri * 3]! * 3;
+    normals.push([body.mesh.normals[v]!, body.mesh.normals[v + 1]!, body.mesh.normals[v + 2]!]);
+  }
+  // A full turn: the normals point all round, so their mean nearly vanishes (a fillet's does not).
+  const mean = normals.reduce((s, n) => add(s, n), [0, 0, 0] as Vec3);
+  if (Math.hypot(mean[0], mean[1], mean[2]) / normals.length > 0.25) return null;
+  const first = normals[0]!;
+  let best: Vec3 | null = null;
+  let bestLength = 0;
+  for (const n of normals) {
+    const c = cross(first, n);
+    const l = Math.hypot(c[0], c[1], c[2]);
+    if (l > bestLength) {
+      bestLength = l;
+      best = c;
+    }
+  }
+  if (!best || bestLength < 0.2) return null;
+  return { point: face.centroid, dir: normalize(best) };
+}
+
 // ---- vector helpers ----------------------------------------------------------------------
+
+function cross(a: Vec3, b: Vec3): Vec3 {
+  return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+}
 
 function dot(a: Vec3, b: Vec3): number {
   return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
