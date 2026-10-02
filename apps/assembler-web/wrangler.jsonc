@@ -1,4 +1,4 @@
-// HimmelCAD Assembler (web) on Cloudflare Workers with static assets — its own
+// HimmelCAD Assembler (web) on Cloudflare Workers with static assets â€” its own
 // project, separate from the main site ("himmelcad", website/wrangler.jsonc).
 //
 // Build (from the repository root; deploy/README.md "Cloudflare"):
@@ -6,8 +6,7 @@
 // Deploy (from apps/assembler-web/; wrangler must be logged in to the owner's account):
 //   npx wrangler deploy
 // Preview URL: https://himmelcad-assembler.<account subdomain>.workers.dev
-// The custom domain assembler.himmelcad.com is attached by the owner (routes or
-// "custom_domain" below `name`, or the dashboard), not by this file.
+// Custom domain: assembler.himmelcad.com (routes below, attached 2026-10-03).
 //
 // Every file of dist/ is a static asset served by Cloudflare with the rules of
 // dist/_headers, except what dist/.assetsignore excludes: the .br/.gz siblings and
@@ -19,6 +18,7 @@
   "main": "deploy/worker.mjs",
   "compatibility_date": "2026-09-01",
   "workers_dev": true,
+  "routes": [{ "pattern": "assembler.himmelcad.com", "custom_domain": true }],
   "preview_urls": false,
   "assets": {
     "directory": "dist",
