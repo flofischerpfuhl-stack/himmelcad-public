@@ -250,18 +250,18 @@ async function run(host: ToolHost, method: string, params: Json): Promise<unknow
   return result;
 }
 
-function imagesOf(result: unknown, label: string): McpContent[] {
+/** The PNGs of a `view.render` (one) or `view.inspect` (`images`) result as MCP image content. */
+function imagesOf(result: unknown): McpContent[] {
   const images: McpContent[] = [];
-  const add = (value: Json, name: string) => {
+  const add = (value: Json) => {
     if (value.mediaType === 'image/png' && typeof value.data === 'string') {
       images.push({ type: 'image', data: value.data, mimeType: 'image/png' });
-      void name;
     }
   };
   if (isRecord(result)) {
-    add(result, label);
+    add(result);
     if (Array.isArray(result.images)) {
-      for (const image of result.images) if (isRecord(image)) add(image, label);
+      for (const image of result.images) if (isRecord(image)) add(image);
     }
   }
   return images;
@@ -283,9 +283,7 @@ export async function callAssistantTool(
         const params = isRecord(args.params) ? args.params : {};
         const result = await run(host, args.method, params);
         const images =
-          args.method === 'view.render' || args.method === 'view.inspect'
-            ? imagesOf(result, args.method)
-            : [];
+          args.method === 'view.render' || args.method === 'view.inspect' ? imagesOf(result) : [];
         for (const image of images) {
           if (image.type === 'image')
             host.onImage?.({ mediaType: image.mimeType, data: image.data, label: args.method });
@@ -298,7 +296,7 @@ export async function callAssistantTool(
       case 'view_inspect': {
         const method = name === 'view_render' ? 'view.render' : 'view.inspect';
         const result = await run(host, method, args);
-        const images = imagesOf(result, method);
+        const images = imagesOf(result);
         for (const image of images) {
           if (image.type === 'image')
             host.onImage?.({ mediaType: image.mimeType, data: image.data, label: method });

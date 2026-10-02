@@ -10,8 +10,7 @@ import { BookOpen, MessageSquare, Plus, RefreshCw, Trash2, X } from 'lucide-reac
 
 import { AgentChatPanel, type AgentTimelineRow } from '@himmelcad/agent';
 
-import { useAssistant } from '../controller.js';
-import { eventsFromStored } from '../controller.js';
+import { eventsFromStored, useAssistant } from '../controller.js';
 import { useAssistantSessions } from '../sessions.js';
 import { SkillsTab } from './SkillsTab.js';
 import styles from './AssistantIsland.module.css';

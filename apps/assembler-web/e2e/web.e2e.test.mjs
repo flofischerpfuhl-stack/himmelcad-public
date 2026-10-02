@@ -277,6 +277,14 @@ void test('sketch → extrude in the UI; save/open round trip via download/uploa
   assert.deepEqual(features, ['sketch', 'extrude']);
   await shot(page, 'w3-sketch-extrude');
 
+  // Block 9: renders and skills work in the browser too (the GPU renderer of the page's
+  // viewport); the embedded assistant needs local CLIs, so its dock button is hidden.
+  const render = await rpc('view.render', { view: 'iso', width: 320, height: 240 });
+  assert.equal(render.mediaType, 'image/png');
+  assert.equal(render.renderer, 'gpu');
+  assert.ok((await rpc('skills.list')).skills.some((s) => s.id === 'printable-part'));
+  assert.equal(await page.getByRole('button', { name: 'Assistant', exact: true }).count(), 0);
+
   // Save: a download of the .hcasm (Ctrl+S).
   const [download] = await Promise.all([
     page.waitForEvent('download'),
