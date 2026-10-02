@@ -383,13 +383,19 @@ void test('File System Access (Chromium): save in place and reopen from Recent p
     (n) => n === 1,
     'one save picker',
   );
-  // `{}` while the file is still empty (the picker created it; the write lands on close).
+  // `{}` while the file is still empty (the picker created it; the write lands on close) —
+  // or while a save in place swaps the file (Chromium briefly reports it as not found).
   const readOpfs = () =>
     page.evaluate(async () => {
-      const root = await navigator.storage.getDirectory();
-      const file = await (await root.getFileHandle('Plate.hcasm')).getFile();
-      const text = await file.text();
-      return text ? JSON.parse(text) : {};
+      try {
+        const root = await navigator.storage.getDirectory();
+        const file = await (await root.getFileHandle('Plate.hcasm')).getFile();
+        const text = await file.text();
+        return text ? JSON.parse(text) : {};
+      } catch (error) {
+        if (error instanceof DOMException && error.name === 'NotFoundError') return {};
+        throw error;
+      }
     });
   const first = await waitFor(
     readOpfs,
