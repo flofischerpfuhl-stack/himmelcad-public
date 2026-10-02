@@ -3,6 +3,8 @@
   "name": "Himmel:CAD Assembler",
   "short_name": "Assembler",
   "description": "CAD for 3D printing: sketch, model, check printability and export STL, 3MF and STEP. Works offline; projects stay on your device.",
+  "lang": "en",
+  "dir": "ltr",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
@@ -14,10 +16,48 @@
     { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
     { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
     {
+      "src": "icons/icon-maskable-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
       "src": "icons/icon-maskable-512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "screenshots/wide.png",
+      "sizes": "1280x800",
+      "type": "image/png",
+      "form_factor": "wide",
+      "label": "Modelling a bracket: items, history and the view cube"
+    },
+    {
+      "src": "screenshots/narrow.png",
+      "sizes": "820x1180",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "The same project on a tablet, with touch-sized controls"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "New project",
+      "short_name": "New",
+      "description": "Start with an empty project",
+      "url": "./?action=new",
+      "icons": [{ "src": "icons/shortcut-96.png", "sizes": "96x96", "type": "image/png" }]
+    },
+    {
+      "name": "Home",
+      "short_name": "Home",
+      "description": "Recent projects and templates",
+      "url": "./?action=home",
+      "icons": [{ "src": "icons/shortcut-96.png", "sizes": "96x96", "type": "image/png" }]
     }
   ],
   "file_handlers": [
@@ -26,6 +66,40 @@
       "accept": { "application/vnd.himmelcad.assembler+json": [".hcasm"] },
       "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" }],
       "launch_type": "single-client"
+    },
+    {
+      "action": "./",
+      "accept": {
+        "model/step": [".step", ".stp"],
+        "model/stl": [".stl"],
+        "model/3mf": [".3mf"]
+      },
+      "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" }],
+      "launch_type": "single-client"
     }
-  ]
+  ],
+  "launch_handler": { "client_mode": ["focus-existing", "auto"] },
+  "share_target": {
+    "action": "./share-target",
+    "method": "POST",
+    "enctype": "multipart/form-data",
+    "params": {
+      "files": [
+        {
+          "name": "files",
+          "accept": [
+            "application/vnd.himmelcad.assembler+json",
+            ".hcasm",
+            "model/step",
+            ".step",
+            ".stp",
+            "model/stl",
+            ".stl",
+            "model/3mf",
+            ".3mf"
+          ]
+        }
+      ]
+    }
+  }
 }

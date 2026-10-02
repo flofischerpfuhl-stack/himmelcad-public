@@ -26,10 +26,21 @@ import { DOCUMENT_CSP, WORKER_CSP, isWorkerCspFile } from './scripts/csp.mjs';
 
 // Loaded at run time, not bundled into the config: the script starts with a shebang.
 const iconScript = new URL('../assembler/scripts/generate-icon.mjs', import.meta.url).href;
-const { drawIcon, encodePng } = (await import(/* @vite-ignore */ iconScript)) as {
+const { drawIcon, encodePng, icoOf, faviconSvg } = (await import(
+  /* @vite-ignore */ iconScript
+)) as {
   drawIcon: (size: number, options?: { maskable?: boolean }) => Uint8Array;
   encodePng: (size: number, rgba: Uint8Array) => Uint8Array;
+  icoOf: (sizes: number[]) => Uint8Array;
+  faviconSvg: () => string;
 };
+
+/**
+ * Preview release (default): not announced yet, so search engines are asked to stay away
+ * (`<meta name="robots">`, `X-Robots-Tag`, `robots.txt`) and Home/About show a "Preview"
+ * badge. `HIMMELCAD_WEB_PUBLIC=1` builds the public release (deploy/README.md "Going public").
+ */
+const PUBLIC_RELEASE = process.env.HIMMELCAD_WEB_PUBLIC === '1';
 
 const occtSelection = (() => {
   if (selectedOcctModule() !== 'himmelcad') return null;
@@ -105,29 +116,37 @@ function documentCspMeta(): Plugin {
           ? html
           : html.replace(
               '<!-- csp -->',
-              `<meta http-equiv="Content-Security-Policy" content="${DOCUMENT_CSP}" />`,
+              `<meta http-equiv="Content-Security-Policy" content="${DOCUMENT_CSP}" />${
+                PUBLIC_RELEASE ? '' : '\n    <meta name="robots" content="noindex, nofollow" />'
+              }`,
             ),
     },
   };
 }
 
 /**
- * App icons, rendered from the desktop app's procedural mark
- * (`../assembler/scripts/generate-icon.mjs`, a documented placeholder until
- * an owner-approved mark exists): manifest icons, the maskable variant
- * (full-bleed, mark inside the safe circle), the iOS home-screen icon and the
- * favicon. Emitted into the build and served by the dev server.
+ * App icons, rendered from the Assembler mark (low-poly bolt,
+ * `branding/logos/source/himmelcad-assembler*.svg`) by
+ * `../assembler/scripts/generate-icon.mjs`, the same pipeline as the desktop
+ * icons: manifest icons on the family's black card, maskable variants
+ * (full-bleed, mark inside the 80 % safe circle), the iOS home-screen icon
+ * (full-bleed: iOS rounds it), shortcut icons, and the favicons (SVG that
+ * follows the light/dark scheme; ICO for `/favicon.ico` requests and browsers
+ * without SVG favicons). Emitted into the build and served by the dev server.
  */
 function appIcons(): Plugin {
-  const icons: [string, number, boolean][] = [
-    ['icons/icon-192.png', 192, false],
-    ['icons/icon-512.png', 512, false],
-    ['icons/icon-maskable-512.png', 512, true],
-    ['icons/apple-touch-icon.png', 180, true],
-    ['icons/favicon-32.png', 32, false],
+  const png = (size: number, draw: (size: number) => Uint8Array) => () =>
+    encodePng(size, draw(size));
+  const icons: [string, string, () => Uint8Array | string][] = [
+    ['icons/icon-192.png', 'image/png', png(192, (s) => drawIcon(s))],
+    ['icons/icon-512.png', 'image/png', png(512, (s) => drawIcon(s))],
+    ['icons/icon-maskable-192.png', 'image/png', png(192, (s) => drawIcon(s, { maskable: true }))],
+    ['icons/icon-maskable-512.png', 'image/png', png(512, (s) => drawIcon(s, { maskable: true }))],
+    ['icons/apple-touch-icon.png', 'image/png', png(180, (s) => drawIcon(s, { maskable: true }))],
+    ['icons/shortcut-96.png', 'image/png', png(96, (s) => drawIcon(s))],
+    ['icons/favicon.svg', 'image/svg+xml', faviconSvg],
+    ['favicon.ico', 'image/x-icon', () => icoOf([16, 32, 48])],
   ];
-  const render = (size: number, maskable: boolean): Uint8Array =>
-    encodePng(size, drawIcon(size, { maskable }));
   return {
     name: 'assembler-web-icons',
     configureServer(server) {
@@ -138,13 +157,13 @@ function appIcons(): Plugin {
           next();
           return;
         }
-        res.setHeader('Content-Type', 'image/png');
-        res.end(render(icon[1], icon[2]));
+        res.setHeader('Content-Type', icon[1]);
+        res.end(icon[2]());
       });
     },
     generateBundle() {
-      for (const [fileName, size, maskable] of icons) {
-        this.emitFile({ type: 'asset', fileName, source: render(size, maskable) });
+      for (const [fileName, , render] of icons) {
+        this.emitFile({ type: 'asset', fileName, source: render() });
       }
     },
   };
@@ -161,6 +180,8 @@ export default defineConfig({
     new URL(occtSelection ? 'node_modules/.vite-himmelcad' : 'node_modules/.vite', import.meta.url),
   ),
   plugins: [react(), devCsp(), occtCacheFiles(), documentCspMeta(), appIcons()],
+  // Read by the shell's Home and About (`interface/shell-ui/releaseChannel.ts`); unset on desktop.
+  define: { 'import.meta.env.VITE_HC_RELEASE': JSON.stringify(PUBLIC_RELEASE ? '' : 'preview') },
   resolve: { alias: occtSelection?.aliases ?? [] },
   server: {
     port: 5176,

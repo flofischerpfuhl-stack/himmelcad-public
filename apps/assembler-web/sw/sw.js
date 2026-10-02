@@ -15,6 +15,10 @@
  * - Updates: a new version installs in the background and waits until the
  *   page asks it to take over (`SKIP_WAITING`, the "Reload" button); the
  *   first install takes control at once.
+ * - Share target: files shared to the installed app are handed to the page
+ *   through a cache (`receiveShare`).
+ * - No navigation preload: navigations are answered from the cache, never
+ *   from the network, so a preload request would only cost bandwidth.
  */
 /* global self, caches, crypto, URL, Response, Headers */
 'use strict';
@@ -141,8 +145,38 @@ self.addEventListener('message', (event) => {
   else if (type === 'VERSION' && event.ports[0]) event.ports[0].postMessage({ version: VERSION });
 });
 
+/** Files shared to the installed app (manifest `share_target`), kept until the page takes them. */
+const SHARE_CACHE = 'hc-shared-files';
+const SHARE_URL = new URL('share-target', SCOPE).href;
+
+/**
+ * A share (Android/ChromeOS share sheet) arrives as a POST navigation: the files go into
+ * {@link SHARE_CACHE}, the app opens at `./?share-target=<n>` and imports them
+ * (`src/pwa/launch.ts`). Never sent to the network: the site is static.
+ */
+async function receiveShare(request) {
+  const form = await request.formData();
+  const cache = await caches.open(SHARE_CACHE);
+  for (const key of await cache.keys()) await cache.delete(key);
+  let count = 0;
+  for (const file of form.getAll('files')) {
+    if (typeof file === 'string') continue;
+    const headers = {
+      'Content-Type': 'application/octet-stream',
+      'X-File-Name': encodeURIComponent(file.name),
+    };
+    await cache.put(new URL(`share-target/${count}`, SCOPE).href, new Response(file, { headers }));
+    count += 1;
+  }
+  return Response.redirect(new URL(`./?share-target=${count}`, SCOPE).href, 303);
+}
+
 self.addEventListener('fetch', (event) => {
   const request = event.request;
+  if (request.method === 'POST' && request.url.split('?')[0] === SHARE_URL) {
+    event.respondWith(receiveShare(request));
+    return;
+  }
   if (request.method !== 'GET') return;
   const url = new URL(request.url);
   if (url.origin !== SCOPE.origin || !url.href.startsWith(SCOPE.href)) return;

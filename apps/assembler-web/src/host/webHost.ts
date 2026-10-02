@@ -56,7 +56,27 @@ interface LaunchQueue {
   setConsumer(consumer: (params: LaunchParams) => void): void;
 }
 
-/** Files opened with the installed app ("Open with", double-click), File Handling API. */
+/** A launched or shared file that is not a project (STEP, STL, 3MF): imported into the open project. */
+export interface LaunchedFile {
+  name: string;
+  bytes: Uint8Array;
+}
+
+let launchImporter: ((files: LaunchedFile[]) => void) | null = null;
+
+/** The web product's import for launched model files (`src/pwa/launch.ts`). */
+export function setLaunchImporter(importer: (files: LaunchedFile[]) => void): void {
+  launchImporter = importer;
+}
+
+const isProject = (name: string) => name.toLowerCase().endsWith('.hcasm');
+
+/**
+ * Files opened with the installed app ("Open with", double-click), File Handling API
+ * (manifest `file_handlers`). A project opens (its handle kept: Save writes in place);
+ * STEP/STL/3MF files are imported. With `launch_handler: focus-existing` a later launch
+ * arrives in the running window through the same consumer.
+ */
 const webWindow: HostWindow = {
   onCloseRequested: () => () => undefined,
   respondClose: async () => undefined,
@@ -64,9 +84,23 @@ const webWindow: HostWindow = {
     const queue = (window as unknown as { launchQueue?: LaunchQueue }).launchQueue;
     let active = true;
     queue?.setConsumer((params) => {
-      const handle = params.files.find((h) => h.kind === 'file') as FileHandle | undefined;
-      if (!active || !handle) return;
-      void openFromLaunch(handle).then(listener, () => undefined);
+      const handles = params.files.filter((h) => h.kind === 'file') as FileHandle[];
+      if (!active || handles.length === 0) return;
+      const project = handles.find((h) => isProject(h.name));
+      if (project) {
+        // Opening a project replaces the document: files launched with it are not imported into it.
+        void openFromLaunch(project).then(listener, () => undefined);
+        return;
+      }
+      void Promise.all(
+        handles.map(async (h) => {
+          const file = await h.getFile();
+          return { name: file.name, bytes: new Uint8Array(await file.arrayBuffer()) };
+        }),
+      ).then(
+        (files) => launchImporter?.(files),
+        () => undefined,
+      );
     });
     return () => {
       active = false;

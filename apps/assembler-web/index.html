@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <!-- csp -->
-    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="dark light" />
     <meta name="theme-color" content="#101114" />
     <meta
@@ -12,10 +12,13 @@
     />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <!-- Opaque bar: the shell keeps no safe-area insets, so nothing may slide under the status bar. -->
+    <meta name="apple-mobile-web-app-status-bar-style" content="black" />
     <meta name="apple-mobile-web-app-title" content="Assembler" />
+    <meta name="application-name" content="Assembler" />
     <link rel="manifest" href="./manifest.webmanifest" />
-    <link rel="icon" type="image/png" sizes="32x32" href="./icons/favicon-32.png" />
+    <link rel="icon" href="./favicon.ico" sizes="16x16 32x32 48x48" />
+    <link rel="icon" type="image/svg+xml" href="./icons/favicon.svg" />
     <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png" />
     <title>Himmel:CAD Assembler</title>
   </head>

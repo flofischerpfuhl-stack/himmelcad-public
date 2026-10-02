@@ -107,7 +107,37 @@ export function registerServiceWorker(): void {
     .catch(() => usePwaStore.setState({ unsupported: true }));
 }
 
-/** Asks the browser to keep this site's storage (recent projects, recovery, the offline app) under pressure. */
+/** The browser shows no prompt for `persist()` (Chromium and WebKit decide silently; Firefox asks). */
+const persistIsSilent = (): boolean => !/\bFirefox\//.test(navigator.userAgent);
+
+/**
+ * Asks the browser to keep this site's storage (recent projects, recovery, the offline app)
+ * under pressure. Only where that happens silently: Firefox would show a permission prompt at
+ * start, and nothing may interrupt a user who models by hand (there storage stays
+ * "best effort"; the recovery copy and the offline app are rebuilt when evicted).
+ */
 export function requestPersistentStorage(): void {
+  if (!persistIsSilent()) return;
   void navigator.storage?.persist?.().catch(() => false);
+}
+
+/**
+ * Keeps `<meta name="theme-color">` on the app's background (`--hc-bg-base`), so an installed
+ * app's title bar matches the app theme (light, dark, or the system's) instead of the manifest's
+ * fixed dark `theme_color`.
+ */
+export function syncThemeColor(): void {
+  const meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
+  if (!meta) return;
+  const apply = () => {
+    const color = getComputedStyle(document.documentElement)
+      .getPropertyValue('--hc-bg-base')
+      .trim();
+    if (color && meta.content !== color) meta.content = color;
+  };
+  apply();
+  new MutationObserver(apply).observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: ['class'],
+  });
 }

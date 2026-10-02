@@ -37,12 +37,21 @@ import {
 import interWoffUrl from '@fontsource/inter/files/inter-latin-400-normal.woff?url';
 
 import { WebChrome } from './pwa/WebChrome.js';
-import { registerServiceWorker, requestPersistentStorage } from './pwa/serviceWorker.js';
+import { handleLaunch } from './pwa/launch.js';
+import {
+  registerServiceWorker,
+  requestPersistentStorage,
+  syncThemeColor,
+} from './pwa/serviceWorker.js';
 
 installPreferenceEffects();
 
 // A blank project until the user opens or creates one (Home, a launched file, recovery).
 startWithBlankDocument();
+// Shortcuts (?action=new|home), shared files, files launched with the installed app.
+handleLaunch();
+// The installed app's title bar follows the app theme.
+syncThemeColor();
 
 // Phone-sized windows: the floating Items and History panels would cover the whole model, so
 // they start closed there (the docks reopen them). The shell has no phone layout yet.
