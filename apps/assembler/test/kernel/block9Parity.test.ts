@@ -399,3 +399,33 @@ void test('Split: one plane cuts several bodies in one step; ids per body; every
   ]);
   assert.match(miss.errors['s'] ?? '', /does not cut "Body 3"/);
 });
+
+// ---- Taper with other extents (MOD-03) -----------------------------------------------------------
+
+void test('Extrude taper with To Object: the tapered prism stops at the face', async () => {
+  const features: Feature[] = [
+    ...box('a', 0, 0, 20, 20, 10),
+    sketch('p-s', 'XY', 20, rect(5, 5, 10, 10)),
+  ];
+  const first = await evaluate(features);
+  const top = faceRef(only(first, 'body:a'), planeAt(2, 10));
+  const result = await evaluate([
+    ...features,
+    {
+      ...extrude('p', 'p-s', -1),
+      operation: 'join',
+      extent: { kind: 'toObject', target: { kind: 'face', face: top } },
+      taper: 5,
+    } as ExtrudeFeature,
+  ]);
+  noErrors(result);
+  // From z = 20 down to the top (z = 10): a frustum narrowing by tan 5° per mm on every side.
+  const k = Math.tan((5 * Math.PI) / 180);
+  const low = 10 - 2 * 10 * k;
+  near(
+    only(result, 'body:a').volume,
+    4000 + (10 / 3) * (100 + low * low + 10 * low),
+    0.05,
+    'tapered to the face',
+  );
+});

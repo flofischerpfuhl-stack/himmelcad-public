@@ -151,7 +151,8 @@ export interface ExtrudeFeature extends FeatureBase {
    * Taper (draft) angle of the side walls, degrees (Shapr3D's extrude draft
    * angle): positive narrows the solid away from the start plane (holes
    * widen), negative widens it; both sides of a symmetric/two-sided
-   * extrude narrow away from the start. Distance extents only.
+   * extrude narrow away from the start. Every extent (Through All and To
+   * Object trim the tapered prism, Block 9).
    */
   taper?: number | undefined;
   /**

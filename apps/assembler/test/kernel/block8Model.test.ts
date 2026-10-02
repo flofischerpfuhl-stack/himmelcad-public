@@ -446,13 +446,23 @@ void test('Symmetric taper narrows both ways; a hole widens; push/pull tapers to
   );
 });
 
-void test('Taper is refused with Through All and survives a save/load', async () => {
-  const bad = await evaluate([
+void test('Taper works with Through All (Block 9) and survives a save/load', async () => {
+  const through = await evaluate([
     ...box('a', 0, 0, 20, 20, 10),
     sketch('h-s', 'XY', 20, circle(10, 10, 3)),
     extrude('h', 'h-s', -1, { operation: 'cut', extent: { kind: 'throughAll' }, taper: 3 }),
   ]);
-  assert.match(bad.errors['h'] ?? '', /Distance extent/);
+  noErrors(through);
+  // The tapered cutter narrows away from its start plane (z = 20): a conical hole.
+  const k = Math.tan((3 * Math.PI) / 180);
+  const top = 3 - 10 * k;
+  const bottom = 3 - 20 * k;
+  near(
+    only(through, 'body:a').volume,
+    4000 - ((Math.PI * 10) / 3) * (top * top + top * bottom + bottom * bottom),
+    0.05,
+    'tapered through hole',
+  );
   const features: Feature[] = [
     sketch('s', 'XY', 0, rect(0, 0, 20, 20)),
     extrude('e', 's', 10, { taper: 10 }),

@@ -839,9 +839,6 @@ export function createEvaluator(oc: OpenCascade, options: EvaluatorOptions = {})
           `Taper must be between -${MAX_EXTRUDE_TAPER}° and ${MAX_EXTRUDE_TAPER}°`,
         );
       }
-      if ((feature.extent?.kind ?? 'distance') !== 'distance') {
-        throw new FeatureError('Taper works with a Distance extent; set the extent to Distance');
-      }
     }
     if (feature.profile.kind === 'face') {
       applyFaceExtrude(feature, feature.profile.face, ctx);

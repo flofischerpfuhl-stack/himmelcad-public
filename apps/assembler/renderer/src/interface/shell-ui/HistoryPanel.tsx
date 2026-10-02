@@ -732,14 +732,12 @@ function FeatureParams({
           unit="mm"
           onCommit={(v) => edit({ startOffset: v === 0 ? undefined : v })}
         />
-        {(feature.extent?.kind ?? 'distance') === 'distance' || feature.taper ? (
-          <ExpressionField
-            label="Taper"
-            value={feature.taper ?? 0}
-            unit="°"
-            onCommit={(v) => edit({ taper: v === 0 ? undefined : v })}
-          />
-        ) : null}
+        <ExpressionField
+          label="Taper"
+          value={feature.taper ?? 0}
+          unit="°"
+          onCommit={(v) => edit({ taper: v === 0 ? undefined : v })}
+        />
         {feature.extent?.kind === 'toObject' ? (
           <span className={styles.paramNote}>
             To{' '}

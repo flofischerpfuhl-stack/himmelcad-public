@@ -321,19 +321,18 @@ function ExtrudeControls({
         unit="mm"
         onCommit={(v) => state.setExtrudeOptions({ startOffset: v === 0 ? undefined : v })}
       />
-      {(tool.extent ?? 'distance') === 'distance' ? (
-        <PillNumber
-          label="Taper"
-          value={tool.taper ?? 0}
-          unit="°"
-          onCommit={(v) =>
-            state.setExtrudeOptions({
-              taper:
-                v === 0 ? undefined : Math.max(-MAX_EXTRUDE_TAPER, Math.min(MAX_EXTRUDE_TAPER, v)),
-            })
-          }
-        />
-      ) : null}
+      {/* Every extent tapers (Through All and To Object trim the tapered prism, Block 9). */}
+      <PillNumber
+        label="Taper"
+        value={tool.taper ?? 0}
+        unit="°"
+        onCommit={(v) =>
+          state.setExtrudeOptions({
+            taper:
+              v === 0 ? undefined : Math.max(-MAX_EXTRUDE_TAPER, Math.min(MAX_EXTRUDE_TAPER, v)),
+          })
+        }
+      />
     </>
   );
 }
