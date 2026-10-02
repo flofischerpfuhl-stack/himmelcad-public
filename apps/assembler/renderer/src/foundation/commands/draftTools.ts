@@ -119,6 +119,11 @@ export type DraftToolHandle<D> =
       axis: Vec3;
       ref: Vec3;
       radius: number;
+      /** `lever`: a tilt with a small range (dragged like a lever of `lever` mm); default: turn. */
+      drag?: 'lever';
+      lever?: number;
+      /** Drag snapping step, degrees (default 15°). */
+      snapDeg?: number;
     })
   | (DraftToolHandleBase<D> & { kind: 'chip'; at: Vec3 });
 

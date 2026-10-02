@@ -296,8 +296,9 @@ export abstract class QueuedKernelAdapter implements KernelAdapter {
 
   private pump(): void {
     if (this.running || this.disposed || this.currentStatus.status !== 'ready') return;
-    // The document channel wins over previews: committed state first.
-    const next = this.waiting.get('document') ?? this.waiting.get('preview');
+    // The document channel wins over previews (committed state first), background work comes last.
+    const next =
+      this.waiting.get('document') ?? this.waiting.get('preview') ?? this.waiting.get('background');
     if (!next) {
       this.onIdle();
       return;

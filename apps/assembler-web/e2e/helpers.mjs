@@ -5,9 +5,10 @@
  * dev-only hooks (the production build has none).
  */
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 /**
  * Chromium: `ASM_CHROME`, else a locally installed Playwright Chromium (no
@@ -46,10 +47,33 @@ export function watchErrors(page) {
   return errors;
 }
 
+/** The demo bracket as a project file (kept equal to `createDemoDocument()` by the assembler tests). */
+export const DEMO_PROJECT = readFileSync(
+  fileURLToPath(new URL('./fixtures/demo-bracket.hcasm', import.meta.url)),
+  'utf8',
+);
+
+/** Drops a project file onto the window, as a user opens one (a `.hcasm` drop opens it). */
+export async function dropProject(page, text, name = 'Bracket.hcasm') {
+  await page.evaluate(
+    ([content, fileName]) => {
+      const dt = new DataTransfer();
+      dt.items.add(new File([content], fileName, { type: 'application/json' }));
+      for (const type of ['dragenter', 'dragover', 'drop']) {
+        window.dispatchEvent(
+          new DragEvent(type, { dataTransfer: dt, bubbles: true, cancelable: true }),
+        );
+      }
+    },
+    [text, name],
+  );
+}
+
 /**
  * Waits until the app is usable: the Home screen is up (started without a
- * file), and — after Escape — the start document's body is listed, which
- * needs the kernel loaded and the first evaluation done.
+ * file); Escape closes it onto a blank project (Block 9: never the sample),
+ * then the demo bracket is opened by dropping its file, and its body is
+ * listed — which needs the kernel loaded and the first evaluation done.
  */
 export async function waitForModel(
   page,
@@ -59,6 +83,7 @@ export async function waitForModel(
     await page.locator('[data-home-screen]').waitFor({ timeout });
     await page.keyboard.press('Escape');
     await page.locator('[data-home-screen]').waitFor({ state: 'detached' });
+    await dropProject(page, DEMO_PROJECT);
   }
   // `items: false` where the Items panel starts closed (phone-sized windows).
   await page.waitForFunction(

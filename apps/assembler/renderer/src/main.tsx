@@ -14,7 +14,10 @@ import { installPreferenceEffects } from './interface/shell-ui/preferenceEffects
 import { installAutomationBridge } from './interface/agent-api/automationStore.js';
 import { installAutomationHook } from './app/devtools/automationHook.js';
 import { WorkerKernelAdapter } from './foundation/geometry-kernel/workerAdapter.js';
-import { useProjectStore } from './interface/shell-ui/project/projectStore.js';
+import {
+  startWithBlankDocument,
+  useProjectStore,
+} from './interface/shell-ui/project/projectStore.js';
 import { useAssemblerStore } from './foundation/commands/store.js';
 import { setSketchSolverFactory } from './foundation/sketch-solver/solverProvider.js';
 import { setFontLoader } from './foundation/sketch-solver/text/fonts.js';
@@ -28,6 +31,9 @@ if (import.meta.env.DEV) installAutomationHook(useAssemblerStore);
 
 // Theme and grid defaults from the user's preferences (Settings dialog).
 installPreferenceEffects();
+
+// A blank project until the user opens or creates one (Home, a file argument, recovery).
+startWithBlankDocument();
 
 // OCCT (WebAssembly) runs in its own worker; the UI stays responsive while it loads.
 const kernelAdapter = new WorkerKernelAdapter(

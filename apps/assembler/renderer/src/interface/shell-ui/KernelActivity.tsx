@@ -18,7 +18,12 @@ function describe(activity: NonNullable<AssemblerState['kernelActivity']>): {
   detail: string;
   fraction: number | null;
 } {
-  const title = activity.channel === 'preview' ? 'Computing preview…' : 'Updating model…';
+  const title =
+    activity.channel === 'preview'
+      ? 'Computing preview…'
+      : activity.channel === 'background'
+        ? 'Testing parameter range…'
+        : 'Updating model…';
   const progress = activity.progress;
   if (!progress) return { title, detail: 'Starting', fraction: null };
   if (progress.phase === 'tessellate') {

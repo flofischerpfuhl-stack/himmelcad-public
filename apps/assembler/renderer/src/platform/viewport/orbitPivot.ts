@@ -9,8 +9,12 @@
  *    the depths drawn within {@link PIVOT_SEARCH_RADIUS_PX}, weighted by
  *    their closeness to the cursor. Put on the cursor ray, the pivot sits
  *    inside a bore at its rim depth instead of on whatever is behind it.
- * 3. **model** — nothing near: the depth of the visible model's centre
- *    (the caller's part, it needs the bounds).
+ * 2b. **nearest** — nothing within that radius (a bore wider than the
+ *    window, the cursor far beside the part): the nearest drawn geometry
+ *    anywhere in the view, from a coarse depth map of the whole view
+ *    ({@link nearestPivotDepth}, read once per gesture, 1/8 resolution).
+ * 3. **model** — nothing drawn in the whole view: the depth of the visible
+ *    model's centre (the caller's part, it needs the bounds).
  *
  * The pivot is always a point on the cursor ray, so it stays under the
  * cursor while the camera turns or zooms about it. Pure: no DOM, no GL.
@@ -39,7 +43,7 @@ export interface DepthProjection {
   orthographic: boolean;
 }
 
-export type PivotRule = 'surface' | 'near' | 'model' | 'target' | 'selection';
+export type PivotRule = 'surface' | 'near' | 'nearest' | 'model' | 'target' | 'selection';
 
 /** Distance from the eye along the viewing axis of a window-space depth `z`. */
 export function linearDepth(z: number, projection: DepthProjection): number {
@@ -95,6 +99,74 @@ export function pivotDepth(
   }
   if (hits === 0 || weight <= 0) return null;
   return { depth: sum / weight, rule: 'near', hits };
+}
+
+/** Block side of the coarse depth map, CSS px (the map is about 1/8 of the view per side). */
+export const PIVOT_COARSE_BLOCK_PX = 8;
+
+/**
+ * The whole view's depth reduced to one sample per `block`² device pixels
+ * — the nearest depth drawn in the block (`gl.ts` `requestPickDepthCoarse`).
+ * Rows top first; block columns start at x = 0, block rows at `offsetY`
+ * (the blocks are aligned to the bottom edge, so the top row may be cut).
+ */
+export interface CoarseDepthMap {
+  width: number;
+  height: number;
+  /** Block side, device pixels. */
+  block: number;
+  /** Device-pixel y of the top block row's upper edge (≤ 0). */
+  offsetY: number;
+  /** Window depth per block, `NaN` where nothing is drawn. */
+  z: Float32Array;
+}
+
+/**
+ * Rule 2b, **nearest**: nothing is drawn within the search radius (a bore
+ * wider than the window, or the cursor far beside the part), so the
+ * nearest drawn geometry anywhere in the view gives the depth — the rim of
+ * a wide bore, the edge of the part next to the cursor. Distances are
+ * measured from the cursor (device px) to each block's rectangle; the
+ * blocks within one block of the nearest are averaged (linearised), so a
+ * rim seen at a slant does not jump between its near and far side.
+ * `null` when the view shows nothing at all (rule 3).
+ */
+export function nearestPivotDepth(
+  map: CoarseDepthMap,
+  cursor: { x: number; y: number },
+  projection: DepthProjection,
+): { depth: number; rule: 'nearest'; distancePx: number } | null {
+  const { width, height, block, offsetY, z } = map;
+  // Squared distance from the cursor to block (row, col)'s rectangle.
+  const distance2 = (row: number, col: number): number => {
+    const top = offsetY + row * block;
+    const left = col * block;
+    const dy = Math.max(top - cursor.y, 0, cursor.y - (top + block));
+    const dx = Math.max(left - cursor.x, 0, cursor.x - (left + block));
+    return dx * dx + dy * dy;
+  };
+  let best = Number.POSITIVE_INFINITY;
+  for (let row = 0; row < height; row += 1) {
+    for (let col = 0; col < width; col += 1) {
+      if (Number.isNaN(z[row * width + col]!)) continue;
+      const d2 = distance2(row, col);
+      if (d2 < best) best = d2;
+    }
+  }
+  if (!Number.isFinite(best)) return null;
+  const nearest = Math.sqrt(best);
+  const limit = (nearest + block) * (nearest + block);
+  let sum = 0;
+  let count = 0;
+  for (let row = 0; row < height; row += 1) {
+    for (let col = 0; col < width; col += 1) {
+      const value = z[row * width + col]!;
+      if (Number.isNaN(value) || distance2(row, col) > limit) continue;
+      sum += linearDepth(value, projection);
+      count += 1;
+    }
+  }
+  return { depth: sum / count, rule: 'nearest', distancePx: nearest };
 }
 
 /** Bytes of a depth-attachment pixel (`gl.ts`: 24-bit depth in RGB, A = 255 where drawn) → window depth or `NaN`. */

@@ -22,7 +22,7 @@ import test from 'node:test';
 import { _electron as electron } from 'playwright-core';
 
 import { closeApp } from './closeApp.js';
-import { dismissHome } from './home.js';
+import { dismissHome, openDemo } from './home.js';
 
 // Run via `pnpm --filter @himmelcad/assembler test:electron` (cwd =
 // `apps/assembler`, where `dist/electron/main.js` and `package.json`'s
@@ -121,16 +121,13 @@ void test('production build: kernel reaches ready, the demo part renders, Save/R
   const canvasCount = await window.evaluate(() => document.querySelectorAll('canvas').length);
   assert.ok(canvasCount > 0, 'the viewport canvas is mounted');
 
-  // Kernel-ready only means the worker/wasm loaded; the initial document
-  // (the demo bracket) still evaluates asynchronously afterwards. Wait for
-  // the Items panel to list it before asserting the app "renders" and
-  // before the screenshot, or the shot would show an empty "No items yet"
-  // viewport despite a ready kernel.
-  await window.waitForFunction(() => !document.body.innerText.includes('No items yet'), {
-    timeout: 20_000,
-  });
-  // Started without a file: the Home screen is up; Escape returns to the start document.
-  await dismissHome(window);
+  // Started without a file: the Home screen is up; Escape closes it onto a blank project
+  // (Block 9: never the sample), then the demo bracket is opened by dropping it onto the
+  // window; `dismissHome` waits until the Items panel lists it.
+  await dismissHome(window, { demo: false });
+  const blank = await window.evaluate(() => document.body.innerText.includes('No items yet'));
+  assert.ok(blank, 'Escape on the Home screen leaves a blank project');
+  await openDemo(window);
 
   mkdirSync(SHOTS_DIR, { recursive: true });
   await window.screenshot({ path: join(SHOTS_DIR, 'f-electron-production-ready.png') });

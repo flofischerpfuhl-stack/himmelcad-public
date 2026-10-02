@@ -176,26 +176,50 @@ class Parameter:
         self.id = str(data["id"])
         self.name = str(data["name"])
         self.unit = str(data["unit"])
-        self.value = float(data["value"])
-        self.expression = data.get("expression")
+        self._refresh(data)
 
     def __repr__(self) -> str:
         suffix = f" = {self.expression}" if self.expression else ""
-        return f"Parameter({self.name!r}{suffix} -> {self.value}{self.unit})"
+        bounds = ""
+        if self.min is not None or self.max is not None:
+            bounds = f" in [{'' if self.min is None else self.min}, {'' if self.max is None else self.max}]"
+        return f"Parameter({self.name!r}{suffix} -> {self.value}{self.unit}{bounds})"
 
     def _refresh(self, data: Mapping[str, Any]) -> Parameter:
         self.name = str(data["name"])
         self.unit = str(data["unit"])
         self.value = float(data["value"])
         self.expression = data.get("expression")
+        #: Range (``None`` = unbounded) and slider step, as last resolved.
+        self.min: float | None = None if data.get("min") is None else float(data["min"])
+        self.max: float | None = None if data.get("max") is None else float(data["max"])
+        self.step: float | None = None if data.get("step") is None else float(data["step"])
         return self
 
     def set(self, value: float | None = None, *, expression: str | None = None, unit: str | None = None) -> Parameter:
         """Changes the value/expression/unit as one undo step: every sketch whose dimensions use it is
         re-solved and every dependent feature re-evaluates. Raises :class:`SketchConflictError` (nothing
-        changed) when a dependent sketch cannot take the new value."""
+        changed) when a dependent sketch cannot take the new value, :class:`InvalidParamsError` when the
+        value lies outside the parameter's range (never clamped)."""
         result = self.doc.client.edit_parameter(self.id, value=value, expression=expression, unit=unit)
         return self._refresh(result["parameter"])
+
+    def set_range(self, min: Any = None, max: Any = None, *, step: Any = None) -> Parameter:  # noqa: A002
+        """Sets the allowed range and slider step (numbers, formulas like ``"wall * 2"`` or ``"5 mm"``);
+        ``None`` keeps a bound, :data:`~himmelcad.assembler.client.NULL` removes it. Refused when the
+        current value would lie outside."""
+        result = self.doc.client.edit_parameter(self.id, min=min, max=max, step=step)
+        return self._refresh(result["parameter"])
+
+    def sweep(self, *, mode: str = "range", samples: int | None = None, min: float | None = None, max: float | None = None) -> Mapping[str, Any]:  # noqa: A002
+        """Rebuilds the model at this parameter's min / nominal / max (or ``samples`` values) without
+        changing it; see :meth:`Document.sweep`."""
+        entry: dict[str, Any] = {"parameterId": self.id}
+        if min is not None:
+            entry["min"] = min
+        if max is not None:
+            entry["max"] = max
+        return self.doc.client.sweep_parameters([entry], mode=mode, samples=samples)
 
     def rename(self, name: str) -> Parameter:
         """Renames the parameter; every expression referencing it by name is rewritten."""
@@ -664,11 +688,11 @@ class Document(PrintToolsMixin, InteropMixin):
     @property
     def commands(self) -> list[str]:
         """Methods issued so far that change or export the document (for benchmarks/audits)."""
-        reads = {"api.hello", "api.describe", "document.get", "features.list", "feature.get", "bodies.list", "body.get", "faces.list", "edges.list", "sketches.list", "selection.get", "print.analyze", "print.orientations", "export.meshStats", "parameters.list", "measure.get", "measure.distance", "measure.angle", "measure.area", "measure.volume"}
+        reads = {"api.hello", "api.describe", "document.get", "features.list", "feature.get", "bodies.list", "body.get", "faces.list", "edges.list", "sketches.list", "selection.get", "print.analyze", "print.orientations", "export.meshStats", "parameters.list", "parameters.sweep", "measure.get", "measure.distance", "measure.angle", "measure.area", "measure.volume"}
         return [call.method for call in self.log if call.method not in reads]
 
     # ---- parameters ---------------------------------------------------------------------
-    def param(self, name: str, value: float | None = None, *, unit: str | None = None, expression: str | None = None) -> Parameter:
+    def param(self, name: str, value: float | None = None, *, unit: str | None = None, expression: str | None = None, min: Any = None, max: Any = None, step: Any = None) -> Parameter:  # noqa: A002
         """Gets, creates or edits a document parameter ("variable") by name.
 
         ``doc.param("wall", 2)`` creates ``wall`` (default unit ``"mm"``) or, if it
@@ -677,22 +701,35 @@ class Document(PrintToolsMixin, InteropMixin):
         value/expression/unit) just returns the existing parameter and raises
         :class:`NotFoundError` if there is none yet. ``doc.param("hole_d",
         expression="wall * 2")`` computes the value from other parameters.
+        ``doc.param("wall", 2, min=1.2, max=4, step=0.2)`` also sets its range (a value
+        outside it is refused, never clamped) and the slider step.
         """
         existing = next((p for p in self.client.parameters() if p["name"] == name), None)
-        if value is None and expression is None and unit is None:
+        if all(v is None for v in (value, expression, unit, min, max, step)):
             if existing is None:
                 raise NotFoundError(raw_code="notFound", message=f'No parameter "{name}"', method="parameters.list")
             return Parameter(self, existing)
         if existing is None:
-            result = self.client.create_parameter(name, unit=unit or "mm", value=value, expression=expression)
+            result = self.client.create_parameter(name, unit=unit or "mm", value=value, expression=expression, min=min, max=max, step=step)
         else:
-            result = self.client.edit_parameter(existing["id"], unit=unit, value=value, expression=expression)
+            result = self.client.edit_parameter(existing["id"], unit=unit, value=value, expression=expression, min=min, max=max, step=step)
         return Parameter(self, result["parameter"])
 
     @property
     def parameters(self) -> list[Parameter]:
         """Every document parameter, in creation order."""
         return [Parameter(self, p) for p in self.client.parameters()]
+
+    def sweep(self, *parameters: Parameter | str | Mapping[str, Any], mode: str = "range", samples: int | None = None, combine: str = "each") -> Mapping[str, Any]:
+        """Tests parameter ranges without changing the document (``parameters.sweep``).
+
+        ``doc.sweep("wall")`` rebuilds at wall's min / nominal / max; ``doc.sweep("wall", "height",
+        mode="samples", samples=4, combine="all")`` tries every combination of 4 values each. Each sample
+        reports ``outcome`` (``rebuilt``/``refused``/``failed``), ``ok``, the failing features in
+        ``errors`` and the stored checks in ``checks``. Parameters need a range (``set_range``) or
+        ``{"parameterId": ..., "min": ..., "max": ...}``."""
+        entries: list[Mapping[str, Any] | str] = [p.id if isinstance(p, Parameter) else p for p in parameters]
+        return self.client.sweep_parameters(entries, mode=mode, samples=samples, combine=combine)
 
     # ---- measurement (the Measure panel's numbers; exact B-rep / kernel) ----------------------
     @staticmethod

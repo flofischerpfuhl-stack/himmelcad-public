@@ -729,11 +729,33 @@
         "expression": {
           "type": "string",
           "minLength": 1
+        },
+        "min": {
+          "type": "number"
+        },
+        "max": {
+          "type": "number"
+        },
+        "step": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "minExpression": {
+          "type": "string",
+          "minLength": 1
+        },
+        "maxExpression": {
+          "type": "string",
+          "minLength": 1
+        },
+        "stepExpression": {
+          "type": "string",
+          "minLength": 1
         }
       },
       "required": ["id", "name", "unit", "value"],
       "additionalProperties": false,
-      "description": "Document parameter (\"variable\"): `value` is always the last resolved value; `expression` (e.g. \"wall * 2\") is the source formula when the value is computed from other parameters. Usable from sketch dimension expressions and the numeric fields of extrude (distance), fillet (radius, radius2), chamfer (distance, distance2), shell/rib/thicken (thickness), hole (diameter) and draft (angle) via `<field>Expression`."
+      "description": "Document parameter (\"variable\"): `value` is always the last resolved value; `expression` (e.g. \"wall * 2\") is the source formula when the value is computed from other parameters. Usable from sketch dimension expressions and the numeric fields of extrude (distance), fillet (radius, radius2), chamfer (distance, distance2), shell/rib/thicken (thickness), hole (diameter) and draft (angle) via `<field>Expression`. Optional range: `min`/`max` bound the value (an edit outside them is refused, never clamped), `step` is the slider increment (not a constraint); each may come from a formula (`minExpression`, …) and is then its last resolved value."
     },
     "SketchPlane": {
       "oneOf": [
@@ -3152,6 +3174,51 @@
             "type": "string",
             "minLength": 1
           },
+          "min": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A number, a formula or text with a unit (\"wall * 2\", \"5 mm\"), or null to remove."
+          },
+          "max": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A number, a formula or text with a unit (\"wall * 2\", \"5 mm\"), or null to remove."
+          },
+          "step": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A number, a formula or text with a unit (\"wall * 2\", \"5 mm\"), or null to remove."
+          },
           "expectedRevision": {
             "type": "integer",
             "minimum": 0,
@@ -3166,7 +3233,7 @@
     "parameter.edit": {
       "kind": "command",
       "capability": "document.write",
-      "summary": "Changes a parameter's name, unit, value and/or expression as ONE undo step (not inside a transaction). A new value re-solves every sketch whose dimensions use the parameter (directly or through other parameters) and re-resolves every feature `*Expression` field; dependent features re-evaluate. All-or-nothing: a sketch the solver cannot satisfy rejects with `sketchConflict` (details.conflicts), a feature that newly fails in the kernel with `featureFailed` — nothing changes. `value` alone replaces a formula; `expression: null` removes it. Renaming rewrites every expression that references it.",
+      "summary": "Changes a parameter's name, unit, value, expression and/or range as ONE undo step (not inside a transaction). A new value re-solves every sketch whose dimensions use the parameter (directly or through other parameters) and re-resolves every feature `*Expression` field; dependent features re-evaluate. All-or-nothing: a sketch the solver cannot satisfy rejects with `sketchConflict` (details.conflicts), a feature that newly fails in the kernel with `featureFailed`, a value outside the parameter's `min`/`max` (its own or a dependent one) with `invalidParams` (details.outOfRange) — nothing changes, nothing is clamped. `value` alone replaces a formula; `expression: null` removes it; `min`/`max`/`step: null` removes that bound. Renaming rewrites every expression that references it.",
       "params": {
         "type": "object",
         "properties": {
@@ -3194,6 +3261,51 @@
                 "type": "null"
               }
             ]
+          },
+          "min": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A number, a formula or text with a unit (\"wall * 2\", \"5 mm\"), or null to remove."
+          },
+          "max": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A number, a formula or text with a unit (\"wall * 2\", \"5 mm\"), or null to remove."
+          },
+          "step": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A number, a formula or text with a unit (\"wall * 2\", \"5 mm\"), or null to remove."
           },
           "expectedRevision": {
             "type": "integer",
@@ -3227,6 +3339,64 @@
         "additionalProperties": false
       },
       "result": "{parameterId, revision, committed, errors, warnings, bodies}"
+    },
+    "parameters.sweep": {
+      "kind": "query",
+      "capability": "document.read",
+      "summary": "Tests a parameter range without changing the document: evaluates the model at each parameter's min / nominal / max (`mode: \"range\"`) or at `samples` evenly spaced values (`mode: \"samples\"`), one parameter at a time (`combine: \"each\"`, the others nominal) or every combination (`combine: \"all\"`), at most 64 samples. Each sample is planned like `parameter.edit` (sketches re-solved, formulas re-resolved) and rebuilt by the kernel at background priority. Per sample: `outcome` (`rebuilt` | `refused` — the values cannot be applied, e.g. a sketch conflict, see `reason`/`featureId` | `failed` — the kernel failed), `errors` (featureId, featureName, message of every failing step), `bodies`, `volume` and `checks` (the document's stored checks on that sample; null when no checks module is installed). Parameters without a stored range need `min`/`max` here; values must lie within a stored range. Steps below the History rollback bar are not evaluated.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "parameters": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 4,
+            "items": {
+              "type": "object",
+              "properties": {
+                "parameterId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "min": {
+                  "type": "number"
+                },
+                "max": {
+                  "type": "number"
+                },
+                "values": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 64,
+                  "items": {
+                    "type": "number"
+                  }
+                }
+              },
+              "required": ["parameterId"],
+              "additionalProperties": false
+            }
+          },
+          "mode": {
+            "enum": ["range", "samples"],
+            "default": "range"
+          },
+          "samples": {
+            "type": "integer",
+            "minimum": 2,
+            "maximum": 16,
+            "default": 5,
+            "description": "Values per parameter in `samples` mode, min and max included."
+          },
+          "combine": {
+            "enum": ["each", "all"],
+            "default": "each"
+          }
+        },
+        "required": ["parameters"],
+        "additionalProperties": false
+      },
+      "result": "{axes: [{parameterId, name, unit, nominal, values}], samples: [{index, values: {name: value}, nominal, outcome, ok, errors: [{featureId, featureName, message}], reason?, featureId?, featureName?, bodies, volume, checks, ms}], passed, failed, total, cancelled, checksAvailable}"
     },
     "measure.get": {
       "kind": "query",

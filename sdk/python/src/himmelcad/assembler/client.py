@@ -21,7 +21,7 @@ METHODS = (
     "api.hello", "api.describe",
     "document.get", "features.list", "feature.get", "bodies.list", "body.get",
     "faces.list", "edges.list", "sketches.list", "sketch.fonts", "datums.list", "selection.get", "selection.set",
-    "parameters.list", "parameter.create", "parameter.edit", "parameter.delete",
+    "parameters.list", "parameter.create", "parameter.edit", "parameter.delete", "parameters.sweep",
     "measure.get", "measure.distance", "measure.angle", "measure.area", "measure.volume",
     "feature.create", "feature.edit", "feature.delete", "feature.suppress", "feature.rename",
     "sketch.addProfile", "sketch.addPolyline", "sketch.addArc", "sketch.addConstraint",
@@ -40,8 +40,19 @@ METHODS = (
 )
 
 
+class _Null:
+    """Sends an explicit JSON ``null`` (``None`` arguments are left out of a call)."""
+
+    def __repr__(self) -> str:
+        return "NULL"
+
+
+#: Pass as a value to send ``null``, e.g. ``edit_parameter(pid, min=NULL)`` removes the lower bound.
+NULL = _Null()
+
+
 def _drop_none(params: Mapping[str, Any]) -> dict[str, Any]:
-    return {key: value for key, value in params.items() if value is not None}
+    return {key: (None if value is NULL else value) for key, value in params.items() if value is not None}
 
 
 def _file_params(source: Path) -> dict[str, Any]:
@@ -152,14 +163,28 @@ class AssemblerClient:
 
     # ---- commands ------------------------------------------------------------------------
 
-    def create_parameter(self, name: str, *, unit: str | None = None, value: float | None = None, expression: str | None = None, expected_revision: int | None = None) -> Mapping[str, Any]:
-        return self.call("parameter.create", {"name": name, "unit": unit, "value": value, "expression": expression, "expectedRevision": expected_revision})
+    def create_parameter(self, name: str, *, unit: str | None = None, value: float | None = None, expression: str | None = None, min: float | str | None = None, max: float | str | None = None, step: float | str | None = None, expected_revision: int | None = None) -> Mapping[str, Any]:  # noqa: A002
+        """``min``/``max`` bound the value (numbers, formulas or text with a unit); ``step`` is the slider increment."""
+        return self.call("parameter.create", {"name": name, "unit": unit, "value": value, "expression": expression, "min": min, "max": max, "step": step, "expectedRevision": expected_revision})
 
-    def edit_parameter(self, parameter_id: str, *, name: str | None = None, unit: str | None = None, value: float | None = None, expression: str | None = None, expected_revision: int | None = None) -> Mapping[str, Any]:
-        return self.call("parameter.edit", {"parameterId": parameter_id, "name": name, "unit": unit, "value": value, "expression": expression, "expectedRevision": expected_revision})
+    def edit_parameter(self, parameter_id: str, *, name: str | None = None, unit: str | None = None, value: float | None = None, expression: str | None = None, min: Any = None, max: Any = None, step: Any = None, expected_revision: int | None = None) -> Mapping[str, Any]:  # noqa: A002
+        """A value outside ``min``/``max`` is refused (``invalidParams``, ``details.outOfRange``), never clamped.
+
+        Pass :data:`NULL` as ``min``/``max``/``step`` to remove that bound."""
+        return self.call("parameter.edit", {"parameterId": parameter_id, "name": name, "unit": unit, "value": value, "expression": expression, "min": min, "max": max, "step": step, "expectedRevision": expected_revision})
 
     def delete_parameter(self, parameter_id: str) -> Mapping[str, Any]:
         return self.call("parameter.delete", {"parameterId": parameter_id})
+
+    def sweep_parameters(self, parameters: Sequence[Mapping[str, Any] | str], *, mode: str | None = None, samples: int | None = None, combine: str | None = None) -> Mapping[str, Any]:
+        """``parameters.sweep``: rebuild the model over parameter ranges without changing it.
+
+        ``parameters``: ids/names, or ``{"parameterId", "min"?, "max"?, "values"?}``. ``mode``:
+        ``"range"`` (min/nominal/max) or ``"samples"`` (``samples`` values per parameter); ``combine``:
+        ``"each"`` (one at a time) or ``"all"`` (every combination). Returns the report with one entry per
+        sample (``outcome``, ``ok``, ``errors``, ``checks``, ...)."""
+        entries = [{"parameterId": p} if isinstance(p, str) else dict(p) for p in parameters]
+        return self.call("parameters.sweep", {"parameters": entries, "mode": mode, "samples": samples, "combine": combine})
     def create_feature(self, kind: str, params: Mapping[str, Any], *, name: str | None = None, expected_revision: int | None = None) -> Mapping[str, Any]:
         return self.call("feature.create", {"kind": kind, "params": dict(params), "name": name, "expectedRevision": expected_revision})
 

@@ -22,6 +22,7 @@
  * Plain data only; no store, no kernel, no UI.
  */
 import type { EdgeRef, FaceRef } from './document.js';
+import { registerFormatCapability } from './formatCapabilities.js';
 
 /** Fields every feature has, regardless of kind. */
 export interface FeatureBase {
@@ -80,6 +81,19 @@ export interface FeatureKindDefinition<K extends FeatureKind = FeatureKind> {
    * B-rep check on commit (`EvaluationRequest.commitCheck`).
    */
   booleanResult?(feature: FeatureKindMap[K]): boolean;
+  /**
+   * Optional fields of the kind that change what it builds, so an older
+   * reader must refuse rather than ignore them (`formatCapabilities.ts`):
+   * a feature that uses one puts its id into the file's `requires` list.
+   */
+  formatCapabilities?: readonly FeatureFormatCapability<FeatureKindMap[K]>[];
+}
+
+/** A capability of one kind and the rule that tells whether a feature uses it. */
+export interface FeatureFormatCapability<F> {
+  id: string;
+  label: string;
+  usedBy(feature: F): boolean;
 }
 
 const definitions = new Map<string, FeatureKindDefinition>();
@@ -95,7 +109,25 @@ export function registerFeatureKind<K extends FeatureKind>(
       `Feature kind "${definition.kind}" is registered twice (${existing.module}, ${definition.module})`,
     );
   }
+  for (const capability of definition.formatCapabilities ?? []) {
+    registerFormatCapability({
+      id: capability.id,
+      label: capability.label,
+      module: definition.module,
+    });
+  }
   definitions.set(definition.kind, definition as unknown as FeatureKindDefinition);
+}
+
+/** Ids of the format capabilities `features` use (see `formatCapabilities.ts`). */
+export function featureFormatCapabilities(features: readonly Feature[]): Set<string> {
+  const used = new Set<string>();
+  for (const feature of features) {
+    for (const capability of definitions.get(feature.kind)?.formatCapabilities ?? []) {
+      if (!used.has(capability.id) && capability.usedBy(feature)) used.add(capability.id);
+    }
+  }
+  return used;
 }
 
 /** The registered definition of `kind`, or `undefined` for an unknown kind. */

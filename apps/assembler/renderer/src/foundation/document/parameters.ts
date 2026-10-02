@@ -28,6 +28,122 @@ export interface Parameter {
   value: number;
   /** Source formula, when the value is computed rather than typed directly. */
   expression?: string;
+  /**
+   * Allowed range (Block 9, optional and additive): the last resolved bounds.
+   * A typed or computed value outside them is refused with a clear error
+   * (never clamped); only the slider clamps, because it cannot leave them.
+   */
+  min?: number;
+  max?: number;
+  /** Slider increment (> 0). An input aid, not a constraint: typed values may lie between steps. */
+  step?: number;
+  /** Source formulas of the bounds/step (other parameters, units), like `expression`. */
+  minExpression?: string;
+  maxExpression?: string;
+  stepExpression?: string;
+}
+
+/** The range fields of a parameter. */
+export const PARAMETER_RANGE_FIELDS = ['min', 'max', 'step'] as const;
+export type ParameterRangeField = (typeof PARAMETER_RANGE_FIELDS)[number];
+
+/** A parameter's resolved range (each part optional). */
+export interface ParameterRange {
+  min?: number;
+  max?: number;
+  step?: number;
+}
+
+/** Whether `p` declares any range field. */
+export function hasParameterRange(p: Parameter): boolean {
+  return p.min !== undefined || p.max !== undefined || p.step !== undefined;
+}
+
+/** Tolerance of the range check (resolved formulas carry float noise). */
+const RANGE_EPSILON = 1e-9;
+
+/**
+ * Resolves the range of every parameter against the resolved `values`: a
+ * bound with a formula is evaluated (it may read other parameters, never
+ * feeds back into values, so it cannot form a cycle), a plain bound is
+ * kept. Fails on the first bound that does not resolve, on `min > max` and
+ * on a step that is not positive.
+ */
+export function resolveParameterRanges(
+  parameters: readonly Parameter[],
+  values: ReadonlyMap<string, number>,
+):
+  | { ok: true; ranges: Map<string, ParameterRange> }
+  | { ok: false; parameterId: string; message: string } {
+  const ranges = new Map<string, ParameterRange>();
+  for (const p of parameters) {
+    const range: ParameterRange = {};
+    for (const field of PARAMETER_RANGE_FIELDS) {
+      const expression = p[`${field}Expression`];
+      let value = p[field];
+      if (expression !== undefined) {
+        const resolved = resolveFeatureExpression(expression, values, { signed: true });
+        if (!resolved.ok) {
+          return {
+            ok: false,
+            parameterId: p.id,
+            message: `${p.name}: ${field} "${expression}" ${resolved.message}`,
+          };
+        }
+        value = resolved.value;
+      }
+      if (value !== undefined) range[field] = value;
+    }
+    if (
+      range.min !== undefined &&
+      range.max !== undefined &&
+      range.min > range.max + RANGE_EPSILON
+    ) {
+      return {
+        ok: false,
+        parameterId: p.id,
+        message: `${p.name}: min ${formatRangeValue(range.min, p.unit)} is greater than max ${formatRangeValue(range.max, p.unit)}`,
+      };
+    }
+    if (range.step !== undefined && !(range.step > 0)) {
+      return { ok: false, parameterId: p.id, message: `${p.name}: step must be positive` };
+    }
+    ranges.set(p.id, range);
+  }
+  return { ok: true, ranges };
+}
+
+/** `null` when `value` lies within `range`, else the reason (names the parameter and the range). */
+export function parameterRangeViolation(
+  p: Pick<Parameter, 'name' | 'unit'>,
+  value: number,
+  range: ParameterRange,
+): string | null {
+  const below = range.min !== undefined && value < range.min - RANGE_EPSILON;
+  const above = range.max !== undefined && value > range.max + RANGE_EPSILON;
+  if (!below && !above) return null;
+  return `${p.name} = ${formatRangeValue(value, p.unit)} is outside its range ${describeParameterRange(range, p.unit)}`;
+}
+
+/** "2–10 mm", "≥ 2 mm", "≤ 10°" (an empty string without bounds). */
+export function describeParameterRange(range: ParameterRange, unit: ParameterUnit): string {
+  if (range.min !== undefined && range.max !== undefined) {
+    return `${trimNumber(range.min)}–${formatRangeValue(range.max, unit)}`;
+  }
+  if (range.min !== undefined) return `≥ ${formatRangeValue(range.min, unit)}`;
+  if (range.max !== undefined) return `≤ ${formatRangeValue(range.max, unit)}`;
+  return '';
+}
+
+function trimNumber(value: number): string {
+  return String(Math.round(value * 1e6) / 1e6);
+}
+
+function formatRangeValue(value: number, unit: ParameterUnit): string {
+  const text = trimNumber(value);
+  if (unit === 'mm') return `${text} mm`;
+  if (unit === 'deg') return `${text}°`;
+  return text;
 }
 
 const NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -162,16 +278,21 @@ export function findParameterDependents(
   parameters: readonly Parameter[],
   paramName: string,
 ): ParameterUsage[] {
-  return parameters
-    .filter(
-      (p) => p.expression !== undefined && expressionReferences(p.expression).includes(paramName),
-    )
-    .map((p) => ({
-      kind: 'parameter' as const,
-      featureId: p.id,
-      featureName: p.name,
-      field: 'expression',
-    }));
+  const usages: ParameterUsage[] = [];
+  for (const p of parameters) {
+    for (const field of [
+      'expression',
+      'minExpression',
+      'maxExpression',
+      'stepExpression',
+    ] as const) {
+      const text = p[field];
+      if (text !== undefined && expressionReferences(text).includes(paramName)) {
+        usages.push({ kind: 'parameter', featureId: p.id, featureName: p.name, field });
+      }
+    }
+  }
+  return usages;
 }
 
 /**

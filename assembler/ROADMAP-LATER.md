@@ -121,6 +121,17 @@ Skills, `view.screenshot`) bereits angelegt und werden mit `@himmelcad/agent`
 1. Render-Sicht für Agenten (`view.render`/Screenshot, Inspektionsbündel), auch headless.
 2. Gespeicherte Prüfungen im Dokument („Checks“) als eigenes Modul, mit Panel und API.
 3. Parameterbereiche (min/max/step), Slider, `parameters.sweep`.
+   **Stand 2026-10-02 (Block 9, `asm/b9-params-20261002`): umgesetzt** —
+   Bereiche mit Zahlen/Formeln/Einheiten (Wert außerhalb → klare
+   Fehlermeldung, nie stilles Klemmen), Slider mit Live-Vorschau und einem
+   Undo-Schritt beim Loslassen, „Test range" im Parameters-Panel und
+   `parameters.sweep` (min/nominal/max oder N Stichproben, einzeln oder alle
+   Kombinationen, max. 64, eigener Kernel-Kanal `background`, Fortschritt und
+   Abbruch, Dokument bleibt unverändert), Python
+   (`doc.param(..., min=, max=, step=)`, `doc.sweep`). Check-Ergebnisse je
+   Stichprobe über den Hook `foundation/commands/documentChecks.ts`, den das
+   Checks-Modul (Punkt 2) registriert; ohne Checks-Modul `checks: null`.
+   Details: [AGENT-API.md](AGENT-API.md) „Ranges, slider and sweep".
 4. Kollision und Spiel zwischen Körpern (Messung, Print-Befund, Check) – aus §4 vorgezogen.
 5. Installierbare Agent-Skills (eingebaute und Projekt-Skills wie in Builder) mit Druckteil-Workflow.
 

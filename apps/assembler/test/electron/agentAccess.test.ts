@@ -63,9 +63,7 @@ void test('agent access: off by default, UI toggle + indicator, bench projects o
   });
   const window = await app.firstWindow();
   await window.waitForLoadState('domcontentloaded');
-  await window.waitForFunction(() => !document.body.innerText.includes('No items yet'), {
-    timeout: 60_000,
-  });
+  // Home → Escape (a blank project) → the demo bracket opened (`home.ts`).
   await dismissHome(window);
 
   const getStatus = () =>

@@ -63,9 +63,7 @@ void test('the app (browser worker) and Node name every body, face and edge iden
   });
   const window = await app.firstWindow();
   await window.waitForLoadState('domcontentloaded');
-  await window.waitForFunction(() => !document.body.innerText.includes('No items yet'), {
-    timeout: 60_000,
-  });
+  // Home → Escape (a blank project) → the demo bracket opened (`home.ts`).
   await dismissHome(window);
 
   // Agent access on, the way a user turns it on.

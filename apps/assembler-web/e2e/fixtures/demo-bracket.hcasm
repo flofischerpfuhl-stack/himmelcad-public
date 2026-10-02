@@ -1,0 +1,417 @@
+{
+  "format": "himmelcad-assembler",
+  "schemaVersion": 3,
+  "appVersion": "e2e-fixture",
+  "units": "mm",
+  "projectName": "Bracket",
+  "features": [
+    {
+      "id": "feature-sketch-1",
+      "name": "Sketch 1",
+      "suppressed": false,
+      "kind": "sketch",
+      "plane": {
+        "kind": "plane",
+        "plane": "XY",
+        "offset": 0
+      },
+      "entities": [
+        {
+          "id": "p1",
+          "kind": "point",
+          "x": 0,
+          "y": 0
+        },
+        {
+          "id": "p2",
+          "kind": "point",
+          "x": 80,
+          "y": 0
+        },
+        {
+          "id": "p3",
+          "kind": "point",
+          "x": 80,
+          "y": 50
+        },
+        {
+          "id": "p4",
+          "kind": "point",
+          "x": 0,
+          "y": 50
+        },
+        {
+          "id": "l1",
+          "kind": "line",
+          "a": "p1",
+          "b": "p2"
+        },
+        {
+          "id": "l2",
+          "kind": "line",
+          "a": "p2",
+          "b": "p3"
+        },
+        {
+          "id": "l3",
+          "kind": "line",
+          "a": "p3",
+          "b": "p4"
+        },
+        {
+          "id": "l4",
+          "kind": "line",
+          "a": "p4",
+          "b": "p1"
+        }
+      ],
+      "constraints": [
+        {
+          "id": "k1",
+          "kind": "horizontal",
+          "refs": [
+            "l1"
+          ]
+        },
+        {
+          "id": "k2",
+          "kind": "vertical",
+          "refs": [
+            "l2"
+          ]
+        },
+        {
+          "id": "k3",
+          "kind": "horizontal",
+          "refs": [
+            "l3"
+          ]
+        },
+        {
+          "id": "k4",
+          "kind": "vertical",
+          "refs": [
+            "l4"
+          ]
+        }
+      ],
+      "dimensions": [
+        {
+          "id": "m1",
+          "name": "d1",
+          "kind": "horizontalDistance",
+          "refs": [
+            "origin",
+            "p1"
+          ],
+          "value": 0
+        },
+        {
+          "id": "m2",
+          "name": "d2",
+          "kind": "verticalDistance",
+          "refs": [
+            "origin",
+            "p1"
+          ],
+          "value": 0
+        },
+        {
+          "id": "m3",
+          "name": "d3",
+          "kind": "distance",
+          "refs": [
+            "l1"
+          ],
+          "value": 80
+        },
+        {
+          "id": "m4",
+          "name": "d4",
+          "kind": "distance",
+          "refs": [
+            "l2"
+          ],
+          "value": 50
+        }
+      ]
+    },
+    {
+      "id": "feature-extrude-1",
+      "name": "Extrude 1",
+      "suppressed": false,
+      "kind": "extrude",
+      "profile": {
+        "kind": "sketch",
+        "featureId": "feature-sketch-1"
+      },
+      "distance": 6,
+      "symmetric": false,
+      "operation": "new",
+      "resultBodyName": "Bracket"
+    },
+    {
+      "id": "feature-sketch-2",
+      "name": "Sketch 2",
+      "suppressed": false,
+      "kind": "sketch",
+      "plane": {
+        "kind": "plane",
+        "plane": "XY",
+        "offset": 6
+      },
+      "entities": [
+        {
+          "id": "p1",
+          "kind": "point",
+          "x": 0,
+          "y": 42
+        },
+        {
+          "id": "p2",
+          "kind": "point",
+          "x": 80,
+          "y": 42
+        },
+        {
+          "id": "p3",
+          "kind": "point",
+          "x": 80,
+          "y": 50
+        },
+        {
+          "id": "p4",
+          "kind": "point",
+          "x": 0,
+          "y": 50
+        },
+        {
+          "id": "l1",
+          "kind": "line",
+          "a": "p1",
+          "b": "p2"
+        },
+        {
+          "id": "l2",
+          "kind": "line",
+          "a": "p2",
+          "b": "p3"
+        },
+        {
+          "id": "l3",
+          "kind": "line",
+          "a": "p3",
+          "b": "p4"
+        },
+        {
+          "id": "l4",
+          "kind": "line",
+          "a": "p4",
+          "b": "p1"
+        }
+      ],
+      "constraints": [
+        {
+          "id": "k1",
+          "kind": "horizontal",
+          "refs": [
+            "l1"
+          ]
+        },
+        {
+          "id": "k2",
+          "kind": "vertical",
+          "refs": [
+            "l2"
+          ]
+        },
+        {
+          "id": "k3",
+          "kind": "horizontal",
+          "refs": [
+            "l3"
+          ]
+        },
+        {
+          "id": "k4",
+          "kind": "vertical",
+          "refs": [
+            "l4"
+          ]
+        }
+      ],
+      "dimensions": [
+        {
+          "id": "m1",
+          "name": "d1",
+          "kind": "horizontalDistance",
+          "refs": [
+            "origin",
+            "p1"
+          ],
+          "value": 0
+        },
+        {
+          "id": "m2",
+          "name": "d2",
+          "kind": "verticalDistance",
+          "refs": [
+            "origin",
+            "p1"
+          ],
+          "value": 42
+        },
+        {
+          "id": "m3",
+          "name": "d3",
+          "kind": "distance",
+          "refs": [
+            "l1"
+          ],
+          "value": 80
+        },
+        {
+          "id": "m4",
+          "name": "d4",
+          "kind": "distance",
+          "refs": [
+            "l2"
+          ],
+          "value": 8
+        }
+      ]
+    },
+    {
+      "id": "feature-extrude-2",
+      "name": "Extrude 2",
+      "suppressed": false,
+      "kind": "extrude",
+      "profile": {
+        "kind": "sketch",
+        "featureId": "feature-sketch-2"
+      },
+      "distance": 40,
+      "symmetric": false,
+      "operation": "join",
+      "targetBodyId": "body:feature-extrude-1"
+    },
+    {
+      "id": "feature-fillet-3",
+      "name": "Fillet 1",
+      "suppressed": false,
+      "kind": "fillet",
+      "radius": 4,
+      "edges": [
+        {
+          "bodyId": "body:feature-extrude-1",
+          "key": "feature-extrude-1:end:0|feature-extrude-2:side:0:l1",
+          "signature": {
+            "curve": "line",
+            "midpoint": [
+              40,
+              42,
+              6
+            ],
+            "length": 80,
+            "direction": [
+              1,
+              0,
+              0
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "feature-sketch-4",
+      "name": "Sketch 3",
+      "suppressed": false,
+      "kind": "sketch",
+      "plane": {
+        "kind": "face",
+        "face": {
+          "bodyId": "body:feature-extrude-1",
+          "key": "feature-extrude-1:end:0",
+          "signature": {
+            "surface": "plane",
+            "normal": [
+              0,
+              0,
+              1
+            ],
+            "centroid": [
+              40,
+              20,
+              6
+            ],
+            "area": 3360,
+            "adjacentFaces": 5
+          }
+        }
+      },
+      "entities": [
+        {
+          "id": "p1",
+          "kind": "point",
+          "x": 40,
+          "y": 20
+        },
+        {
+          "id": "c1",
+          "kind": "circle",
+          "center": "p1",
+          "radius": 3
+        }
+      ],
+      "constraints": [],
+      "dimensions": [
+        {
+          "id": "m1",
+          "name": "d1",
+          "kind": "horizontalDistance",
+          "refs": [
+            "origin",
+            "p1"
+          ],
+          "value": 40
+        },
+        {
+          "id": "m2",
+          "name": "d2",
+          "kind": "verticalDistance",
+          "refs": [
+            "origin",
+            "p1"
+          ],
+          "value": 20
+        },
+        {
+          "id": "m3",
+          "name": "d3",
+          "kind": "diameter",
+          "refs": [
+            "c1"
+          ],
+          "value": 6
+        }
+      ]
+    },
+    {
+      "id": "feature-extrude-5",
+      "name": "Extrude 3",
+      "suppressed": false,
+      "kind": "extrude",
+      "profile": {
+        "kind": "sketch",
+        "featureId": "feature-sketch-4"
+      },
+      "distance": -8,
+      "symmetric": false,
+      "operation": "cut",
+      "targetBodyId": "body:feature-extrude-1"
+    }
+  ],
+  "parameters": [],
+  "createdAt": "2026-10-02T00:00:00.000Z",
+  "modifiedAt": "2026-10-02T00:00:00.000Z"
+}

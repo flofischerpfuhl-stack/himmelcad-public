@@ -73,6 +73,14 @@ import {
 import { cameraTargetBounds, faceFrameBounds } from './cameraTargets.js';
 import { blendFov, PROJECTION_BLEND_MS, wantedFov, type ProjectionBlend } from './projection.js';
 import {
+  EDGE_ON_COS,
+  screenAngleDrag,
+  screenDragAngle,
+  type ScreenAngleDrag,
+} from './angleDrag.js';
+import {
+  nearestPivotDepth,
+  PIVOT_COARSE_BLOCK_PX,
   PIVOT_SEARCH_RADIUS_PX,
   pivotDepth,
   type DepthProjection,
@@ -231,7 +239,8 @@ function sceneDatums(
 function sceneModel(s: AssemblerState): SceneModel {
   const tool = s.activeTool;
   const previewTool = isPreviewTool(tool) ? tool : null;
-  const preview = previewTool?.previewEvaluation ?? null;
+  // A tool's preview, else (no tool) a live preview of an uncommitted change (a parameter slider).
+  const preview = previewTool?.previewEvaluation ?? (tool ? null : s.documentPreview);
   const view = toolViewOf(s, preview);
   let bodies = preview?.bodies ?? s.evaluation.bodies;
   // Reference meshes (imported STL) are never a kernel input — they are
@@ -345,6 +354,8 @@ type DragMode =
       /** Snapping step of the handle (degrees), when not the default. */
       snapDeg?: number;
       start: number;
+      /** Lever or arc-length mapping (`angleDrag.ts`); `null`: the pointer's angle (`last`/`turned`). */
+      screen: ScreenAngleDrag | null;
     }
   /** Left drag from empty canvas: box selection (Shift adds). */
   | { kind: 'box'; additive: boolean };
@@ -422,6 +433,10 @@ export interface PivotProbe {
   readMs: number;
   /** The window came from the read started at pointer down (no wait). */
   prefetched: boolean;
+  /** Rule "nearest": taking or reading the coarse map and searching it, ms (0 when not needed). */
+  coarseMs: number;
+  /** Whether the coarse map was ready from pointer down. */
+  coarsePrefetched: boolean;
 }
 
 type HandleHover =
@@ -549,7 +564,13 @@ export function Viewport(props: ViewportProps): JSX.Element {
   } | null>(null);
   const lastPivotRef = useRef<PivotProbe | null>(null);
   /** The depth window read started at pointer/finger down for an orbit (`prefetchPivot`). */
-  const depthRequestRef = useRef<{ x: number; y: number; pose: CameraPose } | null>(null);
+  const depthRequestRef = useRef<{
+    x: number;
+    y: number;
+    pose: CameraPose;
+    /** The coarse whole-view map was requested too (rule "nearest"). */
+    coarse: boolean;
+  } | null>(null);
 
   const state = useAssemblerStore();
   const stateRef = useRef(state);
@@ -1221,7 +1242,12 @@ export function Viewport(props: ViewportProps): JSX.Element {
    * camera moved since the last frame) it goes straight to the model rule.
    */
   const cursorPivot = useCallback(
-    (clientX: number, clientY: number): { point: Vec3; rule: PivotRule } | null => {
+    (
+      clientX: number,
+      clientY: number,
+      /** `false`: rule "nearest" only from a map read ahead (a zoom step never waits for one). */
+      readCoarse = true,
+    ): { point: Vec3; rule: PivotRule } | null => {
       const t0 = performance.now();
       const pose = poseRef.current;
       const ray = rayAtClient(clientX, clientY);
@@ -1229,7 +1255,10 @@ export function Viewport(props: ViewportProps): JSX.Element {
       let point: Vec3 | null = null;
       let rule: PivotRule = 'model';
       let readMs = 0;
+      let coarseMs = 0;
       let prefetched = false;
+      let coarsePrefetched = false;
+      let request: { coarse: boolean } | null = null;
       const host = hostRef.current;
       const renderer = rendererRef.current;
       const frame = pickFrameRef.current;
@@ -1242,12 +1271,16 @@ export function Viewport(props: ViewportProps): JSX.Element {
         const r0 = performance.now();
         // The read started at pointer down (same point, same camera) if the GPU has it by now,
         // else one small synchronous read.
-        const request = depthRequestRef.current;
+        const pending = depthRequestRef.current;
         depthRequestRef.current = null;
-        let win =
-          request && request.x === clientX && request.y === clientY && request.pose === pose
-            ? renderer.takePickDepthWindow(px, py, half)
-            : null;
+        const matches =
+          pending !== null &&
+          pending.x === clientX &&
+          pending.y === clientY &&
+          pending.pose === pose;
+        request = matches ? { coarse: pending.coarse } : null;
+        if (pending?.coarse && !matches) renderer.cancelPickDepthCoarse();
+        let win = matches ? renderer.takePickDepthWindow(px, py, half) : null;
         prefetched = win !== null;
         win ??= renderer.readPickDepthWindow(px, py, half);
         readMs = performance.now() - r0;
@@ -1267,7 +1300,23 @@ export function Viewport(props: ViewportProps): JSX.Element {
         if (found) {
           point = pointAtViewDepth(pose, ray, found.depth);
           rule = found.rule;
+        } else if (win) {
+          // Rule 2b: nothing within the window — the nearest drawn geometry in the whole view,
+          // from the coarse map read at pointer down (else read now: the window read above
+          // already waited for the GPU, so this only waits for the small reduction).
+          const block = PIVOT_COARSE_BLOCK_PX * dpr;
+          const c0 = performance.now();
+          let coarse = request?.coarse ? renderer.takePickDepthCoarse(block) : null;
+          coarsePrefetched = coarse !== null;
+          if (!coarse && readCoarse) coarse = renderer.readPickDepthCoarse(block);
+          const nearest = coarse ? nearestPivotDepth(coarse, { x: px, y: py }, frame.depth) : null;
+          coarseMs = performance.now() - c0;
+          if (nearest) {
+            point = pointAtViewDepth(pose, ray, nearest.depth);
+            rule = nearest.rule;
+          }
         }
+        if (request?.coarse && !coarsePrefetched) renderer.cancelPickDepthCoarse();
       }
       if (!point) {
         // Rule 3: on the cursor ray at the depth of the visible model's centre.
@@ -1284,7 +1333,15 @@ export function Viewport(props: ViewportProps): JSX.Element {
         rule = bounds ? 'model' : 'target';
       }
       if (!point) return null;
-      lastPivotRef.current = { point, rule, ms: performance.now() - t0, readMs, prefetched };
+      lastPivotRef.current = {
+        point,
+        rule,
+        ms: performance.now() - t0,
+        readMs,
+        prefetched,
+        coarseMs,
+        coarsePrefetched,
+      };
       return { point, rule };
     },
     [rayAtClient],
@@ -1297,7 +1354,9 @@ export function Viewport(props: ViewportProps): JSX.Element {
    */
   const zoomDepthPointAt = useCallback(
     (clientX: number, clientY: number): Vec3 | null =>
-      isOrthographic(poseRef.current) ? null : (cursorPivot(clientX, clientY)?.point ?? null),
+      isOrthographic(poseRef.current)
+        ? null
+        : (cursorPivot(clientX, clientY, false)?.point ?? null),
     [cursorPivot],
   );
 
@@ -1321,7 +1380,9 @@ export function Viewport(props: ViewportProps): JSX.Element {
       (clientY - rect.top) * dpr,
       PIVOT_SEARCH_RADIUS_PX * dpr,
     );
-    depthRequestRef.current = started ? { x: clientX, y: clientY, pose } : null;
+    // The whole view's coarse depth too (rule "nearest"), in the same GPU submission.
+    const coarse = started && renderer.requestPickDepthCoarse(PIVOT_COARSE_BLOCK_PX * dpr);
+    depthRequestRef.current = started ? { x: clientX, y: clientY, pose, coarse } : null;
   }, []);
 
   /** The pivot an orbit starting at a client point turns about (Settings › Navigation › Orbit around). */
@@ -1431,7 +1492,29 @@ export function Viewport(props: ViewportProps): JSX.Element {
           : undefined;
       if (angle) {
         const ray = rayAtClient(clientX, clientY);
-        const at = ray ? pointerAngle(angle, ray) : null;
+        if (!ray) return null;
+        // Tilts drag like a lever; a turn whose plane is seen edge-on by arc length
+        // (`angleDrag.ts`): the value follows the pointer's displacement, not its angle.
+        const axisLength = Math.hypot(...angle.axis) || 1;
+        const edgeOn =
+          Math.abs(
+            (ray.direction[0] * angle.axis[0] +
+              ray.direction[1] * angle.axis[1] +
+              ray.direction[2] * angle.axis[2]) /
+              axisLength,
+          ) < EDGE_ON_COS;
+        const screen =
+          angle.drag === 'lever' || edgeOn
+            ? screenAngleDrag(
+                angle.drag === 'lever' ? 'lever' : 'arc',
+                angle,
+                angle.value,
+                angle.drag === 'lever' ? (angle.lever ?? angle.radius) : angle.radius,
+                [clientX, clientY],
+                projectHost,
+              )
+            : null;
+        const at = screen ? 0 : pointerAngle(angle, ray);
         if (at === null) return null;
         return {
           kind: 'angleHandle',
@@ -1442,6 +1525,7 @@ export function Viewport(props: ViewportProps): JSX.Element {
           last: at,
           turned: 0,
           start: angle.value,
+          screen,
           ...(angle.snapDeg !== undefined ? { snapDeg: angle.snapDeg } : {}),
         };
       }
@@ -1461,7 +1545,7 @@ export function Viewport(props: ViewportProps): JSX.Element {
       }
       return null;
     },
-    [pickAt, rayAtClient, toolPointer],
+    [pickAt, rayAtClient, toolPointer, projectHost],
   );
 
   // ---- Selection helpers (box, overlapping picks) ------------------------------
@@ -2273,6 +2357,12 @@ export function Viewport(props: ViewportProps): JSX.Element {
           applyHandleValue(mode.handle, mode.start + (t - mode.t0));
           dirtyRef.current = true;
         }
+      } else if (mode.kind === 'angleHandle' && mode.screen) {
+        // Lever / arc-length mapping (`angleDrag.ts`): 1° snapping for tilts, Shift free.
+        const raw = screenDragAngle(mode.screen, [event.clientX, event.clientY]);
+        const snapStep = event.shiftKey ? 0.1 : (mode.snapDeg ?? ANGLE_SNAP_DEG);
+        applyHandleValue(mode.handle, Math.round(raw / snapStep) * snapStep, false);
+        dirtyRef.current = true;
       } else if (mode.kind === 'angleHandle') {
         const ray = rayAtClient(event.clientX, event.clientY);
         const at = ray ? pointerAngle(mode, ray) : null;

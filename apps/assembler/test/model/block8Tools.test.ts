@@ -170,6 +170,10 @@ void test('Extrude taper: pill value, drag handle (whole degrees) and the commit
   const arc = handles.angles.find((h) => h.handle === 'extrudeTaper');
   assert.ok(arc, 'the taper arc');
   assert.equal(arc.value, 5);
+  // Block 9: the arc drags like a lever as long as the extrude, in whole degrees.
+  assert.equal(arc.drag, 'lever');
+  assert.equal(arc.lever, 10);
+  assert.equal(arc.snapDeg, 1);
   applyToolHandleValue('extrudeTaper', 7.4, true);
   assert.equal(tool('extrude').taper, 7, 'drag snaps to whole degrees');
   await store.getState().whenSettled();

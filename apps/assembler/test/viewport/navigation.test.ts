@@ -34,8 +34,10 @@ import {
 import {
   PIVOT_SEARCH_RADIUS_PX,
   linearDepth,
+  nearestPivotDepth,
   pivotDepth,
   unpackDepth,
+  type CoarseDepthMap,
   type DepthProjection,
   type DepthSamples,
 } from '../../renderer/src/platform/viewport/orbitPivot.js';
@@ -167,6 +169,64 @@ void test('pivot rule 2 weighs closer hits more and ignores hits outside the rad
     ),
     null,
     'empty window',
+  );
+});
+
+/** A coarse map of a `w × h` px view in `block` px blocks; `depthAt(x, y)` at block centres (px). */
+function coarseMap(
+  projection: DepthProjection,
+  w: number,
+  h: number,
+  block: number,
+  depthAt: (x: number, y: number) => number | null,
+): CoarseDepthMap {
+  const width = Math.ceil(w / block);
+  const height = Math.ceil(h / block);
+  const offsetY = h - height * block;
+  const z = new Float32Array(width * height);
+  for (let row = 0; row < height; row += 1) {
+    for (let col = 0; col < width; col += 1) {
+      const d = depthAt((col + 0.5) * block, offsetY + (row + 0.5) * block);
+      z[row * width + col] = d === null ? Number.NaN : windowZ(d, projection);
+    }
+  }
+  return { width, height, block, offsetY, z };
+}
+
+void test('pivot rule "nearest": a bore wider than the window gives its rim depth from the coarse map', () => {
+  // A 1200 × 900 px view, cursor in the middle of a bore 400 px wide (far beyond the 64 px
+  // window), the plate at depth 100 around it; through the bore nothing is drawn.
+  for (const projection of [PERSP, ORTHO]) {
+    const map = coarseMap(projection, 1200, 900, 8, (x, y) =>
+      Math.hypot(x - 600, y - 450) < 200 ? null : 100,
+    );
+    const window = pivotDepth(
+      samples(projection, () => null),
+      projection,
+    );
+    assert.equal(window, null, 'the window sees nothing');
+    const result = nearestPivotDepth(map, { x: 600, y: 450 }, projection);
+    assert.equal(result?.rule, 'nearest');
+    near(result!.depth, 100, 1e-3, 'rim depth');
+    near(result!.distancePx, 196, 8, 'distance to the rim');
+  }
+  // The nearest geometry wins over a farther, larger part.
+  const two = coarseMap(PERSP, 1200, 900, 8, (x) => (x > 1100 ? 500 : x < 300 ? 150 : null));
+  near(nearestPivotDepth(two, { x: 400, y: 450 }, PERSP)!.depth, 150, 1e-3, 'nearer part');
+  // Blocks are aligned to the bottom edge: a hit in the cut top row is found at its place.
+  const top = coarseMap(PERSP, 100, 101, 8, (_x, y) => (y < 2 ? 77 : null));
+  assert.equal(top.offsetY, -3);
+  const topHit = nearestPivotDepth(top, { x: 50, y: 50 }, PERSP)!;
+  near(topHit.depth, 77, 1e-3, 'top row');
+  near(topHit.distancePx, 50 - 5, 1e-6, 'its lower edge is at y = 5');
+  // Nothing in the whole view: rule 3 (the caller's).
+  assert.equal(
+    nearestPivotDepth(
+      coarseMap(PERSP, 200, 200, 8, () => null),
+      { x: 1, y: 1 },
+      PERSP,
+    ),
+    null,
   );
 });
 

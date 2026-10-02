@@ -9,11 +9,26 @@
  * understand is rejected with a clear message rather than opened read-only
  * or partially, because a CAD feature list is a single indivisible
  * document — there is no meaningful "read-only partial" B-rep history.
+ *
+ * Versioning: additions are optional fields (no schema bump); an optional
+ * field that changes what a feature builds is a format capability, listed
+ * in the file's `requires` so an older reader refuses it instead of
+ * building the plain feature (`formatCapabilities.ts`, README "Files").
  */
 import type { EdgeRef, FaceRef, Feature } from './document.js';
 import './coreKinds.js';
-import { featureKindDefinition, type FormatHelpers } from './featureKinds.js';
-import { isValidParameterName, type Parameter, type ParameterUnit } from './parameters.js';
+import {
+  featureFormatCapabilities,
+  featureKindDefinition,
+  type FormatHelpers,
+} from './featureKinds.js';
+import { requiredCapabilitiesList, unknownRequiredCapabilities } from './formatCapabilities.js';
+import {
+  isValidParameterName,
+  PARAMETER_RANGE_FIELDS,
+  type Parameter,
+  type ParameterUnit,
+} from './parameters.js';
 
 export const PROJECT_FORMAT_ID = 'himmelcad-assembler';
 /**
@@ -208,12 +223,36 @@ function validateParameter(v: unknown, index: number): Parameter {
   if (r.expression !== undefined && !isString(r.expression)) {
     fail(`${path}.expression`, 'expected a string');
   }
+  // Range (Block 9, optional): resolved bounds/step plus their formulas. Whether the value
+  // lies inside is not a format question: an out-of-range value loads and is flagged in the panel.
+  const range: Partial<Parameter> = {};
+  for (const field of PARAMETER_RANGE_FIELDS) {
+    const value = r[field];
+    if (value !== undefined) {
+      if (!isNumber(value)) fail(`${path}.${field}`, 'expected a number');
+      range[field] = value;
+    }
+    const expression = r[`${field}Expression`];
+    if (expression !== undefined) {
+      if (!isString(expression) || expression.trim() === '') {
+        fail(`${path}.${field}Expression`, 'expected a non-empty string');
+      }
+      if (value === undefined)
+        fail(`${path}.${field}`, `expected a number with ${field}Expression`);
+      range[`${field}Expression`] = expression;
+    }
+  }
+  if (range.step !== undefined && !(range.step > 0)) fail(`${path}.step`, 'expected a number > 0');
+  if (range.min !== undefined && range.max !== undefined && range.min > range.max) {
+    fail(`${path}.min`, 'expected min ≤ max');
+  }
   return {
     id: r.id,
     name: r.name,
     unit: r.unit as ParameterUnit,
     value: r.value,
     ...(r.expression !== undefined ? { expression: r.expression as string } : {}),
+    ...range,
   };
 }
 
@@ -307,6 +346,7 @@ export const VIEW_STATE_FIELD_ORDER = 200;
 const CORE_KEYS = new Set([
   'format',
   'schemaVersion',
+  'requires',
   'appVersion',
   'units',
   'projectName',
@@ -526,6 +566,13 @@ export function loadProjectFile(text: string): ProjectFileV1 {
       `Invalid project file: data is nested more than ${MAX_NESTING_DEPTH} levels deep.`,
     );
   }
+  // Minimum-reader rule (`formatCapabilities.ts`): a capability this build does not know
+  // would otherwise be ignored and the feature built differently. A newer schema says so first.
+  if (raw.schemaVersion <= CURRENT_SCHEMA_VERSION) {
+    const required = unknownRequiredCapabilities(raw.requires);
+    if (required.kind === 'malformed') fail('requires', required.message);
+    if (required.kind === 'unknown') throw new ProjectFormatError(required.message);
+  }
   return migrateAndValidate(raw.schemaVersion, raw);
 }
 
@@ -576,9 +623,12 @@ export function saveProjectFile(input: ProjectFileInput): string {
     fields[field.key] =
       field === VIEW_STATE_FIELD ? orderedViewState(value as ProjectViewState) : value;
   }
+  // Written only when the document uses a geometry-changing optional field (`formatCapabilities.ts`).
+  const requires = requiredCapabilitiesList(featureFormatCapabilities(input.features));
   const file = {
     format: PROJECT_FORMAT_ID,
     schemaVersion: CURRENT_SCHEMA_VERSION,
+    ...(requires ? { requires } : {}),
     appVersion: input.appVersion,
     units: 'mm',
     projectName: input.projectName,

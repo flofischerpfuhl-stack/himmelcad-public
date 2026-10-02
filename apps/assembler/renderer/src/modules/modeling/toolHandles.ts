@@ -190,8 +190,11 @@ function taperHandle(
     value: tool.taper ?? 0,
     ring: false,
     color: null,
-    // Draft angles are small: whole degrees (Shift: free).
+    // Draft angles are small: whole degrees (Shift: free), and the drag tilts the wall like
+    // a lever as long as the extrude (`angleDrag.ts`), not by the pointer's angle about the base.
     snapDeg: 1,
+    drag: 'lever',
+    lever: Math.abs(tool.distance),
   };
 }
 

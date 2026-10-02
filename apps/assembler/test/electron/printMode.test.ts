@@ -32,9 +32,7 @@ void test('production build: Print mode analyses in its worker; the slicer IPC a
   });
   const page = await app.firstWindow();
   await page.waitForLoadState('domcontentloaded');
-  await page.waitForFunction(() => !document.body.innerText.includes('No items yet'), null, {
-    timeout: 60_000,
-  });
+  // Home → Escape (a blank project) → the demo bracket opened (`home.ts`).
   await dismissHome(page);
 
   await page.mouse.move(900, 500);

@@ -13,7 +13,10 @@
  * (e) the orbit/zoom pivot's CPU part (`orbitPivot.ts` rules on a 64 × 64
  *     depth window around a bore, plus the ray math), once per gesture — the
  *     GPU read of that window is measured in the app (DEV probe `pivotAt`,
- *     assembler/SELECTION-NAVIGATION.md).
+ *     assembler/SELECTION-NAVIGATION.md); Block 9 adds rule "nearest" on a
+ *     240 × 135 coarse map of the whole view;
+ * (f) a parameter slider driving the demo bracket's fillet: each drag step
+ *     until its live preview shows, then the release's commit.
  *
  * Stages per step: wall time until the stores settle; `ui` = the synchronous
  * main-thread work a React render of the adaptive toolbar and the command
@@ -69,6 +72,7 @@ import {
 } from '../../renderer/src/platform/viewport/camera.js';
 import { unprojectRay } from '../../renderer/src/platform/viewport/math.js';
 import {
+  nearestPivotDepth,
   pivotDepth,
   type DepthProjection,
 } from '../../renderer/src/platform/viewport/orbitPivot.js';
@@ -450,6 +454,49 @@ async function scenarioFillet(steps: number): Promise<StepRow[]> {
   return rows;
 }
 
+/**
+ * (f) Block 9: a parameter slider on the demo bracket — `r` drives the
+ * fillet; each drag step plans the value (like an edit) and evaluates it on
+ * the kernel's preview channel (incremental, preview tessellation) until the
+ * live preview shows it; release commits one undo step.
+ */
+async function scenarioParameterSlider(steps: number): Promise<StepRow[]> {
+  const s = 'f parameter slider';
+  store.getState().cancel();
+  store.getState().loadDocument(createDemoDocument());
+  await settle();
+  const created = await store
+    .getState()
+    .upsertParameter({ name: 'r', unit: 'mm', value: 4, min: 1, max: 12, step: 0.5 });
+  if (!created.ok) throw new Error(created.message);
+  const fillet = store.getState().features.find((f) => f.kind === 'fillet')!;
+  store.getState().editFeatureParams(fillet.id, { radiusExpression: 'r' } as never);
+  await settle();
+  const sliderIdle = async () => {
+    for (let i = 0; i < 2000 && (store.getState().parameterSlider?.pending ?? false); i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+  };
+  const rows: StepRow[] = [];
+  for (let i = 1; i <= steps; i += 1) {
+    const value = 4 + i * 0.5;
+    rows.push(
+      await step(s, 'drag step (live preview)', async () => {
+        store.getState().previewParameterValue(created.id, value);
+        await sliderIdle();
+        if (!store.getState().documentPreview) throw new Error('no slider preview');
+      }),
+    );
+  }
+  rows.push(
+    await step(s, 'release (commit, one undo step)', async () => {
+      const outcome = await store.getState().endParameterPreview(true);
+      if (!outcome?.ok) throw new Error(outcome && !outcome.ok ? outcome.message : 'no commit');
+    }),
+  );
+  return rows;
+}
+
 /** (d) a 60-entity sketch (5 rectangles, 10 circles), dragging one rectangle corner. */
 async function scenarioSketchDrag(steps: number): Promise<StepRow[]> {
   const s = 'd 60-entity drag';
@@ -533,25 +580,66 @@ function scenarioPivot(runs: number): StepRow[] {
       const point = found && ray ? pointAtViewDepth(c.pose, ray, found.depth) : null;
       const ms = performance.now() - t0;
       if (!point || found?.rule !== 'near') throw new Error('pivot: no point in the bore');
-      rows.push({
-        scenario: s,
-        step: c.label,
-        wallMs: ms,
-        uiMs: 0,
-        solverMs: 0,
-        regionsMs: 0,
-        kernelMs: 0,
-        featureMs: 0,
-        validityMs: 0,
-        namingMs: 0,
-        tessellateMs: 0,
-        reused: 0,
-        evaluated: 0,
-        printMs: null,
-      });
+      rows.push(pivotRow(s, c.label, ms));
     }
   }
+  // Rule "nearest": a bore wider than the window (the window is empty), so the coarse map of a
+  // 1920 × 1080 view (8 px blocks: 240 × 135) is searched for the rim — the CPU part per gesture.
+  const projection: DepthProjection = { near: 10, far: 1000, orthographic: false };
+  const block = 8;
+  const map = {
+    width: 240,
+    height: 135,
+    block,
+    offsetY: 1080 - 135 * block,
+    z: new Float32Array(240 * 135),
+  };
+  const windowZ = (d: number) =>
+    (projection.far + projection.near - (2 * projection.far * projection.near) / d) /
+      (projection.far - projection.near) /
+      2 +
+    0.5;
+  for (let row = 0; row < map.height; row += 1) {
+    for (let col = 0; col < map.width; col += 1) {
+      const r = Math.hypot(col + 0.5 - 120, row + 0.5 - 67.5);
+      map.z[row * map.width + col] = r < 40 ? Number.NaN : r < 90 ? windowZ(100) : Number.NaN;
+    }
+  }
+  const empty = new Float32Array(64 * 64).fill(Number.NaN);
+  const pose: CameraPose = { ...DEFAULT_POSE, fov: 45 };
+  for (let i = 0; i < runs; i += 1) {
+    const t0 = performance.now();
+    const found = pivotDepth(
+      { width: 64, height: 64, z: empty, cx: 32, cy: 32, cssPerSample: 1 },
+      projection,
+    );
+    const nearest = found ? null : nearestPivotDepth(map, { x: 960, y: 540 }, projection);
+    const ray = unprojectRay(viewProjectionMatrix(pose, 1.6), 640, 400, 1280, 800);
+    const point = nearest && ray ? pointAtViewDepth(pose, ray, nearest.depth) : null;
+    const ms = performance.now() - t0;
+    if (!point || nearest?.rule !== 'nearest') throw new Error('pivot: no rim found');
+    rows.push(pivotRow(s, 'nearest rule (empty window + 240×135 coarse map)', ms));
+  }
   return rows;
+}
+
+function pivotRow(scenario: string, step: string, ms: number): StepRow {
+  return {
+    scenario,
+    step,
+    wallMs: ms,
+    uiMs: 0,
+    solverMs: 0,
+    regionsMs: 0,
+    kernelMs: 0,
+    featureMs: 0,
+    validityMs: 0,
+    namingMs: 0,
+    tessellateMs: 0,
+    reused: 0,
+    evaluated: 0,
+    printMs: null,
+  };
 }
 
 // ---- report ---------------------------------------------------------------------------------
@@ -642,6 +730,7 @@ async function main(): Promise<void> {
       ...medianRows([await scenarioFillet(10)]),
       ...medianRows([await scenarioSketchDrag(30)]),
       ...medianRows([scenarioPivot(200)]),
+      ...medianRows([await scenarioParameterSlider(10)]),
     ];
   }
 

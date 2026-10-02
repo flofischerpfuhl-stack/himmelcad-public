@@ -148,8 +148,20 @@ WebGL2 cannot read a depth buffer back). Rules (`viewport/orbitPivot.ts`):
    depths drawn within 32 CSS px, weighted by `(1 − d/R)²` and linearised
    (perspective or orthographic clip planes of that frame), averaged — over a
    bore the pivot sits inside it at rim depth, not on whatever is behind it.
-3. **model** — nothing near: the depth of the visible model's centre
-   (`target` without a model).
+   2b. **nearest** (Block 9, owner: "why not always the nearest point like
+   Builder?") — nothing within the window (a bore wider than 64 px on
+   screen, the cursor far beside the part): the nearest drawn geometry
+   anywhere in the view. A reduction pass (`gl.ts` `requestPickDepthCoarse`,
+   one full-screen draw, about one texel fetch per pixel) turns the id pass's
+   depth attachment — now a texture — into a coarse map of the whole view,
+   one texel per 8 × 8 CSS px holding the nearest depth of its block; it is
+   read with a fence at pointer down together with the window, so the orbit
+   takes it ready. `nearestPivotDepth` finds the blocks nearest to the
+   cursor (distance to the block rectangle) and averages the linearised
+   depths of those within one block of the nearest — the rim of the bore at
+   the cursor's side, not its far side. Pivot on the cursor ray at that depth.
+3. **model** — nothing drawn in the whole view: the depth of the visible
+   model's centre (`target` without a model).
 
 The pivot is always the point on the cursor ray at that depth, so it stays
 under the cursor while the view turns (`camera.ts` `orbitAbout`: the
@@ -188,6 +200,37 @@ against 6ef20984 (90 back-to-back frames, GPU synced, 6 interleaved runs)
 0.935 → 0.948 ms orthographic, 1.014 → 1.019 ms perspective. Evidence:
 `D:\AgentWork\HimmelCAD-Assembler\shots\nav\` (`pivot-headed.json`,
 `frames-ab.md`, `bench-ab.md`).
+
+Cost of rule 2b (Block 9, same machine, headed Chromium, desktop dev
+renderer at 1280 × 800, the demo bracket zoomed until its Ø6 bore is 244 px
+wide, cursor at its centre, 30 runs; `D:\AgentWork\HimmelCAD-Assembler\shots\block9-params\pivot-probe.json`):
+as an orbit does it (map read at pointer down, taken at the click
+threshold) 1.1 ms median, 1.9 ms max for the whole pivot including the
+window, the map ready in 30 of 30 runs, taking and searching the map
+0.4 ms; rule "nearest" at the rim (z = 6.04 for the plate top at 6). The
+synchronous probe (id pass redrawn first, window and map read at once) is
+5.5 ms median — that path is only used where no pointer-down read exists
+(pen hover). The CPU search of a 240 × 135 map is the `bench:interactive`
+row "nearest rule". No per-frame work: the reduction runs only at pointer
+down.
+
+## Angle handles (Block 9)
+
+A dragged angle handle follows the pointer's **displacement**, never the
+pointer's angle about a centre that may be only a few pixels away (owner:
+~28 px swung the extrude taper from 5° to 50°). `viewport/angleDrag.ts`:
+
+- **Lever** — tilts with a small range: Extrude taper (lever = the extrude
+  height) and Move Face's turn arcs. Moving the knob sideways by Δs tilts to
+  `atan((L·tan θ₀ + Δs) / L)`, L the lever on screen but at least 200 px
+  (≈ 3.5 px per degree near 0°); 1° snapping, Shift 0.1°. 28 px now move a
+  5° taper to about 13°.
+- **Turn** — rings and wide arcs (Move/Rotate rings, Revolve, circular
+  Pattern, Rotate About Axis, construction-plane angles): the pointer's angle
+  about the centre, as before (any number of turns, 15° snapping); when the
+  arc's plane is seen within ~12° of edge-on, the **arc length** along its
+  tangent instead (one radian per arc radius on screen, at least 200 px).
+- The helix has no angle handle (height arrow, pitch and turns chips).
 
 ## Items and History
 
@@ -251,11 +294,13 @@ against 6ef20984 (90 back-to-back frames, GPU synced, 6 interleaved runs)
 - The id buffer is from the last drawn frame; boxes are evaluated on release
   (no live candidate highlight while dragging).
 - Rollback marker and Select Through are not saved with the project.
-- Pivot: the search radius is fixed (32 CSS px), so a bore wider than about
-  64 px on screen falls back to the model-centre depth (still on the cursor
-  ray); only pickable geometry counts (not the grid, not reference-image
-  quads). The depth is that of the last drawn frame; when the camera moved
-  since (no frame in between) the model rule is used instead of waiting.
+- Pivot: beyond the 32 px window the nearest geometry is found at 8 px
+  resolution (a feature thinner than a block can be missed when nothing
+  else is drawn); only pickable geometry counts (not the grid, not
+  reference-image quads). The depth is that of the last drawn frame; when
+  the camera moved since (no frame in between) the model rule is used
+  instead of waiting. A perspective wheel-zoom step uses rule "nearest"
+  only when the map was read ahead; it never waits for one.
 - Adaptive treats Look at face and saved views as standard views (the
   research archive documents only cube faces/edges/corners as parallel
   views, Report §5).

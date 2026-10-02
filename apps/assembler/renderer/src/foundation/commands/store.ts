@@ -46,6 +46,7 @@ import type { ReferenceMesh, ReferenceMeshTransform } from './referenceMesh.js';
 import {
   EMPTY_EVALUATION,
   type Body,
+  type EvaluationOutcome,
   type EvaluationResult,
   type FeatureErrorRefs,
   type KernelStatus,
@@ -327,6 +328,12 @@ export interface AssemblerState extends AssemblerStateExtensions {
   evaluation: EvaluationResult;
   /** `true` while the kernel computes a newer document revision than `evaluation`. */
   evaluationPending: boolean;
+  /**
+   * A live preview of an uncommitted document change (a parameter slider
+   * being dragged), shown by the viewport instead of `evaluation` while no
+   * tool runs; `null` otherwise. Never committed, never saved.
+   */
+  documentPreview: EvaluationResult | null;
 
   kernelStatus: KernelStatus;
   kernelMessage: string;
@@ -731,6 +738,8 @@ export interface StoreCore {
   getState: () => AssemblerState;
   /** Whether a kernel is attached. */
   hasKernel(): boolean;
+  /** The attached kernel for one-off queries (document checks), or `null`. */
+  kernel(): KernelAdapter | null;
   /**
    * Commits a complete next document (features, and parameters when given)
    * as exactly one undo step, through the path every tool's Done uses.
@@ -753,6 +762,28 @@ export interface StoreCore {
     | { kind: 'failed'; message: string }
     | { kind: 'busy' }
   >;
+  /**
+   * Starts an evaluation of `features` without touching the document: on the
+   * `background` channel (default; lowest priority, never superseded by tool
+   * previews — a parameter sweep's samples) or the `preview` channel with
+   * preview tessellation (a slider's live preview; a newer request
+   * supersedes a waiting one). `null` without a kernel. `cancel` resolves the
+   * job `cancelled` at once (the kernel finishes the running operation and
+   * drops it).
+   */
+  evaluateDetached(
+    features: Feature[],
+    options?: { channel?: 'background' | 'preview' },
+  ): {
+    outcome: Promise<EvaluationOutcome>;
+    cancel: () => void;
+  } | null;
+  /**
+   * A live preview of a document change that is not committed (a parameter
+   * slider being dragged): the viewport shows `evaluation` instead of the
+   * committed one while no tool runs; `null` ends it.
+   */
+  setDocumentPreview(evaluation: EvaluationResult | null): void;
   /** The tool-session lifecycle for a module's tool actions (`registerToolKind`). */
   tools: {
     /** Ends the running tool's preview (call before starting a new session). */
@@ -1128,7 +1159,8 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
         (from >= 0 ? previous.features.slice(from + 1).find((f) => ids.has(f.id))?.id : null) ??
         null;
     }
-    set({ features: nextFeatures, rollbackBefore, ...extra });
+    // Any document change ends a live preview of an uncommitted one (a slider drag).
+    set({ features: nextFeatures, rollbackBefore, documentPreview: null, ...extra });
     if (evaluation) resultCache.set(activeFeatures(), evaluation);
     evaluateDocument();
     notifySettled();
@@ -1178,6 +1210,7 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
   storeCore = {
     getState: get,
     hasKernel: () => kernel !== null,
+    kernel: () => kernel,
     commitDocument: (next) => commitFeatures(next.features, next.selection, next.parameters),
     seedEvaluation: (features, evaluation) => resultCache.set(features, evaluation),
     evaluateCheck: async (features) => {
@@ -1195,6 +1228,22 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
       }
       return { kind: 'busy' };
     },
+    evaluateDetached: (features, options) => {
+      if (!kernel) return null;
+      const adapter = kernel;
+      planCheckRevision += 1;
+      const channel = options?.channel ?? 'background';
+      const job = adapter.evaluate({
+        channel,
+        revision: planCheckRevision,
+        features,
+        ...(channel === 'preview' ? { quality: 'preview' as const } : {}),
+      });
+      return { outcome: job.outcome, cancel: () => adapter.cancel(job.id) };
+    },
+    setDocumentPreview: (evaluation) => {
+      if (get().documentPreview !== evaluation) set({ documentPreview: evaluation });
+    },
     tools: { endPreview, updatePreviewTool },
   };
 
@@ -1208,6 +1257,7 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
     features: createDemoDocument(),
     evaluation: EMPTY_EVALUATION,
     evaluationPending: true,
+    documentPreview: null,
 
     kernelStatus: 'loading',
     kernelMessage: 'Loading CAD kernel…',
@@ -1223,6 +1273,11 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
         kernel.cancel(activity.jobId, { hard: true });
         // A tool's preview: cancelling the computation cancels the tool.
         if (previewJob?.id === activity.jobId) get().cancel();
+        return;
+      }
+      if (activity.channel === 'background') {
+        // A sweep's sample: it sees `cancelled` and stops; the document is untouched.
+        kernel.cancel(activity.jobId, { hard: true });
         return;
       }
       kernel.cancel(activity.jobId, { hard: true });
@@ -1732,6 +1787,7 @@ export const useAssemblerStore = create<AssemblerState>((set, get) => {
         isolatedBodyIds: null,
         sketchVisibility: {},
         evaluation: EMPTY_EVALUATION,
+        documentPreview: null,
         rollbackBefore: null,
         referenceMeshes: options?.referenceMeshes ?? [],
         parameters: options?.parameters ?? [],
