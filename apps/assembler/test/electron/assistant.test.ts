@@ -74,9 +74,7 @@ void test('assistant: scripted harness builds a part through the API, one undo s
   const window = await app.firstWindow();
   await window.setViewportSize({ width: 1600, height: 1000 }).catch(() => undefined);
   await window.waitForLoadState('domcontentloaded');
-  await window.waitForFunction(() => !document.body.innerText.includes('No items yet'), {
-    timeout: 60_000,
-  });
+  // Home → Escape (a blank project, Block 9) → the demo bracket opened (`home.ts`).
   await dismissHome(window);
 
   // Agent Access only to observe the document from the test (the assistant does not need it).
@@ -194,9 +192,7 @@ void test('assistant island: tablet layout (1180 × 820, coarse pointer) and lef
   );
   await window.setViewportSize({ width: 1180, height: 820 }).catch(() => undefined);
   await window.waitForLoadState('domcontentloaded');
-  await window.waitForFunction(() => !document.body.innerText.includes('No items yet'), {
-    timeout: 60_000,
-  });
+  // Home → Escape (a blank project, Block 9) → the demo bracket opened (`home.ts`).
   await dismissHome(window);
   const cdp = await window.context().newCDPSession(window);
   await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
