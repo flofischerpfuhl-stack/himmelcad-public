@@ -291,6 +291,8 @@ export function applyPattern(
   let opsFor: (k: number, centre: Vec3) => RigidOp[];
   /** Second direction of a linear grid: its count and the move of its `j`-th row. */
   let rows: { count: number; vector: (j: number) => Vec3 } | null = null;
+  /** Third direction (Shapr3D: linear in 1–3 directions): its count and the move of layer `l`. */
+  let layers: { count: number; vector: (l: number) => Vec3 } | null = null;
   if (pattern.kind === 'linear') {
     const total = pattern.spacingMode === 'total';
     const spacing = total ? pattern.spacing / (pattern.count - 1) : pattern.spacing;
@@ -317,6 +319,29 @@ export function applyPattern(
       const dir2 = resolveAxis(kit, ctx, second.direction).dir;
       if (length(cross(dir, dir2)) < 1e-6) kit.fail('The two pattern directions must differ');
       rows = { count: second.count, vector: (j) => scale(dir2, spacing2 * j) };
+      const third = pattern.third;
+      if (third) {
+        if (!Number.isInteger(third.count) || third.count < 1 || third.count > MAX_PATTERN_COUNT) {
+          kit.fail(
+            `The third direction count must be a whole number from 1 to ${MAX_PATTERN_COUNT}`,
+          );
+        }
+        if (pattern.count * second.count * third.count > MAX_PATTERN_INSTANCES) {
+          kit.fail(`A pattern makes at most ${MAX_PATTERN_INSTANCES} instances`);
+        }
+        const spacing3 =
+          total && third.count > 1 ? third.spacing / (third.count - 1) : third.spacing;
+        if (third.count > 1 && !(Math.abs(spacing3) >= MIN_FEATURE_SIZE_MM)) {
+          kit.fail(`Pattern spacing must be at least ${MIN_FEATURE_SIZE_MM} mm`);
+        }
+        const dir3 = resolveAxis(kit, ctx, third.direction).dir;
+        if (Math.abs(dot(normalize(cross(dir, dir2)), dir3)) < 1e-6) {
+          kit.fail('The third pattern direction must leave the plane of the other two');
+        }
+        layers = { count: third.count, vector: (l) => scale(dir3, spacing3 * l) };
+      }
+    } else if (pattern.third) {
+      kit.fail('A third pattern direction needs a second one');
     }
   } else {
     if (!(Math.abs(pattern.angle) >= 0.1 && Math.abs(pattern.angle) <= 360)) {
@@ -349,25 +374,38 @@ export function applyPattern(
   bodies.forEach((body, b) => {
     const [min, max] = kit.boundsOf(body.shape);
     const centre = scale(add(min, max), 0.5);
-    for (let j = 0; j < (rows?.count ?? 1); j += 1) {
-      for (let k = 0; k < pattern.count; k += 1) {
-        if (j === 0 && k === 0) continue;
-        const ops = opsFor(k, centre);
-        const shift = rows && j > 0 ? rows.vector(j) : null;
-        // Row 0 keeps the one-direction ids; further rows get ids of their own.
-        const index =
-          j === 0
-            ? b * MAX_PATTERN_COUNT + k
-            : GRID_ID_BASE + (b * MAX_PATTERN_COUNT + j) * MAX_PATTERN_COUNT + k;
-        addCopy(
-          kit,
-          ctx,
-          feature.id,
-          body,
-          shift ? [...ops, { kind: 'translate', vector: shift }] : ops,
-          extraBodyId(feature.id, index),
-          j === 0 ? `${body.name} (${k + 1})` : `${body.name} (${k + 1}, ${j + 1})`,
-        );
+    for (let l = 0; l < (layers?.count ?? 1); l += 1) {
+      for (let j = 0; j < (rows?.count ?? 1); j += 1) {
+        for (let k = 0; k < pattern.count; k += 1) {
+          if (l === 0 && j === 0 && k === 0) continue;
+          const ops = opsFor(k, centre);
+          const shift = add(
+            rows && j > 0 ? rows.vector(j) : [0, 0, 0],
+            layers && l > 0 ? layers.vector(l) : [0, 0, 0],
+          );
+          // Row 0 keeps the one-direction ids; further rows and layers get ids of their own.
+          const index =
+            l > 0
+              ? LAYER_ID_BASE +
+                ((b * MAX_PATTERN_COUNT + l) * MAX_PATTERN_COUNT + j) * MAX_PATTERN_COUNT +
+                k
+              : j === 0
+                ? b * MAX_PATTERN_COUNT + k
+                : GRID_ID_BASE + (b * MAX_PATTERN_COUNT + j) * MAX_PATTERN_COUNT + k;
+          addCopy(
+            kit,
+            ctx,
+            feature.id,
+            body,
+            length(shift) > 0 ? [...ops, { kind: 'translate', vector: shift }] : ops,
+            extraBodyId(feature.id, index),
+            l > 0
+              ? `${body.name} (${k + 1}, ${j + 1}, ${l + 1})`
+              : j === 0
+                ? `${body.name} (${k + 1})`
+                : `${body.name} (${k + 1}, ${j + 1})`,
+          );
+        }
       }
     }
   });
@@ -375,6 +413,8 @@ export function applyPattern(
 
 /** First body-id index of a pattern's second-direction rows (above every one-direction id). */
 const GRID_ID_BASE = 1_000_000;
+/** First body-id index of a pattern's third-direction layers (above every grid id). */
+const LAYER_ID_BASE = 1_000_000_000_000;
 
 // ---- Split -------------------------------------------------------------------------
 

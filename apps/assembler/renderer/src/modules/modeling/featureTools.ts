@@ -1538,22 +1538,25 @@ function patternModeBadges(draft: PatternDraft): DraftBadge[] {
               ...(q.second
                 ? { second: { ...q.second, spacing: convert(q.second.spacing, q.second.count) } }
                 : {}),
+              ...(q.third
+                ? { third: { ...q.third, spacing: convert(q.third.spacing, q.third.count) } }
+                : {}),
             },
           };
         },
       },
       {
         ariaLabel: 'Pattern directions',
-        value: p.second ? 'two' : 'one',
+        value: p.third ? 'three' : p.second ? 'two' : 'one',
         options: [
           { value: 'one', label: 'One direction' },
           { value: 'two', label: 'Two directions' },
+          { value: 'three', label: 'Three directions' },
         ],
         apply: (d, value, evaluation) => {
           if (d.kind !== 'pattern' || d.pattern.kind !== 'linear') return d;
-          const { second, ...rest } = d.pattern;
+          const { second, third, ...rest } = d.pattern;
           if (value === 'one') return { ...d, pattern: rest };
-          if (second) return d;
           const first = axisLine(evaluation, d.pattern.direction, [])?.dir ?? [1, 0, 0];
           // The world axis most across the first direction.
           const axis =
@@ -1564,11 +1567,26 @@ function patternModeBadges(draft: PatternDraft): DraftBadge[] {
                   Math.abs(dot(worldAxisVector(a), first)) -
                   Math.abs(dot(worldAxisVector(b), first)),
               )[0] ?? 'Y';
+          const nextSecond = second ?? {
+            direction: { kind: 'world' as const, axis },
+            count: 2,
+            spacing: rest.spacing,
+          };
+          if (value === 'two') return { ...d, pattern: { ...rest, second: nextSecond } };
+          if (third) return d;
+          // Three directions: the world axis most along first × second.
+          const dir2 = axisLine(evaluation, nextSecond.direction, [])?.dir ?? [0, 1, 0];
+          const normal = cross(first, dir2);
+          const axis3 = (['X', 'Y', 'Z'] as WorldAxis[]).sort(
+            (a, b) =>
+              Math.abs(dot(worldAxisVector(b), normal)) - Math.abs(dot(worldAxisVector(a), normal)),
+          )[0]!;
           return {
             ...d,
             pattern: {
               ...rest,
-              second: { direction: { kind: 'world', axis }, count: 2, spacing: rest.spacing },
+              second: nextSecond,
+              third: { direction: { kind: 'world', axis: axis3 }, count: 2, spacing: rest.spacing },
             },
           };
         },
@@ -1893,6 +1911,46 @@ export function modelingDraftHandles(
               at: add(lastRow, scale(dir2, 6)),
               apply: (d, value) =>
                 setSecond(d, {
+                  count: Math.max(1, Math.min(MAX_PATTERN_COUNT, Math.round(value))),
+                }),
+            },
+          );
+        }
+        const third = p.third;
+        const line3 = third ? axisLine(evaluation, third.direction, features) : null;
+        if (third && line3) {
+          const dir3 = line3.dir;
+          const step3 = total ? third.spacing / Math.max(1, third.count - 1) : third.spacing;
+          const lastLayer = add(centre, scale(dir3, step3 * (third.count - 1)));
+          const setThird = (d: FeatureDraft, patch: Partial<typeof third>): FeatureDraft =>
+            d.kind === 'pattern' && d.pattern.kind === 'linear' && d.pattern.third
+              ? { ...d, pattern: { ...d.pattern, third: { ...d.pattern.third, ...patch } } }
+              : d;
+          out.push(
+            {
+              kind: 'linear',
+              id: 'spacing3',
+              label: total ? 'Third direction length' : 'Third direction spacing',
+              unit: 'mm',
+              value: third.spacing,
+              base: centre,
+              dir: dir3,
+              length: Math.max(Math.abs(step3), STEM_MM),
+              apply: (d, value) =>
+                setThird(d, {
+                  spacing: Math.abs(value) < MIN_FEATURE_SIZE_MM ? MIN_FEATURE_SIZE_MM : value,
+                }),
+            },
+            {
+              kind: 'chip',
+              id: 'count3',
+              label: 'Third direction count',
+              prefix: '×',
+              unit: 'count',
+              value: third.count,
+              at: add(lastLayer, scale(dir3, 6)),
+              apply: (d, value) =>
+                setThird(d, {
                   count: Math.max(1, Math.min(MAX_PATTERN_COUNT, Math.round(value))),
                 }),
             },

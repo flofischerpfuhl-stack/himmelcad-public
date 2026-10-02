@@ -1172,6 +1172,25 @@
               "required": ["direction", "count", "spacing"],
               "additionalProperties": false,
               "description": "A second direction: a grid of count × second.count instances (at most 1000)."
+            },
+            "third": {
+              "type": "object",
+              "properties": {
+                "direction": {
+                  "$ref": "#/$defs/AxisRef"
+                },
+                "count": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 200
+                },
+                "spacing": {
+                  "type": "number"
+                }
+              },
+              "required": ["direction", "count", "spacing"],
+              "additionalProperties": false,
+              "description": "A third direction (with `second`): count × second.count × third.count instances (at most 1000)."
             }
           },
           "required": ["kind", "direction", "count", "spacing"],

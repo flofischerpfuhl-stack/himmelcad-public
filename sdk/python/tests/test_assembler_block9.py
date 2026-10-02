@@ -82,6 +82,13 @@ class HelperTests(unittest.TestCase):
         self.doc.split(a)
         self.assertNotIn("bodyIds", self.params())
 
+    def test_pattern_three_directions(self) -> None:
+        a = Body(self.doc, "body:a")
+        self.doc.pattern_linear(a, "X", 3, 10, direction2="Y", count2=2, direction3="Z", count3=2, spacing3=8)
+        self.assertEqual(self.params()["pattern"]["third"], {"direction": {"kind": "world", "axis": "Z"}, "count": 2, "spacing": 8})
+        with self.assertRaises(ValueError):
+            self.doc.pattern_linear(a, "X", 3, 10, direction3="Z")
+
     def test_copy_unlinked(self) -> None:
         copy = self.doc.copy_unlinked(Body(self.doc, "body:a"), 20, rz=90, pivot=(0, 0, 0))
         self.assertEqual(self.transport.requests[-1][0], "body.copyUnlinked")

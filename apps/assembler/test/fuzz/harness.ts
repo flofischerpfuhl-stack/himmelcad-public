@@ -1000,6 +1000,16 @@ export class FuzzHarness {
                       count: 1 + Math.floor((r[6] ?? 0) * 3),
                       spacing: between(r[7], 5, 30, 2.5),
                     },
+                    // Block 9: sometimes a third direction (layers).
+                    ...((r[1] ?? 0) < 0.2
+                      ? {
+                          third: {
+                            direction: { kind: 'world', axis: axes[(axes.indexOf(axis) + 2) % 3]! },
+                            count: 2,
+                            spacing: between(r[7], 5, 30, 2.5),
+                          },
+                        }
+                      : {}),
                   }
                 : {
                     kind: 'circular',

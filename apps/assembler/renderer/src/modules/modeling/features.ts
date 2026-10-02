@@ -130,6 +130,8 @@ export type PatternDefinition =
       spacingMode?: 'spacing' | 'total';
       /** A second direction (a grid of `count × second.count`), Shapr3D's Pattern 3D. */
       second?: { direction: AxisRef; count: number; spacing: Millimeters };
+      /** A third direction (needs second): count × second.count × third.count instances. */
+      third?: { direction: AxisRef; count: number; spacing: Millimeters };
     }
   | {
       kind: 'circular';
@@ -145,7 +147,7 @@ export type PatternDefinition =
       uniform?: boolean;
     };
 
-/** Most instances of a two-direction pattern (bounds evaluation cost). */
+/** Most instances of a two- or three-direction pattern (bounds evaluation cost). */
 export const MAX_PATTERN_INSTANCES = 1000;
 
 /** Copies bodies in a linear or circular pattern (independent copies, like Shapr3D's Pattern 3D). */

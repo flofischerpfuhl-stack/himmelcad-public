@@ -429,3 +429,39 @@ void test('Extrude taper with To Object: the tapered prism stops at the face', a
     'tapered to the face',
   );
 });
+
+// ---- Pattern in three directions (MOD-20) ----------------------------------------------------------
+
+void test('Pattern: a third direction makes a block of layers; it must leave the grid plane', async () => {
+  const pattern = (third: object) =>
+    ({
+      ...base('p'),
+      kind: 'pattern',
+      bodyIds: ['body:a'],
+      pattern: {
+        kind: 'linear',
+        direction: { kind: 'world', axis: 'X' },
+        count: 3,
+        spacing: 10,
+        second: { direction: { kind: 'world', axis: 'Y' }, count: 2, spacing: 10 },
+        third,
+      },
+    }) as unknown as Feature;
+  const result = await evaluate([
+    ...box('a', 0, 0, 4, 4, 4),
+    pattern({ direction: { kind: 'world', axis: 'Z' }, count: 2, spacing: 8 }),
+  ]);
+  noErrors(result);
+  assert.equal(result.bodies.length, 12, '3 × 2 × 2 instances');
+  const top = result.bodies.filter((b) => Math.abs(b.min[2] - 8) < 1e-6);
+  assert.equal(top.length, 6, 'the second layer');
+  assert.ok(
+    top.every((b) => /\(\d+, \d+, 2\)$/.test(b.name)),
+    'layer names',
+  );
+  const flat = await evaluate([
+    ...box('a', 0, 0, 4, 4, 4),
+    pattern({ direction: { kind: 'world', axis: 'X' }, count: 2, spacing: 8 }),
+  ]);
+  assert.match(flat.errors['p'] ?? '', /leave the plane/);
+});

@@ -437,6 +437,23 @@ export function ModelingFeatureParams({
               />
             </>
           ) : null}
+          {p.kind === 'linear' && p.third ? (
+            <>
+              <ExpressionField
+                label="Count 3"
+                value={p.third.count}
+                onCommit={(v) =>
+                  edit({ pattern: { ...p, third: { ...p.third!, count: Math.round(v) } } })
+                }
+              />
+              <ExpressionField
+                label={p.spacingMode === 'total' ? 'Total length 3' : 'Spacing 3'}
+                value={p.third.spacing}
+                unit="mm"
+                onCommit={(v) => edit({ pattern: { ...p, third: { ...p.third!, spacing: v } } })}
+              />
+            </>
+          ) : null}
           {p.kind === 'circular' ? (
             <div>
               <span className={styles.paramLabel}>Copies</span>

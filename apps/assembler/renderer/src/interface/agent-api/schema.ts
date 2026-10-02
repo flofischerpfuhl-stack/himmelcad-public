@@ -455,6 +455,15 @@ const DEFS_TAIL: Record<string, JsonSchema> = {
             ['direction', 'count', 'spacing'],
             'A second direction: a grid of count × second.count instances (at most 1000).',
           ),
+          third: obj(
+            {
+              direction: ref('AxisRef'),
+              count: { type: 'integer', minimum: 1, maximum: 200 },
+              spacing: num,
+            },
+            ['direction', 'count', 'spacing'],
+            'A third direction (with `second`): count × second.count × third.count instances (at most 1000).',
+          ),
         },
         ['kind', 'direction', 'count', 'spacing'],
       ),

@@ -1046,16 +1046,21 @@ class Document(PrintToolsMixin, InteropMixin):
         params = {"bodyIds": [b.id for b in items], "from": [float(v) for v in start], "to": [float(v) for v in end], "copy": copy}
         return self._feature(self.client.create_feature("translate", params, name=name))
 
-    def pattern_linear(self, bodies: Body | Iterable[Body], direction: str | Edge | SketchLine | Datum, count: int, spacing: float, *, total: bool = False, direction2: str | Edge | SketchLine | Datum | None = None, count2: int = 1, spacing2: float | None = None, name: str | None = None) -> Feature:
+    def pattern_linear(self, bodies: Body | Iterable[Body], direction: str | Edge | SketchLine | Datum, count: int, spacing: float, *, total: bool = False, direction2: str | Edge | SketchLine | Datum | None = None, count2: int = 1, spacing2: float | None = None, direction3: str | Edge | SketchLine | Datum | None = None, count3: int = 1, spacing3: float | None = None, name: str | None = None) -> Feature:
         """Copies bodies ``count`` times along ``direction`` (``"X"``/``"Y"``/``"Z"``, an edge, …),
         ``spacing`` apart — or ``total=True``: ``spacing`` from the first to the last. ``direction2``
-        with ``count2``/``spacing2`` makes a grid (Shapr3D Pattern 3D, at most 1000 instances)."""
+        with ``count2``/``spacing2`` makes a grid, ``direction3`` with ``count3``/``spacing3`` a
+        block of layers (Shapr3D Pattern 3D: 1–3 directions, at most 1000 instances)."""
         items = [bodies] if isinstance(bodies, Body) else list(bodies)
         pattern: dict[str, Any] = {"kind": "linear", "direction": self._axis_ref(direction), "count": count, "spacing": spacing}
         if total:
             pattern["spacingMode"] = "total"
         if direction2 is not None:
             pattern["second"] = {"direction": self._axis_ref(direction2), "count": count2, "spacing": spacing if spacing2 is None else spacing2}
+        if direction3 is not None:
+            if direction2 is None:
+                raise ValueError("a third direction needs direction2")
+            pattern["third"] = {"direction": self._axis_ref(direction3), "count": count3, "spacing": spacing if spacing3 is None else spacing3}
         return self._feature(self.client.create_feature("pattern", {"bodyIds": [b.id for b in items], "pattern": pattern}, name=name))
 
     def pattern_circular(self, bodies: Body | Iterable[Body], axis: str | Edge | SketchLine | Datum, count: int, angle: float = 360.0, *, between: bool = False, uniform: bool = False, name: str | None = None) -> Feature:

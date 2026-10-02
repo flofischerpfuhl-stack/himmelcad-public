@@ -195,12 +195,17 @@ export function validateModelingFeature(r: Rec, path: string, h: FormatHelpers):
         ) {
           h.fail(`${path}.pattern.spacingMode`, 'expected "spacing" or "total"');
         }
-        if (p.second !== undefined) {
-          const s = p.second;
-          if (!isRecord(s)) h.fail(`${path}.pattern.second`, 'expected an object');
-          axis(s.direction, `${path}.pattern.second.direction`);
-          if (!isNumber(s.count)) h.fail(`${path}.pattern.second.count`, 'expected a number');
-          if (!isNumber(s.spacing)) h.fail(`${path}.pattern.second.spacing`, 'expected a number');
+        for (const field of ['second', 'third'] as const) {
+          if (p[field] === undefined) continue;
+          const s = p[field];
+          const at = `${path}.pattern.${field}`;
+          if (!isRecord(s)) h.fail(at, 'expected an object');
+          axis(s.direction, `${at}.direction`);
+          if (!isNumber(s.count)) h.fail(`${at}.count`, 'expected a number');
+          if (!isNumber(s.spacing)) h.fail(`${at}.spacing`, 'expected a number');
+        }
+        if (p.third !== undefined && p.second === undefined) {
+          h.fail(`${path}.pattern.third`, 'a third direction needs a second one');
         }
       } else if (p.kind === 'circular') {
         axis(p.axis, `${path}.pattern.axis`);
