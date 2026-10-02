@@ -221,9 +221,10 @@ export const MAX_FACE_ROTATION = 80;
  * Turns the planar face `key` by `rotation.angle` degrees about the line
  * through `rotation.point` (moved along with the face by `moved`) along
  * `rotation.axis` (projected into the face's plane); the neighbours are
- * trimmed or extended to meet it (OCCT's draft about that line).
+ * trimmed or extended to meet it (OCCT's draft about that line). Also the
+ * tilt of Replace Face (`replaceFace.ts`).
  */
-function rotateFace(
+export function rotateFace(
   kit: FeatureKit,
   ctx: ReplayContextLike,
   body: BodyStateLike,

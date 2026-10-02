@@ -347,6 +347,7 @@ void test('kernel thread: the module kernel parts are registered as in the app (
       'translate',
       'moveEdge',
       'moveFace',
+      'replaceFace',
       'referenceImage',
     ]) {
       assert.ok(thread.evaluatorKinds.includes(kind), `${kind} evaluates on the thread`);

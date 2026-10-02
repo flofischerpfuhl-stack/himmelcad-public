@@ -1,7 +1,7 @@
 /**
  * The direct-edit module (assembler/MODULES.md): Offset Face (value modes),
- * Delete Face, and Move Face / Move Edge (started from Move/Rotate on a
- * face or an edge).
+ * Delete Face, Move Face / Move Edge (started from Move/Rotate on a face or
+ * an edge) and Replace Face.
  *
  * - kinds: `kinds.ts` (types, `.hcasm` validation, labels);
  * - evaluators: `kernel.ts` / `faceEdits.ts` (kernel-worker composition);
@@ -21,6 +21,7 @@ import {
   OFFSET_FACE_DRAFT_TOOL,
 } from './drafts.js';
 import './kinds.js';
+import { REPLACE_FACE_DRAFT_TOOL } from './replaceFaceTool.js';
 
 export const directEditModule = defineAssemblerModule({
   id: 'direct-edit',
@@ -31,5 +32,6 @@ export const directEditModule = defineAssemblerModule({
     DELETE_FACE_DRAFT_TOOL,
     MOVE_EDGE_DRAFT_TOOL,
     MOVE_FACE_DRAFT_TOOL,
+    REPLACE_FACE_DRAFT_TOOL,
   ],
 });

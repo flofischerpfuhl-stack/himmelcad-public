@@ -1140,6 +1140,14 @@ class Document(PrintToolsMixin, InteropMixin):
             params["rotation"] = {"point": [float(v) for v in point], "axis": [float(v) for v in turn_axis], "angle": float(turn)}
         return self._feature(self.client.create_feature("moveFace", params, name=name))
 
+    def replace_face(self, faces: Face | Iterable[Face], target: Face, *, name: str | None = None) -> Feature:
+        """Replace Face: extends or trims planar ``faces`` (one body) until they lie on the surface
+        of ``target`` (a planar or cylindrical face of any body). A planar target turns and offsets
+        the faces (their neighbours follow); the replaced faces keep their keys."""
+        items = [faces] if isinstance(faces, Face) else list(faces)
+        params = {"faces": [f.ref for f in items], "target": target.ref}
+        return self._feature(self.client.create_feature("replaceFace", params, name=name))
+
     def color(self, body: Body, rgb_hex: str, *, name: str | None = None) -> Feature:
         return self._feature(self.client.create_feature("setAppearance", {"bodyId": body.id, "color": rgb_hex}, name=name))
 

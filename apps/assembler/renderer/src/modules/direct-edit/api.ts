@@ -74,6 +74,18 @@ const KIND_SCHEMAS: Record<string, FeatureKindSpec> = {
       ['face', 'vector'],
     ),
   },
+  replaceFace: {
+    label: 'Replace Face',
+    summary:
+      'Extends or trims planar `faces` of one body until they lie on the surface of the `target` face (planar or cylindrical; any body, not one of `faces`). A planar target within 80° of a face turns and offsets it (its neighbours follow, whatever their angle); a cylindrical target cuts the face prism along its normal at the nearest crossing (side walls run along the face normal). The replaced faces keep their keys.',
+    params: schemaObject(
+      {
+        faces: { type: 'array', items: schemaRef('FaceInput'), minItems: 1 },
+        target: schemaRef('FaceInput'),
+      },
+      ['faces', 'target'],
+    ),
+  },
 };
 
 export const DIRECT_EDIT_API: ApiContribution = {

@@ -385,6 +385,15 @@ function normalise(
     case 'moveFace':
       if (out.face !== undefined) out.face = oneFace(out.face, 'params.face');
       return out;
+    case 'replaceFace':
+      if (out.target !== undefined) out.target = oneFace(out.target, 'params.target');
+      if (Array.isArray(out.faces)) {
+        out.faces = out.faces.flatMap((face, i) =>
+          resolveFaceInput(face, evaluation, features, `params.faces[${i}]`, { single: false }),
+        );
+        dedupeByKey(out, 'faces');
+      }
+      return out;
     case 'thicken': {
       const source = out.source as Json | undefined;
       if (source?.kind === 'faces' && Array.isArray(source.faces)) {

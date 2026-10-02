@@ -877,6 +877,26 @@ export class FuzzHarness {
           },
         });
       }
+      case 'replaceFace': {
+        const body = await bodyId(r[0]);
+        const other = await bodyId(r[2]);
+        if (!body || !other) return null;
+        const face = pick(await this.planarFaces(body), r[1]);
+        const targets = (await this.call<FaceSummary[]>('faces.list', { bodyId: other })).filter(
+          (f) =>
+            (f.surface === 'plane' || f.surface === 'cylinder') &&
+            !(other === body && f.key === face?.key),
+        );
+        const target = pick(targets, r[3]);
+        if (!face || !target) return null;
+        return this.api('feature.create', {
+          kind: 'replaceFace',
+          params: {
+            faces: [{ bodyId: body, key: face.key }],
+            target: { bodyId: other, key: target.key },
+          },
+        });
+      }
       case 'helix': {
         const sketch = pick(await sketches(), r[0]);
         if (!sketch) return null;

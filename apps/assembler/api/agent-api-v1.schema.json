@@ -2610,6 +2610,27 @@
         "additionalProperties": false
       }
     },
+    "replaceFace": {
+      "label": "Replace Face",
+      "summary": "Extends or trims planar `faces` of one body until they lie on the surface of the `target` face (planar or cylindrical; any body, not one of `faces`). A planar target within 80° of a face turns and offsets it (its neighbours follow, whatever their angle); a cylindrical target cuts the face prism along its normal at the nearest crossing (side walls run along the face normal). The replaced faces keep their keys.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "faces": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/FaceInput"
+            },
+            "minItems": 1
+          },
+          "target": {
+            "$ref": "#/$defs/FaceInput"
+          }
+        },
+        "required": ["faces", "target"],
+        "additionalProperties": false
+      }
+    },
     "referenceImage": {
       "label": "Image",
       "summary": "Reference image (no body): a picture on a plane, created with image.insert. feature.edit changes `center` [u, v], `width` (mm; the height follows), `rotation` (degrees) and `opacity` (0.05–1).",
