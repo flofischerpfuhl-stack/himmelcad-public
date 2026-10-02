@@ -23,10 +23,14 @@ import {
   findParameterDependents,
   findParameterUsages,
   isValidParameterName,
+  PARAMETER_RANGE_FIELDS,
+  parameterRangeViolation,
   renameInExpression,
   resolveFieldExpression,
+  resolveParameterRanges,
   resolveParameterValues,
   type Parameter,
+  type ParameterRange,
   type ParameterUnit,
   type ParameterUsage,
 } from '../../foundation/document/parameters.js';
@@ -44,6 +48,22 @@ export interface ParameterEdit {
   value?: number;
   /** Source formula; `null` removes it (the parameter keeps its current value). */
   expression?: string | null;
+  /**
+   * Range bounds and slider step: a number, a formula/text with a unit
+   * (`"wall * 2"`, `"5 mm"`), or `null`/`""` to remove; absent keeps them.
+   */
+  min?: number | string | null;
+  max?: number | string | null;
+  step?: number | string | null;
+}
+
+/** The parameter a refused edit would have put outside its range. */
+export interface ParameterOutOfRange {
+  parameterId: string;
+  name: string;
+  value: number;
+  min?: number;
+  max?: number;
 }
 
 export type ParameterChange = ParameterEdit | { delete: string };
@@ -76,11 +96,18 @@ export type ParameterPlan =
       message: string;
       usages?: ParameterUsage[];
       conflicts?: ParameterConflict[];
+      outOfRange?: ParameterOutOfRange;
     };
 
 export type ParameterEditResult =
   | { ok: true; id: string; resolvedSketchIds: string[]; changedFeatureIds: string[] }
-  | { ok: false; message: string; usages?: ParameterUsage[]; conflicts?: ParameterConflict[] };
+  | {
+      ok: false;
+      message: string;
+      usages?: ParameterUsage[];
+      conflicts?: ParameterConflict[];
+      outOfRange?: ParameterOutOfRange;
+    };
 
 type Doc = { features: readonly Feature[]; parameters: readonly Parameter[] };
 
@@ -95,6 +122,58 @@ function parsePlain(text: string): number {
   return Number(text.replace(/\s*(mm|°|deg)\s*$/i, '').replace(',', '.'));
 }
 
+/** A typed number, optionally negative and with a unit (`-2.5 mm`), or `null` for a formula. */
+function signedPlain(text: string): number | null {
+  const negative = /^\s*-/.test(text);
+  const body = negative ? text.replace(/^\s*-/, '') : text;
+  if (!isPlainNumber(body)) return null;
+  const value = parsePlain(body.trim());
+  return negative ? -value : value;
+}
+
+/**
+ * The range fields after `change`: absent keeps the existing ones, `null`
+ * or empty text removes, a number or plain text sets a bound, any other
+ * text is a formula (resolved with the other parameters afterwards).
+ */
+function editRange(
+  existing: Parameter | undefined,
+  change: ParameterEdit,
+): Partial<Parameter> | string {
+  const out: Partial<Parameter> = {};
+  for (const field of PARAMETER_RANGE_FIELDS) {
+    const input = change[field];
+    const formulaKey = `${field}Expression` as const;
+    if (input === undefined) {
+      if (existing?.[field] !== undefined) out[field] = existing[field];
+      if (existing?.[formulaKey] !== undefined) out[formulaKey] = existing[formulaKey];
+      continue;
+    }
+    if (input === null) continue;
+    if (typeof input === 'number') {
+      if (!Number.isFinite(input)) return `${field} must be a finite number`;
+      out[field] = input;
+      continue;
+    }
+    const text = input.trim();
+    if (text === '') continue;
+    const plain = signedPlain(text);
+    if (plain !== null) {
+      if (!Number.isFinite(plain)) return `${field} must be a finite number`;
+      out[field] = plain;
+      continue;
+    }
+    out[formulaKey] = text;
+    // Resolved with the other parameters' values below.
+    out[field] = existing?.[field] ?? 0;
+  }
+  return out;
+}
+
+function rangeKey(range: ParameterRange | undefined): string {
+  return range ? `${range.min ?? ''}|${range.max ?? ''}|${range.step ?? ''}` : '||';
+}
+
 /** Rewrites every expression in the document that reads `from` to read `to`. */
 function renameEverywhere(
   features: readonly Feature[],
@@ -102,11 +181,16 @@ function renameEverywhere(
   from: string,
   to: string,
 ): { features: Feature[]; parameters: Parameter[] } {
-  const nextParameters = parameters.map((p) =>
-    p.expression !== undefined && expressionReferences(p.expression).includes(from)
-      ? { ...p, expression: renameInExpression(p.expression, from, to) }
-      : p,
-  );
+  const nextParameters = parameters.map((p) => {
+    let out = p;
+    for (const key of ['expression', 'minExpression', 'maxExpression', 'stepExpression'] as const) {
+      const text = out[key];
+      if (text !== undefined && expressionReferences(text).includes(from)) {
+        out = { ...out, [key]: renameInExpression(text, from, to) };
+      }
+    }
+    return out;
+  });
   const nextFeatures = features.map((f) => {
     let changed: Feature = f;
     if (f.kind === 'sketch') {
@@ -208,6 +292,8 @@ export async function planParameterChange(
       value = existing?.value ?? 0;
     }
     if (!Number.isFinite(value)) return fail(`${name}: not a finite number`);
+    const range = editRange(existing, change);
+    if (typeof range === 'string') return fail(`${name}: ${range}`);
     id = existing?.id ?? newId();
     const next: Parameter = {
       id,
@@ -215,6 +301,7 @@ export async function planParameterChange(
       unit: change.unit ?? existing?.unit ?? 'mm',
       value,
       ...(expression !== undefined ? { expression } : {}),
+      ...range,
     };
     parameters = existing
       ? doc.parameters.map((p) => (p.id === existing.id ? next : p))
@@ -228,10 +315,19 @@ export async function planParameterChange(
 
   const resolved = resolveParameterValues(parameters);
   if (!resolved.ok) return fail(resolved.message);
-  const nextParameters = parameters.map((p) => ({
-    ...p,
-    value: resolved.values.get(p.name) ?? p.value,
-  }));
+  const ranges = resolveParameterRanges(parameters, resolved.values);
+  if (!ranges.ok) return fail(`${ranges.message}. Nothing was changed.`);
+  const nextParameters = parameters.map((p) => {
+    const range = ranges.ranges.get(p.id) ?? {};
+    const out: Parameter = { ...p, value: resolved.values.get(p.name) ?? p.value };
+    // Formula bounds keep their last resolved value next to the formula (like `value`).
+    for (const field of PARAMETER_RANGE_FIELDS) {
+      if (p[`${field}Expression`] !== undefined && range[field] !== undefined) {
+        out[field] = range[field];
+      }
+    }
+    return out;
+  });
 
   // Parameters whose resolved value changed (a created parameter counts as changed).
   const before = resolveParameterValues(doc.parameters);
@@ -243,6 +339,30 @@ export async function planParameterChange(
       .filter((p) => !oldById.has(p.id) || oldById.get(p.id) !== p.value)
       .map((p) => p.name),
   );
+
+  // A value outside its range is refused, never clamped. Only what this edit touches is
+  // checked (the edited parameter, changed values, changed ranges), so a document that
+  // already holds an out-of-range value (an older file) can still be edited elsewhere.
+  const rangesBefore = before.ok ? resolveParameterRanges(doc.parameters, before.values) : null;
+  for (const p of nextParameters) {
+    const range = ranges.ranges.get(p.id) ?? {};
+    const previous = rangesBefore?.ok ? rangesBefore.ranges.get(p.id) : undefined;
+    const touched =
+      p.id === id || changedNames.has(p.name) || rangeKey(previous) !== rangeKey(range);
+    if (!touched) continue;
+    const violation = parameterRangeViolation(p, p.value, range);
+    if (violation) {
+      return fail(`${violation}. Nothing was changed.`, {
+        outOfRange: {
+          parameterId: p.id,
+          name: p.name,
+          value: p.value,
+          ...(range.min !== undefined ? { min: range.min } : {}),
+          ...(range.max !== undefined ? { max: range.max } : {}),
+        },
+      });
+    }
+  }
 
   // Re-solve every sketch that reads a changed value, with the new values.
   const paramValues = [...resolved.values] as [string, number][];

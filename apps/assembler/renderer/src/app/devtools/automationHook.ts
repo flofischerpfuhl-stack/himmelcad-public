@@ -144,7 +144,10 @@ declare global {
 function displayed(): EvaluationResult {
   const state = useAssemblerStore.getState();
   const tool = state.activeTool;
-  return (isPreviewTool(tool) ? tool.previewEvaluation : null) ?? state.evaluation;
+  return (
+    (isPreviewTool(tool) ? tool.previewEvaluation : tool ? null : state.documentPreview) ??
+    state.evaluation
+  );
 }
 
 function bodyOf(bodyId: string): Body | undefined {

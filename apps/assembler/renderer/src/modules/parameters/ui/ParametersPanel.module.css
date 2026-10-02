@@ -74,3 +74,225 @@
   font-size: 11px;
   color: var(--hc-warning);
 }
+
+/* ---- Block 9: range, slider, Test range ---------------------------------------------- */
+
+.parameter {
+  display: flex;
+  flex-direction: column;
+}
+
+.valueInput[data-out-of-range='true'] {
+  border-color: var(--hc-warning);
+}
+
+.iconButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  border: none;
+  border-radius: var(--hc-radius-sm);
+  background: transparent;
+  color: var(--hc-fg-muted);
+  cursor: pointer;
+}
+
+.iconButton:hover {
+  background: var(--hc-hover-bg);
+  color: var(--hc-fg-strong);
+}
+
+.iconButton[data-active='true'] {
+  color: var(--hc-accent-base);
+}
+
+/* The panel header's Test range toggle while open. */
+:global([aria-label='Parameters panel']) button[aria-pressed='true'] {
+  color: var(--hc-accent-base);
+}
+
+.iconButton:focus-visible,
+.deleteButton:focus-visible {
+  outline: 2px solid var(--hc-focus-ring);
+  outline-offset: 1px;
+}
+
+.rowWarning {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 var(--hc-space-2) 2px calc(var(--hc-space-2) + 4px);
+  font-size: 10.5px;
+  color: var(--hc-warning);
+}
+
+/* The slider sits under the value field and stays compact; the field is primary. */
+.sliderRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 var(--hc-space-2) 4px calc(var(--hc-space-2) + 4px);
+}
+
+.slider {
+  flex: 1 1 auto;
+  min-width: 60px;
+  height: 16px;
+}
+
+.slider[data-pending='true'] {
+  opacity: 0.8;
+}
+
+.bound {
+  flex-shrink: 0;
+  font-size: 10px;
+  color: var(--hc-fg-subtle);
+  font-variant-numeric: tabular-nums;
+}
+
+.rangeEditor {
+  display: flex;
+  gap: 4px;
+  padding: 0 var(--hc-space-2) 6px calc(var(--hc-space-2) + 4px);
+}
+
+.rangeField {
+  display: flex;
+  flex: 1 1 0;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 10px;
+  color: var(--hc-fg-subtle);
+}
+
+.testRange {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: var(--hc-space-2);
+  padding: var(--hc-space-2);
+  border-top: 1px solid var(--hc-border-subtle);
+}
+
+.testHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.testTitle {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--hc-fg-strong);
+}
+
+.testHint {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--hc-fg-subtle);
+}
+
+.testHint[role='alert'] {
+  color: var(--hc-warning);
+}
+
+.testPick {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+}
+
+.testOptions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.samplesInput {
+  width: 40px;
+  font-family: var(--hc-font-ui);
+  font-size: 12px;
+  background: var(--hc-bg-inset);
+  border: 1px solid var(--hc-border-subtle);
+  border-radius: var(--hc-radius-sm);
+  color: var(--hc-fg-default);
+  padding: 2px 4px;
+}
+
+.samplesInput:focus {
+  outline: 2px solid var(--hc-focus-ring);
+  outline-offset: 1px;
+}
+
+.testSummary {
+  font-size: 11px;
+  color: var(--hc-fg-default);
+}
+
+.testTableWrap {
+  max-height: 220px;
+  overflow: auto;
+}
+
+.testTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.testTable th {
+  position: sticky;
+  top: 0;
+  background: var(--hc-bg-island);
+  font-weight: 600;
+  text-align: left;
+  color: var(--hc-fg-subtle);
+  padding: 2px 4px;
+}
+
+.testTable td {
+  padding: 2px 4px;
+  border-top: 1px solid var(--hc-border-subtle);
+  vertical-align: top;
+  white-space: nowrap;
+}
+
+.testTable td[data-nominal='true'] {
+  color: var(--hc-fg-subtle);
+}
+
+.testTable tr[data-ok='false'] .testStatus,
+.testTable tr[data-ok='false'] .testOutcome {
+  color: var(--hc-error);
+}
+
+.testStatus {
+  width: 14px;
+  color: var(--hc-success);
+}
+
+.testOutcome {
+  white-space: normal !important;
+  min-width: 90px;
+}
+
+/* Tablet layout: finger-sized slider and row buttons. */
+:global(html[data-hc-touch]) .slider {
+  height: 32px;
+}
+
+:global(html[data-hc-touch]) .iconButton,
+:global(html[data-hc-touch]) .deleteButton {
+  width: 36px;
+  height: 36px;
+}

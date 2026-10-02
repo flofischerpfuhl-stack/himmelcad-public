@@ -127,6 +127,10 @@ export const CORE_FEATURE_KINDS: readonly FeatureKindDefinition[] = [
     sketchIdsUsedBy: (f) => (f.profile.kind === 'sketch' ? [f.profile.featureId] : []),
     // Push/pull of a body face joins outwards and cuts inwards whatever `operation` says.
     booleanResult: (f) => f.profile.kind === 'face',
+    // Block 8: an older reader would build the walls straight.
+    formatCapabilities: [
+      { id: 'extrude.taper', label: 'Extrude taper', usedBy: (f) => (f.taper ?? 0) !== 0 },
+    ],
     validate(r: Rec, path: string, h: FormatHelpers) {
       const profile = r.profile;
       if (!isRecord(profile)) h.fail(`${path}.profile`, 'expected an object');

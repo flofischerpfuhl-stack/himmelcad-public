@@ -16,7 +16,7 @@ Two layers:
 Transports: :class:`StdioTransport` (``assembler-headless``, no GUI) and
 :class:`LoopbackTransport` (the desktop app's opt-in "Agent access").
 """
-from .client import API_ID, API_VERSION, METHODS, AssemblerClient
+from .client import API_ID, API_VERSION, METHODS, NULL, AssemblerClient
 from .errors import (
     AssemblerError,
     BusyError,
@@ -40,7 +40,7 @@ from .printing import METRIC_HOLE_SIZES, PRINT_FITS, hole_diameter
 from .transport import LoopbackTransport, StdioTransport, Transport, find_headless_command
 
 __all__ = [
-    "API_ID", "API_VERSION", "METHODS",
+    "API_ID", "API_VERSION", "METHODS", "NULL",
     "AssemblerClient", "AssemblerError", "BBox", "Body", "BusyError", "Datum", "MirroredSketch", "MirrorResult", "ConfirmationRequiredError",
     "ConflictError", "Document", "Edge", "EdgeSet", "Face", "FaceSet", "Feature", "FeatureFailedError",
     "InvalidParamsError", "KernelTimeoutError", "LoopbackTransport", "NotFoundError", "Parameter", "PermissionDeniedError", "PrintReport",

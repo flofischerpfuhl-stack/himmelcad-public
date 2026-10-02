@@ -260,8 +260,13 @@ export interface DistanceMeasurement {
   pointB: Vec3;
 }
 
-/** Evaluation channels: a newer request supersedes an older queued one on the same channel. */
-export type EvaluationChannel = 'document' | 'preview';
+/**
+ * Evaluation channels: a newer request supersedes an older queued one on the
+ * same channel. Priority when the kernel picks the next job: `document`, then
+ * `preview` (tools, checks), then `background` (a parameter sweep: never
+ * delays what the user is doing).
+ */
+export type EvaluationChannel = 'document' | 'preview' | 'background';
 
 export interface EvaluationRequest {
   channel: EvaluationChannel;

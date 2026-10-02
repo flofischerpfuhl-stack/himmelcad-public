@@ -231,7 +231,8 @@ function sceneDatums(
 function sceneModel(s: AssemblerState): SceneModel {
   const tool = s.activeTool;
   const previewTool = isPreviewTool(tool) ? tool : null;
-  const preview = previewTool?.previewEvaluation ?? null;
+  // A tool's preview, else (no tool) a live preview of an uncommitted change (a parameter slider).
+  const preview = previewTool?.previewEvaluation ?? (tool ? null : s.documentPreview);
   const view = toolViewOf(s, preview);
   let bodies = preview?.bodies ?? s.evaluation.bodies;
   // Reference meshes (imported STL) are never a kernel input — they are
