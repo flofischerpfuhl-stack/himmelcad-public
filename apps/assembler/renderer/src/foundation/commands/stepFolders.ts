@@ -84,11 +84,19 @@ export function installStepFolderSync(store: StoreLike): () => void {
   if (installed) return installed;
   const pending = new Map<string, PendingFolder>();
   let seen = new Set(store.getState().features.map((f) => f.id));
+  /** Set while a load runs: `loadDocument` bumps the generation, then sets the features. */
+  let loading = false;
   const unsubscribe = store.subscribe((state, prev) => {
     if (state.documentGeneration !== prev.documentGeneration) {
       // Open/New/template: the loaded steps are not new.
       pending.clear();
       seen = new Set(state.features.map((f) => f.id));
+      loading = true;
+      queueMicrotask(() => {
+        loading = false;
+      });
+    } else if (state.features !== prev.features && loading) {
+      for (const feature of state.features) seen.add(feature.id);
     } else if (state.features !== prev.features) {
       for (const feature of state.features) {
         if (seen.has(feature.id)) continue;

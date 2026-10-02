@@ -214,7 +214,7 @@ void test('Pattern: a new step files its instances into an Items folder; undo hi
   );
   // Opening a document with a pattern makes no folder.
   useItemsStore.getState().setItemsMeta(EMPTY_ITEMS_META);
-  await load([cube('a', [0, 0, 0], 4), pattern]);
+  await load([cube('a', [0, 0, 0], 4), { ...pattern, id: 'p-opened' } as Feature]);
   assert.equal(useItemsStore.getState().folders.length, 0);
 });
 
