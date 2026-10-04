@@ -2,6 +2,7 @@ import { button, escapeHtml, status } from './layout.mjs';
 
 const notify =
   'mailto:fernwork.absolute836@passmail.net?subject=Himmel%3ACAD%20release%20notification&amp;body=Hello%2C%0A%0APlease%20notify%20me%20when%20a%20public%20Himmel%3ACAD%20build%20is%20available.%0A';
+const assemblerApp = 'https://assembler.himmelcad.com/';
 const commercial =
   'mailto:fernwork.absolute836@passmail.net?subject=Himmel%3ACAD%20commercial%20licence&amp;body=Hello%2C%0A%0AI%20would%20like%20to%20ask%20about%20a%20commercial%20Himmel%3ACAD%20licence.%0A%0AOrganisation%3A%0APeople%3A%0AIntended%20use%3A%0A';
 
@@ -17,10 +18,10 @@ function mark(ctx, product, size = '') {
 
 function productsGrid(ctx) {
   return `<div class="card-grid product-grid">
-    <article class="card card--blue">${status('First release in progress', 'active')}${mark(ctx, 'photolab')}<h3 class="display-title">PhotoLab</h3><p>Turns image and control data into aligned cameras, point clouds, elevation products, orthomosaics, meshes and splats.</p><a class="text-link" href="/photolab/">PhotoLab details →</a></article>
+    <article class="card card--blue">${status('Browser preview', 'works')}${mark(ctx, 'assembler')}<h3 class="display-title">Assembler</h3><p>CAD for 3D-printed parts: constrained sketches, exact solid modelling, print checks and export to your slicer. Runs in the browser.</p><a class="text-link" href="/assembler/">Assembler details →</a></article>
+    <article class="card">${status('First release in progress', 'active')}${mark(ctx, 'photolab')}<h3 class="display-title">PhotoLab</h3><p>Turns image and control data into aligned cameras, point clouds, elevation products, orthomosaics, meshes and splats.</p><a class="text-link" href="/photolab/">PhotoLab details →</a></article>
     <article class="card">${status('Internal build', 'works')}${mark(ctx, 'builder')}<h3 class="display-title">Builder</h3><p>The flagship: 3D-first Civil CAD with first-class 2D and 2.5D construction.</p><a class="text-link" href="/builder/">Builder details →</a></article>
-    <article class="card">${status('MVP; not released', 'active')}${mark(ctx, 'cap')}<h3 class="display-title">Cap</h3><p>Mobile field capture that packages images, poses and quality evidence into a <code>.hcap</code> session.</p><a class="text-link" href="/cap-weltview/">Cap status →</a></article>
-    <article class="card">${status('Publication planned', 'planned')}${mark(ctx, 'weltview')}<h3 class="display-title">WeltView</h3><p>A read-only browser viewer for shared Himmel:CAD projects.</p><a class="text-link" href="/cap-weltview/#weltview">WeltView status →</a></article>
+    <article class="card">${status('Publication planned', 'planned')}${mark(ctx, 'weltview')}<h3 class="display-title">WeltView</h3><p>A read-only browser viewer for shared Himmel:CAD projects.</p><a class="text-link" href="/weltview/">WeltView status →</a></article>
   </div>`;
 }
 
@@ -29,14 +30,33 @@ function home(ctx) {
     path: '/',
     title: 'Himmel:CAD',
     description:
-      'Offline-first CAD, photogrammetry, capture and viewing for surveying and civil engineering. No public build yet.',
+      'Offline-first CAD for 3D printing and civil engineering, photogrammetry and viewing. Assembler runs as a browser preview.',
     content: `<section class="hero">
       <div class="hero-art" role="img" aria-label="Painted blue sky with clouds"></div>
-      <h1 class="display-title hero-title">Himmel:CAD</h1><div class="hero-copy"><p class="hero-line">CAD, photogrammetry, capture and viewing for surveying and civil engineering.</p><p class="hero-status">No public build yet. PhotoLab will be first.</p><div class="hero-actions">${button('/photolab/', 'See PhotoLab', 'button--cream')}${button('/download/', 'Release status', 'button--dark')}</div></div>
+      <h1 class="display-title hero-title">Himmel:CAD</h1><div class="hero-copy"><p class="hero-line">CAD for 3D printing and civil engineering, photogrammetry and viewing.</p><p class="hero-status">Assembler runs as a preview in your browser. The other products have no public build yet.</p><div class="hero-actions">${button(assemblerApp, 'Open Assembler', 'button--cream')}${button('/assembler/', 'About Assembler', 'button--dark')}</div></div>
     </section>
-    <section class="section"><div class="section-heading"><p class="eyebrow">Four connected products</p><h2 class="display-title">One family.</h2><p>Shared data, rendering and commands where each product allows it. Every status below shows the current development state; none is a public release.</p></div>${productsGrid(ctx)}</section>
+    <section class="section"><div class="section-heading"><p class="eyebrow">Four connected products</p><h2 class="display-title">One family.</h2><p>Shared data, rendering and commands where each product allows it. Every status below shows the current development state. Assembler is a public preview; none is a release yet.</p></div>${productsGrid(ctx)}</section>
     <section class="section section--ink licence-band"><div><p class="eyebrow">Licence essentials</p><h2 class="display-title">Free use.</h2><p class="section-lede">For people and small offices.</p></div><div class="licence-facts"><p><strong>Free:</strong> personal use, evaluation, qualifying education and non-profit research, and organisations with <strong>3 or fewer people</strong> — including paid client work.</p><p><strong>Commercial licence:</strong> production use by organisations above three people, and hosted offerings for third parties. A growing organisation has 90 days to arrange a licence.</p><p>BSL 1.1 with an Additional Use Grant. Each release changes to AGPL-3.0-or-later four years after release.</p>${button('/licence/', 'Read the licence summary', 'button--cream')}</div></section>
     <section class="section action-grid"><article><p class="eyebrow">Programme</p><h2>Follow the work.</h2><p>The roadmap separates current evidence from planned outcomes. It does not promise dates.</p>${button('/roadmap/', 'Open roadmap')}</article><article><p class="eyebrow">Access</p><h2>Nothing to install yet.</h2><p>There is no public download. When one exists, the download page will list each file with its size and SHA-256 checksum.</p>${button('/download/', 'Check downloads')}</article><article><p class="eyebrow">Pricing</p><h2>Free up to three people.</h2><p>Commercial licences for larger organisations are available on request. No prices have been set.</p>${button('/pricing/', 'See pricing')}</article></section>`,
+  };
+}
+
+function assembler(ctx) {
+  return {
+    path: '/assembler/',
+    title: 'Assembler',
+    description:
+      'Assembler is CAD for 3D-printed parts: constrained sketches, exact solid modelling, print checks and slicer export, as a preview in the browser.',
+    software: {
+      name: 'Himmel:CAD Assembler',
+      category: 'DesignApplication',
+      os: 'Web browser, Windows',
+      releaseNotes: 'A public browser preview is available; no release has been published.',
+    },
+    content: `${intro('Assembler · browser preview', 'Assembler.', 'CAD for parts you print. Sketch with constraints, model solids on an exact geometry kernel, check the part and send it to your slicer.', `${status('Preview', 'works')}<div class="hero-actions">${button(assemblerApp, 'Open Assembler')}</div>`, mark(ctx, 'assembler', 'large'))}
+    <section class="section" id="works"><div class="section-heading"><p class="eyebrow">Works in the preview</p><h2 class="display-title">Modelling.</h2><p>Every tool shows a preview before you commit it. Escape leaves the part unchanged, and each finished tool is one undo step.</p></div><div class="feature-columns"><article><h3>Sketch</h3><p>Lines, arcs, circles, rectangles, polygons, splines, slots, ellipses and text. Constraints and dimensions are solved while you draw; dimensions accept expressions.</p></article><article><h3>Model solids</h3><p>Extrude, revolve, sweep, loft, fillet, chamfer, shell, combine and subtract, holes in ISO sizes, emboss, draft, rib, thicken, mirror and patterns.</p></article><article><h3>Prepare the print</h3><p>The printability view checks the part, places a face on the plate and suggests orientations. Export STL or 3MF, or open the part in an installed slicer.</p></article><article><h3>Exchange files</h3><p>Import STEP, IGES, STL, 3MF, OBJ and DXF. STEP keeps the exact geometry, the part structure, names and colours.</p></article></div></section>
+    <section class="section section--blue split"><div><h2>In the browser.</h2><p>The preview runs at assembler.himmelcad.com. You can install it as an app; after the first load it works offline, and projects stay on your device.</p></div><div><h2>On the desktop.</h2><p>A Windows desktop version is built from the same modules. It has no public download yet.</p></div></section>
+    <section class="section evidence-note"><p class="eyebrow">Preview</p><h2 class="display-title">Not a release.</h2><p>The preview changes as development continues. Keep your project files on your device.</p>${button(assemblerApp, 'Open Assembler')}</section>`,
   };
 }
 
@@ -53,7 +73,7 @@ function photolab(ctx) {
       os: 'Linux, Windows',
     },
     content: `${intro('PhotoLab · first release in progress', 'PhotoLab.', 'Images become measured spatial products offline. PhotoLab keeps the source data, coordinate choices, accuracy evidence and a record of how each result was made.', status('No public build', 'active'), mark(ctx, 'photolab', 'large'))}
-    <section class="section split"><div><h2>From capture to published products.</h2><p>Import image files, directories, video-derived frames, camera metadata, control data or a Cap <code>.hcap</code> session. Align cameras, inspect sparse geometry and control, then generate selected products from the chosen source data and settings.</p><ul class="plain-list"><li>Aligned cameras and sparse geometry</li><li>Measurable depth and dense point clouds</li><li>DSM and DTM elevation products</li><li>Orthomosaics</li><li>Textured terrain and spatial meshes</li><li>Gaussian splat datasets</li></ul></div><div>${ctx.media('photolab-project')}${ctx.media('photolab-workflow')}</div></section>
+    <section class="section split"><div><h2>From capture to published products.</h2><p>Import image files, directories, video-derived frames, camera metadata or control data. Align cameras, inspect sparse geometry and control, then generate selected products from the chosen source data and settings.</p><ul class="plain-list"><li>Aligned cameras and sparse geometry</li><li>Measurable depth and dense point clouds</li><li>DSM and DTM elevation products</li><li>Orthomosaics</li><li>Textured terrain and spatial meshes</li><li>Gaussian splat datasets</li></ul></div><div>${ctx.media('photolab-project')}${ctx.media('photolab-workflow')}</div></section>
     <section class="section section--blue ${productMedia ? '' : 'section--compact'}" id="products"><div class="section-heading"><p class="eyebrow">Works in internal builds</p><h2 class="display-title">Products.</h2><p>The processing chain runs. An eight-image test produced aligned cameras, depth maps, a dense cloud, DEM, orthomosaic, textured terrain mesh and Gaussian splat. Later validation with 135 images completed camera alignment and GCP optimisation.</p></div>${productMedia ? `<div class="media-grid">${productMedia}</div>` : ''}</section>
     <section class="section split"><div><p class="eyebrow">Run lifecycle</p><h2>Cancellation and recovery are product requirements.</h2><p>Long stages report progress. Cancellation stops new work, ends processing within a bounded deadline and leaves saved results unchanged. Saved progress may be resumed after an interruption when the source data and settings still match.</p><p>These behaviours still need testing across the complete workflow.</p></div><div><p class="eyebrow">Accuracy and reports</p><h2>Resolution is not reported as accuracy.</h2><p>Control and checkpoint residuals remain separate. Reports retain the inputs, coordinate choices, settings, processing history and quality evidence behind a published result.</p>${ctx.media('photolab-report')}</div></section>
     <section class="section readiness"><div class="section-heading"><p class="eyebrow">Release readiness</p><h2 class="display-title">Release status.</h2><p>Working features do not make a public release. The remaining evidence is stated below.</p></div><div class="readiness-grid"><article>${status('Works', 'works')}<h3>Verified work</h3><p>A review on 19 September 2026 found 4 requirements fully tested and 37 partly tested. A later internal test completed GCP optimisation with 135 images.</p></article><article>${status('In progress', 'active')}<h3>Evidence still required</h3><p>The complete product set still needs real-data testing. Recovery after a forced shutdown, cancellation, reports, and opening results in Builder and WeltView also need more evidence.</p></article><article>${status('Before release', 'planned')}<h3>Before release</h3><p>Linux and Windows installers must be tested. All included processing components need an offline and licence review, and results must open correctly in Builder and WeltView.</p></article></div><div class="callout"><strong>Current status:</strong> PhotoLab is the first intended release, but no public build exists. ${button('/download/', 'See release status')}</div></section>`,
@@ -75,18 +95,15 @@ function builder(ctx) {
   };
 }
 
-function capWeltview(ctx) {
+function weltview(ctx) {
   return {
-    path: '/cap-weltview/',
-    title: 'Cap and WeltView',
+    path: '/weltview/',
+    title: 'WeltView',
     description:
-      'Cap is the mobile capture companion in field validation; WeltView is the read-only browser viewer planned for project publication.',
-    software: [
-      { name: 'Himmel:CAD Cap', category: 'UtilitiesApplication', os: 'Android, iOS' },
-      { name: 'Himmel:CAD WeltView', category: 'DesignApplication', os: 'Web browser' },
-    ],
-    content: `${intro('Companion products', 'Companions.', 'Cap captures in the field. WeltView is for browser review. Both connect to the same project family without gaining Builder’s editing rights.')}
-    <section class="section split"><article>${status('Implemented MVP', 'works')}<h2 class="product-heading">${mark(ctx, 'cap', 'small')}Himmel:CAD Cap</h2><p>A Flutter application for Android and iOS. Cap records phone imagery, poses, observations and quality evidence, then prepares a versioned, checksummed <code>.hcap</code> package for PhotoLab.</p><p>Capture data stays local unless the operator explicitly shares or uploads it. Reconstruction, CRS decisions and final accuracy reporting belong to PhotoLab.</p><div class="callout"><strong>Not released:</strong> supported devices, capture reliability, field accuracy, package recovery and complete Cap-to-PhotoLab results still need field evidence.</div></article><article id="weltview">${status('Browser viewer in progress', 'active')}<h2 class="product-heading">${mark(ctx, 'weltview', 'small')}Himmel:CAD WeltView</h2><p>A read-only browser viewer for shared projects. It uses the shared viewer and interface but cannot edit project data.</p><p>Publication remains a roadmap stage. The delivery method for large projects and full real-project loading still require validation.</p><div class="callout"><strong>Not released:</strong> there is no public WeltView service or project link.</div></article></section>`,
+      'WeltView is the read-only browser viewer planned for publishing Himmel:CAD projects.',
+    software: { name: 'Himmel:CAD WeltView', category: 'DesignApplication', os: 'Web browser' },
+    content: `${intro('WeltView · browser viewer in progress', 'WeltView.', 'A read-only browser viewer for shared projects. It uses the shared viewer and interface but cannot edit project data.', status('Browser viewer in progress', 'active'), mark(ctx, 'weltview', 'large'))}
+    <section class="section split" id="weltview"><div><h2>Publication.</h2><p>Publication remains a roadmap stage. The delivery method for large projects and full real-project loading still require validation.</p></div><div class="callout"><strong>Not released:</strong> there is no public WeltView service or project link.</div></section>`,
   };
 }
 
@@ -95,9 +112,9 @@ function roadmap() {
     path: '/roadmap/',
     title: 'Roadmap',
     description:
-      'The staged Himmel:CAD roadmap: PhotoLab release, Builder completion, WeltView publication and Cap field hardening.',
+      'The staged Himmel:CAD roadmap: Assembler preview, PhotoLab release, Builder completion and WeltView publication.',
     content: `${intro('Roadmap', 'Roadmap.', 'The stages follow the current product direction. A stage advances only when the required work and evidence are complete. No release dates are published.')}
-    <section class="section"><ol class="roadmap-list"><li><article>${status('In progress', 'active')}<p class="stage">R1</p><h2>PhotoLab first release</h2><p>Complete import-to-product workflows, real-data accuracy evidence, cancellation and recovery, offline processing, Linux and Windows packages, and results that open correctly in Builder and WeltView.</p><a href="/photolab/">PhotoLab readiness →</a></article></li><li><article>${status('In progress', 'active')}<p class="stage">R2</p><h2>Builder product completion</h2><p>Complete 2D, 2.5D and 3D construction across projects, import, export, point clouds, terrain, meshes, rasters, BIM/Civil data, plans and documented automation.</p><a href="/builder/">Builder status →</a></article></li><li><article>${status('Planned', 'planned')}<p class="stage">R3</p><h2>WeltView publication</h2><p>Publish Builder and PhotoLab projects for read-only browser viewing with the same rendering and project data. Select and validate the delivery method for large projects.</p><a href="/cap-weltview/#weltview">WeltView status →</a></article></li><li><article>${status('MVP; field hardening planned', 'planned')}<p class="stage">R4</p><h2>Cap field hardening</h2><p>Validate devices, capture reliability, honest GNSS quality, <code>.hcap</code> interoperability, privacy and measured PhotoLab results before release claims.</p><a href="/cap-weltview/">Cap status →</a></article></li></ol><div class="callout">Current work prioritises PhotoLab while Builder continues in parallel.</div></section>`,
+    <section class="section"><ol class="roadmap-list"><li><article>${status('Browser preview', 'works')}<p class="stage">A</p><h2>Assembler preview</h2><p>CAD for 3D-printed parts runs as a public preview in the browser. The Windows desktop version has no public download yet, and no release date is set.</p><a href="/assembler/">Assembler status →</a></article></li><li><article>${status('In progress', 'active')}<p class="stage">R1</p><h2>PhotoLab first release</h2><p>Complete import-to-product workflows, real-data accuracy evidence, cancellation and recovery, offline processing, Linux and Windows packages, and results that open correctly in Builder and WeltView.</p><a href="/photolab/">PhotoLab readiness →</a></article></li><li><article>${status('In progress', 'active')}<p class="stage">R2</p><h2>Builder product completion</h2><p>Complete 2D, 2.5D and 3D construction across projects, import, export, point clouds, terrain, meshes, rasters, BIM/Civil data, plans and documented automation.</p><a href="/builder/">Builder status →</a></article></li><li><article>${status('Planned', 'planned')}<p class="stage">R3</p><h2>WeltView publication</h2><p>Publish Builder and PhotoLab projects for read-only browser viewing with the same rendering and project data. Select and validate the delivery method for large projects.</p><a href="/weltview/">WeltView status →</a></article></li></ol><div class="callout">Current work prioritises PhotoLab while Builder continues in parallel.</div></section>`,
   };
 }
 
@@ -128,6 +145,11 @@ function download(ctx) {
   const { releases } = ctx;
   const products = [
     [
+      'assembler',
+      'Assembler',
+      'The browser preview is public at assembler.himmelcad.com and works offline after the first load. A Windows desktop download is planned.',
+    ],
+    [
       'photolab',
       'PhotoLab',
       'Planned for Linux and Windows. The first release is intended to cover the complete offline workflow from import to products, with reports, cancellation and recovery.',
@@ -138,11 +160,6 @@ function download(ctx) {
       'Planned for Linux and Windows after PhotoLab. The first public build will cover the completed point-cloud, terrain and shared project work available at that time.',
     ],
     [
-      'cap',
-      'Cap',
-      'Planned for Android and iOS after device and field validation. The first release will capture and package checked field sessions for PhotoLab.',
-    ],
-    [
       'weltview',
       'WeltView',
       'Planned for current web browsers after project delivery and read-only loading are validated.',
@@ -151,6 +168,8 @@ function download(ctx) {
   const cards = products
     .map(([key, name, copy]) => {
       const list = releases[key] || [];
+      if (key === 'assembler' && !list.length)
+        return `<article class="download-card">${status('Browser preview', 'works')}${mark(ctx, key)}<h2>${name}</h2><p>${copy}</p>${button(assemblerApp, 'Open Assembler')}</article>`;
       if (!list.length)
         return `<article class="download-card">${status('No public build yet', 'active')}${mark(ctx, key)}<h2>${name}</h2><p>${copy}</p><a class="text-link" href="${notify}">Ask for a release notification →</a></article>`;
       const release = list[0];
@@ -188,8 +207,8 @@ function download(ctx) {
     path: '/download/',
     title: 'Download',
     description:
-      'Himmel:CAD release status and future verified downloads. No public build exists yet.',
-    content: `${intro('Download', 'Download.', empty ? 'There is no public download yet.' : 'Choose a release file for your system and verify its SHA-256 checksum.')}<section class="section"><div class="download-grid">${cards}</div></section>${notes ? `<section class="section" id="release-notes"><div class="section-heading"><p class="eyebrow">Release history</p><h2 class="display-title">Release notes.</h2></div><div class="feature-columns">${notes}</div></section>` : ''}`,
+      'Himmel:CAD release status and future verified downloads. Assembler runs as a browser preview.',
+    content: `${intro('Download', 'Download.', empty ? 'There is no public download yet. Assembler runs as a preview in your browser.' : 'Choose a release file for your system and verify its SHA-256 checksum.')}<section class="section"><div class="download-grid">${cards}</div></section>${notes ? `<section class="section" id="release-notes"><div class="section-heading"><p class="eyebrow">Release history</p><h2 class="display-title">Release notes.</h2></div><div class="feature-columns">${notes}</div></section>` : ''}`,
   };
 }
 
@@ -237,9 +256,10 @@ function notFound() {
 export function createPages(ctx) {
   return [
     home(ctx),
+    assembler(ctx),
     photolab(ctx),
     builder(ctx),
-    capWeltview(ctx),
+    weltview(ctx),
     roadmap(),
     pricing(),
     licence(),

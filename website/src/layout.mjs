@@ -2,9 +2,10 @@ import config from '../site.config.mjs';
 
 export const routes = [
   ['/', 'Home'],
+  ['/assembler/', 'Assembler'],
   ['/photolab/', 'PhotoLab'],
   ['/builder/', 'Builder'],
-  ['/cap-weltview/', 'Cap + WeltView'],
+  ['/weltview/', 'WeltView'],
   ['/roadmap/', 'Roadmap'],
   ['/pricing/', 'Pricing'],
   ['/licence/', 'Licence'],
@@ -47,7 +48,7 @@ export function jsonLd(page) {
       applicationCategory: software.category,
       operatingSystem: software.os,
       description: page.description,
-      releaseNotes: 'No public build has been released.',
+      releaseNotes: software.releaseNotes ?? 'No public build has been released.',
     });
   }
   return JSON.stringify({ '@context': 'https://schema.org', '@graph': graph }).replaceAll(
@@ -124,8 +125,8 @@ export function layout(page, assets) {
   </header>
   <main id="main">${page.content}</main>
   <footer class="site-footer">
-    <div><a class="footer-brand" href="/">Himmel:CAD</a><p>Offline-first spatial software. No public build yet.</p></div>
-    <nav aria-label="Products"><h2>Products</h2><a href="/photolab/">PhotoLab</a><a href="/builder/">Builder</a><a href="/cap-weltview/">Cap + WeltView</a></nav>
+    <div><a class="footer-brand" href="/">Himmel:CAD</a><p>Offline-first CAD and spatial software. Assembler runs as a browser preview.</p></div>
+    <nav aria-label="Products"><h2>Products</h2><a href="/assembler/">Assembler</a><a href="/photolab/">PhotoLab</a><a href="/builder/">Builder</a><a href="/weltview/">WeltView</a></nav>
     <nav aria-label="Project"><h2>Project</h2><a href="/roadmap/">Roadmap</a><a href="/pricing/">Pricing</a><a href="/licence/">Licence</a><a href="/download/">Download</a></nav>
     <nav aria-label="Legal"><h2>Contact</h2><a href="mailto:${config.contactEmail}">${config.contactEmail}</a><a href="/legal/">Legal notice</a><a href="/privacy/">Privacy</a></nav>
   </footer>

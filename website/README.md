@@ -4,20 +4,21 @@ Production-oriented, English, multi-page static site for the Himmel:CAD product 
 
 ## Information architecture
 
-| Route            | Purpose                                                                                                   |
-| ---------------- | --------------------------------------------------------------------------------------------------------- |
-| `/`              | Family overview, current release status, four products, licence essentials and routes to the deeper pages |
-| `/photolab/`     | PhotoLab workflow, inputs/outputs, evidence and honest release-readiness summary                          |
-| `/builder/`      | Current Builder functions, audited inventory totals, active programme and planned outcomes                |
-| `/cap-weltview/` | Concise status and boundary for the two companion products                                                |
-| `/roadmap/`      | R1–R4 outcomes without unsourced dates                                                                    |
-| `/pricing/`      | Free eligibility and commercial licences on request (no prices set)                                       |
-| `/licence/`      | Plain-language BSL 1.1 + Additional Use Grant summary                                                     |
-| `/download/`     | Manifest-driven release files or the honest empty state                                                   |
-| `/legal/`        | English legal notice (Impressum)                                                                          |
-| `/privacy/`      | Privacy, hosting, logs, rights and local Cache Storage                                                    |
-| `/offline/`      | Service-worker fallback                                                                                   |
-| `/404.html`      | Not-found page                                                                                            |
+| Route         | Purpose                                                                                                 |
+| ------------- | ------------------------------------------------------------------------------------------------------- |
+| `/`           | Family overview, current release status, four products (Assembler first), licence essentials and routes |
+| `/assembler/` | Assembler: CAD for 3D-printed parts, what works in the browser preview, desktop status                  |
+| `/photolab/`  | PhotoLab workflow, inputs/outputs, evidence and honest release-readiness summary                        |
+| `/builder/`   | Current Builder functions, audited inventory totals, active programme and planned outcomes              |
+| `/weltview/`  | WeltView status and boundary (`/cap-weltview/` redirects here; Cap is off the site since 2026-10-04)    |
+| `/roadmap/`   | Assembler preview and R1–R3 outcomes without unsourced dates                                            |
+| `/pricing/`   | Free eligibility and commercial licences on request (no prices set)                                     |
+| `/licence/`   | Plain-language BSL 1.1 + Additional Use Grant summary                                                   |
+| `/download/`  | Manifest-driven release files or the honest empty state                                                 |
+| `/legal/`     | English legal notice (Impressum)                                                                        |
+| `/privacy/`   | Privacy, hosting, logs, rights and local Cache Storage                                                  |
+| `/offline/`   | Service-worker fallback                                                                                 |
+| `/404.html`   | Not-found page                                                                                          |
 
 Every published factual claim is mapped to repository evidence in [`CLAIMS.md`](CLAIMS.md). Capture requirements for the currently empty media slots are in [`MEDIA.md`](MEDIA.md).
 
@@ -93,7 +94,7 @@ Complete example (documentation only):
     }
   ],
   "builder": [],
-  "cap": [],
+  "assembler": [],
   "weltview": []
 }
 ```

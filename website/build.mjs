@@ -228,6 +228,7 @@ self.addEventListener('fetch', (event) => {
     `/impressum.html /legal/ 301
 /datenschutz.html /privacy/ 301
 /index.html / 301
+/cap-weltview/ /weltview/ 301
 `,
   );
   writeFileSync(

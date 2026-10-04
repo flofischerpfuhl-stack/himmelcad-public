@@ -67,17 +67,17 @@ gate(
 if (build.status !== 0) process.exit(1);
 
 const htmlFiles = walk(dist, '.html').sort();
-gate(htmlFiles.length === 12, 'page set', `${htmlFiles.length} generated HTML pages`);
+gate(htmlFiles.length === 13, 'page set', `${htmlFiles.length} generated HTML pages`);
 
 const logoHashes = {
   'himmelcad-builder-primary.svg':
     '3a919e417991335abca348488744b20e89a17a871c67b8e7c87d3d0a56d8b001',
   'himmelcad-builder-reserve-hoodie-ready.svg':
     '55db337467be8d98795dc4fbf9dffddd90e69ba0f87c0d8c62a9cc744fad4754',
-  'himmelcad-photolab.svg': '462b9ebd2dd701c3d7fa9d1ec50f4ea6a3c95f9b318fab3a3a545663bf92c310',
-  'himmelcad-builder.svg': 'afe2e9f80140ce2014d92890aebbfd95a3b59de1b567ed651da5004025283db2',
+  'himmelcad-photolab.svg': 'eef164f962cc19630944b37fd7dfc72df505f15537d4dff8f8c7361594672c6f',
+  'himmelcad-builder.svg': '8790e076ab0fcb56eeb486909b7478974c73fb1a4e78acc6d75444e3345e90f5',
+  'himmelcad-assembler.svg': '664ca42adff752b3e4706118728fe130676829ba7c3fbadba92450c8a72483d4',
   'himmelcad-weltview.svg': '051bfb9b2f8d4b5f90552fbeb5485634171d102f5de3126dcc6777d810cb56bd',
-  'himmelcad-cap.svg': '72e6130ab1b27cc5fdbb1357de54eef2f7f0f6ed567d352dab3a4c5edf3da90a',
 };
 for (const [name, expected] of Object.entries(logoHashes)) {
   const source = join(root, 'src/assets/logos', name);
@@ -235,7 +235,10 @@ gate(
 );
 const downloadHtml = readFileSync(join(dist, 'download/index.html'), 'utf8');
 gate(
-  (downloadHtml.match(/No public build yet/g) || []).length >= 5 && !/disabled/i.test(downloadHtml),
+  // PhotoLab, Builder and WeltView have no build; Assembler links its browser preview
+  (downloadHtml.match(/No public build yet/g) || []).length >= 3 &&
+    downloadHtml.includes('href="https://assembler.himmelcad.com/"') &&
+    !/disabled/i.test(downloadHtml),
   'honest empty download state',
 );
 
@@ -273,9 +276,10 @@ try {
   const browser = await chromium.launch({ headless: true });
   const routes = [
     '/',
+    '/assembler/',
     '/photolab/',
     '/builder/',
-    '/cap-weltview/',
+    '/weltview/',
     '/roadmap/',
     '/pricing/',
     '/licence/',

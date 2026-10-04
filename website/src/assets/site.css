@@ -538,7 +538,7 @@ h3 {
   line-height: 1.15;
 }
 .product-grid .display-title {
-  font-size: clamp(2.25rem, 3vw, 3.25rem);
+  font-size: clamp(2rem, 2.5vw, 3rem);
   white-space: nowrap;
 }
 .status {
