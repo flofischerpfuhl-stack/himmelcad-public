@@ -8,14 +8,14 @@ optimized in place.
 | ------------------------ | -------------------------------------------- | -------------------------------------------------------------- | ------------------------------------------------------------------ |
 | Himmel:CAD               | `himmelcad-builder-primary.svg`              | Cloud: general Himmel:CAD icon (Builder mark until 2026-09-25) | `3a919e417991335abca348488744b20e89a17a871c67b8e7c87d3d0a56d8b001` |
 | Himmel:CAD               | `himmelcad-on-light.svg`                     | Cloud for light backgrounds                                    | `4d6cac100259d20d882340c4a0ad38508c402f660493fe8c4474fc25972c1dc8` |
-| Himmel:CAD Builder       | `himmelcad-builder.svg`                      | Hard hat, primary Builder mark                                 | `afe2e9f80140ce2014d92890aebbfd95a3b59de1b567ed651da5004025283db2` |
-| Himmel:CAD Builder       | `himmelcad-builder-on-light.svg`             | Hard hat for light backgrounds                                 | `a305867fd0054895b920d3cb3b19b126aba73506ac077bde2b99f13b84e65f54` |
+| Himmel:CAD Builder       | `himmelcad-builder.svg`                      | Shovel, primary Builder mark                                   | `8790e076ab0fcb56eeb486909b7478974c73fb1a4e78acc6d75444e3345e90f5` |
+| Himmel:CAD Builder       | `himmelcad-builder-on-light.svg`             | Shovel for light backgrounds                                   | `c20ffc091d567d0075dc1482ec7e0e81e80fcda1dc014ca71006c7218c852800` |
 | Himmel:CAD Builder       | `himmelcad-builder-reserve-hoodie-ready.svg` | Retained reserve mark                                          | `55db337467be8d98795dc4fbf9dffddd90e69ba0f87c0d8c62a9cc744fad4754` |
-| Himmel:CAD PhotoLab      | `himmelcad-photolab.svg`                     | Crystal, primary PhotoLab mark                                 | `462b9ebd2dd701c3d7fa9d1ec50f4ea6a3c95f9b318fab3a3a545663bf92c310` |
-| Himmel:CAD PhotoLab      | `himmelcad-photolab-on-light.svg`            | Crystal for light backgrounds                                  | `298a988dce99087a802d3a9284437831bdc6a7485f7f31ab3170531dee7f1fcb` |
+| Himmel:CAD PhotoLab      | `himmelcad-photolab.svg`                     | Aperture, primary PhotoLab mark                                | `eef164f962cc19630944b37fd7dfc72df505f15537d4dff8f8c7361594672c6f` |
+| Himmel:CAD PhotoLab      | `himmelcad-photolab-on-light.svg`            | Aperture for light backgrounds                                 | `e5e71be686130028b6ee5c7b144d19f2488d6b12ec3c40e65e5ae40b54c549e3` |
 | Himmel:CAD WeltView      | `himmelcad-weltview.svg`                     | Globe, primary WeltView mark                                   | `051bfb9b2f8d4b5f90552fbeb5485634171d102f5de3126dcc6777d810cb56bd` |
 | Himmel:CAD WeltView      | `himmelcad-weltview-on-light.svg`            | Globe for light backgrounds                                    | `67b65c929959c4841163e3f29c76b41ca9f49cc88a3789ed52c35b5b694a66bf` |
-| Himmel:CAD Cap (on hold) | `himmelcad-cap.svg`                          | Aperture, kept for Cap                                         | `72e6130ab1b27cc5fdbb1357de54eef2f7f0f6ed567d352dab3a4c5edf3da90a` |
+| Himmel:CAD Cap (on hold) | `himmelcad-cap.svg`                          | Aperture; now PhotoLab's mark, Cap needs its own               | `72e6130ab1b27cc5fdbb1357de54eef2f7f0f6ed567d352dab3a4c5edf3da90a` |
 | Himmel:CAD Cap (on hold) | `himmelcad-cap-on-light.svg`                 | Aperture for light backgrounds                                 | `10838ae50b60690c68a798ec6fdc35d9fab8f87c957137e5f17eacf553ce80dd` |
 | Himmel:CAD Assembler     | `himmelcad-assembler.svg`                    | Bolt, primary Assembler mark                                   | `664ca42adff752b3e4706118728fe130676829ba7c3fbadba92450c8a72483d4` |
 | Himmel:CAD Assembler     | `himmelcad-assembler-on-light.svg`           | Bolt for light backgrounds                                     | `0796b79d8f3db0e22e4282d9e9abbfc42f9db3e836a64cda85d467af7fdc958d` |
@@ -28,10 +28,18 @@ the rejected alternatives and the overview against the family: `logos/proposals/
 needs Inkscape and ImageMagick); `apps/assembler/scripts/generate-icon.mjs` renders the
 Assembler's desktop and web icons from them in plain Node, with the same card conventions.
 
-The Builder hard hat, PhotoLab crystal, WeltView globe, Cap aperture and all `-on-light` masters
-were approved by the product owner on 2026-09-25. They come from the low-poly
-logo round in `logos/proposals/2026-09-25/`, where `generator/` rebuilds them
-(the hard hat is traced from the owner's reference `generator/reference-hard-hat.png`).
+The WeltView globe and the `-on-light` treatment were approved by the product owner on
+2026-09-25 in the low-poly logo round in `logos/proposals/2026-09-25/`, where `generator/`
+rebuilds them. On 2026-10-04 the owner made two changes:
+
+- **Builder** got the shovel (the owner chose variant c2 of the round in
+  `logos/proposals/2026-10-04-builder-shovel/`; `generator/candidates.mjs` rebuilds it with the
+  family renderer). It replaces the hard hat of 2026-09-25, which stays in git history and in
+  `logos/proposals/2026-09-25/`.
+- **PhotoLab** got the aperture that was Cap's mark (geometry unchanged, only the SVG title
+  differs). It replaces the crystal of 2026-09-25. Cap is on hold and off the website; its
+  `himmelcad-cap*.svg` masters and generated set stay until Cap gets a mark of its own.
+
 `-on-light` masters darken the lightest outline facets so the mark holds on
 white; they have no generated icon sets. WeltView uses its masters directly
 (`apps/weltview/public/favicon.svg`, `apps/weltview/src/assets/weltview-mark.svg`);

@@ -1,0 +1,51 @@
+<svg
+  width="256"
+  height="256"
+  viewBox="0 0 256 256"
+  xmlns="http://www.w3.org/2000/svg"
+>
+  <title>Himmel:CAD Builder – Shovel (c3) (on light)</title>
+
+  <g
+    id="Shovel-Low-Poly-c3"
+    stroke="none"
+    fill-rule="evenodd"
+  >
+    <polygon fill="#0084E8" points="128 242 128 204.3 87.3 206.1"/>
+    <polygon fill="#55B8FF" points="128 242 168.7 206.1 128 204.3"/>
+    <polygon fill="#0056A8" points="128 204.3 128 147.8 87.3 149.7"/>
+    <polygon fill="#1597F2" points="128 204.3 168.7 149.7 128 147.8"/>
+    <polygon fill="#0056A8" points="87.3 206.1 128 204.3 87.3 149.7"/>
+    <polygon fill="#1597F2" points="128 204.3 168.7 206.1 168.7 149.7"/>
+    <polygon fill="#92D5FF" points="87.3 149.7 128 147.8 128 143.2 87.3 145"/>
+    <polygon fill="#3EACF5" points="128 147.8 168.7 149.7 168.7 145 128 143.2"/>
+    <polygon fill="#0076D8" points="138.5 132.8 128 152.9 146.4 153.2"/>
+    <polygon fill="#0056A8" points="117.5 132.8 109.6 153.2 128 152.9"/>
+    <polygon fill="#55B8FF" points="109.6 153.2 117.5 134.1 117.5 132.8"/>
+    <polygon fill="#003F7A" points="146.4 153.2 138.5 132.8 138.5 134.1"/>
+    <polygon fill="#55B8FF" points="109.6 153.2 109.6 154 117.5 134.1"/>
+    <polygon fill="#003F7A" points="146.4 154 146.4 153.2 138.5 134.1"/>
+    <polygon fill="#003F7A" points="128 153.6 146.4 154 128 134.7"/>
+    <polygon fill="#003F7A" points="109.6 154 128 153.6 128 134.7"/>
+    <polygon fill="#1597F2" points="109.6 154 128 134.7 117.5 134.1"/>
+    <polygon fill="#003F7A" points="146.4 154 138.5 134.1 128 134.7"/>
+    <polygon fill="#55B8FF" points="117.5 74.1 128 74.8 138.5 74.1 138.5 72.9 128 72.2 117.5 72.9"/>
+    <polygon fill="#3EACF5" points="117.5 134.1 128 134.7 128 74.8 117.5 74.1"/>
+    <polygon fill="#0056A8" points="128 134.7 138.5 134.1 138.5 74.1 128 74.8"/>
+    <polygon fill="#003F7A" points="128 49.7 119 34.9 119 36.2 128 51"/>
+    <polygon fill="#92D5FF" points="137 34.9 128 49.7 128 51 137 36.2"/>
+    <polygon fill="#003F7A" points="161.6 15.3 167.7 26 167.7 24.7 161.6 14"/>
+    <polygon fill="#92D5FF" points="88.3 26 94.4 15.3 94.4 14 88.3 24.7"/>
+    <polygon fill="#55B8FF" points="94.4 15.3 161.6 15.3 161.6 14 94.4 14"/>
+    <polygon fill="#3EACF5" points="128 74.8 128 71.9 117.5 74.1"/>
+    <polygon fill="#0056A8" points="138.5 74.1 128 71.9 128 74.8"/>
+    <polygon fill="#0084E8" points="128 71.9 100.4 26.4 88.3 26 117.5 74.1"/>
+    <polygon fill="#003F7A" points="155.6 26.4 128 71.9 138.5 74.1 167.7 26"/>
+    <polygon fill="#0076D8" points="128 51 119 36.2 100.4 26.4 128 71.9"/>
+    <polygon fill="#55B8FF" points="137 36.2 128 51 128 71.9 155.6 26.4"/>
+    <polygon fill="#55B8FF" points="100.4 26.4 94.4 15.3 88.3 26"/>
+    <polygon fill="#0076D8" points="155.6 26.4 167.7 26 161.6 15.3"/>
+    <polygon fill="#003F7A" points="119 36.2 137 36.2 155.6 26.4 100.4 26.4"/>
+    <polygon fill="#55B8FF" points="100.4 26.4 155.6 26.4 161.6 15.3 94.4 15.3"/>
+  </g>
+</svg>

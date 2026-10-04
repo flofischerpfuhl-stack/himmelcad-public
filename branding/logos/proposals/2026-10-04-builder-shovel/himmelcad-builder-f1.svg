@@ -1,0 +1,47 @@
+<svg
+  width="256"
+  height="256"
+  viewBox="0 0 256 256"
+  xmlns="http://www.w3.org/2000/svg"
+>
+  <title>Himmel:CAD Builder – Shovel (f1)</title>
+
+  <g
+    id="Shovel-Low-Poly-f1"
+    stroke="none"
+    fill-rule="evenodd"
+  >
+    <polygon fill="#0084E8" points="128 242 128 206.2 89.4 207.9"/>
+    <polygon fill="#55B8FF" points="128 242 166.6 207.9 128 206.2"/>
+    <polygon fill="#0056A8" points="128 206.2 128 152.6 89.4 154.3"/>
+    <polygon fill="#1597F2" points="128 206.2 166.6 154.3 128 152.6"/>
+    <polygon fill="#0056A8" points="89.4 207.9 128 206.2 89.4 154.3"/>
+    <polygon fill="#1597F2" points="128 206.2 166.6 207.9 166.6 154.3"/>
+    <polygon fill="#92D5FF" points="89.4 154.3 128 152.6 128 148.1 89.4 149.9"/>
+    <polygon fill="#BDE8FF" points="128 152.6 166.6 154.3 166.6 149.9 128 148.1"/>
+    <polygon fill="#0076D8" points="138 138.3 128 157.3 145.5 157.7"/>
+    <polygon fill="#0056A8" points="118 138.3 110.5 157.7 128 157.3"/>
+    <polygon fill="#55B8FF" points="110.5 157.7 118 139.5 118 138.3"/>
+    <polygon fill="#003F7A" points="145.5 157.7 138 138.3 138 139.5"/>
+    <polygon fill="#55B8FF" points="110.5 157.7 110.5 158.4 118 139.5"/>
+    <polygon fill="#003F7A" points="145.5 158.4 145.5 157.7 138 139.5"/>
+    <polygon fill="#003F7A" points="128 158.1 145.5 158.4 128 140.1"/>
+    <polygon fill="#003F7A" points="110.5 158.4 128 158.1 128 140.1"/>
+    <polygon fill="#1597F2" points="110.5 158.4 128 140.1 118 139.5"/>
+    <polygon fill="#003F7A" points="145.5 158.4 138 139.5 128 140.1"/>
+    <polygon fill="#55B8FF" points="118 82.5 128 83.2 138 82.5 138 81.3 128 80.7 118 81.3"/>
+    <polygon fill="#3EACF5" points="118 139.5 128 140.1 128 83.2 118 82.5"/>
+    <polygon fill="#0056A8" points="128 140.1 138 139.5 138 82.5 128 83.2"/>
+    <polygon fill="#003F7A" points="128 59.2 112.8 33.9 112.8 35.1 128 60.4"/>
+    <polygon fill="#92D5FF" points="143.2 33.9 128 59.2 128 60.4 143.2 35.1"/>
+    <polygon fill="#55B8FF" points="77.6 15.2 178.4 15.2 178.4 14 77.6 14"/>
+    <polygon fill="#3EACF5" points="128 83.2 128 80.4 118 82.5"/>
+    <polygon fill="#0056A8" points="138 82.5 128 80.4 128 83.2"/>
+    <polygon fill="#0084E8" points="128 80.4 95.2 25.7 77.6 15.2 118 82.5"/>
+    <polygon fill="#003F7A" points="160.8 25.7 128 80.4 138 82.5 178.4 15.2"/>
+    <polygon fill="#0076D8" points="128 60.4 112.8 35.1 95.2 25.7 128 80.4"/>
+    <polygon fill="#55B8FF" points="143.2 35.1 128 60.4 128 80.4 160.8 25.7"/>
+    <polygon fill="#003F7A" points="112.8 35.1 143.2 35.1 160.8 25.7 95.2 25.7"/>
+    <polygon fill="#55B8FF" points="95.2 25.7 160.8 25.7 178.4 15.2 77.6 15.2"/>
+  </g>
+</svg>

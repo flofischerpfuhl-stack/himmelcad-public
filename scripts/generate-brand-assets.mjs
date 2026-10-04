@@ -14,7 +14,7 @@ const variants = [
   {
     id: 'photolab',
     source: 'himmelcad-photolab.svg',
-    sourceSha256: '462b9ebd2dd701c3d7fa9d1ec50f4ea6a3c95f9b318fab3a3a545663bf92c310',
+    sourceSha256: 'eef164f962cc19630944b37fd7dfc72df505f15537d4dff8f8c7361594672c6f',
     app: 'photolab',
   },
   {
@@ -30,7 +30,7 @@ const variants = [
   {
     id: 'builder',
     source: 'himmelcad-builder.svg',
-    sourceSha256: 'afe2e9f80140ce2014d92890aebbfd95a3b59de1b567ed651da5004025283db2',
+    sourceSha256: '8790e076ab0fcb56eeb486909b7478974c73fb1a4e78acc6d75444e3345e90f5',
     app: 'builder',
   },
   {
